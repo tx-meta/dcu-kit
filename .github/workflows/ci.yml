@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------
+  # Job: Verify On-chain (Aiken)
+  # ------------------------------------------------------------
+  aiken-verify:
+    name: 🛡️ Verify Aiken
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./onchain/dcu
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Aiken
+        uses: aiken-lang/setup-aiken@v1
+        with:
+          version: v1.1.19
+
+      - name: 🎨 Check Formatting
+        run: aiken fmt --check
+
+      - name: 🧪 Run Tests
+        run: aiken check
+
+  # ------------------------------------------------------------
+  # Job: Verify Documentation (Typst)
+  # ------------------------------------------------------------
+  docs-verify:
+    name: 📄 Verify Docs
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./docs/dcu-kit-design-specs
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Typst
+        uses: typst-community/setup-typst@v3
+
+      - name: 🔨 Compile Design Specs
+        # compiling effectively checks for syntax errors and broken references
+        run: typst compile dcu-kit.typ
+
+  # ------------------------------------------------------------
+  # Job: Gatekeeper (Required Status Check)
+  # ------------------------------------------------------------
+  ci-success:
+    name: ✅ CI Success
+    needs: [aiken-verify, docs-verify]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Status
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "❌ One or more jobs failed."
+          exit 1
+      - name: Success
+        run: echo "✅ All checks passed!"

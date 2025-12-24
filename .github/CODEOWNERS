@@ -1,0 +1,15 @@
+# This file defines the code owners for the repository.
+# These owners will be automatically requested for review when files matching the pattern are modified.
+
+# Global owner (fallback)
+# *       @TxMeta/core-team
+
+# On-chain code (Aiken)
+onchain/**/*.ak     @TxMeta/smart-contracts
+
+# Documentation
+docs/**/*.typ       @TxMeta/docs
+docs/**/*.md        @TxMeta/docs
+
+# CI/CD Workflows
+.github/workflows/* @TxMeta/devops

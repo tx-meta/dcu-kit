@@ -1,0 +1,27 @@
+# OS & System
+.DS_Store
+Thumbs.db
+.fseventsd
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+
+# Typst / Documentation Artifacts
+# We ignore generated PDFs to keep the repo size small.
+# The CI handles generating them.
+docs/**/*.pdf
+
+# Generic Build
+dist/
+build/
+out/
+tmp/
