@@ -2,9 +2,12 @@ use cardano/assets.{AssetName}
 
 /// Account Validator Datum
 pub type AccountDatum {
-  email_hash: ByteArray, // Hash<ByteArray, Sha2_256> (32 bytes)
-  phone_hash: ByteArray, // Hash<ByteArray, Sha2_256> (32 bytes)
+  email_hash: ByteArray,
+  // Hash<ByteArray, Sha2_256> (32 bytes)
+  phone_hash: ByteArray,
 }
+
+// Hash<ByteArray, Sha2_256> (32 bytes)
 
 /// Account Validator Redeemer
 pub type AccountRedeemer {

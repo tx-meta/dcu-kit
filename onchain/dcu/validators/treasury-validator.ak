@@ -13,12 +13,10 @@ validator treasury {
     // - Validate contribution fee & joining fee paid (locked in Treasury UTxO).
     // - Mint exactly one Membership Token (TokenName: "treasury-membership").
     // - Ensure User NFT goes to member, Membership Token goes to script (or stays with UTxO logic).
-    
     // TODO: TerminateGroup
     // - Burn exactly one Membership Token.
     // - Validate Group Reference Input (Group Datum).
     // - Ensure appropriate logic for termination (e.g. all members exited or force close).
-    
     trace @"Treasury Validator - Mint"
     True
   }
@@ -51,7 +49,6 @@ validator treasury {
     // - Validate Group Reference Input (eligibility).
     // - Check vesting schedule/linear vesting logic.
     // - If inactive -> Allow full withdrawal & burn Membership Token.
-    
     trace @"Treasury Validator - Spend"
     True
   }

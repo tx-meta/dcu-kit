@@ -1,6 +1,6 @@
-use dcu/account.{AccountDatum, AccountRedeemer} as account_types
 use cardano/assets.{PolicyId}
 use cardano/transaction.{OutputReference, Transaction}
+use dcu/account.{AccountDatum, AccountRedeemer} as account_types
 
 validator account {
   mint(_redeemer: AccountRedeemer, _policy_id: PolicyId, _self: Transaction) {
