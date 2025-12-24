@@ -1,0 +1,559 @@
+{
+  "preamble": {
+    "title": "txmeta/dcu",
+    "description": "Aiken contracts for project 'txmeta/dcu'",
+    "version": "0.0.0",
+    "plutusVersion": "v3",
+    "compiler": {
+      "name": "Aiken",
+      "version": "v1.1.19+e525483"
+    },
+    "license": "Apache-2.0"
+  },
+  "validators": [
+    {
+      "title": "account_validator.account.mint",
+      "redeemer": {
+        "title": "_redeemer",
+        "schema": {
+          "$ref": "#/definitions/dcu~1account~1AccountRedeemer"
+        }
+      },
+      "compiledCode": "59015c01010029800aba2aba1aab9faab9eaab9dab9a48888896600264646530013005375400322325980099b8748000006264646644b3001301000380345900e1bad300d001375a601a004601a00260126ea800e2b30013370e9001000c4c8c8c8ca60026eb4c03c0066eb8c03c0126eb4c03c00e6eb4c03c009222259800980a002c02a2c8090601e002601c002601a00260126ea800e2b30013370e9002000c4c8c8ca60026eb4c0380066eb8c03800e6eb4c03800922259800980900240222c8080601c002601a00260126ea800e2b30013370e9003000c4c8c966002601c0050048b2018375c601800260126ea800e2c8039007200e401c600e6ea800a60100073008002488896600266e1d2000004899198020010a51375c601860146ea80162b30013370e900100244c8cc88cc01801052898068009806980700098051baa0058a5140208040600e6010002600e00260066ea801e29344d95900101",
+      "hash": "348296f98ce9491a337f6085fd90e7eda349b0a945b2f2826f2e01f8"
+    },
+    {
+      "title": "account_validator.account.spend",
+      "datum": {
+        "title": "_datum",
+        "schema": {
+          "$ref": "#/definitions/dcu~1account~1AccountDatum"
+        }
+      },
+      "redeemer": {
+        "title": "_redeemer",
+        "schema": {
+          "$ref": "#/definitions/dcu~1account~1AccountRedeemer"
+        }
+      },
+      "compiledCode": "59015c01010029800aba2aba1aab9faab9eaab9dab9a48888896600264646530013005375400322325980099b8748000006264646644b3001301000380345900e1bad300d001375a601a004601a00260126ea800e2b30013370e9001000c4c8c8c8ca60026eb4c03c0066eb8c03c0126eb4c03c00e6eb4c03c009222259800980a002c02a2c8090601e002601c002601a00260126ea800e2b30013370e9002000c4c8c8ca60026eb4c0380066eb8c03800e6eb4c03800922259800980900240222c8080601c002601a00260126ea800e2b30013370e9003000c4c8c966002601c0050048b2018375c601800260126ea800e2c8039007200e401c600e6ea800a60100073008002488896600266e1d2000004899198020010a51375c601860146ea80162b30013370e900100244c8cc88cc01801052898068009806980700098051baa0058a5140208040600e6010002600e00260066ea801e29344d95900101",
+      "hash": "348296f98ce9491a337f6085fd90e7eda349b0a945b2f2826f2e01f8"
+    },
+    {
+      "title": "account_validator.account.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "compiledCode": "59015c01010029800aba2aba1aab9faab9eaab9dab9a48888896600264646530013005375400322325980099b8748000006264646644b3001301000380345900e1bad300d001375a601a004601a00260126ea800e2b30013370e9001000c4c8c8c8ca60026eb4c03c0066eb8c03c0126eb4c03c00e6eb4c03c009222259800980a002c02a2c8090601e002601c002601a00260126ea800e2b30013370e9002000c4c8c8ca60026eb4c0380066eb8c03800e6eb4c03800922259800980900240222c8080601c002601a00260126ea800e2b30013370e9003000c4c8c966002601c0050048b2018375c601800260126ea800e2c8039007200e401c600e6ea800a60100073008002488896600266e1d2000004899198020010a51375c601860146ea80162b30013370e900100244c8cc88cc01801052898068009806980700098051baa0058a5140208040600e6010002600e00260066ea801e29344d95900101",
+      "hash": "348296f98ce9491a337f6085fd90e7eda349b0a945b2f2826f2e01f8"
+    },
+    {
+      "title": "group_validator.group.mint",
+      "redeemer": {
+        "title": "_redeemer",
+        "schema": {
+          "$ref": "#/definitions/dcu~1group~1GroupRedeemer"
+        }
+      },
+      "compiledCode": "59012d01010029800aba2aba1aab9faab9eaab9dab9a48888896600264646530013005375400322325980099b87480000062b3001300937540070028b20148acc004cdc3a400400313232323298009bad300f0019bae300f0049bad300f0039bad300f0024888966002602800b00a8b202418078009807000980680098049baa0038acc004cdc3a400800313232323298009bad300f0019bae300f0049bad300f0039bad300f0024888966002602800b00a8b202418078009807000980680098049baa0038b200e401c8038c01cdd50014c02000e601000491112cc004cdc3a40000091323300400214a26eb8c030c028dd5002c56600266e1d20020048991991198030020a51300d001300d300e001300a375400b14a280410080c01cc020004c01c004c00cdd5003c52689b2b20021",
+      "hash": "97bc4c73a6c3a6570ca2bbdbe36e29d64b47f4ff5feae6a4fbc76be8"
+    },
+    {
+      "title": "group_validator.group.spend",
+      "datum": {
+        "title": "_datum",
+        "schema": {
+          "$ref": "#/definitions/dcu~1group~1GroupDatum"
+        }
+      },
+      "redeemer": {
+        "title": "_redeemer",
+        "schema": {
+          "$ref": "#/definitions/dcu~1group~1GroupRedeemer"
+        }
+      },
+      "compiledCode": "59012d01010029800aba2aba1aab9faab9eaab9dab9a48888896600264646530013005375400322325980099b87480000062b3001300937540070028b20148acc004cdc3a400400313232323298009bad300f0019bae300f0049bad300f0039bad300f0024888966002602800b00a8b202418078009807000980680098049baa0038acc004cdc3a400800313232323298009bad300f0019bae300f0049bad300f0039bad300f0024888966002602800b00a8b202418078009807000980680098049baa0038b200e401c8038c01cdd50014c02000e601000491112cc004cdc3a40000091323300400214a26eb8c030c028dd5002c56600266e1d20020048991991198030020a51300d001300d300e001300a375400b14a280410080c01cc020004c01c004c00cdd5003c52689b2b20021",
+      "hash": "97bc4c73a6c3a6570ca2bbdbe36e29d64b47f4ff5feae6a4fbc76be8"
+    },
+    {
+      "title": "group_validator.group.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "compiledCode": "59012d01010029800aba2aba1aab9faab9eaab9dab9a48888896600264646530013005375400322325980099b87480000062b3001300937540070028b20148acc004cdc3a400400313232323298009bad300f0019bae300f0049bad300f0039bad300f0024888966002602800b00a8b202418078009807000980680098049baa0038acc004cdc3a400800313232323298009bad300f0019bae300f0049bad300f0039bad300f0024888966002602800b00a8b202418078009807000980680098049baa0038b200e401c8038c01cdd50014c02000e601000491112cc004cdc3a40000091323300400214a26eb8c030c028dd5002c56600266e1d20020048991991198030020a51300d001300d300e001300a375400b14a280410080c01cc020004c01c004c00cdd5003c52689b2b20021",
+      "hash": "97bc4c73a6c3a6570ca2bbdbe36e29d64b47f4ff5feae6a4fbc76be8"
+    },
+    {
+      "title": "treasury_validator.treasury.mint",
+      "redeemer": {
+        "title": "_redeemer",
+        "schema": {
+          "$ref": "#/definitions/dcu~1treasury~1TreasuryRedeemer"
+        }
+      },
+      "compiledCode": "5901f601010029800aba2aba1aab9faab9eaab9dab9a4888889660026644646530013006375400322325980099b874800000626464653001375a601e003375a601e007375a601e0049112cc004c04c012011164044300f001300e001300a375400715980099b87480080062b3001300a37540070028b20168acc004cdc3a400800313232323298009bad30100019bad30100049bac3010002488966002602800913300d3758602600c44b3001002899807801912cc00400a01b13230023019003375a602e00480b22646004602e0066eb4c0540090144590120c040004c03c004c038004c028dd5001c56600266e1d20060018991919194c004dd69808000cdd698080024dd69808001cdd6980800124444b300130150058054590130c040004c03c004c038004c028dd5001c56600266e1d2008001899191919194c004dd69808800cdd69808802cdd698088024dd69808801cdd69808801244444b300130170068064590150c044004c040004c03c004c038004c028dd5001c5900820104020804100818041baa00298048024c02400922225980099b8748000012264660080042944dd7180698059baa0058acc004cdc3a400400913233223300600414a2601c002601c601e00260166ea80162945009201218041804800980400118019baa007223233001001003223300300130020028a4d1365640041",
+      "hash": "37af26cc88f7ac0279c4a965041c3121819782ee250805e43e59c076"
+    },
+    {
+      "title": "treasury_validator.treasury.spend",
+      "datum": {
+        "title": "_datum",
+        "schema": {
+          "$ref": "#/definitions/dcu~1treasury~1TreasuryDatum"
+        }
+      },
+      "redeemer": {
+        "title": "_redeemer",
+        "schema": {
+          "$ref": "#/definitions/dcu~1treasury~1TreasuryRedeemer"
+        }
+      },
+      "compiledCode": "5901f601010029800aba2aba1aab9faab9eaab9dab9a4888889660026644646530013006375400322325980099b874800000626464653001375a601e003375a601e007375a601e0049112cc004c04c012011164044300f001300e001300a375400715980099b87480080062b3001300a37540070028b20168acc004cdc3a400800313232323298009bad30100019bad30100049bac3010002488966002602800913300d3758602600c44b3001002899807801912cc00400a01b13230023019003375a602e00480b22646004602e0066eb4c0540090144590120c040004c03c004c038004c028dd5001c56600266e1d20060018991919194c004dd69808000cdd698080024dd69808001cdd6980800124444b300130150058054590130c040004c03c004c038004c028dd5001c56600266e1d2008001899191919194c004dd69808800cdd69808802cdd698088024dd69808801cdd69808801244444b300130170068064590150c044004c040004c03c004c038004c028dd5001c5900820104020804100818041baa00298048024c02400922225980099b8748000012264660080042944dd7180698059baa0058acc004cdc3a400400913233223300600414a2601c002601c601e00260166ea80162945009201218041804800980400118019baa007223233001001003223300300130020028a4d1365640041",
+      "hash": "37af26cc88f7ac0279c4a965041c3121819782ee250805e43e59c076"
+    },
+    {
+      "title": "treasury_validator.treasury.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "compiledCode": "5901f601010029800aba2aba1aab9faab9eaab9dab9a4888889660026644646530013006375400322325980099b874800000626464653001375a601e003375a601e007375a601e0049112cc004c04c012011164044300f001300e001300a375400715980099b87480080062b3001300a37540070028b20168acc004cdc3a400800313232323298009bad30100019bad30100049bac3010002488966002602800913300d3758602600c44b3001002899807801912cc00400a01b13230023019003375a602e00480b22646004602e0066eb4c0540090144590120c040004c03c004c038004c028dd5001c56600266e1d20060018991919194c004dd69808000cdd698080024dd69808001cdd6980800124444b300130150058054590130c040004c03c004c038004c028dd5001c56600266e1d2008001899191919194c004dd69808800cdd69808802cdd698088024dd69808801cdd69808801244444b300130170068064590150c044004c040004c03c004c038004c028dd5001c5900820104020804100818041baa00298048024c02400922225980099b8748000012264660080042944dd7180698059baa0058acc004cdc3a400400913233223300600414a2601c002601c601e00260166ea80162945009201218041804800980400118019baa007223233001001003223300300130020028a4d1365640041",
+      "hash": "37af26cc88f7ac0279c4a965041c3121819782ee250805e43e59c076"
+    }
+  ],
+  "definitions": {
+    "Bool": {
+      "title": "Bool",
+      "anyOf": [
+        {
+          "title": "False",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": []
+        },
+        {
+          "title": "True",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": []
+        }
+      ]
+    },
+    "ByteArray": {
+      "dataType": "bytes"
+    },
+    "Int": {
+      "dataType": "integer"
+    },
+    "List$Int": {
+      "dataType": "list",
+      "items": {
+        "$ref": "#/definitions/Int"
+      }
+    },
+    "List$dcu/treasury/Contribution": {
+      "dataType": "list",
+      "items": {
+        "$ref": "#/definitions/dcu~1treasury~1Contribution"
+      }
+    },
+    "cardano/assets/AssetName": {
+      "title": "AssetName",
+      "dataType": "bytes"
+    },
+    "cardano/assets/PolicyId": {
+      "title": "PolicyId",
+      "dataType": "bytes"
+    },
+    "dcu/account/AccountDatum": {
+      "title": "AccountDatum",
+      "description": "Account Validator Datum",
+      "anyOf": [
+        {
+          "title": "AccountDatum",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "email_hash",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "phone_hash",
+              "$ref": "#/definitions/ByteArray"
+            }
+          ]
+        }
+      ]
+    },
+    "dcu/account/AccountRedeemer": {
+      "title": "AccountRedeemer",
+      "description": "Account Validator Redeemer",
+      "anyOf": [
+        {
+          "title": "CreateAccount",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "UpdateAccount",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "reference_token_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "user_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "account_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "account_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "RemoveAccount",
+          "dataType": "constructor",
+          "index": 2,
+          "fields": [
+            {
+              "title": "reference_token_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "user_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "account_input_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "DeleteAccount",
+          "dataType": "constructor",
+          "index": 3,
+          "fields": [
+            {
+              "title": "reference_token_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            }
+          ]
+        }
+      ]
+    },
+    "dcu/group/GroupDatum": {
+      "title": "GroupDatum",
+      "description": "Group Validator Datum",
+      "anyOf": [
+        {
+          "title": "GroupDatum",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "contribution_fee_policyid",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            },
+            {
+              "title": "contribution_fee_assetname",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "contribution_fee",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "joining_fee_policyid",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            },
+            {
+              "title": "joining_fee_assetname",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "joining_fee",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "penalty_fee_policyid",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            },
+            {
+              "title": "penalty_fee_assetname",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "penalty_fee",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "interval_length",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "num_intervals",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "member_count",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "share_holding",
+              "$ref": "#/definitions/Bool"
+            },
+            {
+              "title": "is_active",
+              "$ref": "#/definitions/Bool"
+            }
+          ]
+        }
+      ]
+    },
+    "dcu/group/GroupRedeemer": {
+      "title": "GroupRedeemer",
+      "description": "Group Validator Redeemer",
+      "anyOf": [
+        {
+          "title": "CreateGroup",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": []
+        },
+        {
+          "title": "UpdateGroup",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "group_ref_token_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "admin_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "group_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "group_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "RemoveGroup",
+          "dataType": "constructor",
+          "index": 2,
+          "fields": [
+            {
+              "title": "group_ref_token_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "admin_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "group_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "group_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    },
+    "dcu/treasury/Contribution": {
+      "title": "Contribution",
+      "description": "Contribution struct for Treasury Datum",
+      "anyOf": [
+        {
+          "title": "Contribution",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "claimable_at",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "claimable_amount",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    },
+    "dcu/treasury/TreasuryDatum": {
+      "title": "TreasuryDatum",
+      "description": "Treasury Validator Datum (Sum Type)",
+      "anyOf": [
+        {
+          "title": "TreasuryState",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "group_reference_tokenname",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "member_reference_tokenname",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "membership_start",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "contribution_list",
+              "$ref": "#/definitions/List$dcu~1treasury~1Contribution"
+            }
+          ]
+        },
+        {
+          "title": "PenaltyState",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "group_reference_tokenname",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "member_reference_tokenname",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            }
+          ]
+        }
+      ]
+    },
+    "dcu/treasury/TreasuryRedeemer": {
+      "title": "TreasuryRedeemer",
+      "description": "Treasury Validator Redeemer",
+      "anyOf": [
+        {
+          "title": "JoinGroup",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "group_ref_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "member_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "treasury_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "TerminateGroup",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": []
+        },
+        {
+          "title": "DistributePayout",
+          "dataType": "constructor",
+          "index": 2,
+          "fields": [
+            {
+              "title": "group_ref_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "treasury_input_indices",
+              "$ref": "#/definitions/List$Int"
+            },
+            {
+              "title": "treasury_output_indices",
+              "$ref": "#/definitions/List$Int"
+            },
+            {
+              "title": "borrower_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "ExitGroup",
+          "dataType": "constructor",
+          "index": 3,
+          "fields": [
+            {
+              "title": "group_ref_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "member_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "treasury_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "penalty_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "MemberWithdraw",
+          "dataType": "constructor",
+          "index": 4,
+          "fields": [
+            {
+              "title": "group_ref_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "member_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "treasury_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "treasury_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "loans_withdrawn",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
