@@ -1,3 +1,4 @@
+#import "./resources/transaction.typ": *
 #let background-color = rect(width: 100%, height: 100%, fill: rgb("#102E4A"))
 #let image-foreground = image("./images/tx-logo.png", width: 100%, fit: "contain")
 #let image-header = image("./images/tx-logo-dark.png", height: 75%, fit: "contain")
@@ -100,7 +101,7 @@
 \
 
 #set heading(numbering: "1.")
-#show heading: set text(rgb("#c41112"))
+#show heading: set text(rgb("#102E4A"))
 
 = Overview
 \
@@ -166,10 +167,10 @@ There are three validators in this cooperative finance system.
   - *TokenName:* Defined in Group Validator using CIP-68 standards with transaction ID, output index, and appropriate prefix (`prefix_100` for reference NFT, `prefix_222` for user NFT).
 
 + *Membership NFT* 
+  
+  Can only be minted when a user joins a group and the Reference NFT is locked in the Treasury Validator while the User NFT is sent to the member.
 
-  Can only be minted when a user joins a group by depositing funds to the Membership Validator making them a member and burned when a member exits the system or when penalties are processed.
-
-  - *TokenName:* Defined in Membership Validator parameters with a static identifier (e.g., "membership").
+  - *TokenName:* Defined in Treasury Validator using CIP-68 standards with transaction ID, output index, and appropriate prefix (`prefix_100` for reference NFT, `prefix_222` for user NFT).
 
 #pagebreak()
 
@@ -213,7 +214,7 @@ The Treasury Validator is the core contract responsible for managing member cont
 
   - Validate that the member's Account NFT is present in the transaction inputs.
   
-  - A reference input must provide the Group datum from the Group Validator.
+  - A Group Input must be provided from the Group Validator (as a spending input, not reference) to update the member count.
   
   - The treasury output must be sent to the Treasury Script's address and contain a Treasury datum that is consistent with the Group datum.
   
@@ -268,11 +269,11 @@ This is a Sum type datum where one represents the treasury datum and the other r
 
 \
 - *```rust 
-  AdminWithdraw {
+  DistributePayout {
     group_ref_input_index: Int,
-    admin_input_index: Int,
-    treasury_input_index: Int,
-    treasury_output_index: Int,
+    treasury_input_indices: List<Int>,
+    treasury_output_indices: List<Int>,
+    borrower_output_index: Int,
   }
   ```*
 
@@ -299,22 +300,21 @@ This is a Sum type datum where one represents the treasury datum and the other r
 ==== Validation
 
 \
-+ *AdminWithdraw* 
++ *DistributePayout* 
   
-  This redeemer allows the group administrator to withdraw joining fees or funds agreed upon by the group using a multisig signature threshold.
+  This redeemer allows the group (or an administrator/bot) to trigger the distribution of funds to the eligible member for the current interval. It utilizes a "trustless collection" pattern where multiple member inputs are aggregated and sent directly to the borrower.
 
-  - The Treasury UTxO being spent must be identified and contain a valid Treasury datum.
+  - *Eligibility Check*: Validate that the "Borrower" (recipient at *`borrower_output_index`*) provides a *Slot NFT* that matches the designated slot for the current interval (derived from the *`group_datum`* and time). This strictly enforces the rotation schedule.
 
-  - A Group datum must be supplied as a reference input (at *`group_ref_input_index`*), ensuring that the Group NFT is present.
+  - The `Treasury` UTxOs being spent (at *`treasury_input_indices`*) must be identified and contain valid Treasury datums.
 
-  - The administrator input (at *`admin_input_index`*) must prove ownership of the Group NFT.
+  - A Group datum must be supplied as a reference input (at *`group_ref_input_index`*) to determine the Rotation Schedule and current Borrower.
 
-  - The output UTxO (at treasury_output_index) must remain at the Treasury Script's address and include an updated Treasury datum.
+  - The "Borrower" output (at *`borrower_output_index`*) must go to the address of the scheduled member.
 
-  - Implement linear vesting for fund release by:
-    - Dropping the first *`fees_withdrawn`* elements from the original fees installments list to form the new Treasury datum.
-    
-    - Verifying that the difference in value between input and output does not exceed the sum of the *`claimable_amount`* of installments that are past their *`claimable_at`* time.
+  - The value sent to the borrower must equal the sum of the collected `claimable_amount`s from the inputs (minus any transaction fees if applicable).
+
+  - The outputs at *`treasury_output_indices`* must return the Treasury UTxOs to the script address with updated datums (marking the current interval as "paid").
 
   \
 + *ExitGroup* 
@@ -325,7 +325,8 @@ This is a Sum type datum where one represents the treasury datum and the other r
 
   - The Treasury UTxO (from treasury_input_index) must have a valid Treasury datum.
   
-  - A Group datum is provided as a reference input to verify group conditions.
+  - The Group UTxO is provided as a spending input to decrement the member count.
+
 
   - The decision branch is based on the membership timing:
 
@@ -386,6 +387,7 @@ Nothing
     - *penalty_fee*: Must be ≥ 0.
     - *interval_length*: Must be greater than 0.
     - *num_intervals*: Must be > 0 and within a reasonable bound (e.g. ≤ 100).
+    - *member_count*: Must be initialized to 0.
     - *is_active*: Must be set to true. 
 
 \
@@ -416,6 +418,8 @@ Nothing
 - *`interval_length: Int`* An Int defining the duration of one contribution interval.
 
 - *`num_intervals: Int`* An Int representing the total number of intervals in the rotation cycle.
+
+- *`member_count: Int`* An Int tracking the number of active members in the group.
 
 - *`share_holding: Bool`* A Bool indicating if members can hold multiple shares.
 
@@ -460,9 +464,9 @@ Nothing
   
   - Validate that the metadata of the Reference NFT token is updated within acceptable bounds.
   
-  - Metadata changes must be within acceptable bounds (for example, fee adjustments limited to within +/-10%).
+  - Critical metadata changes (fees, intervals) are *ONLY* allowed if `member_count == 0`.
   
-  - The reference token must be spent back to its own address, ensuring that the Group NFT remains intact.
+  - The Group NFT must still be present in the output.
 
   \
 + *RemoveGroup*
@@ -480,6 +484,8 @@ Nothing
   - The output Group datum must indicate that the group is inactivated by setting is_active to false.
   
   - The Group NFT must still be present in the output to maintain correct state tracking.
+  
+  - `member_count` must be 0 to remove/deactivate a group.
 
 #pagebreak()
 
@@ -613,10 +619,42 @@ This section outlines the various transactions involved in the DCU-Toolkit on th
 This transaction creates a new member account by minting Account NFTs. This transaction is performed by a user to establish their identity within the cooperative finance system and enable participation in multiple groups.
 
 \
-// #figure(
-//   image("./images/create-account-image.png", width: 100%),
-//   caption: [Create Account UTxO diagram]
-// )
+#transaction(
+  "CreateAccount",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 5000000,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Account Validator UTxO",
+      address: "account_validator",
+      value: (
+        ada: 2000000,
+        Ref_NFT: 1,
+      ),
+      datum: (
+        email_hash: "0x12..ef",
+        phone_hash: "0xab..89",
+      ),
+    ),
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 1000000, // Change
+        User_NFT: 1,
+      ),
+    ),
+  ),
+  show_mints: true,
+  notes: [Create Account Transaction],
+)
 
 \
 ==== Inputs
@@ -670,10 +708,55 @@ This transaction creates a new member account by minting Account NFTs. This tran
 This transaction updates the member's account metadata. It consumes both the Account NFT and the Reference NFT, then sends the updated Account NFT back to the member's wallet and the updated Reference NFT to the spending endpoint.
 
 \
-// #figure(
-//   image("./images/update-account-metadata-image.png", width: 100%),
-//   caption: [Update Account MetaData UTxO diagram]
-// )
+#transaction(
+  "UpdateAccount",
+  inputs: (
+    (
+      name: "Account Validator UTxO",
+      address: "account_validator",
+      value: (
+        ada: 2000000,
+        Ref_NFT: 1,
+      ),
+      datum: (
+        email_hash: "0x12..ef",
+        phone_hash: "0xab..89",
+      ),
+    ),
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 2000000,
+        User_NFT: 1,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Account Validator UTxO",
+      address: "account_validator",
+      value: (
+        ada: 2000000,
+        Ref_NFT: 1,
+      ),
+      datum: (
+        email_hash: "0xnew..",
+        phone_hash: "0xnew..",
+      ),
+    ),
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 1500000,
+        User_NFT: 1,
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Update Account Metadata],
+)
 \
 
 ==== Inputs
@@ -735,10 +818,46 @@ This transaction updates the member's account metadata. It consumes both the Acc
 This transaction creates a new cooperative group by minting Group NFTs. This transaction is performed by a member who wishes to become a group administrator.
 
 \
-// #figure(
-//   image("./images/create-group-image.png", width: 100%),
-//   caption: [Create Group UTxO diagram]
-// )
+#transaction(
+  "CreateGroup",
+  inputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 10000000,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        joining_fee: 100,
+        contribution_fee: 10,
+        penalty_fee: 50,
+        interval: 86400,
+        member_count: 0, // Initialized
+        active: true,
+      ),
+    ),
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 1000000, // Change
+        Group_User: 1,
+      ),
+    ),
+  ),
+  show_mints: true,
+  notes: [Create Group Transaction],
+)
 \
 
 ==== Inputs
@@ -807,10 +926,55 @@ This transaction creates a new cooperative group by minting Group NFTs. This tra
 This transaction updates the group metadata attached to the Group UTxO at the script address. It enables administrators to adjust group parameters such as fees, intervals, and governance rules.
 
 \
-// #figure(
-//   image("./images/update-group-metadata-image.png", width: 100%),
-//   caption: [Update Group Metadata UTxO diagram],
-// )
+#transaction(
+  "UpdateGroup",
+  inputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 2000000,
+        Group_NFT: 1,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 0, // Must be 0
+        active: false,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 1000000,
+        Group_NFT: 1,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 0,
+        active: true,
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Update Group Metadata (Safe)],
+)
 \
 
 ==== Inputs
@@ -871,10 +1035,69 @@ This transaction updates the group metadata attached to the Group UTxO at the sc
 This transaction occurs when a member joins a cooperative group by locking contribution funds in the Treasury Validator script address.
 
 \
-// #figure(
-//   image("./images/join-group-image.png", width: 100%),
-//   caption: [Join Group UTxO diagram],
-// )
+#transaction(
+  "JoinGroup",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 10000000,
+        Account_NFT: 1,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        joining_fee: 50,
+        contribution_fee: 100,
+        member_count: 5,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 9850000, 
+        Account_NFT: 1,
+        Member_User: 1, // The Slot Key
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 100000000, 
+        Member_Ref: 1, // Locked State
+      ),
+      datum: (
+        start: 123456789,
+        contribution: 100,
+        member_index: 6, // Slot #6
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 6, 
+      ),
+    ),
+  ),
+  show_mints: true,
+  notes: [Join, Mint Slot Key & Lock Funds],
+)
 \
 
 ==== Inputs
@@ -943,10 +1166,68 @@ This transaction occurs when a member joins a cooperative group by locking contr
 This transaction allows a member to withdraw their allocated funds when it's their turn in the rotation schedule.
 
 \
-// #figure(
-//   image("./images/member-withdraw-image.png", width: 100%),
-//   caption: [Member Withdraw UTxO diagram],
-// )
+#transaction(
+  "MemberWithdraw",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 2000000,
+        Account_NFT: 1,
+        Member_User: 1, // Required Key
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 500000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        start: 123456789,
+        contribution: 100,
+        member_index: 6,
+      ),
+    ),
+    (
+      reference: true,
+      name: "Group Reference UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 102000000, // +100 ADA withdrawn
+        Account_NFT: 1,
+        Member_User: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 400000000, // Remaining
+        Member_Ref: 1,
+      ),
+      datum: (
+        start: 123456789,
+        contribution: 0, 
+        member_index: 6,
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Member Withdraws Funds],
+)
 \
 
 ==== Inputs
@@ -1022,10 +1303,78 @@ This transaction allows a member to withdraw their allocated funds when it's the
 This transaction allows a member to exit a cooperative group by spending a Treasury UTxO, unlocking the remaining contribution to their wallet address and potentially creating a Penalty UTxO.
 
 \
-// #figure(
-//   image("./images/exit-group-image.png", width: 100%),
-//   caption: [Exit Group UTxO diagram],
-// )
+#transaction(
+  "ExitGroup",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 2000000,
+        Account_NFT: 1,
+        Member_User: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 500000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        start: 123456789,
+        contribution: 500,
+        member_index: 6,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 6,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 452000000, // Refund - Penalty
+        Account_NFT: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 50000000, // Penalty Locked
+        Member_Ref: 1,
+      ),
+      datum: (
+        penalty: 50,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 5, // Decremented
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Exit Group & Update Count],
+)
 \
 
 ==== Inputs
@@ -1099,42 +1448,104 @@ This transaction allows a member to exit a cooperative group by spending a Treas
 
 #pagebreak()
 
-=== Spend :: AdminWithdraw
+=== Spend :: DistributePayout
 \
-This transaction allows a group administrator to withdraw accumulated contributions from the Treasury UTxO according to the rotation schedule and vesting rules.
+This transaction aggregates contributions from multiple members and distributes the lump sum "pot" to the eligible winner of the current rotation interval. It ensures trustless delivery of funds without requiring an administrator to take custody.
 
 \
-// #figure(
-//   image("./images/admin-withdraw-image.png", width: 100%),
-//   caption: [Admin Withdraw UTxO diagram],
-// )
+#transaction(
+  "DistributePayout",
+  inputs: (
+    (
+      name: "Borrower Wallet",
+      address: "member_wallet", // Borrower
+      value: (
+        ada: 2000000,
+        Member_User: 1, // Slot #1 Key
+      ),
+    ),
+    (
+      name: "Treasury UTxO (A)",
+      address: "treasury_validator",
+      value: (
+        ada: 100000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        member_index: 0,
+      ),
+    ),
+    (
+      name: "Treasury UTxO (B)",
+      address: "treasury_validator",
+      value: (
+        ada: 100000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        member_index: 1,
+      ),
+    ),
+    (
+      reference: true,
+      name: "Group Reference UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Borrower Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 200000000, // Pot
+      ),
+    ),
+    (
+      name: "Treasury UTxO (A)",
+      address: "treasury_validator",
+      value: (
+        ada: 2000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        status: "paid",
+      ),
+    ),
+    (
+      name: "Treasury UTxO (B)",
+      address: "treasury_validator",
+      value: (
+        ada: 2000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        status: "paid",
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Distribute Payout to Borrower],
+)
 \
 
 ==== Inputs:
 \
-+ *Administrator Wallet UTxO*
-
-  - Address: Administrator's wallet address
-  
-  - Value:
-
-    - Minimum ADA
-
-    - 1 Group NFT Asset
-
-+ *Treasury Validator UTxO*
++ *Treasury Validator UTxOs (Multiple)*
 
   - Address: Treasury validator script address
 
   - Datum:
-
-    - treasury_datum: listed in @treasury-datum
+    - treasury_datum: listed in @treasury-datum (for Member A)
+    - treasury_datum: listed in @treasury-datum (for Member B)
+    - ...
 
   - Value:
-
-    - Locked contribution funds
-
-    - 1 Treasury NFT Asset
+    - Locked contribution funds per member
+    - Treasury NFT Assets
 
 + *Group Reference UTxO*
 
@@ -1151,31 +1562,29 @@ This transaction allows a group administrator to withdraw accumulated contributi
 \
 ==== Outputs:
 \
-+ *Administrator Wallet UTxO*
++ *Borrower Wallet UTxO*
 
-  - Address: Administrator's wallet address
+  - Address: Scheduled Borrower's wallet address
 
   - Value:
 
     - Minimum ADA
 
-    - Withdrawn contribution funds for the installment
-    
-    - 1 Group NFT Asset
+    - Total collected "Pot" amount (Sum of inputs)
 
-+ *Treasury Validator UTxO*
++ *Treasury Validator UTxOs (Multiple)*
 
   - Address: Treasury validator script address
 
   - Datum:
 
-    - updated_datum: Metadata reflecting the withdrawal
+    - updated_datum: Metadata reflecting the payout ("Paid" status) for each member
     
   - Value:
 
-    - Remaining ADA after withdrawal
+    - Minimum ADA (or remaining balance)
 
-    - 1 Treasury NFT Asset
+    - Treasury NFT Assets
 #pagebreak()
 
 
@@ -1184,10 +1593,51 @@ This transaction allows a group administrator to withdraw accumulated contributi
 This transaction allows a group administrator with a Group NFT to unlock penalty funds from the Penalty UTxO, burning the Treasury NFT attached to the UTxO.
 
 \
-// #figure(
-//   image("./images/penalty-withdraw-image.png", width: 100%),
-//   caption: [Penalty Withdraw UTxO diagram],
-// )
+#transaction(
+  "PenaltyWithdraw",
+  inputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 2000000,
+        Group_NFT: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 50000000,
+        Treasury_NFT: 1,
+      ),
+      datum: (
+        type: "Penalty",
+      ),
+    ),
+    (
+      reference: true,
+      name: "Group Reference UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 52000000, // Withdrawn Penalty
+        Group_NFT: 1,
+      ),
+    ),
+  ),
+  show_mints: true,
+  notes: [Withdraw Penalty Funds],
+)
 \
 
 ==== Inputs:
