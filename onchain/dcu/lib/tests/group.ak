@@ -1,5 +1,4 @@
 use aiken/primitive/bytearray
-use cardano/address
 use cardano/assets
 use dcu/cip68
 use dcu/group.{
@@ -9,7 +8,7 @@ use dcu/group.{
 use tests/common
 
 test create_group_success() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   // 1. Setup CIP-68 names & ref
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
 
@@ -23,8 +22,7 @@ test create_group_success() {
 
   // 4. Build Output (must have Ref Token + Correct Addr)
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
-  let output =
-    common.test_output(address.from_script(policy_id), output_value, datum)
+  let output = common.test_script_utxo(policy_id, output_value, datum)
 
   // 5. Build Input
   let input = common.test_input(output_ref, output)
@@ -37,7 +35,7 @@ test create_group_success() {
 }
 
 test create_group_invalid_fee() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let mint =
     assets.from_asset(policy_id, ref_tn, 1)
@@ -46,15 +44,14 @@ test create_group_invalid_fee() {
   let base_datum = common.test_group_datum(policy_id)
   let datum = GroupDatum { ..base_datum, contribution_fee: 0 }
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
-  let output =
-    common.test_output(address.from_script(policy_id), output_value, datum)
+  let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
 
   !validate_create_group(policy_id, 0, 0, [input], [output], mint)
 }
 
 test create_group_invalid_member_count() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let mint =
     assets.from_asset(policy_id, ref_tn, 1)
@@ -64,15 +61,14 @@ test create_group_invalid_member_count() {
   let datum = GroupDatum { ..base_datum, member_count: 1 }
 
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
-  let output =
-    common.test_output(address.from_script(policy_id), output_value, datum)
+  let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
 
   !validate_create_group(policy_id, 0, 0, [input], [output], mint)
 }
 
 test create_group_invalid_intervals() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let mint =
     assets.from_asset(policy_id, ref_tn, 1)
@@ -82,15 +78,14 @@ test create_group_invalid_intervals() {
   let datum = GroupDatum { ..base_datum, interval_length: 0 }
 
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
-  let output =
-    common.test_output(address.from_script(policy_id), output_value, datum)
+  let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
 
   !validate_create_group(policy_id, 0, 0, [input], [output], mint)
 }
 
 test create_group_inactive() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let mint =
     assets.from_asset(policy_id, ref_tn, 1)
@@ -100,15 +95,14 @@ test create_group_inactive() {
   let datum = GroupDatum { ..base_datum, is_active: False }
 
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
-  let output =
-    common.test_output(address.from_script(policy_id), output_value, datum)
+  let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
 
   !validate_create_group(policy_id, 0, 0, [input], [output], mint)
 }
 
 test create_group_wrong_token_names() fail {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, _user_tn) = common.setup_cip68(policy_id)
   let datum = common.test_group_datum(policy_id)
   // Use a WRONG suffix to simulate mismatch
@@ -122,15 +116,14 @@ test create_group_wrong_token_names() fail {
   // Even if we put the 'correct' ref token in output (unlikely scenario but possible if mismatched),
   // validation should fail on mint check first.
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
-  let output =
-    common.test_output(address.from_script(policy_id), output_value, datum)
+  let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
 
   !validate_create_group(policy_id, 0, 0, [input], [output], mint)
 }
 
 test create_group_wrong_mint_quantity() fail {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let datum = common.test_group_datum(policy_id)
 
@@ -139,15 +132,14 @@ test create_group_wrong_mint_quantity() fail {
     assets.from_asset(policy_id, ref_tn, 2)
       |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
-  let output =
-    common.test_output(address.from_script(policy_id), output_value, datum)
+  let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
 
   !validate_create_group(policy_id, 0, 0, [input], [output], invalid_mint)
 }
 
 test create_group_wrong_output_address_fails() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let datum = common.test_group_datum(policy_id)
   let mint =
@@ -156,18 +148,14 @@ test create_group_wrong_output_address_fails() {
 
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
   // FAILURE CASE: Wrong Address (not script address)
-  let wrong_addr =
-    address.from_verification_key(
-      #"bad00000000000000000000000000000000000000000000000000000",
-    )
-  let output = common.test_output(wrong_addr, output_value, datum)
+  let output = common.test_user_utxo(common.test_pkh(), output_value, datum)
   let input = common.test_input(output_ref, output)
 
   !validate_create_group(policy_id, 0, 0, [input], [output], mint)
 }
 
 test create_group_missing_ref_token_fails() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let datum = common.test_group_datum(policy_id)
   let mint =
@@ -176,8 +164,7 @@ test create_group_missing_ref_token_fails() {
 
   // FAILURE CASE: Output has NO value (missing ref token)
   let output_value = assets.zero
-  let output =
-    common.test_output(address.from_script(policy_id), output_value, datum)
+  let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
 
   !validate_create_group(policy_id, 0, 0, [input], [output], mint)
@@ -186,24 +173,22 @@ test create_group_missing_ref_token_fails() {
 // --- Update Group Tests ---
 
 test update_group_success() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
 
   let base_datum = common.test_group_datum(policy_id)
   // Initial State: member_count = 0 (from test_group_datum)
   let group_input_utxo =
-    common.test_output(
-      address.from_script(policy_id),
+    common.test_script_utxo(
+      policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       base_datum,
     )
   let group_input = common.test_input(output_ref, group_input_utxo)
 
   let admin_input_utxo =
-    common.test_output(
-      address.from_verification_key(
-        #"01010101010101010101010101010101010101010101010101010101",
-      ),
+    common.test_user_utxo(
+      common.test_pkh(),
       assets.from_asset(policy_id, user_tn, 1),
       base_datum,
     )
@@ -212,8 +197,8 @@ test update_group_success() {
   // Update: Change fee
   let updated_datum = GroupDatum { ..base_datum, contribution_fee: 2000 }
   let group_output_utxo =
-    common.test_output(
-      address.from_script(policy_id),
+    common.test_script_utxo(
+      policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       updated_datum,
     )
@@ -236,12 +221,12 @@ test update_group_success() {
 }
 
 test update_group_fail_auth() fail {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, _user_tn) = common.setup_cip68(policy_id)
   let base_datum = common.test_group_datum(policy_id)
   let group_input_utxo =
-    common.test_output(
-      address.from_script(policy_id),
+    common.test_script_utxo(
+      policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       base_datum,
     )
@@ -249,19 +234,13 @@ test update_group_fail_auth() fail {
 
   // Admin has WRONG token (or no token)
   let admin_input_utxo =
-    common.test_output(
-      address.from_verification_key(
-        #"01010101010101010101010101010101010101010101010101010101",
-      ),
-      assets.zero,
-      base_datum,
-    )
+    common.test_user_utxo(common.test_pkh(), assets.zero, base_datum)
   let admin_input = common.test_input(output_ref, admin_input_utxo)
 
   let updated_datum = GroupDatum { ..base_datum, contribution_fee: 2000 }
   let group_output_utxo =
-    common.test_output(
-      address.from_script(policy_id),
+    common.test_script_utxo(
+      policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       updated_datum,
     )
@@ -278,24 +257,22 @@ test update_group_fail_auth() fail {
 }
 
 test update_group_fail_active() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   // Active Group with Members
   let base_datum =
     GroupDatum { ..common.test_group_datum(policy_id), member_count: 5 }
   let group_input_utxo =
-    common.test_output(
-      address.from_script(policy_id),
+    common.test_script_utxo(
+      policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       base_datum,
     )
   let group_input = common.test_input(output_ref, group_input_utxo)
 
   let admin_input_utxo =
-    common.test_output(
-      address.from_verification_key(
-        #"01010101010101010101010101010101010101010101010101010101",
-      ),
+    common.test_user_utxo(
+      common.test_pkh(),
       assets.from_asset(policy_id, user_tn, 1),
       base_datum,
     )
@@ -304,8 +281,8 @@ test update_group_fail_active() {
   // Critical Update on Active Group -> Should Fail
   let updated_datum = GroupDatum { ..base_datum, contribution_fee: 2000 }
   let group_output_utxo =
-    common.test_output(
-      address.from_script(policy_id),
+    common.test_script_utxo(
+      policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       updated_datum,
     )
@@ -322,14 +299,14 @@ test update_group_fail_active() {
 }
 
 test update_group_fail_change_members() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let base_datum = common.test_group_datum(policy_id)
   let group_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_script(policy_id),
+      common.test_script_utxo(
+        policy_id,
         assets.from_asset(policy_id, ref_tn, 1),
         base_datum,
       ),
@@ -337,10 +314,8 @@ test update_group_fail_change_members() {
   let admin_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_verification_key(
-          #"01010101010101010101010101010101010101010101010101010101",
-        ),
+      common.test_user_utxo(
+        common.test_pkh(),
         assets.from_asset(policy_id, user_tn, 1),
         base_datum,
       ),
@@ -349,8 +324,8 @@ test update_group_fail_change_members() {
   // Try to manually increment member count via Update (Not Allowed)
   let updated_datum = GroupDatum { ..base_datum, member_count: 1 }
   let group_output =
-    common.test_output(
-      address.from_script(policy_id),
+    common.test_script_utxo(
+      policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       updated_datum,
     )
@@ -367,15 +342,15 @@ test update_group_fail_change_members() {
 }
 
 test update_group_wrong_output_address_fails() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let base_datum = common.test_group_datum(policy_id)
 
   let group_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_script(policy_id),
+      common.test_script_utxo(
+        policy_id,
         assets.from_asset(policy_id, ref_tn, 1),
         base_datum,
       ),
@@ -383,23 +358,17 @@ test update_group_wrong_output_address_fails() {
   let admin_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_verification_key(
-          #"01010101010101010101010101010101010101010101010101010101",
-        ),
+      common.test_user_utxo(
+        common.test_pkh(),
         assets.from_asset(policy_id, user_tn, 1),
         base_datum,
       ),
     )
 
   // Fail: Send to wrong address
-  let wrong_addr =
-    address.from_verification_key(
-      #"bad00000000000000000000000000000000000000000000000000000",
-    )
   let group_output =
-    common.test_output(
-      wrong_addr,
+    common.test_user_utxo(
+      common.test_pkh(),
       assets.from_asset(policy_id, ref_tn, 1),
       base_datum,
     )
@@ -416,15 +385,15 @@ test update_group_wrong_output_address_fails() {
 }
 
 test update_group_missing_ref_token_fails() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let base_datum = common.test_group_datum(policy_id)
 
   let group_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_script(policy_id),
+      common.test_script_utxo(
+        policy_id,
         assets.from_asset(policy_id, ref_tn, 1),
         base_datum,
       ),
@@ -432,18 +401,15 @@ test update_group_missing_ref_token_fails() {
   let admin_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_verification_key(
-          #"01010101010101010101010101010101010101010101010101010101",
-        ),
+      common.test_user_utxo(
+        common.test_pkh(),
         assets.from_asset(policy_id, user_tn, 1),
         base_datum,
       ),
     )
 
   // Fail: Missing Ref Token
-  let group_output =
-    common.test_output(address.from_script(policy_id), assets.zero, base_datum)
+  let group_output = common.test_script_utxo(policy_id, assets.zero, base_datum)
 
   !validate_update_group(
     policy_id,
@@ -457,15 +423,15 @@ test update_group_missing_ref_token_fails() {
 }
 
 test update_group_fail_deactivate() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let base_datum = common.test_group_datum(policy_id)
 
   let group_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_script(policy_id),
+      common.test_script_utxo(
+        policy_id,
         assets.from_asset(policy_id, ref_tn, 1),
         base_datum,
       ),
@@ -473,10 +439,8 @@ test update_group_fail_deactivate() {
   let admin_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_verification_key(
-          #"01010101010101010101010101010101010101010101010101010101",
-        ),
+      common.test_user_utxo(
+        common.test_pkh(),
         assets.from_asset(policy_id, user_tn, 1),
         base_datum,
       ),
@@ -485,8 +449,8 @@ test update_group_fail_deactivate() {
   // Fail: Cannot deactivate via Update (use RemoveGroup)
   let updated_datum = GroupDatum { ..base_datum, is_active: False }
   let group_output =
-    common.test_output(
-      address.from_script(policy_id),
+    common.test_script_utxo(
+      policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       updated_datum,
     )
@@ -505,15 +469,15 @@ test update_group_fail_deactivate() {
 // --- Remove Group Tests ---
 
 test remove_group_success() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let base_datum = common.test_group_datum(policy_id)
   // member_count = 0
   let group_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_script(policy_id),
+      common.test_script_utxo(
+        policy_id,
         assets.from_asset(policy_id, ref_tn, 1),
         base_datum,
       ),
@@ -521,10 +485,8 @@ test remove_group_success() {
   let admin_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_verification_key(
-          #"01010101010101010101010101010101010101010101010101010101",
-        ),
+      common.test_user_utxo(
+        common.test_pkh(),
         assets.from_asset(policy_id, user_tn, 1),
         base_datum,
       ),
@@ -532,8 +494,8 @@ test remove_group_success() {
 
   let updated_datum = GroupDatum { ..base_datum, is_active: False }
   let group_output =
-    common.test_output(
-      address.from_script(policy_id),
+    common.test_script_utxo(
+      policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       updated_datum,
     )
@@ -550,15 +512,15 @@ test remove_group_success() {
 }
 
 test remove_group_fail_members() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let base_datum =
     GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
   let group_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_script(policy_id),
+      common.test_script_utxo(
+        policy_id,
         assets.from_asset(policy_id, ref_tn, 1),
         base_datum,
       ),
@@ -566,10 +528,8 @@ test remove_group_fail_members() {
   let admin_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_verification_key(
-          #"01010101010101010101010101010101010101010101010101010101",
-        ),
+      common.test_user_utxo(
+        common.test_pkh(),
         assets.from_asset(policy_id, user_tn, 1),
         base_datum,
       ),
@@ -577,8 +537,8 @@ test remove_group_fail_members() {
 
   let updated_datum = GroupDatum { ..base_datum, is_active: False }
   let group_output =
-    common.test_output(
-      address.from_script(policy_id),
+    common.test_script_utxo(
+      policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       updated_datum,
     )
@@ -595,15 +555,15 @@ test remove_group_fail_members() {
 }
 
 test remove_group_wrong_output_address_fails() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let base_datum = common.test_group_datum(policy_id)
 
   let group_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_script(policy_id),
+      common.test_script_utxo(
+        policy_id,
         assets.from_asset(policy_id, ref_tn, 1),
         base_datum,
       ),
@@ -611,24 +571,18 @@ test remove_group_wrong_output_address_fails() {
   let admin_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_verification_key(
-          #"01010101010101010101010101010101010101010101010101010101",
-        ),
+      common.test_user_utxo(
+        common.test_pkh(),
         assets.from_asset(policy_id, user_tn, 1),
         base_datum,
       ),
     )
 
   // Fail: Wrong address
-  let wrong_addr =
-    address.from_verification_key(
-      #"bad00000000000000000000000000000000000000000000000000000",
-    )
   let updated_datum = GroupDatum { ..base_datum, is_active: False }
   let group_output =
-    common.test_output(
-      wrong_addr,
+    common.test_user_utxo(
+      common.test_pkh(),
       assets.from_asset(policy_id, ref_tn, 1),
       updated_datum,
     )
@@ -645,15 +599,15 @@ test remove_group_wrong_output_address_fails() {
 }
 
 test remove_group_missing_ref_token_fails() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let base_datum = common.test_group_datum(policy_id)
 
   let group_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_script(policy_id),
+      common.test_script_utxo(
+        policy_id,
         assets.from_asset(policy_id, ref_tn, 1),
         base_datum,
       ),
@@ -661,10 +615,8 @@ test remove_group_missing_ref_token_fails() {
   let admin_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_verification_key(
-          #"01010101010101010101010101010101010101010101010101010101",
-        ),
+      common.test_user_utxo(
+        common.test_pkh(),
         assets.from_asset(policy_id, user_tn, 1),
         base_datum,
       ),
@@ -673,11 +625,7 @@ test remove_group_missing_ref_token_fails() {
   // Fail: Missing ref token
   let updated_datum = GroupDatum { ..base_datum, is_active: False }
   let group_output =
-    common.test_output(
-      address.from_script(policy_id),
-      assets.zero,
-      updated_datum,
-    )
+    common.test_script_utxo(policy_id, assets.zero, updated_datum)
 
   !validate_remove_group(
     policy_id,
@@ -691,15 +639,15 @@ test remove_group_missing_ref_token_fails() {
 }
 
 test remove_group_fail_active() {
-  let policy_id = #"00000000000000000000000000000000000000000000000000000000"
+  let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let base_datum = common.test_group_datum(policy_id)
 
   let group_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_script(policy_id),
+      common.test_script_utxo(
+        policy_id,
         assets.from_asset(policy_id, ref_tn, 1),
         base_datum,
       ),
@@ -707,10 +655,8 @@ test remove_group_fail_active() {
   let admin_input =
     common.test_input(
       output_ref,
-      common.test_output(
-        address.from_verification_key(
-          #"01010101010101010101010101010101010101010101010101010101",
-        ),
+      common.test_user_utxo(
+        common.test_pkh(),
         assets.from_asset(policy_id, user_tn, 1),
         base_datum,
       ),
@@ -719,8 +665,8 @@ test remove_group_fail_active() {
   // Fail: Still active (Remove MUST deactivate)
   let updated_datum = GroupDatum { ..base_datum, is_active: True }
   let group_output =
-    common.test_output(
-      address.from_script(policy_id),
+    common.test_script_utxo(
+      policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       updated_datum,
     )
