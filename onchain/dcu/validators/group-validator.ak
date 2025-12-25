@@ -1,23 +1,23 @@
 use cardano/assets.{PolicyId}
 use cardano/transaction.{OutputReference, Transaction}
-use dcu/group.{GroupDatum, GroupRedeemer} as group_types
+use dcu/group.{GroupDatum, GroupRedeemer, CreateGroup, validate_create_group}
 
-validator group {
-  mint(_redeemer: GroupRedeemer, _policy_id: PolicyId, _self: Transaction) {
-    // TODO: CreateGroup
-    // - Retrieve input at input_index to derive unique token names (CIP-68).
-    // - Validate exactly two assets are minted: Reference NFT (prefix 100) and User NFT (prefix 222).
-    // - Ensure Reference NFT goes to script address with valid Group Datum.
-    // - Validate Group Datum:
-    //   - contribution_fee > 0
-    //   - joining_fee >= 0
-    //   - penalty_fee >= 0
-    //   - interval_length > 0
-    //   - num_intervals > 0
-    //   - member_count == 0
-    //   - is_active == True
-    trace @"Group Validator - Mint"
-    True
+validator group_validator {
+  mint(redeemer: GroupRedeemer, policy_id: PolicyId, tx: Transaction) {
+    let Transaction { inputs, outputs, mint, .. } = tx
+
+    when redeemer is {
+      CreateGroup { input_index, output_index } ->
+        validate_create_group(
+          policy_id,
+          input_index,
+          output_index,
+          inputs,
+          outputs,
+          mint,
+        )
+      _ -> False
+    }
   }
 
   spend(
