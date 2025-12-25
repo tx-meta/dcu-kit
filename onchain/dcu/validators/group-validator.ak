@@ -43,7 +43,6 @@ validator group_validator {
         group_input_index,
         group_output_index,
       } ->
-
         validate_update_group(
           policy_id,
           group_ref_token_name,
@@ -60,7 +59,6 @@ validator group_validator {
         group_input_index,
         group_output_index,
       } ->
-
         validate_remove_group(
           policy_id,
           group_ref_token_name,
