@@ -1,6 +1,6 @@
-use aiken/primitive/bytearray
 use aiken/cbor
 use aiken/crypto.{blake2b_256}
+use aiken/primitive/bytearray
 use cardano/assets.{AssetName}
 use cardano/transaction.{OutputReference}
 
@@ -29,4 +29,11 @@ pub fn unique_token_name(
   // We must limit the unique part to 28 bytes.
   let chopped_hash = bytearray.slice(unique_hash, 0, 28)
   bytearray.concat(prefix, chopped_hash)
+}
+
+/// Converts a Reference Token Name (100) to its corresponding User Token Name (222).
+/// Assumes the input is a valid CIP-68 token name (starts with 4-byte prefix).
+pub fn convert_ref_to_user_token(ref_token_name: AssetName) -> AssetName {
+  let unique_part = bytearray.drop(ref_token_name, prefix_length)
+  bytearray.concat(prefix_222, unique_part)
 }

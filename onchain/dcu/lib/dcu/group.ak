@@ -1,10 +1,10 @@
 use aiken/collection/dict
 use aiken/collection/list
+use aiken/primitive/bytearray
 use cardano/address.{Script}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output}
 use dcu/cip68
-
 
 /// Group Validator Datum
 pub type GroupDatum {
@@ -25,8 +25,13 @@ pub type GroupDatum {
 }
 
 /// Group Validator Redeemer
-pub type GroupRedeemer {
+/// Group Validator Mint Redeemer
+pub type GroupMintRedeemer {
   CreateGroup { input_index: Int, output_index: Int }
+}
+
+/// Group Validator Spend Redeemer
+pub type GroupSpendRedeemer {
   UpdateGroup {
     group_ref_token_name: AssetName,
     admin_input_index: Int,
@@ -91,3 +96,124 @@ pub fn validate_create_group(
   }
 }
 
+pub fn validate_update_group(
+  policy_id: PolicyId,
+  group_ref_token_name: AssetName,
+  admin_input_index: Int,
+  group_input_index: Int,
+  group_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
+) -> Bool {
+  // 1. Find Group Input
+  expect Some(group_input) = list.at(inputs, group_input_index)
+  // Ensure it's the correct Group UTxO by checking the Reference Token
+  expect
+    assets.quantity_of(
+      group_input.output.value,
+      policy_id,
+      group_ref_token_name,
+    ) == 1
+
+  // 2. Validate Admin Authorization
+  expect Some(admin_input) = list.at(inputs, admin_input_index)
+  // Calculate user token name: drop (100) prefix, replace with (222) prefix 
+  let user_token_name =
+    cip68.prefix_222
+      |> bytearray.concat(
+          bytearray.drop(group_ref_token_name, cip68.prefix_length),
+        )
+
+  // Admin must hold the User Token (prefix_222) corresponding to the thread
+  expect
+    assets.quantity_of(admin_input.output.value, policy_id, user_token_name) == 1
+
+  // 3. Validate Group Output
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect InlineDatum(datum_data) = group_output.datum
+  expect updated_datum: GroupDatum = datum_data
+
+  expect InlineDatum(input_datum_data) = group_input.output.datum
+  expect current_datum: GroupDatum = input_datum_data
+
+  // 4. Security Checks
+  // Critical Check: Can only change fees/intervals if member_count is 0.
+  // This prevents rug-pulling existing members.
+  let is_critical_update =
+    updated_datum.contribution_fee != current_datum.contribution_fee || updated_datum.joining_fee != current_datum.joining_fee || updated_datum.penalty_fee != current_datum.penalty_fee || updated_datum.interval_length != current_datum.interval_length || updated_datum.num_intervals != current_datum.num_intervals
+
+  let is_safe_update = !is_critical_update || current_datum.member_count == 0
+
+  // 5. Constraints
+  and {
+    // Must strictly send to script address
+    (group_output.address == group_input.output.address)?,
+    // Must preserve the Reference Token
+    (assets.quantity_of(group_output.value, policy_id, group_ref_token_name) == 1)?,
+    // Admin checks
+    is_safe_update?,
+    // Members count must be preserved (Updates don't change membership)
+    (updated_datum.member_count == current_datum.member_count)?,
+    // Active status logic (use RemoveGroup to deactivate)
+    updated_datum.is_active?,
+  }
+}
+
+pub fn validate_remove_group(
+  policy_id: PolicyId,
+  group_ref_token_name: AssetName,
+  admin_input_index: Int,
+  group_input_index: Int,
+  group_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
+) -> Bool {
+  // 1. Find Group Input
+  expect Some(group_input) = list.at(inputs, group_input_index)
+  // Ensure it's the correct Group UTxO by checking the Reference Token
+  expect
+    assets.quantity_of(
+      group_input.output.value,
+      policy_id,
+      group_ref_token_name,
+    ) == 1
+
+  // 2. Validate Admin Authorization
+  expect Some(admin_input) = list.at(inputs, admin_input_index)
+  // Calculate user token name: drop (100) prefix, replace with (222) prefix 
+  let user_token_name =
+    cip68.prefix_222
+      |> bytearray.concat(
+          bytearray.drop(group_ref_token_name, cip68.prefix_length),
+        )
+
+  // Admin must hold the User Token (prefix_222) corresponding to the thread
+  expect
+    assets.quantity_of(admin_input.output.value, policy_id, user_token_name) == 1
+
+  expect InlineDatum(input_datum_data) = group_input.output.datum
+  expect current_datum: GroupDatum = input_datum_data
+
+  // 3. Validate Group Output
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect InlineDatum(output_datum_data) = group_output.datum
+  expect updated_datum: GroupDatum = output_datum_data
+
+  // 4. Security Checks
+  // Can only remove if member_count is 0.
+  let is_safe_remove = current_datum.member_count == 0
+
+  // 5. Constraints
+  and {
+    // Must strictly send to script address
+    (group_output.address == group_input.output.address)?,
+    // Must preserve the Reference Token
+    (assets.quantity_of(group_output.value, policy_id, group_ref_token_name) == 1)?,
+    // Admin checks
+    is_safe_remove?,
+    // Correct status update
+    !updated_datum.is_active?,
+    // Ensure 0 members
+    (updated_datum.member_count == 0)?,
+  }
+}

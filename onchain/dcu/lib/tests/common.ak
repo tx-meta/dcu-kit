@@ -51,7 +51,8 @@ pub fn test_user_token_name(output_ref: OutputReference) -> ByteArray {
 pub fn setup_cip68(
   _policy_id: PolicyId,
 ) -> (OutputReference, ByteArray, ByteArray) {
-  let tx_id = #"0000000000000000000000000000000000000000000000000000000000000000"
+  let tx_id =
+    #"0000000000000000000000000000000000000000000000000000000000000000"
   let output_ref = OutputReference { transaction_id: tx_id, output_index: 0 }
   let ref_tn = test_ref_token_name(output_ref)
   let user_tn = test_user_token_name(output_ref)
