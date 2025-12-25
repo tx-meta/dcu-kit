@@ -1,4 +1,5 @@
 use aiken/primitive/bytearray
+
 use cardano/assets
 use dcu/cip68
 use dcu/group.{
@@ -6,6 +7,7 @@ use dcu/group.{
   validate_update_group,
 }
 use tests/common
+use tests/fuzzers.{gen_group_datum}
 
 test create_group_success() {
   let policy_id = common.test_policy_id()
@@ -169,6 +171,8 @@ test create_group_missing_ref_token_fails() {
 
   !validate_create_group(policy_id, 0, 0, [input], [output], mint)
 }
+
+
 
 // --- Update Group Tests ---
 
@@ -680,4 +684,39 @@ test remove_group_fail_active() {
     [group_input, admin_input],
     [group_output],
   )
+}
+
+// --- Property Tests ---
+
+test prop_create_group_integrity(datum via gen_group_datum()) {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  // Construct valid Mint and UTxOs around the random datum
+  let mint =
+    assets.from_asset(policy_id, ref_tn, 1)
+      |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let output_value = assets.from_asset(policy_id, ref_tn, 1)
+  let output = common.test_script_utxo(policy_id, output_value, datum)
+  let input = common.test_input(output_ref, output)
+
+  // Define what makes a datum "Invalid"
+  let is_invalid =
+    datum.contribution_fee <= 0 ||
+    datum.joining_fee < 0 ||
+    datum.penalty_fee < 0 ||
+    datum.interval_length <= 0 ||
+    datum.num_intervals <= 0 ||
+    datum.member_count != 0 || // CreateGroup must have 0 members
+    !datum.is_active           // CreateGroup must be active
+
+  // The Property:
+  // If the datum is invalid, validation MUST return False.
+  // If the datum happens to be valid (rare but possible), we expect True.
+  if is_invalid {
+    !validate_create_group(policy_id, 0, 0, [input], [output], mint)
+  } else {
+    validate_create_group(policy_id, 0, 0, [input], [output], mint)
+  }
 }
