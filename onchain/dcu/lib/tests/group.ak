@@ -1,5 +1,4 @@
 use aiken/primitive/bytearray
-
 use cardano/assets
 use dcu/cip68
 use dcu/group.{
@@ -171,8 +170,6 @@ test create_group_missing_ref_token_fails() {
 
   !validate_create_group(policy_id, 0, 0, [input], [output], mint)
 }
-
-
 
 // --- Update Group Tests ---
 
@@ -703,14 +700,10 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
 
   // Define what makes a datum "Invalid"
   let is_invalid =
-    datum.contribution_fee <= 0 ||
-    datum.joining_fee < 0 ||
-    datum.penalty_fee < 0 ||
-    datum.interval_length <= 0 ||
-    datum.num_intervals <= 0 ||
-    datum.member_count != 0 || // CreateGroup must have 0 members
-    !datum.is_active           // CreateGroup must be active
+    datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.interval_length <= 0 || datum.num_intervals <= 0 || datum.member_count != 0 || // CreateGroup must have 0 members
+    !datum.is_active
 
+  // CreateGroup must be active
   // The Property:
   // If the datum is invalid, validation MUST return False.
   // If the datum happens to be valid (rare but possible), we expect True.

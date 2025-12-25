@@ -12,7 +12,6 @@ pub fn gen_group_datum() {
   let num_intervals <- fuzz.and_then(fuzz.int())
   let member_count <- fuzz.and_then(fuzz.int())
   let is_active <- fuzz.and_then(fuzz.bool())
-  
   // Use constant policy IDs for now
   let policy_id = common.test_policy_id()
 
