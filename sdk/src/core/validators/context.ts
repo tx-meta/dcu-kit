@@ -1,20 +1,12 @@
 import {
-  Credential,
   mintingPolicyToId,
   Network,
   Script,
-  scriptHashToCredential,
   validatorToAddress,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { PlutusArtifact } from "../loader.js";
+import plutusJson from "../plutus.json";
 import { getScript, readValidators } from "./reader.js";
-
-export interface ValidatorInfo {
-  script: Script;
-  address: string;
-  policyId: string;
-}
 
 export interface SpendingValidatorInfo {
     script: Script;
@@ -45,7 +37,7 @@ export const makeValidators = (
   network: Network
 ): Effect.Effect<DcuValidators, Error> =>
   Effect.gen(function* () {
-    const validators = yield* readValidators(PlutusArtifact);
+    const validators = yield* readValidators(plutusJson);
 
     const getSpending = (title: string): SpendingValidatorInfo => {
       const script = Effect.runSync(getScript(validators, title));

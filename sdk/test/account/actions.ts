@@ -3,9 +3,11 @@ import { LucidEvolution, Data, UTxO, TxHash, TxSignBuilder, fromText } from "@lu
 import { unsignedCreateAccountTxProgram } from "../../src/endpoints/createAccount.js";
 import { unsignedUpdateAccountTxProgram } from "../../src/endpoints/updateAccount.js";
 import { unsignedDeleteAccountTxProgram } from "../../src/endpoints/deleteAccount.js";
-import { AccountDatum } from "../../src/core/account.types.js";
+import { AccountDatum } from "../../src/core/types.js";
 import { LucidContext } from "../infra/lucidContext.js";
 import { DcuValidators } from "../../src/core/validators/context.js";
+import { selectWalletFromSeed, getWalletAddress, getUtxosAt, signAndSubmit } from "../../src/core/index.js";
+import { createDefaultAccountDatum } from "../helpers/index.js";
 
 // --- Types ---
 
@@ -30,21 +32,17 @@ export const createAccountTestCase = (
     datumOverride?: Partial<AccountDatum>
 ): Effect.Effect<CreateAccountResult, Error, never> => {
     return Effect.gen(function* () {
-        // use user1 as the creator
-        lucid.selectWallet.fromSeed(users.user1.seedPhrase);
+        // Use user1 as the creator
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
         
-        const address = yield* Effect.promise(() => lucid.wallet().address());
-        const utxos = yield* Effect.promise(() => lucid.utxosAt(address));
+        const address = yield* getWalletAddress(lucid);
+        const utxos = yield* getUtxosAt(lucid, address);
         
-        // Simple selection: take the first one. 
+        // Simple selection: take the first one
         const selectedUTxO = utxos[0];
         if (!selectedUTxO) throw new Error("No UTxOs found for user1");
 
-        const accountConfig: AccountDatum = {
-            email_hash: fromText("email_hash"),
-            phone_hash: fromText("phone_hash"),
-            ...datumOverride
-        };
+        const accountConfig = createDefaultAccountDatum(datumOverride);
 
         const createAccountTx = yield* unsignedCreateAccountTxProgram(
             lucid,
@@ -52,8 +50,7 @@ export const createAccountTestCase = (
             selectedUTxO,
             scripts
         );
-        const signedTx = yield* Effect.promise(() => createAccountTx.sign.withWallet().complete());
-        const txHash = yield* Effect.promise(() => signedTx.submit());
+        const txHash = yield* signAndSubmit(createAccountTx);
 
         return {
             txHash,
@@ -75,15 +72,14 @@ export const updateAccountTestCase = (
         const updateAccountTx = yield* unsignedUpdateAccountTxProgram(
             lucid,
             accountUtxo,
-            Data.to(updatedDatum, AccountDatum), // We need to pass Data, logic inside expects Config/Data
+            Data.to(updatedDatum, AccountDatum),
             userUtxo,
             scripts
         );
-        const signedTx = yield* Effect.promise(() => updateAccountTx.sign.withWallet().complete());
-        const updateAccountTxHash = yield* Effect.promise(() => signedTx.submit());
+        const txHash = yield* signAndSubmit(updateAccountTx);
 
         return {
-            txHash: updateAccountTxHash,
+            txHash,
         };
     });
 };
@@ -103,11 +99,10 @@ export const deleteAccountTestCase = (
             userUtxo,
             scripts
         );
-        const signedTx = yield* Effect.promise(() => deleteAccountTx.sign.withWallet().complete());
-        const deleteAccountTxHash = yield* Effect.promise(() => signedTx.submit());
+        const txHash = yield* signAndSubmit(deleteAccountTx);
 
         return {
-            txHash: deleteAccountTxHash,
+            txHash,
         };
     });
 };

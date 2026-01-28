@@ -1,5 +1,5 @@
 import { LucidEvolution, Data, UTxO, TxHash, fromText, TxSignBuilder } from "@lucid-evolution/lucid";
-import { AccountRedeemer } from "../core/account.types.js";
+import { AccountRedeemer } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
 import { Effect } from "effect";
 

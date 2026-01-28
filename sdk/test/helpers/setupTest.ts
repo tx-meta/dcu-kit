@@ -1,7 +1,7 @@
 import { Network, UTxO, validatorToAddress, fromText } from "@lucid-evolution/lucid";
 import { LucidContext, makeLucidContext } from "../infra/lucidContext.js";
 import { Effect } from "effect";
-import { AccountDatum } from "../../src/core/account.types.js";
+import { AccountDatum } from "../../src/core/types.js";
 import { DcuValidators, makeValidators } from "../../src/core/validators/context.js";
 import { findUtxoWithToken } from "../../src/core/utils.js";
 import { createAccountTestCase } from "../account/actions.js";
