@@ -172,7 +172,7 @@ There are three validators in this cooperative finance system.
 
   - *TokenName:* Defined in Treasury Validator using CIP-68 standards with transaction ID, output index, and appropriate prefix (`prefix_100` for reference NFT, `prefix_222` for user NFT).
 
-#pagebreak()
+
 
 \
 == Smart Contracts
@@ -180,6 +180,20 @@ There are three validators in this cooperative finance system.
 === Treasury Multi-validator
 \
 The Treasury Validator is the core contract responsible for managing member contributions, validating group memberships, and ensuring proper distribution of funds through rotating schedules and linear vesting. It facilitates member joins, exits, fund withdrawals, and penalty processing, allowing both members and administrators to interact securely within the cooperative finance framework.
+
+\
+==== Slot Assignment & Rotation Mechanism
+\
+The DCU-Toolkit implements a deterministic slot assignment system for ROSCA-style rotating fund distribution via on-chain calculation:
+
+1. *Assignment*: When a member joins a group, they are assigned a fixed slot position (0 to num_intervals-1) sequentially. This value is stored in their Treasury datum's `assigned_slot` field.
+
+2. *Calculation*: The current rotation slot is calculated as:
+   ```
+   current_slot = (current_time - group.start_time) / group.interval_length % num_intervals
+   ```
+
+3. *Validation*: During `DistributePayout`, the validator verifies that the borrower's `assigned_slot` matches the calculated `current_slot`. This ensures only the designated member for the current interval can receive the payout.
 
 \
 ==== Parameters
@@ -249,6 +263,8 @@ This is a Sum type datum where one represents the treasury datum and the other r
 
 - *`membership_start`: ```rs Int```*  – The timestamp when the member joined the group.
 
+- *`assigned_slot`: ```rs Int```* – The member's fixed slot position (0 to num_intervals-1) assigned at join time. Used for deterministic rotation schedule validation.
+
 - *`contribution_list`:* List of contributions – Each contribution specifies when and how much can be withdrawn based on the rotation schedule.
 
   - *`Contribution`*:
@@ -304,7 +320,7 @@ This is a Sum type datum where one represents the treasury datum and the other r
   
   This redeemer allows the group (or an administrator/bot) to trigger the distribution of funds to the eligible member for the current interval. It utilizes a "trustless collection" pattern where multiple member inputs are aggregated and sent directly to the borrower.
 
-  - *Eligibility Check*: Validate that the "Borrower" (recipient at *`borrower_output_index`*) provides a *Slot NFT* that matches the designated slot for the current interval (derived from the *`group_datum`* and time). This strictly enforces the rotation schedule.
+  - *Eligibility Check*: Validate that the "Borrower's" Treasury datum contains an `assigned_slot` that matches the calculated current rotation slot. This strictly enforces the rotation schedule.
 
   - The `Treasury` UTxOs being spent (at *`treasury_input_indices`*) must be identified and contain valid Treasury datums.
 
@@ -1067,7 +1083,7 @@ This transaction occurs when a member joins a cooperative group by locking contr
       value: (
         ada: 9850000, 
         Account_NFT: 1,
-        Member_User: 1, // The Slot Key
+        Member_User: 1, // Account Identity
       ),
     ),
     (
@@ -1080,7 +1096,7 @@ This transaction occurs when a member joins a cooperative group by locking contr
       datum: (
         start: 123456789,
         contribution: 100,
-        member_index: 6, // Slot #6
+        assigned_slot: 6, // Slot #6
       ),
     ),
     (
@@ -1096,7 +1112,7 @@ This transaction occurs when a member joins a cooperative group by locking contr
     ),
   ),
   show_mints: true,
-  notes: [Join, Mint Slot Key & Lock Funds],
+  notes: [Join & Lock Funds],
 )
 \
 
@@ -1175,7 +1191,7 @@ This transaction allows a member to withdraw their allocated funds when it's the
       value: (
         ada: 2000000,
         Account_NFT: 1,
-        Member_User: 1, // Required Key
+        Member_User: 1, // Account Identity
       ),
     ),
     (
@@ -1188,7 +1204,7 @@ This transaction allows a member to withdraw their allocated funds when it's the
       datum: (
         start: 123456789,
         contribution: 100,
-        member_index: 6,
+        assigned_slot: 6,
       ),
     ),
     (
@@ -1325,7 +1341,7 @@ This transaction allows a member to exit a cooperative group by spending a Treas
       datum: (
         start: 123456789,
         contribution: 500,
-        member_index: 6,
+        assigned_slot: 6,
       ),
     ),
     (
@@ -1444,13 +1460,13 @@ This transaction allows a member to exit a cooperative group by spending a Treas
 
       - Treasury NFT Asset
 
-*Note:* If the group is inactive or membership period has ended, the Treasury NFT is burned instead of creating a Penalty UTxO.
+*Note:* If the group is inactive or membership period has ended, the Treasury NFT is burned.
 
 #pagebreak()
 
 === Spend :: DistributePayout
 \
-This transaction aggregates contributions from multiple members and distributes the lump sum "pot" to the eligible winner of the current rotation interval. It ensures trustless delivery of funds without requiring an administrator to take custody.
+This transaction aggregates contributions from multiple members and distributes the lump sum "pot" to the eligible winner of the current rotation interval. It ensures trustless delivery of funds.
 
 \
 #transaction(
@@ -1461,7 +1477,7 @@ This transaction aggregates contributions from multiple members and distributes 
       address: "member_wallet", // Borrower
       value: (
         ada: 2000000,
-        Member_User: 1, // Slot #1 Key
+        Member_User: 1, // Account Identity
       ),
     ),
     (
@@ -1472,7 +1488,7 @@ This transaction aggregates contributions from multiple members and distributes 
         Member_Ref: 1,
       ),
       datum: (
-        member_index: 0,
+        assigned_slot: 0,
       ),
     ),
     (
@@ -1483,7 +1499,7 @@ This transaction aggregates contributions from multiple members and distributes 
         Member_Ref: 1,
       ),
       datum: (
-        member_index: 1,
+        assigned_slot: 1,
       ),
     ),
     (

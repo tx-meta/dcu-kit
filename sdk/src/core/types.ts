@@ -105,6 +105,7 @@ export const TreasuryDatumSchema = Data.Enum([
             group_reference_tokenname: Data.Bytes(),
             member_reference_tokenname: Data.Bytes(),
             membership_start: Data.Integer(),
+            assigned_slot: Data.Integer(),
             slot_number: Data.Integer(),
             contribution_list: Data.Array(ContributionSchema),
         })
