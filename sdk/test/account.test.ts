@@ -1,7 +1,7 @@
 import { describe, expect } from "vitest";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { setupAccount, setupBase } from "./helpers/setupTest.js";
+import { setupAccount, setupBase } from "./setup.js";
 import {
   createAccountTestCase,
   updateAccountTestCase,

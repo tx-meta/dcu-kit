@@ -6,8 +6,8 @@
  */
 
 import { fromText } from "@lucid-evolution/lucid";
-import { GroupDatum } from "../../src/core/types.js";
-import { AccountDatum } from "../../src/core/types.js";
+import { GroupDatum } from "../src/core/types.js";
+import { AccountDatum } from "../src/core/types.js";
 
 /**
  * Creates a default GroupDatum for testing.

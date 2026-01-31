@@ -6,57 +6,34 @@ import {
   exitGroupTestCase,
   memberWithdrawTestCase,
   distributePayoutTestCase,
-  createAccountTestCase,
-  createGroupTestCase
 } from "./actions.js";
-import { setupBase } from "./helpers/setupTest.js";
+import { setupBase, setupGroup, setupAccount, setupMembership } from "./setup.js";
 import { fromText } from "@lucid-evolution/lucid";
 import { unsignedTerminateGroupTxProgram } from "../src/endpoints/terminateGroup.js";
-import { signAndSubmit } from "../src/core/utils.js";
+import { signAndSubmit, findUtxoWithToken } from "../src/core/utils.js";
 
 describe("Treasury Endpoints", () => {
   // --- Join Group ---
   it.effect("should allow a user with an account to join a group", () =>
     Effect.gen(function* () {
-      const { context, scripts } = yield* setupBase();
-      const { lucid, users } = context;
+      const base = yield* setupBase();
 
-      // 1. Create Group first to avoid consuming Account UTxO
-      yield* createGroupTestCase(context, scripts);
+      const { context, scripts, groupUtxo } = yield* setupGroup(base);
+      const { userUtxo } = yield* setupAccount(base);
+      const { users, lucid } = context;
 
-      // 2. Create Account
-      yield* createAccountTestCase(context, scripts);
+      if (!userUtxo) throw new Error("User Account UTxO not found");
 
-      // 3. Find Group Reference UTxO
-      const groupScriptAddr = scripts.group.spend.address;
-      const groupUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupName = fromText("GroupReference");
-      const foundGroupUtxo = groupUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-      if (!foundGroupUtxo) throw new Error("Group UTxO not found");
-
-      // 4. Find Account UTxO
-      lucid.selectWallet.fromSeed(users.user1.seedPhrase);
-      const userUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const accountPolicy = scripts.account.mint.policyId;
-      const accountUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
-      );
-      if (!accountUtxo) throw new Error("Account UTxO not found");
-
+      // Refetch Admin UTxO as it might have been spent by setupAccount
+      const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
       const adminTokenName = fromText("GroupAdmin");
-      const adminUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.endsWith(adminTokenName)),
-      );
+      const adminUtxo = findUtxoWithToken(walletUtxos, scripts.group.mint.policyId!, adminTokenName) || walletUtxos[0];
       if (!adminUtxo) throw new Error("Admin UTxO not found");
 
       const result = yield* joinGroupTestCase(
         context,
-        foundGroupUtxo!,
-        accountUtxo!,
+        groupUtxo,
+        userUtxo,
         adminUtxo,
         100_000_000n,
         scripts,
@@ -69,63 +46,16 @@ describe("Treasury Endpoints", () => {
   // --- Exit Group (Standard) ---
   it.effect("should allow a member to exit", () =>
     Effect.gen(function* () {
-      const { context, scripts } = yield* setupBase();
-      const { lucid, users } = context;
+      const base = yield* setupBase();
 
-      yield* createGroupTestCase(context, scripts);
-      yield* createAccountTestCase(context, scripts);
-
-      const groupScriptAddr = scripts.group.spend.address;
-      const groupUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupName = fromText("GroupReference");
-      const foundGroupUtxo = groupUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-
-      lucid.selectWallet.fromSeed(users.user1.seedPhrase);
-      const userUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const accountPolicy = scripts.account.mint.policyId;
-      const accountUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
-      );
-      const adminTokenName = fromText("GroupAdmin");
-      const adminUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.endsWith(adminTokenName)),
-      );
-
-      yield* joinGroupTestCase(
-        context,
-        foundGroupUtxo!,
-        accountUtxo!,
-        adminUtxo!,
-        100_000_000n,
-        scripts,
-        users.user1.seedPhrase,
-      );
-
-      // Fetch for Exit
-      const userUtxos2 = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const accountUtxo2 = userUtxos2.find((u) =>
-        Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
-      );
-      const groupUtxos2 = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupUtxo2 = groupUtxos2.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-      const treasuryUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(scripts.treasury.spend.address),
-      );
-      const memberUtxo = treasuryUtxos[0];
+      const { context, scripts, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base);
+      const { users } = context;
 
       const result = yield* exitGroupTestCase(
         context,
-        groupUtxo2!,
-        accountUtxo2!,
-        memberUtxo!,
+        groupUtxo,
+        userUtxo, // accountUtxo
+        memberUtxo,
         scripts,
         users.user1.seedPhrase,
       );
@@ -137,69 +67,21 @@ describe("Treasury Endpoints", () => {
   // --- Exit Group (Mature) ---
   it.effect("should allow a member to exit gracefully (mature)", () =>
     Effect.gen(function* () {
-      const { context, scripts } = yield* setupBase();
-      const { lucid, users } = context;
+      const base = yield* setupBase();
 
-      // Old start time to force maturity
+      // Old start time
       const oneHour = 3600000n;
       const now = BigInt(Date.now());
       const oldStartTime = now - 11n * oneHour;
 
-      yield* createGroupTestCase(context, scripts, {
-        start_time: oldStartTime,
-      });
-      yield* createAccountTestCase(context, scripts);
-
-      const groupScriptAddr = scripts.group.spend.address;
-      const groupUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupName = fromText("GroupReference");
-      const foundGroupUtxo = groupUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-
-      lucid.selectWallet.fromSeed(users.user1.seedPhrase);
-      const userUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const accountPolicy = scripts.account.mint.policyId;
-      const accountUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
-      );
-      const adminTokenName = fromText("GroupAdmin");
-      const adminUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.endsWith(adminTokenName)),
-      );
-
-      yield* joinGroupTestCase(
-        context,
-        foundGroupUtxo!,
-        accountUtxo!,
-        adminUtxo!,
-        100_000_000n,
-        scripts,
-        users.user1.seedPhrase,
-      );
-
-      const userUtxos3 = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const accountUtxo3 = userUtxos3.find((u) =>
-        Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
-      );
-      const groupUtxos3 = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupUtxo3 = groupUtxos3.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-      const treasuryUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(scripts.treasury.spend.address),
-      );
-      const memberUtxo = treasuryUtxos[0];
+      const { context, scripts, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base, 100_000_000n, { start_time: oldStartTime });
+      const { users } = context;
 
       const result = yield* exitGroupTestCase(
         context,
-        groupUtxo3!,
-        accountUtxo3!,
-        memberUtxo!,
+        groupUtxo,
+        userUtxo,
+        memberUtxo,
         scripts,
         users.user1.seedPhrase,
       );
@@ -211,58 +93,19 @@ describe("Treasury Endpoints", () => {
   // --- Terminate Group ---
   it.effect("should allow terminating a membership (burn)", () =>
     Effect.gen(function* () {
-      const { context, scripts } = yield* setupBase();
-      const { lucid, users } = context;
+      const base = yield* setupBase();
+      
+      const { context, scripts, groupUtxo, memberUtxo, userUtxo } = yield* setupMembership(base);
+      const { lucid } = context;
 
-      yield* createGroupTestCase(context, scripts);
-      yield* createAccountTestCase(context, scripts);
-
-      const groupScriptAddr = scripts.group.spend.address;
-      const groupUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupName = fromText("GroupReference");
-      const foundGroupUtxo = groupUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-
-      lucid.selectWallet.fromSeed(users.user1.seedPhrase);
-      const userUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const accountPolicy = scripts.account.mint.policyId;
-      const accountUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
-      );
-      const adminTokenName = fromText("GroupAdmin");
-      const adminUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.endsWith(adminTokenName)),
-      );
-
-      yield* joinGroupTestCase(
-        context,
-        foundGroupUtxo!,
-        accountUtxo!,
-        adminUtxo!,
-        100_000_000n,
-        scripts,
-        users.user1.seedPhrase,
-      );
-
-      const treasuryAddr = scripts.treasury.spend.address;
-      const treasuryUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(treasuryAddr),
-      );
-      const memberUtxo = treasuryUtxos[0];
-
-      const groupUtxos2 = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupUtxoRef = groupUtxos2.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-
+      // Group Reference 
+       const groupName = fromText("GroupReference");
+       // Re-verify Group Reference from setupMembership result or refetch if logic requires latest
+       // setupMembership returns latest groupUtxo after join
+      
       const unsignedTx = yield* unsignedTerminateGroupTxProgram(
         lucid,
-        groupUtxoRef!,
+        groupUtxo,
         memberUtxo,
         scripts,
       );
@@ -275,64 +118,16 @@ describe("Treasury Endpoints", () => {
   // --- Member Withdraw ---
   it.effect("should allow member to withdraw funds", () =>
     Effect.gen(function* () {
-      const { context, scripts } = yield* setupBase();
-      const { lucid, users } = context;
-
-      yield* createGroupTestCase(context, scripts);
-      yield* createAccountTestCase(context, scripts);
-
-      const groupScriptAddr = scripts.group.spend.address;
-      const groupUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupName = fromText("GroupReference");
-      const foundGroupUtxo = groupUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-
-      lucid.selectWallet.fromSeed(users.user1.seedPhrase);
-      const userUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const accountPolicy = scripts.account.mint.policyId;
-      const accountUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
-      );
-      const adminTokenName = fromText("GroupAdmin");
-      const adminUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.endsWith(adminTokenName)),
-      );
-
-      yield* joinGroupTestCase(
-        context,
-        foundGroupUtxo!,
-        accountUtxo!,
-        adminUtxo!,
-        100_000_000n,
-        scripts,
-        users.user1.seedPhrase,
-      );
-
-      const groupUtxos2 = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupUtxo2 = groupUtxos2.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-      const treasuryAddr = scripts.treasury.spend.address;
-      const treasuryUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(treasuryAddr),
-      );
-      const treasuryUtxo = treasuryUtxos[0];
-
-      const userUtxos2 = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const accountUtxo2 = userUtxos2.find((u) =>
-        Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
-      );
+      const base = yield* setupBase();
+      
+      const { context, scripts, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base);
+      const { users } = context;
 
       const result = yield* memberWithdrawTestCase(
         context,
-        groupUtxo2!,
-        accountUtxo2!,
-        treasuryUtxo,
+        groupUtxo,
+        userUtxo,
+        memberUtxo,
         5_000_000n, // Withdraw 5 ADA
         scripts,
         users.user1.seedPhrase,
@@ -346,57 +141,19 @@ describe("Treasury Endpoints", () => {
   // --- Distribute Payout ---
   it.effect("should distribute payout to the assigned slot holder", () =>
     Effect.gen(function* () {
-      const { context, scripts } = yield* setupBase();
-      const { lucid, users } = context;
+      const base = yield* setupBase();
+      
+      const { context, scripts, groupUtxo, memberUtxo } = yield* setupMembership(base);
+      const { users } = context;
 
-      yield* createGroupTestCase(context, scripts);
-      yield* createAccountTestCase(context, scripts);
-
-      const groupScriptAddr = scripts.group.spend.address;
-      const groupUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupName = fromText("GroupReference");
-      const foundGroupUtxo = groupUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-
-      lucid.selectWallet.fromSeed(users.user1.seedPhrase);
-      const userUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const accountPolicy = scripts.account.mint.policyId;
-      const accountUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
-      );
-      const adminTokenName = fromText("GroupAdmin");
-      const adminUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.endsWith(adminTokenName)),
-      );
-
-      yield* joinGroupTestCase(
-        context,
-        foundGroupUtxo!,
-        accountUtxo!,
-        adminUtxo!,
-        100_000_000n,
-        scripts,
-        users.user1.seedPhrase,
-      );
-
-      const groupUtxos2 = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupUtxo2 = groupUtxos2.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-      const treasuryAddr = scripts.treasury.spend.address;
-      const treasuryUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(treasuryAddr),
-      );
-
+      // Note: distributePayoutTestCase takes Array<UTxO> for Treasury?
+      // Looking at params: context, groupUtxo, treasuryUtxo(s), scripts, seedPhrase
+      // Previous call: treasuryUtxos (Array)
+      
       const result = yield* distributePayoutTestCase(
         context,
-        groupUtxo2!,
-        treasuryUtxos,
+        groupUtxo,
+        [memberUtxo], // Wrap as array
         scripts,
         users.user1.seedPhrase,
       );

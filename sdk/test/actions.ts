@@ -16,7 +16,7 @@ import { unsignedMemberWithdrawTxProgram } from "../src/endpoints/memberWithdraw
 import { unsignedExitGroupTxProgram } from "../src/endpoints/exitGroup.js";
 
 import { AccountDatum, GroupDatum } from "../src/core/types.js";
-import { LucidContext } from "./infra/lucidContext.js";
+import { LucidContext } from "./context.js";
 import { DcuValidators } from "../src/core/validators/context.js";
 import {
   selectWalletFromSeed,
@@ -25,7 +25,7 @@ import {
   signAndSubmit,
   getWalletUtxos
 } from "../src/core/index.js";
-import { createDefaultAccountDatum, createDefaultGroupDatum } from "./helpers/index.js";
+import { createDefaultAccountDatum, createDefaultGroupDatum } from "./utils.js";
 
 // --- Types ---
 
