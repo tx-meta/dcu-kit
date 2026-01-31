@@ -48,6 +48,7 @@ export const createGroupTestCase = (
             scripts
         );
         const txHash = yield* signAndSubmit(createGroupTx);
+        yield* Effect.promise(() => lucid.awaitTx(txHash));
 
         return {
             txHash,
@@ -74,6 +75,7 @@ export const updateGroupTestCase = (
             scripts
         );
         const txHash = yield* signAndSubmit(updateGroupTx);
+        yield* Effect.promise(() => lucid.awaitTx(txHash));
 
         return {
             txHash,
@@ -99,6 +101,7 @@ export const deleteGroupTestCase = (
             scripts
         );
         const txHash = yield* signAndSubmit(deleteGroupTx);
+        yield* Effect.promise(() => lucid.awaitTx(txHash));
 
         return {
             txHash,

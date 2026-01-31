@@ -2,6 +2,8 @@ import { Constr, LucidEvolution, Data, UTxO, fromText, TxSignBuilder } from "@lu
 import { Effect } from "effect";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
+import { DcuError, TransactionBuildError } from "../core/errors.js";
+import { tryBuildTx } from "../core/utils.js";
 
 export const unsignedDeleteGroupTxProgram = (
   lucid: LucidEvolution,
@@ -9,7 +11,7 @@ export const unsignedDeleteGroupTxProgram = (
   currentDatum: GroupDatum, // Needed to preserve other fields but set is_active = false
   adminUtxo: UTxO,
   scripts: DcuValidators
-): Effect.Effect<TxSignBuilder, Error, never> =>
+): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
       const groupScripts = scripts.group;
       const address = groupScripts.spend.address;
@@ -27,7 +29,7 @@ export const unsignedDeleteGroupTxProgram = (
           0n
       ]));
 
-      const tx = yield* Effect.promise(() => lucid
+      const tx = yield* tryBuildTx("deleteGroup", () => lucid
         .newTx()
         .collectFrom([groupUtxo], redeemer)
         .collectFrom([adminUtxo])

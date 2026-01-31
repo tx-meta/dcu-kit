@@ -5,6 +5,7 @@ import {
   Script,
 } from "@lucid-evolution/lucid";
 import { Effect, Option, pipe } from "effect";
+import { BlueprintLoadError, ValidatorNotFoundError } from "../errors.js";
 
 export type ValidatorMap = Record<string, Script>;
 
@@ -20,10 +21,15 @@ export interface Blueprint {
 export const readValidators = (
   blueprint: Blueprint,
   params?: Data[] | null
-): Effect.Effect<ValidatorMap, Error> =>
+): Effect.Effect<ValidatorMap, BlueprintLoadError> =>
   Effect.gen(function* () {
     if (!blueprint.validators) {
-      yield* Effect.fail(new Error("Blueprint definition missing 'validators' field"));
+      yield* Effect.fail(
+        new BlueprintLoadError({
+          path: "in-memory blueprint",
+          error: "Blueprint definition missing 'validators' field",
+        })
+      );
     }
 
     const validators: ValidatorMap = {};
@@ -34,7 +40,12 @@ export const readValidators = (
 
       const scriptCode = v.compiledCode;
       if (!scriptCode) {
-        yield* Effect.fail(new Error(`Validator '${title}' missing compiledCode`));
+        yield* Effect.fail(
+          new BlueprintLoadError({
+            path: "in-memory blueprint",
+            error: `Validator '${title}' missing compiledCode`,
+          })
+        );
       }
 
       let scriptHex = applyDoubleCborEncoding(scriptCode);
@@ -59,8 +70,10 @@ export const readValidators = (
 export const getScript = (
   validators: ValidatorMap,
   title: string
-): Effect.Effect<Script, Error> =>
+): Effect.Effect<Script, ValidatorNotFoundError> =>
   pipe(
     Option.fromNullable(validators[title]),
-    Effect.mapError(() => new Error(`Validator not found: ${title}`))
+    Effect.mapError(
+      () => new ValidatorNotFoundError({ validatorName: title })
+    )
   );

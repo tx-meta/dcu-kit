@@ -51,6 +51,7 @@ export const createAccountTestCase = (
             scripts
         );
         const txHash = yield* signAndSubmit(createAccountTx);
+        yield* Effect.promise(() => lucid.awaitTx(txHash));
 
         return {
             txHash,
@@ -77,6 +78,7 @@ export const updateAccountTestCase = (
             scripts
         );
         const txHash = yield* signAndSubmit(updateAccountTx);
+        yield* Effect.promise(() => lucid.awaitTx(txHash));
 
         return {
             txHash,
@@ -100,6 +102,7 @@ export const deleteAccountTestCase = (
             scripts
         );
         const txHash = yield* signAndSubmit(deleteAccountTx);
+        yield* Effect.promise(() => lucid.awaitTx(txHash));
 
         return {
             txHash,

@@ -2,7 +2,8 @@ import { Data, TxSignBuilder, fromText, LucidEvolution, UTxO } from "@lucid-evol
 import { Effect } from "effect";
 import { GroupDatum } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
-import { buildGroupMintRedeemer } from "../core/utils.js";
+import { buildGroupMintRedeemer, tryBuildTx } from "../core/utils.js";
+import { DcuError, TransactionBuildError, ValidatorNotFoundError } from "../core/errors.js";
 
 /**
  * Creates an unsigned transaction for creating a new Group.
@@ -28,28 +29,31 @@ export const unsignedCreateGroupTxProgram = (
   config: GroupDatum,
   utxoToSpend: UTxO, // Typed correctly
   scripts: DcuValidators
-): Effect.Effect<TxSignBuilder, Error, never> =>
+): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     const groupScripts = scripts.group;
     // PolicyID is on the Minting Policy
     const policyId = groupScripts.mint.policyId;
-    if (!policyId) yield* Effect.fail(new Error("Group Mint Policy ID missing"));
+    if (!policyId) yield* Effect.fail(new ValidatorNotFoundError({ validatorName: "group.mint" }));
 
-    const userAddress = yield* Effect.promise(async () => lucid.wallet().address());
+    const userAddress = yield* Effect.tryPromise({
+        try: () => lucid.wallet().address(),
+        catch: (error) => new TransactionBuildError({ operation: "getAddress", error: String(error) })
+    });
 
     const datum = Data.to(config, GroupDatum);
 
     // Use redeemer util for type-safe construction
     const redeemer = buildGroupMintRedeemer.createGroup();
 
-    const txWithPay = yield* Effect.promise(async () => lucid
+    const txWithPay = yield* tryBuildTx("createGroup", async () => lucid
         .newTx()
         .collectFrom([utxoToSpend])
         .attach.MintingPolicy(groupScripts.mint.script)
         .mintAssets(
             {
                 [policyId + fromText("GroupReference")]: 1n,
-                [policyId + fromText("GroupUser")]: 1n,
+                [policyId + fromText("GroupAdmin")]: 1n,
             },
             redeemer
         )
@@ -59,7 +63,7 @@ export const unsignedCreateGroupTxProgram = (
             { [policyId + fromText("GroupReference")]: 1n }
         )
         .pay.ToAddress(userAddress, {
-            [policyId + fromText("GroupUser")]: 1n
+            [policyId + fromText("GroupAdmin")]: 1n
         })
         .complete({ changeAddress: await lucid.wallet().address() })
     );

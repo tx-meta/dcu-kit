@@ -5,65 +5,88 @@
  * Each error has a `_tag` field for discrimination and additional context fields.
  */
 
+import { Data } from "effect";
+
+// --- Base Error Types ---
+
+export type GenericErrorFields = {
+  readonly message?: string;
+  readonly cause?: unknown;
+};
+
+export class LucidError extends Data.TaggedError("LucidError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
 // --- UTxO Errors ---
 
-export type UtxoNotFoundError = {
-  readonly _tag: "UtxoNotFound";
+export class UtxoNotFoundError extends Data.TaggedError("UtxoNotFound")<{
   readonly tokenName: string;
   readonly address: string;
-};
+  readonly message?: string;
+  readonly cause?: unknown;
+}> {}
 
-export type InsufficientUtxosError = {
-  readonly _tag: "InsufficientUtxos";
+export class InsufficientUtxosError extends Data.TaggedError("InsufficientUtxos")<{
   readonly required: number;
   readonly available: number;
-};
+  readonly message?: string;
+  readonly cause?: unknown;
+}> {}
 
 // --- Datum Errors ---
 
-export type InvalidDatumError = {
-  readonly _tag: "InvalidDatum";
+export class InvalidDatumError extends Data.TaggedError("InvalidDatum")<{
   readonly field: string;
   readonly reason: string;
-};
+  readonly message?: string;
+  readonly cause?: unknown;
+}> {}
 
-export type DatumDecodingError = {
-  readonly _tag: "DatumDecodingError";
+export class DatumDecodingError extends Data.TaggedError("DatumDecodingError")<{
   readonly utxoId: string;
   readonly error: string;
-};
+  readonly message?: string;
+  readonly cause?: unknown;
+}> {}
 
 // --- Transaction Errors ---
 
-export type TransactionBuildError = {
-  readonly _tag: "TransactionBuildError";
+export class TransactionBuildError extends Data.TaggedError("TransactionBuildError")<{
   readonly operation: string;
   readonly error: string;
-};
+  readonly message?: string;
+  readonly cause?: unknown;
+}> {}
 
-export type TransactionSignError = {
-  readonly _tag: "TransactionSignError";
+export class TransactionSignError extends Data.TaggedError("TransactionSignError")<{
   readonly error: string;
-};
+  readonly message?: string;
+  readonly cause?: unknown;
+}> {}
 
-export type TransactionSubmitError = {
-  readonly _tag: "TransactionSubmitError";
+export class TransactionSubmitError extends Data.TaggedError("TransactionSubmitError")<{
   readonly txHash?: string;
   readonly error: string;
-};
+  readonly message?: string;
+  readonly cause?: unknown;
+}> {}
 
 // --- Validator Errors ---
 
-export type ValidatorNotFoundError = {
-  readonly _tag: "ValidatorNotFound";
+export class ValidatorNotFoundError extends Data.TaggedError("ValidatorNotFound")<{
   readonly validatorName: string;
-};
+  readonly message?: string;
+  readonly cause?: unknown;
+}> {}
 
-export type BlueprintLoadError = {
-  readonly _tag: "BlueprintLoadError";
+export class BlueprintLoadError extends Data.TaggedError("BlueprintLoadError")<{
   readonly path: string;
   readonly error: string;
-};
+  readonly message?: string;
+  readonly cause?: unknown;
+}> {}
 
 // --- Union Type ---
 
@@ -76,60 +99,5 @@ export type DcuError =
   | TransactionSignError
   | TransactionSubmitError
   | ValidatorNotFoundError
-  | BlueprintLoadError;
-
-// --- Error Constructors ---
-
-export const DcuErrors = {
-  utxoNotFound: (tokenName: string, address: string): UtxoNotFoundError => ({
-    _tag: "UtxoNotFound",
-    tokenName,
-    address,
-  }),
-
-  insufficientUtxos: (required: number, available: number): InsufficientUtxosError => ({
-    _tag: "InsufficientUtxos",
-    required,
-    available,
-  }),
-
-  invalidDatum: (field: string, reason: string): InvalidDatumError => ({
-    _tag: "InvalidDatum",
-    field,
-    reason,
-  }),
-
-  datumDecodingError: (utxoId: string, error: string): DatumDecodingError => ({
-    _tag: "DatumDecodingError",
-    utxoId,
-    error,
-  }),
-
-  transactionBuildError: (operation: string, error: string): TransactionBuildError => ({
-    _tag: "TransactionBuildError",
-    operation,
-    error,
-  }),
-
-  transactionSignError: (error: string): TransactionSignError => ({
-    _tag: "TransactionSignError",
-    error,
-  }),
-
-  transactionSubmitError: (error: string, txHash?: string): TransactionSubmitError => ({
-    _tag: "TransactionSubmitError",
-    error,
-    txHash,
-  }),
-
-  validatorNotFound: (validatorName: string): ValidatorNotFoundError => ({
-    _tag: "ValidatorNotFound",
-    validatorName,
-  }),
-
-  blueprintLoadError: (path: string, error: string): BlueprintLoadError => ({
-    _tag: "BlueprintLoadError",
-    path,
-    error,
-  }),
-};
+  | BlueprintLoadError
+  | LucidError;

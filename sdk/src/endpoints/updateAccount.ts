@@ -2,6 +2,8 @@ import { LucidEvolution, Data, UTxO, TxHash, fromText, TxSignBuilder } from "@lu
 import { AccountRedeemer } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
 import { Effect } from "effect";
+import { DcuError, TransactionBuildError } from "../core/errors.js";
+import { tryBuildTx } from "../core/utils.js";
 
 export const unsignedUpdateAccountTxProgram = (
   lucid: LucidEvolution,
@@ -9,7 +11,7 @@ export const unsignedUpdateAccountTxProgram = (
   config: Data, 
   userUtxo: UTxO,
   scripts: DcuValidators
-): Effect.Effect<TxSignBuilder, Error, never> =>
+): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     const accountScripts = scripts.account;
     const policyId = accountScripts.mint.policyId;
@@ -24,7 +26,7 @@ export const unsignedUpdateAccountTxProgram = (
       AccountRedeemer
     );
 
-    const tx = yield* Effect.promise(() => lucid
+    const tx = yield* tryBuildTx("updateAccount", () => lucid
       .newTx()
       .collectFrom([accountUtxo], redeemer)
       .collectFrom([userUtxo])
@@ -35,7 +37,8 @@ export const unsignedUpdateAccountTxProgram = (
           { kind: "inline", value: Data.void() },
           { [policyId + fromText("AccountReference")]: 1n }
       )
-      .complete());
+      .complete()
+    );
 
     return tx;
   });

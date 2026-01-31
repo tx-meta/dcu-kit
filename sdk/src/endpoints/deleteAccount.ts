@@ -2,13 +2,15 @@ import { LucidEvolution, Data, UTxO, TxHash, fromText, TxSignBuilder } from "@lu
 import { DcuValidators } from "../core/validators/context.js";
 import { AccountRedeemer } from "../core/types.js";
 import { Effect } from "effect";
+import { DcuError, TransactionBuildError } from "../core/errors.js";
+import { tryBuildTx } from "../core/utils.js";
 
 export const unsignedDeleteAccountTxProgram = (
   lucid: LucidEvolution,
   accountUtxo: UTxO,
   userUtxo: UTxO,
   scripts: DcuValidators
-): Effect.Effect<TxSignBuilder, Error, never> =>
+): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     const accountScripts = scripts.account;
     const policyId = accountScripts.mint.policyId;
@@ -20,7 +22,7 @@ export const unsignedDeleteAccountTxProgram = (
       AccountRedeemer
     );
 
-    const tx = yield* Effect.promise(() => lucid
+    const tx = yield* tryBuildTx("deleteAccount", () => lucid
       .newTx()
       .collectFrom([accountUtxo], redeemer)
       .collectFrom([userUtxo])
@@ -33,7 +35,8 @@ export const unsignedDeleteAccountTxProgram = (
           },
           redeemer
       )
-      .complete());
+      .complete()
+    );
 
     return tx;
   });

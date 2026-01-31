@@ -2,18 +2,23 @@ import { LucidEvolution, Data, UTxO, TxHash, fromText, TxSignBuilder } from "@lu
 import { AccountDatum, AccountRedeemer } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
 import { Effect } from "effect";
+import { DcuError, TransactionBuildError } from "../core/errors.js";
+import { tryBuildTx } from "../core/utils.js";
 
 export const unsignedCreateAccountTxProgram = (
   lucid: LucidEvolution,
   config: AccountDatum,
   utxoToSpend: UTxO,
   scripts: DcuValidators
-): Effect.Effect<TxSignBuilder, Error, never> =>
+): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     const accountScripts = scripts.account;
     const policyId = accountScripts.mint.policyId;
     
-    const userAddress = yield* Effect.promise(async () => lucid.wallet().address());
+    const userAddress = yield* Effect.tryPromise({
+        try: () => lucid.wallet().address(),
+        catch: (error) => new TransactionBuildError({ operation: "getAddress", error: String(error) })
+    });
     const network = lucid.config().network;
     
     const datum = Data.to(config, AccountDatum);
@@ -23,7 +28,7 @@ export const unsignedCreateAccountTxProgram = (
       AccountRedeemer
     );
 
-    const txWithPay = yield* Effect.promise(() => lucid
+    const txWithPay = yield* tryBuildTx("createAccount", () => lucid
         .newTx()
         .collectFrom([utxoToSpend])
         .attach.MintingPolicy(accountScripts.mint.script) // Use script from context
