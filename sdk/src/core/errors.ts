@@ -88,6 +88,17 @@ export class BlueprintLoadError extends Data.TaggedError("BlueprintLoadError")<{
   readonly cause?: unknown;
 }> {}
 
+export class ConfigurationError extends Data.TaggedError("ConfigurationError")<{
+  readonly configKey: string;
+  readonly message?: string;
+  readonly cause?: unknown;
+}> {}
+
+export class SetupError extends Data.TaggedError("SetupError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
 // --- Union Type ---
 
 export type DcuError =
@@ -100,4 +111,6 @@ export type DcuError =
   | TransactionSubmitError
   | ValidatorNotFoundError
   | BlueprintLoadError
+  | ConfigurationError
+  | SetupError
   | LucidError;

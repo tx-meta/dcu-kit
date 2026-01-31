@@ -13,6 +13,7 @@ import {
 } from "./actions.js";
 import { AccountDatum, GroupDatum } from "../src/core/types.js";
 import { LucidContext, makeLucidContext } from "./context.js";
+import { SetupError } from "../src/core/errors.js";
 
 // --- Test Helper Setup ---
 
@@ -33,7 +34,7 @@ export const setupBase = (): Effect.Effect<BaseSetup, Error, never> => {
   return Effect.gen(function* (_) {
     const { lucid, users, emulator } = yield* makeLucidContext();
     const network = lucid.config().network;
-    if (!network) throw Error("Invalid Network selection");
+    if (!network) return yield* Effect.die(new SetupError({ message: "Invalid Network selection" }));
 
     const scripts = yield* makeValidators(network);
 
@@ -78,7 +79,7 @@ export const setupAccount = (
       accountPolicyId,
       fromText("AccountReference"),
     );
-    if (!accountUtxo) throw new Error("Account UTxO not found after creation");
+    if (!accountUtxo) return yield* Effect.die(new SetupError({ message: "Account UTxO not found after creation" }));
 
     lucid.selectWallet.fromSeed(users.user1.seedPhrase);
     const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
@@ -89,7 +90,7 @@ export const setupAccount = (
       accountPolicyId,
       userTokenName,
     );
-    if (!currentUserUtxo) throw new Error("User Auth Token UTxO not found");
+    if (!currentUserUtxo) return yield* Effect.die(new SetupError({ message: "User Auth Token UTxO not found" }));
 
     return {
       context: base.context,
@@ -102,7 +103,7 @@ export const setupAccount = (
 export type GroupSetupResult = {
   context: LucidContext;
   scripts: DcuValidators;
-  groupDatum: any; 
+  groupDatum: GroupDatum; 
   groupUtxo: UTxO;
   adminUtxo: UTxO;
 };
@@ -132,7 +133,7 @@ export const setupGroup = (
          lucid.utxosAt(scripts.group.spend.address)
      );
      const groupUtxo = findUtxoWithToken(utxosAtAddress, groupPolicyId, groupRefTokenName);
-     if (!groupUtxo) throw new Error("Group UTxO not found after creation");
+     if (!groupUtxo) return yield* Effect.die(new SetupError({ message: "Group UTxO not found after creation" }));
 
      const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
      
@@ -141,7 +142,7 @@ export const setupGroup = (
      const adminTokenUtxo = findUtxoWithToken(walletUtxos, groupPolicyId, adminTokenName);
      const adminUtxo = adminTokenUtxo || walletUtxos[0]; 
 
-     if (!adminUtxo) throw new Error("Admin UTxO not found");
+     if (!adminUtxo) return yield* Effect.die(new SetupError({ message: "Admin UTxO not found" }));
 
      return {
          context: base.context,
@@ -171,7 +172,7 @@ export const setupMembership = (
         const { userUtxo } = yield* setupAccount(base);
         const { lucid, users } = context;
 
-        if (!userUtxo) throw new Error("User Account UTxO not found");
+        if (!userUtxo) return yield* Effect.die(new SetupError({ message: "User Account UTxO not found" }));
 
         const groupPolicyId = scripts.group.mint.policyId!;
         const groupRefTokenName = fromText("GroupReference");
@@ -180,7 +181,7 @@ export const setupMembership = (
         const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
         const adminTokenName = fromText("GroupAdmin");
         const refreshedAdminUtxo = findUtxoWithToken(walletUtxos, groupPolicyId, adminTokenName);
-        if (!refreshedAdminUtxo) throw new Error("Admin UTxO not found after Account setup");
+        if (!refreshedAdminUtxo) return yield* Effect.die(new SetupError({ message: "Admin UTxO not found after Account setup" }));
 
         yield* joinGroupTestCase(
             context,
@@ -200,7 +201,7 @@ export const setupMembership = (
         const accountUtxo2 = userUtxos2.find((u) =>
            Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
         );
-        if (!accountUtxo2) throw new Error("Account UTxO not found after Join");
+        if (!accountUtxo2) return yield* Effect.die(new SetupError({ message: "Account UTxO not found after Join" }));
 
          // 2. Group UTxO
          const groupScriptAddr = scripts.group.spend.address;
@@ -210,7 +211,7 @@ export const setupMembership = (
          const groupUtxo2 = groupUtxos2.find((u) =>
           Object.keys(u.assets).some((k) => k.includes(groupRefTokenName)),
         );
-         if (!groupUtxo2) throw new Error("Group UTxO not found after Join");
+         if (!groupUtxo2) return yield* Effect.die(new SetupError({ message: "Group UTxO not found after Join" }));
 
          // 3. Treasury UTxO (Member)
         const treasuryUtxos = yield* Effect.promise(() =>
@@ -218,7 +219,7 @@ export const setupMembership = (
         );
         // Assuming first one is ours for this simple test flow
         const memberUtxo = treasuryUtxos[0];
-        if (!memberUtxo) throw new Error("Member Treasury UTxO not found after Join");
+        if (!memberUtxo) return yield* Effect.die(new SetupError({ message: "Member Treasury UTxO not found after Join" }));
 
         return {
             context,

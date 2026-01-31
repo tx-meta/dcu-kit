@@ -26,6 +26,7 @@ import {
   getWalletUtxos
 } from "../src/core/index.js";
 import { createDefaultAccountDatum, createDefaultGroupDatum } from "./utils.js";
+import { SetupError } from "../src/core/errors.js";
 
 // --- Types ---
 
@@ -87,7 +88,7 @@ export const createAccountTestCase = (
 
     // Simple selection: take the first one
     const selectedUTxO = utxos[0];
-    if (!selectedUTxO) throw new Error("No UTxOs found for user1");
+    if (!selectedUTxO) return yield* Effect.die(new SetupError({ message: "No UTxOs found for user1" }));
 
     const accountConfig = createDefaultAccountDatum(datumOverride);
 
@@ -170,7 +171,7 @@ export const createGroupTestCase = (
         
         const utxos = yield* getWalletUtxos(lucid);
         const selectedUTxO = utxos[0];
-        if (!selectedUTxO) throw new Error("No UTxOs found for user1");
+        if (!selectedUTxO) return yield* Effect.die(new SetupError({ message: "No UTxOs found for user1" }));
 
         const groupDatum = createDefaultGroupDatum(datumOverride);
 

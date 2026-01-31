@@ -1,6 +1,6 @@
 import { LucidEvolution, Data, UTxO, TxHash, fromText, TxSignBuilder } from "@lucid-evolution/lucid";
 import { DcuValidators } from "../core/validators/context.js";
-import { AccountRedeemer, TreasuryDatumSchema } from "../core/types.js";
+import { AccountRedeemer, TreasuryDatumSchema, TreasuryDatum } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError, UtxoNotFoundError } from "../core/errors.js";
 import { tryBuildTx } from "../core/utils.js";
@@ -48,9 +48,9 @@ export const unsignedDeleteAccountTxProgram = (
         try {
             // Optimistic parsing: ignore if not parseable
             if (!u.datum) return false;
-            const datum = Data.from(u.datum, TreasuryDatumSchema) as unknown as any; 
+            const datum = Data.from(u.datum, TreasuryDatumSchema) as unknown as TreasuryDatum; 
             // Handle both TreasuryState and PenaltyState (both reference member)
-            const state = datum.TreasuryState || datum.PenaltyState;
+            const state = 'TreasuryState' in datum ? datum.TreasuryState : datum.PenaltyState;
             return state && state.member_reference_tokenname === accountTokenName;
         } catch {
             return false;

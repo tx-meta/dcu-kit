@@ -10,6 +10,9 @@ import {
   joinGroupTestCase
 } from "./actions.js";
 import { fromText } from "@lucid-evolution/lucid";
+import { AccountDatum } from "../src/core/types.js";
+import { createDefaultAccountDatum } from "./utils.js";
+import { SetupError } from "../src/core/errors.js";
 
 describe("Account Endpoints", () => {
   // --- Create Account ---
@@ -25,7 +28,7 @@ describe("Account Endpoints", () => {
 
         expect(result.txHash).toBeDefined();
         expect(result.txHash).toHaveLength(64);
-      }) as any,
+      }).pipe(Effect.asVoid),
   );
 
   // --- Update Account ---
@@ -36,16 +39,16 @@ describe("Account Endpoints", () => {
       const { emulator } = baseSetup.context;
 
       if (!baseSetup.accountUtxo || !baseSetup.userUtxo)
-        throw new Error("Setup failure");
+        return yield* Effect.die(new SetupError({ message: "Setup failure" }));
 
       const result = yield* updateAccountTestCase(
         baseSetup.context,
         baseSetup.accountUtxo!,
         baseSetup.userUtxo!,
-        {
+        createDefaultAccountDatum({
           email_hash: fromText("updated"),
           phone_hash: fromText("updated"),
-        } as any,
+        }),
         baseSetup.scripts,
       );
 
@@ -65,7 +68,7 @@ describe("Account Endpoints", () => {
       const { context, accountUtxo, userUtxo } = baseSetup;
       const { emulator } = context;
 
-      if (!accountUtxo || !userUtxo) throw new Error("Setup failure");
+      if (!accountUtxo || !userUtxo) return yield* Effect.die(new SetupError({ message: "Setup failure" }));
 
       const result = yield* deleteAccountTestCase(
         baseSetup.context,

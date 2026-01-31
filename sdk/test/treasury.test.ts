@@ -11,6 +11,7 @@ import { setupBase, setupGroup, setupAccount, setupMembership } from "./setup.js
 import { fromText } from "@lucid-evolution/lucid";
 import { unsignedTerminateGroupTxProgram } from "../src/endpoints/terminateGroup.js";
 import { signAndSubmit, findUtxoWithToken } from "../src/core/utils.js";
+import { SetupError } from "../src/core/errors.js";
 
 describe("Treasury Endpoints", () => {
   // --- Join Group ---
@@ -22,13 +23,13 @@ describe("Treasury Endpoints", () => {
       const { userUtxo } = yield* setupAccount(base);
       const { users, lucid } = context;
 
-      if (!userUtxo) throw new Error("User Account UTxO not found");
+      if (!userUtxo) return yield* Effect.die(new SetupError({ message: "User Account UTxO not found" }));
 
       // Refetch Admin UTxO as it might have been spent by setupAccount
       const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
       const adminTokenName = fromText("GroupAdmin");
       const adminUtxo = findUtxoWithToken(walletUtxos, scripts.group.mint.policyId!, adminTokenName) || walletUtxos[0];
-      if (!adminUtxo) throw new Error("Admin UTxO not found");
+      if (!adminUtxo) return yield* Effect.die(new SetupError({ message: "Admin UTxO not found" }));
 
       const result = yield* joinGroupTestCase(
         context,
