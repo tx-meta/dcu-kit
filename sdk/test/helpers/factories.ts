@@ -39,12 +39,12 @@ export const createDefaultGroupDatum = (
   penalty_fee_policyid: "00",
   penalty_fee_assetname: "00",
   penalty_fee: 100n,
-  interval_length: 1000n,
+  interval_length: 3600000n, // 1 hour
   num_intervals: 10n,
   member_count: 0n,
   share_holding: false,
   is_active: true,
-  start_time: 1000n,
+  start_time: BigInt(Date.now()),
   ...overrides,
 });
 

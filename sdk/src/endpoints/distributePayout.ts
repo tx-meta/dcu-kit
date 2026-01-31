@@ -19,6 +19,17 @@ import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/erro
 
 /**
  * Creates an unsigned transaction for Distributing Payouts.
+ * 
+ * **Functionality:**
+ * - **Aggregation:** Collects contributions from all valid active members in the Treasury.
+ * - **Distribution:** Identifies the **Borrower** assigned to the Current Slot (Rotation Schedule) and sends the collected pot.
+ * - **State Update:** Updates Treasury Datums (record payment, update next claim).
+ * 
+ * @param lucid - Lucid instance.
+ * @param groupUtxo - Group Reference Input (Context).
+ * @param treasuryUtxos - List of Treasury Membership UTxOs (Contributors).
+ * @param scripts - Validator Context.
+ * @returns Effect yielding TxSignBuilder.
  */
 export const unsignedDistributePayoutTxProgram = (
   lucid: LucidEvolution,

@@ -6,7 +6,6 @@ import {
     UTxO,
     TxSignBuilder,
     Data,
-    Constr,
     fromText
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
@@ -109,76 +108,6 @@ export const tryBuildTx = (
     try: f,
     catch: (error) => new TransactionBuildError({ operation, error: String(error) }),
   });
-
-// --- Redeemer Utilities ---
-
-export const buildGroupMintRedeemer = {
-  createGroup: (): string => {
-    return Data.to(new Constr(0, []));
-  },
-};
-
-export const buildGroupSpendRedeemer = {
-  updateGroup: (
-    tokenName: string,
-    adminInputIndex: bigint,
-    groupInputIndex: bigint,
-    groupOutputIndex: bigint
-  ): string => {
-    return Data.to(
-      new Constr(1, [
-        fromText(tokenName),
-        adminInputIndex,
-        groupInputIndex,
-        groupOutputIndex,
-      ])
-    );
-  },
-
-  removeGroup: (
-    tokenName: string,
-    adminInputIndex: bigint,
-    groupInputIndex: bigint,
-    groupOutputIndex: bigint
-  ): string => {
-    return Data.to(
-      new Constr(2, [
-        fromText(tokenName),
-        adminInputIndex,
-        groupInputIndex,
-        groupOutputIndex,
-      ])
-    );
-  },
-};
-
-export const buildAccountSpendRedeemer = {
-  updateAccount: (
-    tokenName: string,
-    userInputIndex: bigint,
-    accountInputIndex: bigint,
-    accountOutputIndex: bigint
-  ): string => {
-    return Data.to(
-      new Constr(0, [
-        fromText(tokenName),
-        userInputIndex,
-        accountInputIndex,
-        accountOutputIndex,
-      ])
-    );
-  },
-
-  deleteAccount: (
-    tokenName: string,
-    userInputIndex: bigint,
-    accountInputIndex: bigint
-  ): string => {
-    return Data.to(
-      new Constr(1, [fromText(tokenName), userInputIndex, accountInputIndex])
-    );
-  },
-};
 
 // --- Lookup Utilities ---
 

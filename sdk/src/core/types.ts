@@ -71,6 +71,9 @@ export const GroupMintRedeemer = GroupMintRedeemerSchema as unknown as GroupMint
 
 export const GroupSpendRedeemerSchema = Data.Enum([
   Data.Object({
+    CreateGroup: Data.Literal("CreateGroup")
+  }),
+  Data.Object({
     UpdateGroup: Data.Object({
       group_ref_token_name: Data.Bytes(),
       admin_input_index: Data.Integer(),

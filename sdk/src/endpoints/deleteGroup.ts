@@ -5,6 +5,21 @@ import { DcuValidators } from "../core/validators/context.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
 import { tryBuildTx } from "../core/utils.js";
 
+/**
+ * Creates an unsigned transaction for Deleting (Deactivating) a Group.
+ * 
+ * **Functionality:**
+ * - Uses `RemoveGroup` redeemer.
+ * - **Current Logic:** Updates Group Datum to `is_active: false` (Soft Delete).
+ * - **Constraint:** `member_count` must be 0 (Enforced by Validator).
+ * 
+ * @param lucid - Lucid instance.
+ * @param groupUtxo - Group UTxO to update.
+ * @param currentDatum - Current Group Datum (used to construct deactivated state).
+ * @param adminUtxo - Admin Auth UTxO.
+ * @param scripts - Validator Context.
+ * @returns Effect yielding TxSignBuilder.
+ */
 export const unsignedDeleteGroupTxProgram = (
   lucid: LucidEvolution,
   groupUtxo: UTxO,
@@ -22,12 +37,14 @@ export const unsignedDeleteGroupTxProgram = (
           is_active: false
       };
 
-      const redeemer = Data.to(new Constr(2, [
-          fromText("GroupReference"),
-          0n,
-          0n,
-          0n
-      ]));
+      const redeemer = Data.to({
+          RemoveGroup: {
+              group_ref_token_name: fromText("GroupReference"),
+              admin_input_index: 0n,
+              group_input_index: 0n,
+              group_output_index: 0n
+          }
+      }, GroupSpendRedeemer);
 
       const tx = yield* tryBuildTx("deleteGroup", () => lucid
         .newTx()

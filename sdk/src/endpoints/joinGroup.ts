@@ -24,6 +24,19 @@ import {
 
 /**
  * Creates an unsigned transaction for Joining a Group.
+ * 
+ * **Functionality:**
+ * 1. **Mints Treasury Token:** `treasury-membership` (sent to Treasury Validator).
+ * 2. **Locks Contribution:** Sends contribution amount + min ADA to Treasury.
+ * 3. **Updates Group State:** Increments `member_count` (Assigns slot index).
+ * 
+ * @param lucid - Lucid instance with wallet selected.
+ * @param groupUtxo - The Reference UTxO of the Group to join.
+ * @param accountUtxo - The Account UTxO (Identity Proof).
+ * @param adminUtxo - The Group Admin UTxO (Required to authorize Group State update).
+ * @param contributionAmount - Amount in Lovelace to lock.
+ * @param scripts - Validator Context.
+ * @returns Effect yielding a TxSignBuilder.
  */
 export const unsignedJoinGroupTxProgram = (
   lucid: LucidEvolution,

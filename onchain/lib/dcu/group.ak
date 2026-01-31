@@ -16,6 +16,7 @@ pub type GroupDatum {
   member_count: Int,
   share_holding: Bool,
   is_active: Bool,
+  start_time: Int,
 }
 
 /// Group Validator Redeemer

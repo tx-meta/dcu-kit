@@ -1,18 +1,24 @@
-import { Data, TxSignBuilder, fromText, LucidEvolution, UTxO } from "@lucid-evolution/lucid";
+import { Data, TxSignBuilder, fromText, LucidEvolution, UTxO, Constr } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
-import { buildGroupMintRedeemer, tryBuildTx } from "../core/utils.js";
+import { tryBuildTx } from "../core/utils.js";
 import { DcuError, TransactionBuildError, ValidatorNotFoundError } from "../core/errors.js";
 
 /**
- * Creates an unsigned transaction for creating a new Group.
+ * Creates an unsigned transaction for Creating a New Group.
  *
- * @param lucid - Lucid instance with wallet selected
- * @param config - Group configuration and fees
- * @param utxoToSpend - UTxO to spend for uniqueness
- * @param scripts - Validator scripts from DcuValidators
- * @returns Effect yielding a TxSignBuilder ready for signing
+ * **Functionality:**
+ * 1. **Mints Tokens:**
+ *    - `GroupReference`: Sent to Group Validator (holds configuration).
+ *    - `GroupAdmin`: Sent to User Wallet (Administrative Authority).
+ * 2. Initializes Group Datum (Fees, Intervals, Inactive State).
+ *
+ * @param lucid - Lucid instance with wallet selected.
+ * @param config - Initial Group Configuration.
+ * @param utxoToSpend - UTxO to spend for uniqueness.
+ * @param scripts - Validator Context (DcuValidators).
+ * @returns Effect yielding a TxSignBuilder ready for signing.
  *
  * @example
  * ```typescript
@@ -43,8 +49,8 @@ export const unsignedCreateGroupTxProgram = (
 
     const datum = Data.to(config, GroupDatum);
 
-    // Use redeemer util for type-safe construction
-    const redeemer = buildGroupMintRedeemer.createGroup();
+    // Redeemer: CreateGroup (Variant 0)
+    const redeemer = Data.to(new Constr(0, []));
 
     const txWithPay = yield* tryBuildTx("createGroup", async () => lucid
         .newTx()

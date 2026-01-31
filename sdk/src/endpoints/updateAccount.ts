@@ -1,14 +1,28 @@
 import { LucidEvolution, Data, UTxO, TxHash, fromText, TxSignBuilder } from "@lucid-evolution/lucid";
-import { AccountRedeemer } from "../core/types.js";
+import { AccountRedeemer, AccountDatum } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
 import { tryBuildTx } from "../core/utils.js";
 
+/**
+ * Creates an unsigned transaction for Updating Account Information.
+ * 
+ * **Functionality:**
+ * - Updates the Account Datum (Email/Phone Hash) on-chain.
+ * - Requires authentication via `AccountUser` token (Input).
+ * 
+ * @param lucid - Lucid instance.
+ * @param accountUtxo - Account Reference UTxO (at Script).
+ * @param config - New Account Datum.
+ * @param userUtxo - User Auth UTxO (at Wallet).
+ * @param scripts - Validator Context.
+ * @returns Effect yielding TxSignBuilder.
+ */
 export const unsignedUpdateAccountTxProgram = (
   lucid: LucidEvolution,
   accountUtxo: UTxO,
-  config: Data, 
+  config: AccountDatum, 
   userUtxo: UTxO,
   scripts: DcuValidators
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
@@ -34,7 +48,7 @@ export const unsignedUpdateAccountTxProgram = (
       .attach.MintingPolicy(accountScripts.mint.script) // Attach rule
       .pay.ToContract(
           accountScripts.spend.address,
-          { kind: "inline", value: Data.void() },
+          { kind: "inline", value: Data.to(config, AccountDatum) },
           { [policyId + fromText("AccountReference")]: 1n }
       )
       .complete()

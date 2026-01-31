@@ -17,12 +17,27 @@ import { tryBuildTx } from "../core/utils.js";
 
 /**
  * Creates an unsigned transaction for Member Withdrawal.
+ * 
+ * **Functionality:**
+ * - Allows a member to withdraw funds (e.g., a loan or payout) from their Treasury allocation.
+ * 
+ * **Critical Logic:**
+ * - **Balance Preservation:** Calculates `Input Balance - Withdrawal Amount` to ensure remaining funds are sent back to the Treasury.
+ * - **Vesting Check:** Assumes Validator enforces vesting limits based on current slot.
+ * 
+ * @param lucid - Lucid instance.
+ * @param groupUtxo - Group Reference Input (Context).
+ * @param accountUtxo - User Auth UTxO.
+ * @param treasuryUtxo - Treasury Membership UTxO (Source of funds).
+ * @param withdrawAmount - Amount to withdraw (in Lovelace).
+ * @param scripts - Validator Context.
+ * @returns Effect yielding TxSignBuilder.
  */
 export const unsignedMemberWithdrawTxProgram = (
   lucid: LucidEvolution,
-  groupUtxo: UTxO, // Reference
-  accountUtxo: UTxO, // Auth
-  treasuryUtxo: UTxO, // Source
+  groupUtxo: UTxO, // Reference Input
+  accountUtxo: UTxO, // Auth Input
+  treasuryUtxo: UTxO, // Source Input
   withdrawAmount: bigint,
   scripts: DcuValidators
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
@@ -33,7 +48,14 @@ export const unsignedMemberWithdrawTxProgram = (
     const memberRefName = treasuryDatum.TreasuryState.member_reference_tokenname;
     const policyId = scripts.treasury.mint.policyId;
 
-    // Redeemer
+    // Calculate remaining Treasury Balance
+    const currentTreasuryBalance = treasuryUtxo.assets.lovelace;
+    if (currentTreasuryBalance < withdrawAmount + 2_000_000n) {
+         // Basic safety check: Ensure enough remains for min ADA
+         return yield* Effect.fail(new TransactionBuildError({ operation: "memberWithdraw", error: "Insufficient funds in Treasury UTxO" }));
+    }
+    const remainingBalance = currentTreasuryBalance - withdrawAmount;
+
     const redeemer = Data.to({
         MemberWithdraw: {
             group_ref_input_index: 0n,
@@ -51,13 +73,12 @@ export const unsignedMemberWithdrawTxProgram = (
             .collectFrom([treasuryUtxo], redeemer)
             .attach.SpendingValidator(scripts.treasury.spend.script)
             
-            // Output 1: Return remaining logic
-            // We pay back to script with SAME datum (simplified)
+            // Output 1: Return remaining balance to Treasury
             .pay.ToContract(
                 scripts.treasury.spend.address,
                 { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) },
                 { 
-                   lovelace: 2_000_000n, // Placeholder remaining
+                   lovelace: remainingBalance,
                    [policyId + memberRefName]: 1n
                 }
             )

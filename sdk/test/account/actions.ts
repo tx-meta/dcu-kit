@@ -73,7 +73,7 @@ export const updateAccountTestCase = (
         const updateAccountTx = yield* unsignedUpdateAccountTxProgram(
             lucid,
             accountUtxo,
-            Data.to(updatedDatum, AccountDatum),
+            updatedDatum,
             userUtxo,
             scripts
         );

@@ -5,6 +5,21 @@ import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
 import { tryBuildTx } from "../core/utils.js";
 
+/**
+ * Creates an unsigned transaction for Creating a DCU Account.
+ * 
+ * **Functionality:**
+ * 1. Mints two tokens:
+ *    - `AccountReference`: Sent to the Account Validator Script (holds Identity Datum).
+ *    - `AccountUser`: Sent to the User's Wallet (Proof of Identity).
+ * 2. Initializes the Account Datum (Email Hash, Phone Hash) on-chain.
+ * 
+ * @param lucid - Lucid instance.
+ * @param config - Account Datum (e.g., Email Hash, Phone Hash).
+ * @param utxoToSpend - Wallet UTxO to spend (for uniqueness/fees).
+ * @param scripts - Validator Context.
+ * @returns Effect yielding TxSignBuilder.
+ */
 export const unsignedCreateAccountTxProgram = (
   lucid: LucidEvolution,
   config: AccountDatum,
