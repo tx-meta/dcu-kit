@@ -3,7 +3,8 @@ import {
     Data, 
     LucidEvolution, 
     UTxO, 
-    TxSignBuilder 
+    TxSignBuilder,
+    RedeemerBuilder 
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { 
@@ -52,14 +53,22 @@ export const unsignedExitGroupTxProgram = (
     const isEarlyExit = groupDatum.is_active && (now < maturityTime);
 
     // Redeemer construction: Indices correspond to the specific UTxO positions in the built transaction.
-    const redeemer = Data.to({
-        ExitGroup: {
-            group_ref_input_index: 0n,
-            member_input_index: 1n,
-            treasury_input_index: 2n,
-            penalty_output_index: 0n 
-        }
-    }, TreasuryRedeemer);
+    // Redeemer construction using RedeemerBuilder
+    const redeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (inputIndices: bigint[]) => {
+            // [accountUtxo, treasuryUtxo] -> [memberIndex, treasuryIndex]
+            return Data.to({
+                ExitGroup: {
+                    group_ref_input_index: 0n, // Ref input (assuming only one)
+                    member_input_index: inputIndices[0],
+                    treasury_input_index: inputIndices[1],
+                    penalty_output_index: 0n 
+                }
+            }, TreasuryRedeemer);
+        },
+        inputs: [accountUtxo, treasuryUtxo]
+    };
 
     const tx = yield* tryBuildTx("exitGroup", async () => {
         const t = lucid.newTx()

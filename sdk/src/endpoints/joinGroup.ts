@@ -1,10 +1,10 @@
-
 import { 
     Data, 
     LucidEvolution, 
     UTxO, 
     TxSignBuilder, 
-    fromText 
+    fromText,
+    RedeemerBuilder
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { 
@@ -14,7 +14,7 @@ import {
     GroupSpendRedeemer 
 } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
-import { fromHex, toHex, sortUtxos, tryBuildTx } from "../core/utils.js";
+import { fromHex, toHex, tryBuildTx } from "../core/utils.js";
 import { 
     DcuError, 
     InvalidDatumError, 
@@ -73,7 +73,6 @@ export const unsignedJoinGroupTxProgram = (
     if (!accountAssetEntry) return yield* Effect.fail(new UtxoNotFoundError({ tokenName: "Account NFT", address: accountUtxo.address }));
     
     const accountAssetName = accountAssetEntry.slice(accountPolicy.length); 
-
     const treasuryDatum: TreasuryDatum = {
         TreasuryState: {
             group_reference_tokenname: groupRefName, 
@@ -85,59 +84,54 @@ export const unsignedJoinGroupTxProgram = (
         }
     };
 
-    // 3. Sort Inputs and Calculate Indices
-    // Dedup first (Account and Admin might be on same UTxO)
-    const uniqueInputsMap = new Map<string, UTxO>();
-    [groupUtxo, accountUtxo, adminUtxo].forEach(u => {
-        uniqueInputsMap.set(u.txHash + u.outputIndex, u);
-    });
-    const uniqueInputs = Array.from(uniqueInputsMap.values());
-    const allInputs = sortUtxos(uniqueInputs);
-    
-    const groupIndex = BigInt(allInputs.findIndex(u => u === groupUtxo));
-    const memberIndex = BigInt(allInputs.findIndex(u => u === accountUtxo));
-    const adminIndex = BigInt(allInputs.findIndex(u => u === adminUtxo));
+    // 3. Redeemers (Using RedeemerBuilder)
 
-    if (groupIndex < 0 || memberIndex < 0 || adminIndex < 0) {
-        return yield* Effect.fail(new TransactionBuildError({ operation: "sortInputs", error: "Inputs lost during sort?" }));
-    }
-    
-    // 4. Redeemers
-    const groupRedeemer = Data.to({
-        UpdateGroup: {
-            group_ref_token_name: groupRefName,
-            admin_input_index: adminIndex,
-            group_input_index: groupIndex,
-            group_output_index: 0n // Group output will be first
-        }
-    }, GroupSpendRedeemer);
+    // Group Spending Redeemer (UpdateGroup)
+    // Needs indices of: Group UTxO, Admin UTxO
+    const groupRedeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (inputIndices: bigint[]) => {
+            // [groupUtxo, adminUtxo] -> [groupIndex, adminIndex]
+            return Data.to({
+                UpdateGroup: {
+                    group_ref_token_name: groupRefName,
+                    group_input_index: inputIndices[0],
+                    admin_input_index: inputIndices[1],
+                    group_output_index: 0n        // Output 0
+                }
+            }, GroupSpendRedeemer);
+        },
+        inputs: [groupUtxo, adminUtxo]
+    };
 
-    const treasuryRedeemer = Data.to({
-        JoinGroup: {
-            group_ref_input_index: groupIndex, // Group is spent (not reference)
-            member_input_index: memberIndex,
-            treasury_output_index: 1n // Treasury output is after Group
-        }
-    }, TreasuryRedeemer);
+    // Treasury Minting Redeemer (JoinGroup)
+    // Needs indices of: Group UTxO, Account UTxO
+    const treasuryRedeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (inputIndices: bigint[]) => {
+             // [groupUtxo, accountUtxo] -> [groupIndex, memberIndex]
+             return Data.to({
+                JoinGroup: {
+                    group_ref_input_index: inputIndices[0],
+                    member_input_index: inputIndices[1],
+                    treasury_output_index: 1n     // Output 1
+                }
+             }, TreasuryRedeemer);
+        },
+        inputs: [groupUtxo, accountUtxo]
+    };
 
-    // 5. Build Tx
+    // 4. Build Tx
     const tx = yield* tryBuildTx("joinGroup", async () => {
-        const t = lucid.newTx();
-        
-        // Collect inputs (Group will have redeemer, others won't)
-        for (const u of allInputs) {
-            if (u === groupUtxo) {
-                t.collectFrom([u], groupRedeemer);
-            } else {
-                t.collectFrom([u]);
-            }
-        }
-        
-        t.mintAssets(
+        return lucid.newTx()
+        .collectFrom([groupUtxo], groupRedeemer) // Attach builder for spending
+        .collectFrom([accountUtxo])              // No redeemer needed (Pubkey)
+        .collectFrom([adminUtxo])                // No redeemer needed (Pubkey)
+        .mintAssets(
             { 
                 [scripts.treasury.mint.policyId + accountAssetName]: 1n 
             },
-            treasuryRedeemer 
+            treasuryRedeemer // Attach builder for minting
         )
         .attach.MintingPolicy(scripts.treasury.mint.script)
         .attach.SpendingValidator(scripts.group.spend.script)
@@ -158,9 +152,13 @@ export const unsignedJoinGroupTxProgram = (
                 [scripts.treasury.mint.policyId + accountAssetName]: 1n 
             }
         )
-        .addSigner(await lucid.wallet().address());
-        
-        return t.complete();
+        // Output 2: Return Account NFT to User
+        .pay.ToAddress(
+            await lucid.wallet().address(), 
+            accountUtxo.assets // Return all assets from the Account UTxO (The NFT)
+        )
+        .addSigner(await lucid.wallet().address())
+        .complete();
     });
 
     return tx;

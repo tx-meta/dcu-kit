@@ -166,12 +166,12 @@ export const createGroupTestCase = (
     datumOverride?: Partial<GroupDatum>
 ): Effect.Effect<CreateGroupResult, Error, never> => {
     return Effect.gen(function* () {
-        // Use user1 as the creator
-        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        // Use ADMIN as the creator
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
         
         const utxos = yield* getWalletUtxos(lucid);
         const selectedUTxO = utxos[0];
-        if (!selectedUTxO) return yield* Effect.die(new SetupError({ message: "No UTxOs found for user1" }));
+        if (!selectedUTxO) return yield* Effect.die(new SetupError({ message: "No UTxOs found for Admin" }));
 
         const groupDatum = createDefaultGroupDatum(datumOverride);
 

@@ -1,4 +1,4 @@
-import { LucidEvolution, Data, UTxO, TxHash, fromText, TxSignBuilder } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, UTxO, TxHash, fromText, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
 import { AccountRedeemer, AccountDatum } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
 import { Effect } from "effect";
@@ -30,15 +30,23 @@ export const unsignedUpdateAccountTxProgram = (
     const accountScripts = scripts.account;
     const policyId = accountScripts.mint.policyId;
     
-    const redeemer = Data.to(
-      { UpdateAccount: { 
-          reference_token_name: fromText("AccountReference"),
-          user_input_index: 0n,
-          account_input_index: 0n,
-          account_output_index: 0n
-      }},
-      AccountRedeemer
-    );
+    // Use RedeemerBuilder to handle indices
+    const redeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (inputIndices: bigint[]) => {
+            // [userUtxo, accountUtxo] -> [userIndex, accountIndex]
+            return Data.to(
+              { UpdateAccount: { 
+                  reference_token_name: fromText("AccountReference"),
+                  user_input_index: inputIndices[0],
+                  account_input_index: inputIndices[1],
+                  account_output_index: 0n
+              }},
+              AccountRedeemer
+            );
+        },
+        inputs: [userUtxo, accountUtxo]
+    };
 
     const tx = yield* tryBuildTx("updateAccount", () => lucid
       .newTx()

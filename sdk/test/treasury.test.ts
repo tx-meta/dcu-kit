@@ -36,7 +36,7 @@ describe("Treasury Endpoints", () => {
         groupUtxo,
         userUtxo,
         adminUtxo,
-        100_000_000n,
+        50_000_000n,
         scripts,
         users.user1.seedPhrase,
       );
@@ -75,7 +75,7 @@ describe("Treasury Endpoints", () => {
       const now = BigInt(Date.now());
       const oldStartTime = now - 11n * oneHour;
 
-      const { context, scripts, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base, 100_000_000n, { start_time: oldStartTime });
+      const { context, scripts, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base, 50_000_000n, { start_time: oldStartTime });
       const { users } = context;
 
       const result = yield* exitGroupTestCase(

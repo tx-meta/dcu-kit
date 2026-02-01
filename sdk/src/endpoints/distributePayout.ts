@@ -3,7 +3,8 @@ import {
     Data, 
     LucidEvolution, 
     UTxO, 
-    TxSignBuilder 
+    TxSignBuilder,
+    RedeemerBuilder 
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { 
@@ -69,15 +70,28 @@ export const unsignedDistributePayoutTxProgram = (
     });
     const payoutAmount = 200_000_000n; 
 
-    // Construct Redeemer
-    const redeemer = Data.to({
-        DistributePayout: {
-            group_ref_input_index: 0n, 
-            treasury_input_indices: treasuryUtxos.map((_, i) => BigInt(i)), 
-            treasury_output_indices: treasuryUtxos.map((_, i) => BigInt(i)),
-            borrower_output_index: 0n
-        }
-    }, TreasuryRedeemer);
+    // Construct Redeemer using RedeemerBuilder
+    const redeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (inputIndices: bigint[]) => {
+            // inputIndices: The actual sorted indices of the treasury UTxOs in the transaction
+            // We map these to the redeemer's expected list
+            
+            // Output indices: Assuming 1-to-1 mapping of Input -> Output (returning change/state)
+            // Output 0 is Borrower. So Treasury Outputs start at 1.
+            const outputIndices = inputIndices.map((_, i) => BigInt(i + 1));
+
+            return Data.to({
+                DistributePayout: {
+                    group_ref_input_index: 0n, 
+                    treasury_input_indices: inputIndices, 
+                    treasury_output_indices: outputIndices,
+                    borrower_output_index: 0n
+                }
+            }, TreasuryRedeemer);
+        },
+        inputs: treasuryUtxos
+    };
 
     const txBuilder = lucid.newTx()
         .readFrom([groupUtxo])

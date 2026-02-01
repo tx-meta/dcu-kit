@@ -54,8 +54,7 @@ export const setupAccount = (
     const { lucid, users, emulator } = base.context;
     const { scripts } = base;
 
-    // Use TestCase to create the account, passing injected scripts
-    yield* createAccountTestCase(
+    const { txHash, accountConfig } = yield* createAccountTestCase(
       { lucid, users, emulator },
       scripts,
       datumOverride,
@@ -74,11 +73,14 @@ export const setupAccount = (
 
     const accountReferenceToken =
       accountPolicyId + fromText("AccountReference");
-    const accountUtxo = findUtxoWithToken(
-      accountUtxos,
-      accountPolicyId,
-      fromText("AccountReference"),
+      
+    // Filter by txHash to ensure we get the specific UTxO created in this test run
+    const accountUtxo = accountUtxos.find(
+      (u) => 
+        u.txHash === txHash && 
+        Object.keys(u.assets).includes(accountReferenceToken)
     );
+
     if (!accountUtxo) return yield* Effect.die(new SetupError({ message: "Account UTxO not found after creation" }));
 
     lucid.selectWallet.fromSeed(users.user1.seedPhrase);
@@ -116,7 +118,7 @@ export const setupGroup = (
      const { lucid, users, emulator } = base.context;
      const { scripts } = base;
 
-     const { groupDatum } = yield* createGroupTestCase(
+     const { txHash, groupDatum } = yield* createGroupTestCase(
          base.context,
          scripts,
          datumOverride
@@ -132,7 +134,14 @@ export const setupGroup = (
      const utxosAtAddress = yield* Effect.promise(() => 
          lucid.utxosAt(scripts.group.spend.address)
      );
-     const groupUtxo = findUtxoWithToken(utxosAtAddress, groupPolicyId, groupRefTokenName);
+     
+     // Filter by txHash to ensure we get the specific UTxO created in this test run
+     const groupUtxo = utxosAtAddress.find(
+       (u) => 
+         u.txHash === txHash && 
+         Object.keys(u.assets).includes(groupPolicyId + groupRefTokenName)
+     );
+
      if (!groupUtxo) return yield* Effect.die(new SetupError({ message: "Group UTxO not found after creation" }));
 
      const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
@@ -164,7 +173,7 @@ export type MembershipSetupResult = {
 
 export const setupMembership = (
     base: BaseSetup,
-    contributionAmount: bigint = 100_000_000n, // Default 100 ADA
+    contributionAmount: bigint = 50_000_000n, // Default 50 ADA
     groupDatumOverride?: Partial<GroupDatum>
 ): Effect.Effect<MembershipSetupResult, Error, never> => 
     Effect.gen(function* (_) {
@@ -183,7 +192,7 @@ export const setupMembership = (
         const refreshedAdminUtxo = findUtxoWithToken(walletUtxos, groupPolicyId, adminTokenName);
         if (!refreshedAdminUtxo) return yield* Effect.die(new SetupError({ message: "Admin UTxO not found after Account setup" }));
 
-        yield* joinGroupTestCase(
+        const { txHash } = yield* joinGroupTestCase(
             context,
             groupUtxo,
             userUtxo,
@@ -198,7 +207,9 @@ export const setupMembership = (
         // 1. Account UTxO
         const accountPolicy = scripts.account.mint.policyId;
         const userUtxos2 = yield* Effect.promise(() => lucid.wallet().getUtxos());
+        
         const accountUtxo2 = userUtxos2.find((u) =>
+           u.txHash === txHash &&
            Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
         );
         if (!accountUtxo2) return yield* Effect.die(new SetupError({ message: "Account UTxO not found after Join" }));
@@ -209,6 +220,7 @@ export const setupMembership = (
           lucid.utxosAt(groupScriptAddr),
         );
          const groupUtxo2 = groupUtxos2.find((u) =>
+          u.txHash === txHash &&
           Object.keys(u.assets).some((k) => k.includes(groupRefTokenName)),
         );
          if (!groupUtxo2) return yield* Effect.die(new SetupError({ message: "Group UTxO not found after Join" }));
@@ -217,8 +229,9 @@ export const setupMembership = (
         const treasuryUtxos = yield* Effect.promise(() =>
             lucid.utxosAt(scripts.treasury.spend.address),
         );
-        // Assuming first one is ours for this simple test flow
-        const memberUtxo = treasuryUtxos[0];
+        // Find the Treasury UTxO created in this transaction
+        const memberUtxo = treasuryUtxos.find((u) => u.txHash === txHash);
+
         if (!memberUtxo) return yield* Effect.die(new SetupError({ message: "Member Treasury UTxO not found after Join" }));
 
         return {

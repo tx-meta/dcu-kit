@@ -3,7 +3,8 @@ import {
     Data, 
     LucidEvolution, 
     UTxO, 
-    TxSignBuilder 
+    TxSignBuilder,
+    RedeemerBuilder 
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { 
@@ -56,15 +57,22 @@ export const unsignedMemberWithdrawTxProgram = (
     }
     const remainingBalance = currentTreasuryBalance - withdrawAmount;
 
-    const redeemer = Data.to({
-        MemberWithdraw: {
-            group_ref_input_index: 0n,
-            member_input_index: 1n,
-            treasury_input_index: 2n,
-            treasury_output_index: 0n,
-            loans_withdrawn: withdrawAmount
-        }
-    }, TreasuryRedeemer);
+    const redeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (inputIndices: bigint[]) => {
+            // [accountUtxo, treasuryUtxo] -> [memberIndex, treasuryIndex]
+            return Data.to({
+                MemberWithdraw: {
+                    group_ref_input_index: 0n, // Only 1 ref input (groupUtxo) -> Index 0
+                    member_input_index: inputIndices[0],
+                    treasury_input_index: inputIndices[1],
+                    treasury_output_index: 0n,
+                    loans_withdrawn: withdrawAmount
+                }
+            }, TreasuryRedeemer);
+        },
+        inputs: [accountUtxo, treasuryUtxo]
+    };
 
     const tx = yield* tryBuildTx("memberWithdraw", async () => {
          const t = lucid.newTx()

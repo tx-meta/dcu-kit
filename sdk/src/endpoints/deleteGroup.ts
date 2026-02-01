@@ -1,4 +1,4 @@
-import { Constr, LucidEvolution, Data, UTxO, fromText, TxSignBuilder } from "@lucid-evolution/lucid";
+import { Constr, LucidEvolution, Data, UTxO, fromText, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
@@ -37,14 +37,21 @@ export const unsignedDeleteGroupTxProgram = (
           is_active: false
       };
 
-      const redeemer = Data.to({
-          RemoveGroup: {
-              group_ref_token_name: fromText("GroupReference"),
-              admin_input_index: 0n,
-              group_input_index: 0n,
-              group_output_index: 0n
-          }
-      }, GroupSpendRedeemer);
+      const redeemer: RedeemerBuilder = {
+          kind: "selected",
+          makeRedeemer: (inputIndices: bigint[]) => {
+               // [groupUtxo, adminUtxo] -> [groupIndex, adminIndex]
+              return Data.to({
+                  RemoveGroup: {
+                      group_ref_token_name: fromText("GroupReference"),
+                      group_input_index: inputIndices[0],
+                      admin_input_index: inputIndices[1],
+                      group_output_index: 0n 
+                  }
+              }, GroupSpendRedeemer);
+          },
+          inputs: [groupUtxo, adminUtxo]
+      };
 
       const tx = yield* tryBuildTx("deleteGroup", () => lucid
         .newTx()
