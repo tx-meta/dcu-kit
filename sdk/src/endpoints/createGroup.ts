@@ -2,22 +2,22 @@ import { Data, TxSignBuilder, fromText, LucidEvolution, UTxO, Constr } from "@lu
 import { Effect } from "effect";
 import { GroupDatum } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
-import { tryBuildTx } from "../core/utils.js";
+import { tryBuildTx } from "../core/utils/index.js";
 import { DcuError, TransactionBuildError, ValidatorNotFoundError } from "../core/errors.js";
 
 /**
- * Creates an unsigned transaction for Creating a New Group.
+ * Creates an unsigned transaction for creating a new DCU Group.
  *
  * **Functionality:**
- * 1. **Mints Tokens:**
- *    - `GroupReference`: Sent to Group Validator (holds configuration).
- *    - `GroupAdmin`: Sent to User Wallet (Administrative Authority).
- * 2. Initializes Group Datum (Fees, Intervals, Inactive State).
+ * - Mints a unique pair of Group tokens (Reference + Admin Auth).
+ * - Locks the Reference NFT in the Group script with the provided configuration.
+ * - Sends the Admin Auth NFT to the user's wallet.
+ * - Initializes the Group Datum (Fees, Intervals, Inactive State).
  *
  * @param lucid - Lucid instance with wallet selected.
  * @param config - Initial Group Configuration.
- * @param utxoToSpend - UTxO to spend for uniqueness.
- * @param scripts - Validator Context (DcuValidators).
+ * @param utxoToSpend - UTxO to spend for uniqueness and fees.
+ * @param scripts - Validator Context.
  * @returns Effect yielding a TxSignBuilder ready for signing.
  *
  * @example

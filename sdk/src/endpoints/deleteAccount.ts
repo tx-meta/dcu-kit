@@ -1,91 +1,105 @@
-import { LucidEvolution, Data, UTxO, TxHash, fromText, TxSignBuilder } from "@lucid-evolution/lucid";
-import { DcuValidators } from "../core/validators/context.js";
+
+import { LucidEvolution, Data, UTxO, fromText, TxSignBuilder } from "@lucid-evolution/lucid";
 import { AccountRedeemer, TreasuryDatumSchema, TreasuryDatum } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError, UtxoNotFoundError } from "../core/errors.js";
-import { tryBuildTx } from "../core/utils.js";
+import { tryBuildTx, getScriptAddress, assetNameLabels, findCip68TokenPair } from "../core/utils/index.js";
+import { accountValidator, accountPolicyId, treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
+
+// --- Configuration ---
+
+export type DeleteAccountConfig = {
+    // Empty config as no specific params are needed beyond context/authorization
+};
+
+// --- Endpoint ---
 
 /**
- * Creates an unsigned transaction for Deleting a DCU Account.
- * 
- * **Safety Verification:**
- * - Before execution, this function **QUERIES** the Treasury Validator to ensure no active memberships exist for this account.
- * - If the user is a member of **ANY** group, the transaction build **FAILS** (prevents loss of access to funds).
+ * Creates an unsigned transaction for deleting a DCU Account.
  * 
  * **Functionality:**
- * 1. Burns `AccountReference` (from Script) and `AccountUser` (from Wallet).
- * 2. Permanently removes the On-Chain Identity.
+ * - Burns the Reference NFT and User Auth token.
+ * - Integrity Check: Rejects if the account has active memberships in any groups.
  * 
- * @param lucid - Lucid instance.
- * @param accountUtxo - Account Reference UTxO (at Script).
- * @param userUtxo - User Auth UTxO (at Wallet).
- * @param scripts - Validator Context.
+ * @param lucid - Lucid instance with wallet selected.
+ * @param config - DeleteAccountConfig (currently placeholder).
  * @returns Effect yielding TxSignBuilder.
+ * 
+ * @example
+ * ```typescript
+ * const program = unsignedDeleteAccountTxProgram(lucid, {});
+ * ```
  */
 export const unsignedDeleteAccountTxProgram = (
   lucid: LucidEvolution,
-  accountUtxo: UTxO, // The Reference UTxO at script address
-  userUtxo: UTxO,    // The Wallet UTxO holding the User Token
-  scripts: DcuValidators
+  _config: DeleteAccountConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const accountScripts = scripts.account;
-    const policyId = accountScripts.mint.policyId;
+    const walletUtxos = yield* Effect.tryPromise({
+        try: () => lucid.wallet().getUtxos(),
+        catch: (e) => new TransactionBuildError({ operation: "getWalletUtxos", error: String(e) })
+    });
+    
+    const accountAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
+    const scriptUtxos = yield* Effect.tryPromise({
+        try: () => lucid.utxosAt(accountAddress),
+        catch: (e) => new TransactionBuildError({ operation: "getAccountUtxos", error: String(e) })
+    });
 
-    // 0. Integrity Check: Ensure no active memberships
-    const accountAssetEntry = Object.keys(accountUtxo.assets).find(k => k.startsWith(policyId));
-    if (!accountAssetEntry) return yield* Effect.fail(new UtxoNotFoundError({ address: accountUtxo.address, tokenName: "Account Asset", message: "Account Asset not found on UTxO" }));
-    const accountTokenName = accountAssetEntry.slice(policyId.length);
+    const { userUtxo, userTokenName, refUtxo: accountUtxo, refTokenName } = yield* findCip68TokenPair([...walletUtxos, ...scriptUtxos], accountPolicyId);
 
-    // Query Treasury UTxOs
-    const treasuryAddress = scripts.treasury.spend.address;
+    const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
     const treasuryUtxos = yield* Effect.tryPromise({
         try: () => lucid.utxosAt(treasuryAddress),
         catch: (error) => new TransactionBuildError({ operation: "queryTreasury", error: String(error) })
     });
-    
+
     const hasActiveMembership = treasuryUtxos.some(u => {
         try {
-            // Optimistic parsing: ignore if not parseable
             if (!u.datum) return false;
-            const datum = Data.from(u.datum, TreasuryDatumSchema) as unknown as TreasuryDatum; 
-            // Handle both TreasuryState and PenaltyState (both reference member)
-            const state = 'TreasuryState' in datum ? datum.TreasuryState : datum.PenaltyState;
-            return state && state.member_reference_tokenname === accountTokenName;
+            const datum = Data.from(u.datum, TreasuryDatumSchema) as unknown as TreasuryDatum;
+            const state = 'TreasuryState' in datum ? datum.TreasuryState : ('PenaltyState' in datum ? datum.PenaltyState : undefined);
+            
+            // Rejects if the account has an active seat in a Treasury (regardless of Ref/User label usage in datum)
+            return state && (
+                state.member_reference_tokenname === refTokenName || 
+                state.member_reference_tokenname === userTokenName
+            );
         } catch {
             return false;
         }
     });
 
+
+
     if (hasActiveMembership) {
         return yield* Effect.fail(new TransactionBuildError({ 
             operation: "deleteAccountCheck", 
-            error: "Cannot delete account with active memberships. Exit all groups first." 
+            error: `Cannot delete account (${userTokenName}) with active membership. Exit all groups first.` 
         }));
     }
 
     const redeemer = Data.to(
       { DeleteAccount: { 
-          reference_token_name: fromText("AccountReference") 
+          reference_token_name: refTokenName
       }},
       AccountRedeemer
     );
 
-    const tx = yield* tryBuildTx("deleteAccount", () => lucid
+    return yield* tryBuildTx("deleteAccount", async () => lucid
       .newTx()
       .collectFrom([accountUtxo], redeemer)
       .collectFrom([userUtxo])
-      .attach.SpendingValidator(accountScripts.spend.script)
-      .attach.MintingPolicy(accountScripts.mint.script)
+      .attach.SpendingValidator(accountValidator.spendAccount)
+      .attach.MintingPolicy(accountValidator.mintAccount)
       .mintAssets(
           {
-              [policyId + fromText("AccountReference")]: -1n,
-              [policyId + fromText("AccountUser")]: -1n,
+              [accountPolicyId + refTokenName]: -1n,
+              [accountPolicyId + userTokenName]: -1n,
           },
           redeemer
       )
+      .addSigner(await lucid.wallet().address()) // Add signer for User Auth
       .complete()
     );
-
-    return tx;
   });

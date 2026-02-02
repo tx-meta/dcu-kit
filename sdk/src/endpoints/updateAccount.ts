@@ -1,66 +1,78 @@
-import { LucidEvolution, Data, UTxO, TxHash, fromText, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
+
+import { LucidEvolution, Data, UTxO, fromText, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
 import { AccountRedeemer, AccountDatum } from "../core/types.js";
-import { DcuValidators } from "../core/validators/context.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { tryBuildTx } from "../core/utils.js";
+import { tryBuildTx, getScriptAddress, findCip68TokenPair } from "../core/utils/index.js";
+import { accountValidator, accountPolicyId } from "../core/validators/constants.js";
+import { assetNameLabels } from "../core/utils/index.js";
+
+// --- Configuration ---
+
+export type UpdateAccountConfig = {
+    account_utxo: UTxO;
+    user_utxo: UTxO;
+    account_datum: AccountDatum;
+};
+
+// --- Endpoint ---
 
 /**
- * Creates an unsigned transaction for Updating Account Information.
+ * Creates an unsigned transaction for updating a DCU Account.
  * 
  * **Functionality:**
- * - Updates the Account Datum (Email/Phone Hash) on-chain.
- * - Requires authentication via `AccountUser` token (Input).
+ * - Updates the Identity Datum (e.g. Email/Phone hashes) on-chain.
+ * - Requires the User Auth NFT in the wallet for authorization.
  * 
- * @param lucid - Lucid instance.
- * @param accountUtxo - Account Reference UTxO (at Script).
- * @param config - New Account Datum.
- * @param userUtxo - User Auth UTxO (at Wallet).
- * @param scripts - Validator Context.
+ * @param lucid - Lucid instance with wallet selected.
+ * @param config - UpdateAccountConfig containing UTxOs and updated datum.
  * @returns Effect yielding TxSignBuilder.
+ * 
+ * @example
+ * ```typescript
+ * const program = unsignedUpdateAccountTxProgram(lucid, {
+ *   account_utxo,
+ *   user_utxo,
+ *   account_datum: { ... }
+ * });
+ * ```
  */
 export const unsignedUpdateAccountTxProgram = (
   lucid: LucidEvolution,
-  accountUtxo: UTxO,
-  config: AccountDatum, 
-  userUtxo: UTxO,
-  scripts: DcuValidators
+  config: UpdateAccountConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const accountScripts = scripts.account;
-    const policyId = accountScripts.mint.policyId;
-    
-    // Use RedeemerBuilder to handle indices
-    const redeemer: RedeemerBuilder = {
-        kind: "selected",
-        makeRedeemer: (inputIndices: bigint[]) => {
-            // [userUtxo, accountUtxo] -> [userIndex, accountIndex]
-            return Data.to(
-              { UpdateAccount: { 
-                  reference_token_name: fromText("AccountReference"),
-                  user_input_index: inputIndices[0],
-                  account_input_index: inputIndices[1],
-                  account_output_index: 0n
-              }},
-              AccountRedeemer
-            );
-        },
-        inputs: [userUtxo, accountUtxo]
-    };
+    const { account_utxo, user_utxo, account_datum } = config;
 
-    const tx = yield* tryBuildTx("updateAccount", () => lucid
-      .newTx()
-      .collectFrom([accountUtxo], redeemer)
-      .collectFrom([userUtxo])
-      .attach.SpendingValidator(accountScripts.spend.script)
-      .attach.MintingPolicy(accountScripts.mint.script) // Attach rule
-      .pay.ToContract(
-          accountScripts.spend.address,
-          { kind: "inline", value: Data.to(config, AccountDatum) },
-          { [policyId + fromText("AccountReference")]: 1n }
-      )
-      .complete()
+    const { userTokenName, refTokenName } = yield* findCip68TokenPair([user_utxo, account_utxo], accountPolicyId);
+
+    const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
+    const datum = Data.to(account_datum, AccountDatum);
+    
+    const redeemer = Data.to(
+      { UpdateAccount: { 
+          reference_token_name: refTokenName,
+          user_input_index: 0n, 
+          account_input_index: 1n, 
+          account_output_index: 0n 
+      }},
+      AccountRedeemer
     );
 
-    return tx;
+    return yield* tryBuildTx("updateAccount", async () => lucid
+      .newTx()
+      .collectFrom([user_utxo])
+      .collectFrom([account_utxo], redeemer)
+      .attach.SpendingValidator(accountValidator.spendAccount)
+      .pay.ToAddressWithData(
+        accountScriptAddress,
+        { kind: "inline", value: datum },
+        { [accountPolicyId + refTokenName]: 1n },
+      )
+      .pay.ToAddress(await lucid.wallet().address(), {
+        [accountPolicyId + userTokenName]: 1n
+      })
+      .addSigner(await lucid.wallet().address())
+      .complete()
+    );
   });

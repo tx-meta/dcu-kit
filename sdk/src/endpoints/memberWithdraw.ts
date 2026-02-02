@@ -14,25 +14,30 @@ import {
 } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
-import { tryBuildTx } from "../core/utils.js";
+import { tryBuildTx } from "../core/utils/index.js";
 
 /**
- * Creates an unsigned transaction for Member Withdrawal.
+ * Creates an unsigned transaction for a member withdrawal from the Treasury.
  * 
  * **Functionality:**
- * - Allows a member to withdraw funds (e.g., a loan or payout) from their Treasury allocation.
+ * - Allows a member to withdraw their allocated funds (loan/payout).
+ * - Ensures remaining Treasury funds are preserved and returned to the script.
  * 
- * **Critical Logic:**
- * - **Balance Preservation:** Calculates `Input Balance - Withdrawal Amount` to ensure remaining funds are sent back to the Treasury.
- * - **Vesting Check:** Assumes Validator enforces vesting limits based on current slot.
- * 
- * @param lucid - Lucid instance.
+ * @param lucid - Lucid instance with wallet selected.
  * @param groupUtxo - Group Reference Input (Context).
- * @param accountUtxo - User Auth UTxO.
- * @param treasuryUtxo - Treasury Membership UTxO (Source of funds).
- * @param withdrawAmount - Amount to withdraw (in Lovelace).
+ * @param accountUtxo - User Auth UTxO for authorization.
+ * @param treasuryUtxo - The member's Treasury UTxO.
+ * @param withdrawAmount - Amount to withdraw in Lovelace.
  * @param scripts - Validator Context.
  * @returns Effect yielding TxSignBuilder.
+ * 
+ * @example
+ * ```typescript
+ * const program = unsignedMemberWithdrawTxProgram(lucid, 
+ *   groupUtxo, accountUtxo, treasuryUtxo, 
+ *   100_000_000n, scripts
+ * );
+ * ```
  */
 export const unsignedMemberWithdrawTxProgram = (
   lucid: LucidEvolution,

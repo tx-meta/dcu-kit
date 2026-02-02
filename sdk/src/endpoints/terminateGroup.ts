@@ -13,20 +13,27 @@ import {
 } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
 import { DcuError, InvalidDatumError } from "../core/errors.js";
-import { tryBuildTx } from "../core/utils.js";
+import { tryBuildTx } from "../core/utils/index.js";
 
 /**
- * Creates an unsigned transaction for Terminating a Group Membership.
+ * Creates an unsigned transaction for terminating a Group membership.
  * 
  * **Functionality:**
- * - **Force Burn:** Irreversibly burns the Membership Token.
- * - **Context:** Typically used for administrative cleanup.
+ * - Irreversibly burns a Treasury Membership token.
+ * - Destroys the Treasury UTxO state and refunds remaining ADA (to the script/admin control).
  * 
- * @param lucid - Lucid instance.
- * @param groupUtxo - Group Reference Input.
- * @param treasuryUtxo - The Treasury UTxO to burn.
+ * @param lucid - Lucid instance with wallet selected.
+ * @param groupUtxo - Group Reference Input for context.
+ * @param treasuryUtxo - The Treasury Membership UTxO to terminate.
  * @param scripts - Validator Context.
  * @returns Effect yielding TxSignBuilder.
+ * 
+ * @example
+ * ```typescript
+ * const program = unsignedTerminateGroupTxProgram(lucid, 
+ *   groupUtxo, treasuryUtxo, scripts
+ * );
+ * ```
  */
 export const unsignedTerminateGroupTxProgram = (
   lucid: LucidEvolution,

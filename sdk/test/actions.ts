@@ -86,17 +86,25 @@ export const createAccountTestCase = (
     const address = yield* getWalletAddress(lucid);
     const utxos = yield* getUtxosAt(lucid, address);
 
-    // Simple selection: take the first one
-    const selectedUTxO = utxos[0];
+    // Select a UTxO that isn't holding the GroupAdmin token if possible, to verify it persists.
+    // Or just ensure we have enough checks.
+    // Ideally, preventing the spend of the Admin token ensures it's available for JoinGroup later without issues.
+    const adminTokenHex = "47726f757041646d696e"; // "GroupAdmin"
+    const selectedUTxO = utxos.find(u => 
+        !Object.keys(u.assets).some(k => k.endsWith(adminTokenHex)) && 
+        u.assets.lovelace > 2_000_000n
+    ) || utxos[0];
+
     if (!selectedUTxO) return yield* Effect.die(new SetupError({ message: "No UTxOs found for user1" }));
 
     const accountConfig = createDefaultAccountDatum(datumOverride);
 
     const createAccountTx = yield* unsignedCreateAccountTxProgram(
       lucid,
-      accountConfig,
-      selectedUTxO,
-      scripts,
+      {
+          selected_out_ref: selectedUTxO,
+          account_datum: accountConfig
+      }
     );
     const txHash = yield* signAndSubmit(createAccountTx);
     yield* Effect.promise(() => lucid.awaitTx(txHash));
@@ -120,10 +128,11 @@ export const updateAccountTestCase = (
 
     const updateAccountTx = yield* unsignedUpdateAccountTxProgram(
       lucid,
-      accountUtxo,
-      updatedDatum,
-      userUtxo,
-      scripts,
+      {
+          account_utxo: accountUtxo,
+          user_utxo: userUtxo,
+          account_datum: updatedDatum
+      }
     );
     const txHash = yield* signAndSubmit(updateAccountTx);
     yield* Effect.promise(() => lucid.awaitTx(txHash));
@@ -136,8 +145,6 @@ export const updateAccountTestCase = (
 
 export const deleteAccountTestCase = (
   context: LucidContext,
-  accountUtxo: UTxO,
-  userUtxo: UTxO,
   scripts: DcuValidators,
 ): Effect.Effect<DeleteAccountResult, Error, never> => {
   return Effect.gen(function* () {
@@ -145,9 +152,7 @@ export const deleteAccountTestCase = (
 
     const deleteAccountTx = yield* unsignedDeleteAccountTxProgram(
       lucid,
-      accountUtxo,
-      userUtxo,
-      scripts,
+      {},
     );
     const txHash = yield* signAndSubmit(deleteAccountTx);
     yield* Effect.promise(() => lucid.awaitTx(txHash));
@@ -163,11 +168,12 @@ export const deleteAccountTestCase = (
 export const createGroupTestCase = (
     { lucid, users }: LucidContext,
     scripts: DcuValidators,
-    datumOverride?: Partial<GroupDatum>
+    datumOverride?: Partial<GroupDatum>,
+    creatorSeed: string = users.admin.seedPhrase
 ): Effect.Effect<CreateGroupResult, Error, never> => {
     return Effect.gen(function* () {
-        // Use ADMIN as the creator
-        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+        // Use provided creator (default ADMIN)
+        selectWalletFromSeed(lucid, creatorSeed);
         
         const utxos = yield* getWalletUtxos(lucid);
         const selectedUTxO = utxos[0];

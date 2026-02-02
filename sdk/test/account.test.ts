@@ -1,7 +1,7 @@
 import { describe, expect } from "vitest";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { setupAccount, setupBase } from "./setup.js";
+import { setupAccount, setupBase, setupMembership } from "./setup.js";
 import {
   createAccountTestCase,
   updateAccountTestCase,
@@ -72,8 +72,6 @@ describe("Account Endpoints", () => {
 
       const result = yield* deleteAccountTestCase(
         baseSetup.context,
-        baseSetup.accountUtxo!,
-        baseSetup.userUtxo!,
         baseSetup.scripts,
       );
 
@@ -85,55 +83,19 @@ describe("Account Endpoints", () => {
 
   it.effect("should fail to delete an account with active membership", () =>
     Effect.gen(function* () {
-      const { context, scripts } = yield* setupBase();
-      const { lucid, users } = context;
+      const base = yield* setupBase();
+      
+      // Setup Group, Account, and Join Membership
+      const { context, scripts, userUtxo } = yield* setupMembership(base);
 
-      // 1. Setup Group & Account
-      yield* createGroupTestCase(context, scripts);
-      yield* createAccountTestCase(context, scripts);
-
-      // 2. Fetch UTxOs
-      const groupScriptAddr = scripts.group.spend.address;
-      const groupUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(groupScriptAddr),
-      );
-      const groupName = fromText("GroupReference");
-      const foundGroupUtxo = groupUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.includes(groupName)),
-      );
-
-      lucid.selectWallet.fromSeed(users.user1.seedPhrase);
-      const userUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const accountPolicy = scripts.account.mint.policyId;
-      const accountUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
-      );
-      const adminTokenName = fromText("GroupAdmin");
-      const adminUtxo = userUtxos.find((u) =>
-        Object.keys(u.assets).some((k) => k.endsWith(adminTokenName)),
-      );
-
-      // 3. Join Group
-      yield* joinGroupTestCase(
-        context,
-        foundGroupUtxo!,
-        accountUtxo!,
-        adminUtxo!,
-        100_000_000n,
-        scripts,
-        users.user1.seedPhrase,
-      );
-
-      // 4. Try Delete Account
-      const userUtxos2 = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const accountUtxo2 = userUtxos2.find((u) =>
-        Object.keys(u.assets).some((k) => k.startsWith(accountPolicy)),
-      );
-
+      // Try Delete Account (Should fail)
+      // Note: deleteAccount logic queries Treasury. If membership exists, it fails.
+      
+      // Need to refetch Account UTxO because setupMembership might return an older utxo version?
+      // setupMembership returns `userUtxo` (Account UTxO) after Join.
+      
       const result = yield* deleteAccountTestCase(
         context,
-        accountUtxo2!,
-        accountUtxo2!,
         scripts,
       ).pipe(Effect.flip); // Expect failure
 

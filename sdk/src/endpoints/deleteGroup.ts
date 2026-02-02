@@ -3,22 +3,31 @@ import { Effect } from "effect";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { tryBuildTx } from "../core/utils.js";
+import { tryBuildTx } from "../core/utils/index.js";
 
 /**
- * Creates an unsigned transaction for Deleting (Deactivating) a Group.
+ * Creates an unsigned transaction for deleting (deactivating) a DCU Group.
  * 
  * **Functionality:**
- * - Uses `RemoveGroup` redeemer.
- * - **Current Logic:** Updates Group Datum to `is_active: false` (Soft Delete).
- * - **Constraint:** `member_count` must be 0 (Enforced by Validator).
+ * - Deactivates the Group by setting `is_active` to false.
+ * - This is a "soft delete" as the UTxO remains but the group is non-functional.
  * 
- * @param lucid - Lucid instance.
- * @param groupUtxo - Group UTxO to update.
- * @param currentDatum - Current Group Datum (used to construct deactivated state).
- * @param adminUtxo - Admin Auth UTxO.
+ * **Constraints:**
+ * - Group can only be deleted if `member_count` is 0.
+ * 
+ * @param lucid - Lucid instance with wallet selected.
+ * @param groupUtxo - The Group Reference UTxO.
+ * @param currentDatum - The current Group Datum.
+ * @param adminUtxo - The Admin Auth UTxO.
  * @param scripts - Validator Context.
  * @returns Effect yielding TxSignBuilder.
+ * 
+ * @example
+ * ```typescript
+ * const program = unsignedDeleteGroupTxProgram(lucid, 
+ *   groupUtxo, currentDatum, adminUtxo, scripts
+ * );
+ * ```
  */
 export const unsignedDeleteGroupTxProgram = (
   lucid: LucidEvolution,

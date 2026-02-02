@@ -15,7 +15,7 @@ import {
     GroupDatum, 
     GroupDatumSchema
 } from "./types.js";
-import { fromHex, toHex } from "./utils.js";
+import { fromHex, toHex } from "./utils/index.js";
 
 function getTreasuryScript(lucid: LucidEvolution, groupPolicyId: string, accountPolicyId: string): Script {
     const treasuryCode = "58..."; // Placeholder - you should ideally load this from a compiled artifact

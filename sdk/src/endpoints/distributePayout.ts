@@ -15,22 +15,30 @@ import {
 } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
 import { calculateCurrentSlot } from "../core/treasury.utils.js";
-import { fromHex, tryBuildTx } from "../core/utils.js";
+import { fromHex, tryBuildTx } from "../core/utils/index.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
 
 /**
- * Creates an unsigned transaction for Distributing Payouts.
+ * Creates an unsigned transaction for distributing payouts in a Group.
  * 
  * **Functionality:**
- * - **Aggregation:** Collects contributions from all valid active members in the Treasury.
- * - **Distribution:** Identifies the **Borrower** assigned to the Current Slot (Rotation Schedule) and sends the collected pot.
- * - **State Update:** Updates Treasury Datums (record payment, update next claim).
+ * - Aggregates contributions from active members in the Treasury.
+ * - Identifies the Borrower assigned to the current rotation slot.
+ * - Distributes the collected pot to the borrower.
+ * - Updates Treasury states to reflect the payout.
  * 
- * @param lucid - Lucid instance.
- * @param groupUtxo - Group Reference Input (Context).
- * @param treasuryUtxos - List of Treasury Membership UTxOs (Contributors).
+ * @param lucid - Lucid instance with wallet selected.
+ * @param groupUtxo - Group Reference Input for context.
+ * @param treasuryUtxos - List of Treasury Membership UTxOs to collect from.
  * @param scripts - Validator Context.
  * @returns Effect yielding TxSignBuilder.
+ * 
+ * @example
+ * ```typescript
+ * const program = unsignedDistributePayoutTxProgram(lucid, 
+ *   groupUtxo, treasuryUtxos, scripts
+ * );
+ * ```
  */
 export const unsignedDistributePayoutTxProgram = (
   lucid: LucidEvolution,

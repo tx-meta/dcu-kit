@@ -3,24 +3,31 @@ import { Effect } from "effect";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { tryBuildTx } from "../core/utils.js";
+import { tryBuildTx } from "../core/utils/index.js";
 
 /**
- * Creates an unsigned transaction for Updating Group Configuration.
+ * Creates an unsigned transaction for updating a DCU Group's configuration.
  * 
  * **Functionality:**
- * - Updates Group Datum (e.g., Fees, Inactive State).
- * - Requires authentication via `GroupAdmin` token.
+ * - Updates the Group Datum (e.g. Fees, Intervals, Inactive State).
+ * - Requires the Admin Auth NFT for authorization.
  * 
  * **Constraints:**
- * - **Member Count Check:** Critical changes (Fees, Intervals) allowed **ONLY** if `member_count == 0` (Enforced by Validator).
+ * - Critical changes (Fees, Intervals) are only allowed if `member_count` is 0.
  * 
- * @param lucid - Lucid instance.
- * @param groupUtxo - Group UTxO to update.
- * @param updatedDatum - New Group Configuration (Datum).
- * @param adminUtxo - Admin Auth UTxO.
+ * @param lucid - Lucid instance with wallet selected.
+ * @param groupUtxo - The current Group Reference UTxO.
+ * @param updatedDatum - The new Group Configuration.
+ * @param adminUtxo - The Admin Auth UTxO.
  * @param scripts - Validator Context.
  * @returns Effect yielding TxSignBuilder.
+ * 
+ * @example
+ * ```typescript
+ * const program = unsignedUpdateGroupTxProgram(lucid, 
+ *   groupUtxo, updatedDatum, adminUtxo, scripts
+ * );
+ * ```
  */
 export const unsignedUpdateGroupTxProgram = (
   lucid: LucidEvolution,

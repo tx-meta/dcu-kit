@@ -15,21 +15,29 @@ import {
 } from "../core/types.js";
 import { DcuValidators } from "../core/validators/context.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
-import { tryBuildTx } from "../core/utils.js";
+import { tryBuildTx } from "../core/utils/index.js";
 
 /**
- * Creates an unsigned transaction for Exiting a Group.
+ * Creates an unsigned transaction for exiting a Group.
  * 
  * **Functionality:**
- * - **Early Exit:** Transitions Treasury UTxO to PenaltyState (fee deduction, token retained).
- * - **Mature Exit:** Burns Membership Token (full refund).
+ * - Handles both early and mature exits from a Group.
+ * - Early Exit: Transition to Penalty State (fee deduction).
+ * - Mature Exit: Burn Membership token and receive full refund.
  * 
- * @param lucid - Lucid instance.
+ * @param lucid - Lucid instance with wallet selected.
  * @param groupUtxo - Group Reference Input.
- * @param accountUtxo - Member Auth Input.
- * @param treasuryUtxo - Treasury Membership Input.
+ * @param accountUtxo - User Auth UTxO for authorization.
+ * @param treasuryUtxo - Treasury Membership UTxO.
  * @param scripts - Validator Context.
  * @returns Effect yielding TxSignBuilder.
+ * 
+ * @example
+ * ```typescript
+ * const program = unsignedExitGroupTxProgram(lucid, 
+ *   groupUtxo, accountUtxo, treasuryUtxo, scripts
+ * );
+ * ```
  */
 export const unsignedExitGroupTxProgram = (
   lucid: LucidEvolution,

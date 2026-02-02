@@ -10,7 +10,7 @@ import {
 import { setupBase, setupGroup, setupAccount, setupMembership } from "./setup.js";
 import { fromText } from "@lucid-evolution/lucid";
 import { unsignedTerminateGroupTxProgram } from "../src/endpoints/terminateGroup.js";
-import { signAndSubmit, findUtxoWithToken } from "../src/core/utils.js";
+import { signAndSubmit, findUtxoWithToken } from "../src/core/utils/index.js";
 import { SetupError } from "../src/core/errors.js";
 
 describe("Treasury Endpoints", () => {
@@ -28,8 +28,9 @@ describe("Treasury Endpoints", () => {
       // Refetch Admin UTxO as it might have been spent by setupAccount
       const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
       const adminTokenName = fromText("GroupAdmin");
-      const adminUtxo = findUtxoWithToken(walletUtxos, scripts.group.mint.policyId!, adminTokenName) || walletUtxos[0];
-      if (!adminUtxo) return yield* Effect.die(new SetupError({ message: "Admin UTxO not found" }));
+      const adminUtxo = yield* findUtxoWithToken(walletUtxos, scripts.group.mint.policyId!, adminTokenName).pipe(
+        Effect.catchAll(() => Effect.die(new SetupError({ message: "Admin UTxO not found" })))
+      );
 
       const result = yield* joinGroupTestCase(
         context,
