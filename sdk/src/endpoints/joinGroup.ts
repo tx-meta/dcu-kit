@@ -13,8 +13,10 @@ import {
     TreasuryRedeemer, 
     GroupSpendRedeemer 
 } from "../core/types.js";
-import { DcuValidators } from "../core/validators/context.js";
-import { fromHex, toHex, tryBuildTx } from "../core/utils/index.js";
+import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
+import { accountValidator, accountPolicyId } from "../core/validators/constants.js";
+import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
+import { getScriptAddress, tryBuildTx, fromHex, toHex } from "../core/utils/index.js";
 import { 
     DcuError, 
     InvalidDatumError, 
@@ -31,30 +33,29 @@ import {
  * - Updates the Group state (increments member count/assigns slot).
  * 
  * @param lucid - Lucid instance with wallet selected.
- * @param groupUtxo - The Reference UTxO of the Group to join.
- * @param accountUtxo - The Account UTxO (Identity Proof).
- * @param adminUtxo - The Group Admin UTxO.
- * @param contributionAmount - Amount in Lovelace to lock.
- * @param scripts - Validator Context.
+ * @param config - Join Group Configuration.
  * @returns Effect yielding a TxSignBuilder.
  * 
  * @example
  * ```typescript
  * const program = unsignedJoinGroupTxProgram(lucid, 
- *   groupUtxo, accountUtxo, adminUtxo, 
- *   50_000_000n, scripts
+ *   { groupUtxo, accountUtxo, adminUtxo, contributionAmount }
  * );
  * ```
  */
+export type JoinGroupConfig = {
+    groupUtxo: UTxO;
+    accountUtxo: UTxO;
+    adminUtxo: UTxO;
+    contributionAmount: bigint;
+};
+
 export const unsignedJoinGroupTxProgram = (
   lucid: LucidEvolution,
-  groupUtxo: UTxO,
-  accountUtxo: UTxO,
-  adminUtxo: UTxO,
-  contributionAmount: bigint,
-  scripts: DcuValidators
+  config: JoinGroupConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { groupUtxo, accountUtxo, adminUtxo, contributionAmount } = config;
     const groupDatum = Data.from(groupUtxo.datum!, GroupDatum);
     if (!groupDatum) yield* Effect.fail(new InvalidDatumError({ field: "groupDatum", reason: "Invalid Group Datum" }));
 
@@ -64,13 +65,13 @@ export const unsignedJoinGroupTxProgram = (
         member_count: groupDatum.member_count + 1n
     };
 
-    const groupPolicy = scripts.group.mint.policyId;
+    const groupPolicy = groupPolicyId!;
     const groupRefAssetEntry = Object.keys(groupUtxo.assets).find(k => k.startsWith(groupPolicy));
     const groupRefName = groupRefAssetEntry 
         ? groupRefAssetEntry.slice(groupPolicy.length) 
         : fromText("GroupReference");
 
-    const accountPolicy = scripts.account.mint.policyId;
+    const accountPolicy = accountPolicyId!;
     const accountAssetEntry = Object.keys(accountUtxo.assets).find(k => k.startsWith(accountPolicy));
     if (!accountAssetEntry) return yield* Effect.fail(new UtxoNotFoundError({ tokenName: "Account NFT", address: accountUtxo.address }));
     
@@ -111,28 +112,31 @@ export const unsignedJoinGroupTxProgram = (
         inputs: [groupUtxo, accountUtxo]
     };
 
+    const groupAddress = yield* getScriptAddress(lucid, groupValidator.spendGroup);
+    const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
+
     return yield* tryBuildTx("joinGroup", async () => {
         return lucid.newTx()
         .collectFrom([groupUtxo], groupRedeemer)
         .collectFrom([accountUtxo])
         .collectFrom([adminUtxo])
         .mintAssets(
-            { [scripts.treasury.mint.policyId + accountAssetName]: 1n },
+            { [treasuryPolicyId + accountAssetName]: 1n },
             treasuryRedeemer
         )
-        .attach.MintingPolicy(scripts.treasury.mint.script)
-        .attach.SpendingValidator(scripts.group.spend.script)
+        .attach.MintingPolicy(treasuryValidator.mintTreasury)
+        .attach.SpendingValidator(groupValidator.spendGroup)
         .pay.ToContract(
-            scripts.group.spend.address,
+            groupAddress,
             { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
             groupUtxo.assets
         )
         .pay.ToContract(
-            scripts.treasury.spend.address,
+            treasuryAddress,
             { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) },
             { 
                 lovelace: contributionAmount,
-                [scripts.treasury.mint.policyId + accountAssetName]: 1n 
+                [treasuryPolicyId + accountAssetName]: 1n 
             }
         )
         .pay.ToAddress(await lucid.wallet().address(), accountUtxo.assets)

@@ -13,9 +13,9 @@ import {
     TreasuryDatumSchema, 
     TreasuryRedeemer 
 } from "../core/types.js";
-import { DcuValidators } from "../core/validators/context.js";
+import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
+import { getScriptAddress, tryBuildTx, fromHex } from "../core/utils/index.js";
 import { calculateCurrentSlot } from "../core/treasury.utils.js";
-import { fromHex, tryBuildTx } from "../core/utils/index.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
 
 /**
@@ -28,25 +28,27 @@ import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/erro
  * - Updates Treasury states to reflect the payout.
  * 
  * @param lucid - Lucid instance with wallet selected.
- * @param groupUtxo - Group Reference Input for context.
- * @param treasuryUtxos - List of Treasury Membership UTxOs to collect from.
- * @param scripts - Validator Context.
+ * @param config - Distribute Payout Configuration.
  * @returns Effect yielding TxSignBuilder.
  * 
  * @example
  * ```typescript
  * const program = unsignedDistributePayoutTxProgram(lucid, 
- *   groupUtxo, treasuryUtxos, scripts
+ *   { groupUtxo, treasuryUtxos }
  * );
  * ```
  */
+export type DistributePayoutConfig = {
+    groupUtxo: UTxO;
+    treasuryUtxos: UTxO[];
+};
+
 export const unsignedDistributePayoutTxProgram = (
   lucid: LucidEvolution,
-  groupUtxo: UTxO, // Reference Input
-  treasuryUtxos: UTxO[], // Inputs to collect from
-  scripts: DcuValidators
+  config: DistributePayoutConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { groupUtxo, treasuryUtxos } = config;
     const groupDatum = Data.from(groupUtxo.datum!, GroupDatum);
     if (!groupDatum) yield* Effect.fail(new InvalidDatumError({ field: "groupDatum", reason: "Invalid Group Datum" }));
 
@@ -82,11 +84,7 @@ export const unsignedDistributePayoutTxProgram = (
     const redeemer: RedeemerBuilder = {
         kind: "selected",
         makeRedeemer: (inputIndices: bigint[]) => {
-            // inputIndices: The actual sorted indices of the treasury UTxOs in the transaction
-            // We map these to the redeemer's expected list
-            
-            // Output indices: Assuming 1-to-1 mapping of Input -> Output (returning change/state)
-            // Output 0 is Borrower. So Treasury Outputs start at 1.
+            // Map input indices to output indices (1-based for Treasury outputs)
             const outputIndices = inputIndices.map((_, i) => BigInt(i + 1));
 
             return Data.to({
@@ -101,10 +99,12 @@ export const unsignedDistributePayoutTxProgram = (
         inputs: treasuryUtxos
     };
 
+    const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
+
     const txBuilder = lucid.newTx()
         .readFrom([groupUtxo])
         .collectFrom(treasuryUtxos, redeemer)
-        .attach.SpendingValidator(scripts.treasury.spend.script)
+        .attach.SpendingValidator(treasuryValidator.spendTreasury)
         
         // Output 1: Borrower Payout
         .pay.ToAddress(borrowerAddress, { lovelace: payoutAmount });
@@ -113,11 +113,11 @@ export const unsignedDistributePayoutTxProgram = (
     for (const state of memberStates) {
         if (!('TreasuryState' in state.datum)) continue;
         txBuilder.pay.ToContract(
-            scripts.treasury.spend.address,
+            treasuryAddress,
             { kind: "inline", value: Data.to(state.datum, TreasuryDatum) },
             { 
                 lovelace: 2_000_000n, // Locked min ADA
-                [scripts.treasury.mint.policyId + state.datum.TreasuryState.member_reference_tokenname]: 1n
+                [treasuryPolicyId + state.datum.TreasuryState.member_reference_tokenname]: 1n
                 // Re-lock the Member Ref using the hex string from datum directly
             }
         );

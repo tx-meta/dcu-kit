@@ -13,9 +13,9 @@ import {
     TreasuryDatumSchema, 
     TreasuryRedeemer 
 } from "../core/types.js";
-import { DcuValidators } from "../core/validators/context.js";
+import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
-import { tryBuildTx } from "../core/utils/index.js";
+import { tryBuildTx, getScriptAddress } from "../core/utils/index.js";
 
 /**
  * Creates an unsigned transaction for exiting a Group.
@@ -26,32 +26,33 @@ import { tryBuildTx } from "../core/utils/index.js";
  * - Mature Exit: Burn Membership token and receive full refund.
  * 
  * @param lucid - Lucid instance with wallet selected.
- * @param groupUtxo - Group Reference Input.
- * @param accountUtxo - User Auth UTxO for authorization.
- * @param treasuryUtxo - Treasury Membership UTxO.
- * @param scripts - Validator Context.
+ * @param config - Exit Group Configuration.
  * @returns Effect yielding TxSignBuilder.
  * 
  * @example
  * ```typescript
  * const program = unsignedExitGroupTxProgram(lucid, 
- *   groupUtxo, accountUtxo, treasuryUtxo, scripts
+ *   { groupUtxo, accountUtxo, treasuryUtxo }
  * );
  * ```
  */
+export type ExitGroupConfig = {
+    groupUtxo: UTxO;
+    accountUtxo: UTxO;
+    treasuryUtxo: UTxO;
+};
+
 export const unsignedExitGroupTxProgram = (
   lucid: LucidEvolution,
-  groupUtxo: UTxO, // Reference Input
-  accountUtxo: UTxO, // Member Auth Input
-  treasuryUtxo: UTxO, // Treasury Membership Input
-  scripts: DcuValidators
+  config: ExitGroupConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { groupUtxo, accountUtxo, treasuryUtxo } = config;
     const treasuryDatum = Data.from(treasuryUtxo.datum!, TreasuryDatumSchema) as unknown as TreasuryDatum;
     if (!('TreasuryState' in treasuryDatum)) return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Invalid Treasury State" }));
 
     const memberRefName = treasuryDatum.TreasuryState.member_reference_tokenname;
-    const policyId = scripts.treasury.mint.policyId;
+    const policyId = treasuryPolicyId!;
 
     const groupDatum = Data.from(groupUtxo.datum!, GroupDatum);
     if (!groupDatum) return yield* Effect.fail(new InvalidDatumError({ field: "groupDatum", reason: "Invalid Group Datum" }));
@@ -65,7 +66,6 @@ export const unsignedExitGroupTxProgram = (
     const redeemer: RedeemerBuilder = {
         kind: "selected",
         makeRedeemer: (inputIndices: bigint[]) => {
-            // [accountUtxo, treasuryUtxo] -> [memberIndex, treasuryIndex]
             return Data.to({
                 ExitGroup: {
                     group_ref_input_index: 0n, // Ref input (assuming only one)
@@ -78,13 +78,15 @@ export const unsignedExitGroupTxProgram = (
         inputs: [accountUtxo, treasuryUtxo]
     };
 
+    const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
+
     const tx = yield* tryBuildTx("exitGroup", async () => {
         const t = lucid.newTx()
             .readFrom([groupUtxo])
             .collectFrom([accountUtxo])
             .collectFrom([treasuryUtxo], redeemer)
-            .attach.MintingPolicy(scripts.treasury.mint.script)
-            .attach.SpendingValidator(scripts.treasury.spend.script)
+            .attach.MintingPolicy(treasuryValidator.mintTreasury)
+            .attach.SpendingValidator(treasuryValidator.spendTreasury)
             .addSigner(await lucid.wallet().address());
 
         if (isEarlyExit) {
@@ -97,7 +99,7 @@ export const unsignedExitGroupTxProgram = (
              
              // Transition to Penalty State (Keep Token)
              t.pay.ToContract(
-                 scripts.treasury.spend.address,
+                 treasuryAddress,
                  { kind: "inline", value: Data.to(penaltyDatum, TreasuryDatum) },
                  { 
                      lovelace: 2_000_000n + groupDatum.penalty_fee, // Lock Min ADA + Penalty

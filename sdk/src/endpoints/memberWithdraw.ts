@@ -12,9 +12,9 @@ import {
     TreasuryDatumSchema, 
     TreasuryRedeemer 
 } from "../core/types.js";
-import { DcuValidators } from "../core/validators/context.js";
+import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
-import { tryBuildTx } from "../core/utils/index.js";
+import { tryBuildTx, getScriptAddress } from "../core/utils/index.js";
 
 /**
  * Creates an unsigned transaction for a member withdrawal from the Treasury.
@@ -24,35 +24,34 @@ import { tryBuildTx } from "../core/utils/index.js";
  * - Ensures remaining Treasury funds are preserved and returned to the script.
  * 
  * @param lucid - Lucid instance with wallet selected.
- * @param groupUtxo - Group Reference Input (Context).
- * @param accountUtxo - User Auth UTxO for authorization.
- * @param treasuryUtxo - The member's Treasury UTxO.
- * @param withdrawAmount - Amount to withdraw in Lovelace.
- * @param scripts - Validator Context.
+ * @param config - Member Withdraw Configuration.
  * @returns Effect yielding TxSignBuilder.
  * 
  * @example
  * ```typescript
  * const program = unsignedMemberWithdrawTxProgram(lucid, 
- *   groupUtxo, accountUtxo, treasuryUtxo, 
- *   100_000_000n, scripts
+ *   { groupUtxo, accountUtxo, treasuryUtxo, withdrawAmount }
  * );
  * ```
  */
+export type MemberWithdrawConfig = {
+    groupUtxo: UTxO;
+    accountUtxo: UTxO;
+    treasuryUtxo: UTxO;
+    withdrawAmount: bigint;
+};
+
 export const unsignedMemberWithdrawTxProgram = (
   lucid: LucidEvolution,
-  groupUtxo: UTxO, // Reference Input
-  accountUtxo: UTxO, // Auth Input
-  treasuryUtxo: UTxO, // Source Input
-  withdrawAmount: bigint,
-  scripts: DcuValidators
+  config: MemberWithdrawConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { groupUtxo, accountUtxo, treasuryUtxo, withdrawAmount } = config;
     const treasuryDatum = Data.from(treasuryUtxo.datum!, TreasuryDatumSchema) as unknown as TreasuryDatum;
     if (!('TreasuryState' in treasuryDatum)) return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Invalid Treasury State" }));
 
     const memberRefName = treasuryDatum.TreasuryState.member_reference_tokenname;
-    const policyId = scripts.treasury.mint.policyId;
+    const policyId = treasuryPolicyId!;
 
     // Calculate remaining Treasury Balance
     const currentTreasuryBalance = treasuryUtxo.assets.lovelace;
@@ -65,7 +64,6 @@ export const unsignedMemberWithdrawTxProgram = (
     const redeemer: RedeemerBuilder = {
         kind: "selected",
         makeRedeemer: (inputIndices: bigint[]) => {
-            // [accountUtxo, treasuryUtxo] -> [memberIndex, treasuryIndex]
             return Data.to({
                 MemberWithdraw: {
                     group_ref_input_index: 0n, // Only 1 ref input (groupUtxo) -> Index 0
@@ -79,16 +77,18 @@ export const unsignedMemberWithdrawTxProgram = (
         inputs: [accountUtxo, treasuryUtxo]
     };
 
+    const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
+
     const tx = yield* tryBuildTx("memberWithdraw", async () => {
          const t = lucid.newTx()
             .readFrom([groupUtxo])
             .collectFrom([accountUtxo])
             .collectFrom([treasuryUtxo], redeemer)
-            .attach.SpendingValidator(scripts.treasury.spend.script)
+            .attach.SpendingValidator(treasuryValidator.spendTreasury)
             
             // Output 1: Return remaining balance to Treasury
             .pay.ToContract(
-                scripts.treasury.spend.address,
+                treasuryAddress,
                 { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) },
                 { 
                    lovelace: remainingBalance,

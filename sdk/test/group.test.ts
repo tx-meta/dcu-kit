@@ -17,7 +17,6 @@ describe("Group Endpoints", () => {
 
       const { txHash, groupDatum } = yield* createGroupTestCase(
         context,
-        scripts,
       );
 
       expect(txHash).toBeDefined();
@@ -38,10 +37,11 @@ describe("Group Endpoints", () => {
 
       const { txHash } = yield* updateGroupTestCase(
         context,
-        groupUtxo,
-        updatedDatum,
-        adminUtxo,
-        scripts,
+        {
+            groupUtxo,
+            updatedDatum,
+            adminUtxo
+        }
       );
 
       expect(txHash).toBeDefined();
@@ -57,10 +57,11 @@ describe("Group Endpoints", () => {
 
       const { txHash } = yield* deleteGroupTestCase(
         context,
-        groupUtxo,
-        groupDatum, // Pass current datum state
-        adminUtxo,
-        scripts,
+        {
+            groupUtxo,
+            currentDatum: groupDatum,
+            adminUtxo
+        }
       );
 
       expect(txHash).toBeDefined();

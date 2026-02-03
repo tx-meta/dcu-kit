@@ -34,12 +34,13 @@ describe("Treasury Endpoints", () => {
 
       const result = yield* joinGroupTestCase(
         context,
-        groupUtxo,
-        userUtxo,
-        adminUtxo,
-        50_000_000n,
-        scripts,
-        users.user1.seedPhrase,
+        {
+            groupUtxo,
+            accountUtxo: userUtxo,
+            adminUtxo,
+            contributionAmount: 50_000_000n,
+            userSeed: users.user1.seedPhrase
+        }
       );
       expect(result.txHash).toHaveLength(64);
     }),
@@ -55,11 +56,12 @@ describe("Treasury Endpoints", () => {
 
       const result = yield* exitGroupTestCase(
         context,
-        groupUtxo,
-        userUtxo, // accountUtxo
-        memberUtxo,
-        scripts,
-        users.user1.seedPhrase,
+        {
+            groupUtxo,
+            accountUtxo: userUtxo, // accountUtxo
+            treasuryUtxo: memberUtxo,
+            userSeed: users.user1.seedPhrase
+        }
       );
 
       expect(result.txHash).toHaveLength(64);
@@ -81,11 +83,12 @@ describe("Treasury Endpoints", () => {
 
       const result = yield* exitGroupTestCase(
         context,
-        groupUtxo,
-        userUtxo,
-        memberUtxo,
-        scripts,
-        users.user1.seedPhrase,
+        {
+            groupUtxo,
+            accountUtxo: userUtxo,
+            treasuryUtxo: memberUtxo,
+            userSeed: users.user1.seedPhrase
+        }
       );
 
       expect(result.txHash).toHaveLength(64);
@@ -127,12 +130,13 @@ describe("Treasury Endpoints", () => {
 
       const result = yield* memberWithdrawTestCase(
         context,
-        groupUtxo,
-        userUtxo,
-        memberUtxo,
-        5_000_000n, // Withdraw 5 ADA
-        scripts,
-        users.user1.seedPhrase,
+        {
+            groupUtxo,
+            accountUtxo: userUtxo,
+            treasuryUtxo: memberUtxo,
+            withdrawAmount: 5_000_000n, // Withdraw 5 ADA
+            userSeed: users.user1.seedPhrase
+        }
       );
 
       expect(result.txHash).toBeDefined();
@@ -154,10 +158,11 @@ describe("Treasury Endpoints", () => {
       
       const result = yield* distributePayoutTestCase(
         context,
-        groupUtxo,
-        [memberUtxo], // Wrap as array
-        scripts,
-        users.user1.seedPhrase,
+        {
+            groupUtxo,
+            treasuryUtxos: [memberUtxo],
+            callerSeed: users.user1.seedPhrase
+        }
       );
 
       expect(result.txHash).toBeDefined();

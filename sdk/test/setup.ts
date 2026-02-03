@@ -57,7 +57,7 @@ export const setupAccount = (
 
     const { txHash, outputs } = yield* createAccountTestCase(
       { lucid, users, emulator },
-      datumOverride,
+      { datumOverride },
     );
 
     const { accountUtxo, userUtxo } = outputs;
@@ -92,9 +92,10 @@ export const setupGroup = (
 
      const { txHash, groupDatum } = yield* createGroupTestCase(
          base.context,
-         scripts,
-         datumOverride,
-         users.user1.seedPhrase 
+         {
+             datumOverride,
+             creatorSeed: users.user1.seedPhrase 
+         }
      );
      
      if (emulator && base.network === "Custom") {
@@ -171,12 +172,13 @@ export const setupMembership = (
 
         const { txHash } = yield* joinGroupTestCase(
             context,
-            groupUtxo,
-            userUtxo,
-            refreshedAdminUtxo,
-            contributionAmount,
-            scripts,
-            users.user1.seedPhrase
+            {
+                groupUtxo,
+                accountUtxo: userUtxo, // Maps from SetupResult userUtxo (Account)
+                adminUtxo,
+                contributionAmount,
+                userSeed: users.user1.seedPhrase
+            }
         );
 
         // --- Wait for Confirmation ---
