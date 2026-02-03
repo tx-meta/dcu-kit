@@ -55,35 +55,22 @@ export const setupAccount = (
     const { lucid, users, emulator } = base.context;
     const { scripts } = base;
 
-    const { txHash, accountConfig } = yield* createAccountTestCase(
+    const { txHash, outputs } = yield* createAccountTestCase(
       { lucid, users, emulator },
-      scripts,
       datumOverride,
     );
+
+    const { accountUtxo, userUtxo } = outputs;
 
     if (emulator && base.network === "Custom") {
       yield* Effect.sync(() => emulator.awaitBlock(5));
     }
 
-    const accountAddress = scripts.account.spend.address;
-    const accountUtxos = yield* Effect.promise(() =>
-      lucid.utxosAt(accountAddress),
-    );
-
-    const accountPolicyId = scripts.account.mint.policyId;
-
-    lucid.selectWallet.fromSeed(users.user1.seedPhrase);
-    const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-
-    // Discover the pair using the helper across all relevant UTxOs
-    const { refUtxo: accountUtxo, userUtxo: currentUserUtxo } = yield* findCip68TokenPair([...accountUtxos, ...walletUtxos], accountPolicyId);
-
-
     return {
       context: base.context,
       scripts,
       accountUtxo,
-      userUtxo: currentUserUtxo,
+      userUtxo,
     };
   });
 
