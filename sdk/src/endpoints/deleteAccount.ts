@@ -8,8 +8,11 @@ import { accountValidator, accountPolicyId, treasuryValidator, treasuryPolicyId 
 
 // --- Configuration ---
 
+// --- Configuration ---
+
 export type DeleteAccountConfig = {
-    // Empty config as no specific params are needed beyond context/authorization
+    user_utxo: UTxO;
+    account_utxo: UTxO;
 };
 
 // --- Endpoint ---
@@ -22,31 +25,18 @@ export type DeleteAccountConfig = {
  * - Integrity Check: Rejects if the account has active memberships in any groups.
  * 
  * @param lucid - Lucid instance with wallet selected.
- * @param config - DeleteAccountConfig (currently placeholder).
+ * @param config - DeleteAccountConfig containing the specific UTxOs to burn.
  * @returns Effect yielding TxSignBuilder.
- * 
- * @example
- * ```typescript
- * const program = unsignedDeleteAccountTxProgram(lucid, {});
- * ```
  */
 export const unsignedDeleteAccountTxProgram = (
   lucid: LucidEvolution,
-  _config: DeleteAccountConfig,
+  config: DeleteAccountConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const walletUtxos = yield* Effect.tryPromise({
-        try: () => lucid.wallet().getUtxos(),
-        catch: (e) => new TransactionBuildError({ operation: "getWalletUtxos", error: String(e) })
-    });
-    
-    const accountAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
-    const scriptUtxos = yield* Effect.tryPromise({
-        try: () => lucid.utxosAt(accountAddress),
-        catch: (e) => new TransactionBuildError({ operation: "getAccountUtxos", error: String(e) })
-    });
+    const { user_utxo, account_utxo } = config;
 
-    const { userUtxo, userTokenName, refUtxo: accountUtxo, refTokenName } = yield* findCip68TokenPair([...walletUtxos, ...scriptUtxos], accountPolicyId);
+    // Derive explicit token names from the provided UTxOs
+    const { userTokenName, refTokenName } = yield* findCip68TokenPair([user_utxo, account_utxo], accountPolicyId);
 
     const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
     const treasuryUtxos = yield* Effect.tryPromise({
@@ -60,7 +50,7 @@ export const unsignedDeleteAccountTxProgram = (
             const datum = Data.from(u.datum, TreasuryDatumSchema) as unknown as TreasuryDatum;
             const state = 'TreasuryState' in datum ? datum.TreasuryState : ('PenaltyState' in datum ? datum.PenaltyState : undefined);
             
-            // Rejects if the account has an active seat in a Treasury (regardless of Ref/User label usage in datum)
+            // Rejects if the account has an active seat in a Treasury
             return state && (
                 state.member_reference_tokenname === refTokenName || 
                 state.member_reference_tokenname === userTokenName
@@ -69,8 +59,6 @@ export const unsignedDeleteAccountTxProgram = (
             return false;
         }
     });
-
-
 
     if (hasActiveMembership) {
         return yield* Effect.fail(new TransactionBuildError({ 
@@ -88,8 +76,8 @@ export const unsignedDeleteAccountTxProgram = (
 
     return yield* tryBuildTx("deleteAccount", async () => lucid
       .newTx()
-      .collectFrom([accountUtxo], redeemer)
-      .collectFrom([userUtxo])
+      .collectFrom([account_utxo], redeemer)
+      .collectFrom([user_utxo])
       .attach.SpendingValidator(accountValidator.spendAccount)
       .attach.MintingPolicy(accountValidator.mintAccount)
       .mintAssets(

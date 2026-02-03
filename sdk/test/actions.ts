@@ -120,19 +120,25 @@ export const createAccountTestCase = (
 
     // 4. Verify & Fetch Outputs
     const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
+    
+    // We filter specifically by the txHash to ensure we get the FRESHLY created tokens,
+    // avoiding stale tokens from previous test runs on shared/live environments.
+    
     const scriptUtxos = yield* Effect.promise(() => lucid.utxosAt(accountScriptAddress));
-    
-    const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-    
-    // Find User Auth Token
-    const userUtxo = walletUtxos.find(u => Object.keys(u.assets).some(k => k.startsWith(accountPolicyId)));
-    
-    if (!userUtxo) return yield* Effect.die(new Error("User Auth Token not found in wallet after creation"));
-    
-    // Find Account UTxO
-    const accountUtxo = scriptUtxos.find(u => Object.keys(u.assets).some(k => k.startsWith(accountPolicyId)));
+    const accountUtxo = scriptUtxos.find(u => 
+        u.txHash === txHash && 
+        Object.keys(u.assets).some(k => k.startsWith(accountPolicyId))
+    );
     
     if (!accountUtxo) return yield* Effect.die(new Error("Account UTxO not found in script after creation"));
+
+    const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
+    const userUtxo = walletUtxos.find(u => 
+        u.txHash === txHash &&
+        Object.keys(u.assets).some(k => k.startsWith(accountPolicyId))
+    );
+    
+    if (!userUtxo) return yield* Effect.die(new Error("User Auth Token not found in wallet after creation"));
 
     return {
       txHash,
@@ -208,11 +214,12 @@ export const deleteAccountTestCase = (
 ): Effect.Effect<DeleteAccountResult, Error, never> => {
   return Effect.gen(function* () {
     const { lucid } = context;
-    // const { accountUtxo, userUtxo } = params; // Unused for now, but good to have in params
+    const { accountUtxo, userUtxo } = params;
     
     // 1. Construct Config
     const deleteConfig: DeleteAccountConfig = {
-        // currently empty or derived if needed
+        user_utxo: userUtxo,
+        account_utxo: accountUtxo
     };
 
     const deleteAccountTx = yield* unsignedDeleteAccountTxProgram(
