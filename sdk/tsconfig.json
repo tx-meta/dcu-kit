@@ -10,7 +10,11 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@dcu/sdk": ["src/index.ts"]
+    }
   },
   "include": ["src", "test"],
   "exclude": ["node_modules", "dist"]

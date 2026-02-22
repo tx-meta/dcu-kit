@@ -8,3 +8,5 @@ export * from "./joinGroup.js";
 export * from "./distributePayout.js";
 export * from "./memberWithdraw.js";
 export * from "./exitGroup.js";
+export * from "./terminateGroup.js";
+export * from "./programWrapper.js";

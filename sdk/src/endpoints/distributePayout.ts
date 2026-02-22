@@ -14,7 +14,7 @@ import {
     TreasuryRedeemer 
 } from "../core/types.js";
 import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
-import { getScriptAddress, tryBuildTx, fromHex } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress } from "../core/utils/index.js";
 import { calculateCurrentSlot } from "../core/treasury.utils.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
 
@@ -74,10 +74,7 @@ export const unsignedDistributePayoutTxProgram = (
         yield* Effect.fail(new TransactionBuildError({ operation: "distributePayout", error: `No member found for current slot ${currentSlot}` }));
     }
     
-    const borrowerAddress = yield* Effect.tryPromise({
-        try: () => lucid.wallet().address(),
-        catch: (error) => new TransactionBuildError({ operation: "getAddress", error: String(error) })
-    });
+    const borrowerAddress = yield* getWalletAddress(lucid);
     const payoutAmount = 200_000_000n; 
 
     // Construct Redeemer using RedeemerBuilder
@@ -123,5 +120,7 @@ export const unsignedDistributePayoutTxProgram = (
         );
     }
     
-    return yield* tryBuildTx("distributePayout", () => txBuilder.complete());
+    return yield* txBuilder
+        .completeProgram()
+        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "distributePayout", error: String(e) })));
   });

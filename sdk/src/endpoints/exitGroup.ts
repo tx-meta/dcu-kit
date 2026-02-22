@@ -15,7 +15,7 @@ import {
 } from "../core/types.js";
 import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
-import { tryBuildTx, getScriptAddress } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress } from "../core/utils/index.js";
 
 /**
  * Creates an unsigned transaction for exiting a Group.
@@ -78,44 +78,42 @@ export const unsignedExitGroupTxProgram = (
         inputs: [accountUtxo, treasuryUtxo]
     };
 
+    const address = yield* getWalletAddress(lucid);
     const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
 
-    const tx = yield* tryBuildTx("exitGroup", async () => {
-        const t = lucid.newTx()
-            .readFrom([groupUtxo])
-            .collectFrom([accountUtxo])
-            .collectFrom([treasuryUtxo], redeemer)
-            .attach.MintingPolicy(treasuryValidator.mintTreasury)
-            .attach.SpendingValidator(treasuryValidator.spendTreasury)
-            .addSigner(await lucid.wallet().address());
+    const txBuilder = lucid.newTx()
+        .readFrom([groupUtxo])
+        .collectFrom([accountUtxo])
+        .collectFrom([treasuryUtxo], redeemer)
+        .attach.MintingPolicy(treasuryValidator.mintTreasury)
+        .attach.SpendingValidator(treasuryValidator.spendTreasury)
+        .addSigner(address);
 
-        if (isEarlyExit) {
-             const penaltyDatum: TreasuryDatum = {
-                PenaltyState: {
-                    group_reference_tokenname: treasuryDatum.TreasuryState.group_reference_tokenname,
-                    member_reference_tokenname: treasuryDatum.TreasuryState.member_reference_tokenname
-                }
-             };
-             
-             // Transition to Penalty State (Keep Token)
-             t.pay.ToContract(
-                 treasuryAddress,
-                 { kind: "inline", value: Data.to(penaltyDatum, TreasuryDatum) },
-                 { 
-                     lovelace: 2_000_000n + groupDatum.penalty_fee, // Lock Min ADA + Penalty
-                     [policyId + memberRefName]: 1n // Keep Token
-                 }
-             );
-        } else {
-            // Mature Exit: Burn Token
-            t.mintAssets(
-                { [policyId + memberRefName]: -1n }, 
-                redeemer 
-            );
-        }
-        
-        return t.complete();
-    });
+    if (isEarlyExit) {
+        const penaltyDatum: TreasuryDatum = {
+            PenaltyState: {
+                group_reference_tokenname: treasuryDatum.TreasuryState.group_reference_tokenname,
+                member_reference_tokenname: treasuryDatum.TreasuryState.member_reference_tokenname
+            }
+        };
+        // Transition to Penalty State (Keep Token)
+        txBuilder.pay.ToContract(
+            treasuryAddress,
+            { kind: "inline", value: Data.to(penaltyDatum, TreasuryDatum) },
+            {
+                lovelace: 2_000_000n + groupDatum.penalty_fee, // Lock Min ADA + Penalty
+                [policyId + memberRefName]: 1n // Keep Token
+            }
+        );
+    } else {
+        // Mature Exit: Burn Token
+        txBuilder.mintAssets(
+            { [policyId + memberRefName]: -1n },
+            redeemer
+        );
+    }
 
-    return tx;
+    return yield* txBuilder
+        .completeProgram()
+        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "exitGroup", error: String(e) })));
   });

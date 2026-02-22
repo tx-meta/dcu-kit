@@ -110,9 +110,10 @@ describe("Treasury Endpoints", () => {
       
       const unsignedTx = yield* unsignedTerminateGroupTxProgram(
         lucid,
-        groupUtxo,
-        memberUtxo,
-        scripts,
+        {
+          groupUtxo,
+          treasuryUtxo: memberUtxo,
+        }
       );
 
       const txHash = yield* signAndSubmit(unsignedTx);
