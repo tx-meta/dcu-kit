@@ -149,14 +149,21 @@ describe("Treasury Endpoints", () => {
   it.effect("should distribute payout to the assigned slot holder", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
-      
-      const { context, scripts, groupUtxo, memberUtxo } = yield* setupMembership(base);
+
+      // Use a start_time 20 intervals in the past so:
+      // - currentSlot = 20 % 10 = 0 (matches the member's assigned_slot = 0)
+      // - All 10 contribution_list entries are past their claimable_at timestamp
+      const oneHour = 3600000n;
+      const now = BigInt(Date.now());
+      const oldStartTime = now - 20n * oneHour;
+
+      const { context, scripts, groupUtxo, memberUtxo } = yield* setupMembership(
+        base,
+        50_000_000n,
+        { start_time: oldStartTime, contribution_fee: 2_000_000n }
+      );
       const { users } = context;
 
-      // Note: distributePayoutTestCase takes Array<UTxO> for Treasury?
-      // Looking at params: context, groupUtxo, treasuryUtxo(s), scripts, seedPhrase
-      // Previous call: treasuryUtxos (Array)
-      
       const result = yield* distributePayoutTestCase(
         context,
         {
