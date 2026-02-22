@@ -1,5 +1,5 @@
 
-import { LucidEvolution, Data, UTxO, TxSignBuilder } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
 import { AccountRedeemer, AccountDatum } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
@@ -48,15 +48,19 @@ export const unsignedUpdateAccountTxProgram = (
     const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
     const datum = Data.to(account_datum, AccountDatum);
 
-    const redeemer = Data.to(
-      { UpdateAccount: {
-          reference_token_name: refTokenName,
-          user_input_index: 0n,
-          account_input_index: 1n,
-          account_output_index: 0n,
-      }},
-      AccountRedeemer
-    );
+    const redeemer: RedeemerBuilder = {
+      kind: "selected",
+      makeRedeemer: (inputIndices: bigint[]) => Data.to(
+        { UpdateAccount: {
+            reference_token_name: refTokenName,
+            user_input_index: inputIndices[0],
+            account_input_index: inputIndices[1],
+            account_output_index: 0n,
+        }},
+        AccountRedeemer
+      ),
+      inputs: [user_utxo, account_utxo],
+    };
 
     return yield* lucid
       .newTx()
