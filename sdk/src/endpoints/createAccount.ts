@@ -1,9 +1,9 @@
 
-import { LucidEvolution, Data, UTxO, TxHash, fromText, TxSignBuilder } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, UTxO, TxSignBuilder } from "@lucid-evolution/lucid";
 import { AccountDatum, AccountRedeemer } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { tryBuildTx, getScriptAddress, createCip68TokenNames } from "../core/utils/index.js";
+import { getScriptAddress, createCip68TokenNames, getWalletAddress } from "../core/utils/index.js";
 import { accountValidator, accountPolicyId } from "../core/validators/constants.js";
 
 // --- Configuration ---
@@ -17,17 +17,17 @@ export type CreateAccountConfig = {
 
 /**
  * Creates an unsigned transaction for creating a DCU Account.
- * 
+ *
  * **Functionality:**
  * - Mints a unique pair of CIP-68 tokens (Reference + User Auth).
  * - Locks the Reference NFT in the Account Script with the provided datum.
  * - Sends the User Auth NFT to the user's wallet.
  * - Initializes the Account Datum (Email Hash, Phone Hash) on-chain.
- * 
+ *
  * @param lucid - Lucid instance with wallet selected.
  * @param config - CreateAccountConfig (UTxO + Datum).
  * @returns Effect yielding TxSignBuilder.
- * 
+ *
  * @example
  * ```typescript
  * const program = unsignedCreateAccountTxProgram(lucid, {
@@ -41,21 +41,17 @@ export const unsignedCreateAccountTxProgram = (
   config: CreateAccountConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const address = yield* Effect.tryPromise({
-        try: () => lucid.wallet().address(),
-        catch: (error) => new TransactionBuildError({ operation: "getAddress", error: String(error) })
-    });
-    
+    const address = yield* getWalletAddress(lucid);
     const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
     const { refTokenName, userTokenName } = yield* createCip68TokenNames(config.selected_out_ref);
-    
+
     const datum = Data.to(config.account_datum, AccountDatum);
     const redeemer = Data.to(
-        { CreateAccount: { input_index: 0n, output_index: 0n } }, 
+        { CreateAccount: { input_index: 0n, output_index: 0n } },
         AccountRedeemer
     );
 
-    return yield* tryBuildTx("createAccount", async () => lucid
+    return yield* lucid
       .newTx()
       .collectFrom([config.selected_out_ref])
       .mintAssets(
@@ -75,6 +71,6 @@ export const unsignedCreateAccountTxProgram = (
       })
       .attach.MintingPolicy(accountValidator.mintAccount)
       .addSigner(address)
-      .complete()
-    );
+      .completeProgram()
+      .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "createAccount", error: String(e) })));
   });
