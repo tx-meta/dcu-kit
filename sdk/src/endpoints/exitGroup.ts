@@ -15,7 +15,7 @@ import {
 } from "../core/types.js";
 import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
-import { getScriptAddress, getWalletAddress } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
 
 /**
  * Creates an unsigned transaction for exiting a Group.
@@ -48,14 +48,13 @@ export const unsignedExitGroupTxProgram = (
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     const { groupUtxo, accountUtxo, treasuryUtxo } = config;
-    const treasuryDatum = Data.from(treasuryUtxo.datum!, TreasuryDatumSchema) as unknown as TreasuryDatum;
-    if (!('TreasuryState' in treasuryDatum)) return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Invalid Treasury State" }));
+    const treasuryDatum = (yield* parseSafeDatum(treasuryUtxo.datum, TreasuryDatumSchema)) as unknown as TreasuryDatum;
+    if (!('TreasuryState' in treasuryDatum)) return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Expected TreasuryState" }));
 
     const memberRefName = treasuryDatum.TreasuryState.member_reference_tokenname;
     const policyId = treasuryPolicyId!;
 
-    const groupDatum = Data.from(groupUtxo.datum!, GroupDatum);
-    if (!groupDatum) return yield* Effect.fail(new InvalidDatumError({ field: "groupDatum", reason: "Invalid Group Datum" }));
+    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
 
     const now = BigInt(Date.now());
     const maturityTime = groupDatum.start_time + (groupDatum.num_intervals * groupDatum.interval_length);

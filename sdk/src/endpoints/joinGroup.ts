@@ -16,12 +16,11 @@ import {
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 import { accountPolicyId } from "../core/validators/constants.js";
 import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
-import { getScriptAddress, getWalletAddress } from "../core/utils/index.js";
-import { 
-    DcuError, 
-    InvalidDatumError, 
-    UtxoNotFoundError, 
-    TransactionBuildError 
+import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
+import {
+    DcuError,
+    UtxoNotFoundError,
+    TransactionBuildError
 } from "../core/errors.js";
 
 /**
@@ -56,8 +55,7 @@ export const unsignedJoinGroupTxProgram = (
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     const { groupUtxo, accountUtxo, adminUtxo, contributionAmount } = config;
-    const groupDatum = Data.from(groupUtxo.datum!, GroupDatum);
-    if (!groupDatum) yield* Effect.fail(new InvalidDatumError({ field: "groupDatum", reason: "Invalid Group Datum" }));
+    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
 
     const assignedSlot = groupDatum.member_count; 
     const updatedGroupDatum: GroupDatum = {
