@@ -825,6 +825,109 @@ This transaction updates the member's account metadata. It consumes both the Acc
 
       - 1 Reference NFT Asset
 
+
+
+#pagebreak()
+
+=== Mint :: DeleteAccount
+\
+This transaction removes a member account from the cooperative finance system by burning both the Account Reference NFT and the Account User NFT. The check that the member has no active group memberships must be performed off-chain before submitting this transaction.
+
+\
+#transaction(
+  "DeleteAccount",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 2000000,
+        User_NFT: 1,
+      ),
+    ),
+    (
+      name: "Account Validator UTxO",
+      address: "account_validator",
+      value: (
+        ada: 2000000,
+        Ref_NFT: 1,
+      ),
+      datum: (
+        email_hash: "0x12..ef",
+        phone_hash: "0xab..89",
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 3500000, // Reclaimed ADA
+      ),
+    ),
+  ),
+  show_mints: true,
+  notes: [Delete Account & Burn NFTs],
+)
+
+\
+==== Inputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Account User NFT Asset
+
+  + *Account Validator UTxO*
+
+    - Address: Account validator script address
+
+    - Datum:
+
+      - existing_datum: listed in @account-datum
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Account Reference NFT Asset
+\
+==== Mints
+\
+  + *Account Multi-validator (Mint)*
+
+    - Redeemer: DeleteAccount
+
+    - Value:
+
+      - -1 Account Reference NFT Asset
+
+      - -1 Account User NFT Asset
+
+  + *Account Multi-validator (Spend)*
+
+    - Redeemer: RemoveAccount
+
+    - Authorizes spending the Account Validator UTxO and proves ownership via the User NFT.
+\
+==== Outputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value:
+
+      - Reclaimed ADA (from both UTxOs)
+
+*Note:* No script output is produced. `RemoveAccount` (spend) and `DeleteAccount` (mint) execute in the same transaction — the spend validator authorizes unlocking the script UTxO while the mint validator burns both tokens. The check that the member has no active group memberships must be performed off-chain before submission.
+
 #pagebreak()
 
 == Group Validator
@@ -1042,6 +1145,120 @@ This transaction updates the group metadata attached to the Group UTxO at the sc
       - Minimum ADA
 
       - 1 Reference NFT Asset
+
+
+#pagebreak()
+
+=== Spend :: RemoveGroup
+\
+This transaction allows an administrator to deactivate a cooperative group by updating the Group UTxO datum so that `is_active` is set to `false`. The Group Reference NFT is preserved in the output to maintain correct on-chain state. The group must have zero active members (`member_count == 0`) before it can be deactivated.
+
+\
+#transaction(
+  "RemoveGroup",
+  inputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 2000000,
+        Group_NFT: 1,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 0, // Required
+        active: true,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 1500000,
+        Group_NFT: 1,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 0,
+        active: false, // Deactivated
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Deactivate Group],
+)
+
+\
+==== Inputs
+\
+  + *Administrator Wallet UTxO*
+
+    - Address: Administrator's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Group NFT Asset (proves ownership)
+
+  + *Group Validator UTxO*
+
+    - Address: Group validator script address
+
+    - Datum:
+
+      - existing_datum: listed in @group-datum, with `member_count == 0` and `is_active == true`
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Group Reference NFT Asset
+\
+==== Outputs
+\
+  + *Administrator Wallet UTxO*
+
+    - Address: Administrator's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Group NFT Asset
+
+  + *Group Validator UTxO*
+
+    - Address: Group validator script address
+
+    - Datum:
+
+      - updated_datum: Same fields as @group-datum with `is_active` set to `false`
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Group Reference NFT Asset
+
+*Note:* The Group Reference NFT is preserved in the output to maintain correct on-chain state. The group can no longer accept new members once `is_active` is `false`.
+
 #pagebreak()
 
 == Treasury Validator
@@ -1725,6 +1942,8 @@ This transaction allows a group administrator with a Group NFT to unlock penalty
 
     - Remaining ADA after withdrawal (if any)
 
+
+#pagebreak()
 
 // Additional Features for Future Versions
 
