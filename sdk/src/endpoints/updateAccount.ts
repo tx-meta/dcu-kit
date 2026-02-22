@@ -1,11 +1,10 @@
 
-import { LucidEvolution, Data, UTxO, fromText, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, UTxO, TxSignBuilder } from "@lucid-evolution/lucid";
 import { AccountRedeemer, AccountDatum } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { tryBuildTx, getScriptAddress, findCip68TokenPair } from "../core/utils/index.js";
+import { getScriptAddress, findCip68TokenPair, getWalletAddress } from "../core/utils/index.js";
 import { accountValidator, accountPolicyId } from "../core/validators/constants.js";
-import { assetNameLabels } from "../core/utils/index.js";
 
 // --- Configuration ---
 
@@ -19,15 +18,15 @@ export type UpdateAccountConfig = {
 
 /**
  * Creates an unsigned transaction for updating a DCU Account.
- * 
+ *
  * **Functionality:**
  * - Updates the Identity Datum (e.g. Email/Phone hashes) on-chain.
  * - Requires the User Auth NFT in the wallet for authorization.
- * 
+ *
  * @param lucid - Lucid instance with wallet selected.
  * @param config - UpdateAccountConfig containing UTxOs and updated datum.
  * @returns Effect yielding TxSignBuilder.
- * 
+ *
  * @example
  * ```typescript
  * const program = unsignedUpdateAccountTxProgram(lucid, {
@@ -44,22 +43,22 @@ export const unsignedUpdateAccountTxProgram = (
   Effect.gen(function* () {
     const { account_utxo, user_utxo, account_datum } = config;
 
+    const address = yield* getWalletAddress(lucid);
     const { userTokenName, refTokenName } = yield* findCip68TokenPair([user_utxo, account_utxo], accountPolicyId);
-
     const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
     const datum = Data.to(account_datum, AccountDatum);
-    
+
     const redeemer = Data.to(
-      { UpdateAccount: { 
+      { UpdateAccount: {
           reference_token_name: refTokenName,
-          user_input_index: 0n, 
-          account_input_index: 1n, 
-          account_output_index: 0n 
+          user_input_index: 0n,
+          account_input_index: 1n,
+          account_output_index: 0n,
       }},
       AccountRedeemer
     );
 
-    return yield* tryBuildTx("updateAccount", async () => lucid
+    return yield* lucid
       .newTx()
       .collectFrom([user_utxo])
       .collectFrom([account_utxo], redeemer)
@@ -69,10 +68,10 @@ export const unsignedUpdateAccountTxProgram = (
         { kind: "inline", value: datum },
         { [accountPolicyId + refTokenName]: 1n },
       )
-      .pay.ToAddress(await lucid.wallet().address(), {
+      .pay.ToAddress(address, {
         [accountPolicyId + userTokenName]: 1n
       })
-      .addSigner(await lucid.wallet().address())
-      .complete()
-    );
+      .addSigner(address)
+      .completeProgram()
+      .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "updateAccount", error: String(e) })));
   });
