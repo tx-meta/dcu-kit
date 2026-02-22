@@ -14,7 +14,7 @@ import {
 } from "../core/types.js";
 import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
-import { getScriptAddress, getWalletAddress } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
 
 /**
  * Creates an unsigned transaction for a member withdrawal from the Treasury.
@@ -47,8 +47,8 @@ export const unsignedMemberWithdrawTxProgram = (
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     const { groupUtxo, accountUtxo, treasuryUtxo, withdrawAmount } = config;
-    const treasuryDatum = Data.from(treasuryUtxo.datum!, TreasuryDatumSchema) as unknown as TreasuryDatum;
-    if (!('TreasuryState' in treasuryDatum)) return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Invalid Treasury State" }));
+    const treasuryDatum = (yield* parseSafeDatum(treasuryUtxo.datum, TreasuryDatumSchema)) as unknown as TreasuryDatum;
+    if (!('TreasuryState' in treasuryDatum)) return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Expected TreasuryState" }));
 
     const memberRefName = treasuryDatum.TreasuryState.member_reference_tokenname;
     const policyId = treasuryPolicyId!;

@@ -14,9 +14,9 @@ import {
     TreasuryRedeemer 
 } from "../core/types.js";
 import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
-import { getScriptAddress, getWalletAddress } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
 import { calculateCurrentSlot } from "../core/treasury.utils.js";
-import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
+import { DcuError, TransactionBuildError } from "../core/errors.js";
 
 /**
  * Creates an unsigned transaction for distributing payouts in a Group.
@@ -49,25 +49,29 @@ export const unsignedDistributePayoutTxProgram = (
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     const { groupUtxo, treasuryUtxos } = config;
-    const groupDatum = Data.from(groupUtxo.datum!, GroupDatum);
-    if (!groupDatum) yield* Effect.fail(new InvalidDatumError({ field: "groupDatum", reason: "Invalid Group Datum" }));
-
+    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
     const currentSlot = calculateCurrentSlot(Date.now(), groupDatum);
+
+    // Parse all treasury UTxO datums, silently skipping ones with invalid datums
+    const parsedStates = yield* Effect.all(
+        treasuryUtxos.map(u =>
+            parseSafeDatum(u.datum, TreasuryDatumSchema).pipe(
+                Effect.map(raw => ({ utxo: u, datum: raw as unknown as TreasuryDatum })),
+                Effect.orElse(() => Effect.succeed(null))
+            )
+        ),
+        { concurrency: "unbounded" }
+    );
 
     let borrowerUtxo: UTxO | undefined;
     const memberStates: { utxo: UTxO, datum: TreasuryDatum }[] = [];
-    
-    for (const u of treasuryUtxos) {
-        if (!u.datum) continue;
-        try {
-            const d = Data.from(u.datum, TreasuryDatumSchema) as unknown as TreasuryDatum;
-            if ('TreasuryState' in d) {
-                 memberStates.push({ utxo: u, datum: d });
-                 if (Number(d.TreasuryState.assigned_slot) === currentSlot) {
-                     borrowerUtxo = u;
-                 }
-            }
-        } catch(e) { /* ignore invalid */ }
+
+    for (const state of parsedStates) {
+        if (!state || !('TreasuryState' in state.datum)) continue;
+        memberStates.push(state);
+        if (Number(state.datum.TreasuryState.assigned_slot) === currentSlot) {
+            borrowerUtxo = state.utxo;
+        }
     }
 
     if (!borrowerUtxo) {
