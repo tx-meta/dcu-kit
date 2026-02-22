@@ -1,5 +1,5 @@
 import { TxSignBuilder, LucidEvolution } from "@lucid-evolution/lucid";
-import { Effect, Schedule } from "effect";
+import { Effect, Either, Schedule } from "effect";
 import { LucidError, TransactionBuildError } from "../errors.js";
 
 /**
@@ -43,6 +43,33 @@ export const tryBuildTx = (
     try: f,
     catch: (error) => new TransactionBuildError({ operation, error: String(error) }),
   });
+
+/**
+ * Wraps an Effect program in a set of execution strategies.
+ *
+ * Provides three ways to run a program without committing to one at the call site:
+ * - `unsafeRun()` — Promise that throws on failure (use in programWrapper / CLI).
+ * - `safeRun()`   — Promise returning Either<E, A> (use when you need to inspect errors).
+ * - `program()`   — Returns the raw Effect for further composition.
+ *
+ * @param program - Any Effect.Effect<A, E>.
+ * @returns Object with `unsafeRun`, `safeRun`, and `program` methods.
+ *
+ * @example
+ * ```typescript
+ * export const createAccount = (lucid: LucidEvolution, config: CreateAccountConfig) =>
+ *   makeReturn(unsignedCreateAccountTxProgram(lucid, config));
+ *
+ * // Caller chooses how to run it:
+ * const tx = await createAccount(lucid, config).unsafeRun();
+ * const result = await createAccount(lucid, config).safeRun(); // Either<DcuError, TxSignBuilder>
+ * ```
+ */
+export const makeReturn = <A, E>(program: Effect.Effect<A, E>) => ({
+  unsafeRun: () => Effect.runPromise(program),
+  safeRun:   () => Effect.runPromise(Effect.either(program)),
+  program:   () => program,
+});
 
 /**
  * Polls the network to confirm that a transaction has been successfully indexed.

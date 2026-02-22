@@ -1,9 +1,9 @@
 
-import { LucidEvolution, Data, UTxO, TxSignBuilder } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
 import { AccountRedeemer, TreasuryDatumSchema, TreasuryDatum } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { getScriptAddress, findCip68TokenPair, getWalletAddress } from "../core/utils/index.js";
+import { getScriptAddress, findCip68TokenPair, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
 import { accountValidator, accountPolicyId, treasuryValidator } from "../core/validators/constants.js";
 
 // --- Configuration ---
@@ -42,39 +42,54 @@ export const unsignedDeleteAccountTxProgram = (
         catch: (error) => new TransactionBuildError({ operation: "queryTreasury", error: String(error) })
     });
 
-    const hasActiveMembership = treasuryUtxos.some(u => {
-        try {
-            if (!u.datum) return false;
-            const datum = Data.from(u.datum, TreasuryDatumSchema) as unknown as TreasuryDatum;
-            const state = 'TreasuryState' in datum ? datum.TreasuryState : ('PenaltyState' in datum ? datum.PenaltyState : undefined);
+    const membershipChecks = yield* Effect.all(
+        treasuryUtxos.map(u =>
+            parseSafeDatum(u.datum, TreasuryDatumSchema).pipe(
+                Effect.map(datum => {
+                    const d = datum as unknown as TreasuryDatum;
+                    const state = 'TreasuryState' in d
+                        ? d.TreasuryState
+                        : ('PenaltyState' in d ? d.PenaltyState : undefined);
+                    return !!state && (
+                        state.member_reference_tokenname === refTokenName ||
+                        state.member_reference_tokenname === userTokenName
+                    );
+                }),
+                Effect.orElse(() => Effect.succeed(false))
+            )
+        ),
+        { concurrency: "unbounded" }
+    );
 
-            return state && (
-                state.member_reference_tokenname === refTokenName ||
-                state.member_reference_tokenname === userTokenName
-            );
-        } catch {
-            return false;
-        }
-    });
-
-    if (hasActiveMembership) {
+    if (membershipChecks.some(Boolean)) {
         return yield* Effect.fail(new TransactionBuildError({
             operation: "deleteAccountCheck",
             error: `Cannot delete account (${userTokenName}) with active membership. Exit all groups first.`
         }));
     }
 
-    const redeemer = Data.to(
-      { DeleteAccount: {
-          reference_token_name: refTokenName
-      }},
+    const spendRedeemer: RedeemerBuilder = {
+      kind: "selected",
+      makeRedeemer: (inputIndices: bigint[]) => Data.to(
+        { RemoveAccount: {
+            reference_token_name: refTokenName,
+            user_input_index: inputIndices[0],
+            account_input_index: inputIndices[1],
+        }},
+        AccountRedeemer
+      ),
+      inputs: [user_utxo, account_utxo],
+    };
+
+    const mintRedeemer = Data.to(
+      { DeleteAccount: { reference_token_name: refTokenName } },
       AccountRedeemer
     );
 
     return yield* lucid
       .newTx()
-      .collectFrom([account_utxo], redeemer)
       .collectFrom([user_utxo])
+      .collectFrom([account_utxo], spendRedeemer)
       .attach.SpendingValidator(accountValidator.spendAccount)
       .attach.MintingPolicy(accountValidator.mintAccount)
       .mintAssets(
@@ -82,7 +97,7 @@ export const unsignedDeleteAccountTxProgram = (
               [accountPolicyId + refTokenName]: -1n,
               [accountPolicyId + userTokenName]: -1n,
           },
-          redeemer
+          mintRedeemer
       )
       .addSigner(address)
       .completeProgram()
