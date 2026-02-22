@@ -1,7 +1,7 @@
 import { Data, TxSignBuilder, fromText, LucidEvolution, UTxO, Constr } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum } from "../core/types.js";
-import { getScriptAddress, tryBuildTx } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress } from "../core/utils/index.js";
 import { DcuError, TransactionBuildError, ValidatorNotFoundError } from "../core/errors.js";
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 
@@ -41,11 +41,7 @@ export const unsignedCreateGroupTxProgram = (
     // PolicyID is on the Minting Policy
     if (!groupPolicyId) yield* Effect.fail(new ValidatorNotFoundError({ validatorName: "group.mint" }));
 
-    const userAddress = yield* Effect.tryPromise({
-        try: () => lucid.wallet().address(),
-        catch: (error) => new TransactionBuildError({ operation: "getAddress", error: String(error) })
-    });
-    
+    const address = yield* getWalletAddress(lucid);
     const groupAddress = yield* getScriptAddress(lucid, groupValidator.spendGroup);
 
     const datum = Data.to(groupDatum, GroupDatum);
@@ -53,7 +49,7 @@ export const unsignedCreateGroupTxProgram = (
     // Redeemer: CreateGroup (Variant 0)
     const redeemer = Data.to(new Constr(0, []));
 
-    const txWithPay = yield* tryBuildTx("createGroup", async () => lucid
+    return yield* lucid
         .newTx()
         .collectFrom([utxoToSpend])
         .attach.MintingPolicy(groupValidator.mintGroup)
@@ -69,12 +65,10 @@ export const unsignedCreateGroupTxProgram = (
             { kind: "inline", value: datum },
             { [groupPolicyId + fromText("GroupReference")]: 1n }
         )
-        .pay.ToAddress(userAddress, {
+        .pay.ToAddress(address, {
             [groupPolicyId + fromText("GroupAdmin")]: 1n
         })
-        .complete({ changeAddress: await lucid.wallet().address() })
-    );
-
-    return txWithPay;
+        .completeProgram()
+        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "createGroup", error: String(e) })));
   });
 

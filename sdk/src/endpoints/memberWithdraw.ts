@@ -14,7 +14,7 @@ import {
 } from "../core/types.js";
 import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
-import { tryBuildTx, getScriptAddress } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress } from "../core/utils/index.js";
 
 /**
  * Creates an unsigned transaction for a member withdrawal from the Treasury.
@@ -77,29 +77,25 @@ export const unsignedMemberWithdrawTxProgram = (
         inputs: [accountUtxo, treasuryUtxo]
     };
 
+    const address = yield* getWalletAddress(lucid);
     const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
 
-    const tx = yield* tryBuildTx("memberWithdraw", async () => {
-         const t = lucid.newTx()
-            .readFrom([groupUtxo])
-            .collectFrom([accountUtxo])
-            .collectFrom([treasuryUtxo], redeemer)
-            .attach.SpendingValidator(treasuryValidator.spendTreasury)
-            
-            // Output 1: Return remaining balance to Treasury
-            .pay.ToContract(
-                treasuryAddress,
-                { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) },
-                { 
-                   lovelace: remainingBalance,
-                   [policyId + memberRefName]: 1n
-                }
-            )
-            // Output 2: User Withdrawal (To Address of Signer)
-            .pay.ToAddress(await lucid.wallet().address(), { lovelace: withdrawAmount });
-
-         return t.complete();
-    });
-
-    return tx;
+    return yield* lucid.newTx()
+        .readFrom([groupUtxo])
+        .collectFrom([accountUtxo])
+        .collectFrom([treasuryUtxo], redeemer)
+        .attach.SpendingValidator(treasuryValidator.spendTreasury)
+        // Output 1: Return remaining balance to Treasury
+        .pay.ToContract(
+            treasuryAddress,
+            { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) },
+            {
+                lovelace: remainingBalance,
+                [policyId + memberRefName]: 1n
+            }
+        )
+        // Output 2: User Withdrawal
+        .pay.ToAddress(address, { lovelace: withdrawAmount })
+        .completeProgram()
+        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "memberWithdraw", error: String(e) })));
   });

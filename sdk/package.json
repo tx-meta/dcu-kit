@@ -13,7 +13,8 @@
     "build": "tsup src/index.ts --minify --format esm,cjs --dts --clean",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
-    "test": "vitest run"
+    "test": "vitest run",
+    "repack": "pnpm run build && pnpm pack"
   },
   "devDependencies": {
     "@effect/vitest": "^0.17.8",

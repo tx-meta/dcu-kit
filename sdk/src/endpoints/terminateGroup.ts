@@ -11,9 +11,18 @@ import {
     TreasuryDatumSchema, 
     TreasuryRedeemer 
 } from "../core/types.js";
-import { DcuValidators } from "../core/validators/context.js";
-import { DcuError, InvalidDatumError } from "../core/errors.js";
-import { tryBuildTx } from "../core/utils/index.js";
+import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
+import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
+import { getWalletAddress } from "../core/utils/index.js";
+
+// --- Configuration ---
+
+export type TerminateGroupConfig = {
+    groupUtxo: UTxO;
+    treasuryUtxo: UTxO;
+};
+
+// --- Endpoint ---
 
 /**
  * Creates an unsigned transaction for terminating a Group membership.
@@ -23,52 +32,48 @@ import { tryBuildTx } from "../core/utils/index.js";
  * - Destroys the Treasury UTxO state and refunds remaining ADA (to the script/admin control).
  * 
  * @param lucid - Lucid instance with wallet selected.
- * @param groupUtxo - Group Reference Input for context.
- * @param treasuryUtxo - The Treasury Membership UTxO to terminate.
- * @param scripts - Validator Context.
+ * @param config - TerminateGroupConfig.
  * @returns Effect yielding TxSignBuilder.
- * 
- * @example
- * ```typescript
- * const program = unsignedTerminateGroupTxProgram(lucid, 
- *   groupUtxo, treasuryUtxo, scripts
- * );
- * ```
  */
 export const unsignedTerminateGroupTxProgram = (
   lucid: LucidEvolution,
-  groupUtxo: UTxO, // Reference Input
-  treasuryUtxo: UTxO, // The UTxO holding the membership token to be burned
-  scripts: DcuValidators
+  config: TerminateGroupConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { groupUtxo, treasuryUtxo } = config;
+
     const treasuryDatum = Data.from(treasuryUtxo.datum!, TreasuryDatumSchema) as unknown as TreasuryDatum;
-    if (!('TreasuryState' in treasuryDatum)) return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Invalid Treasury State" }));
+    // Check for valid state
+    if (!('TreasuryState' in treasuryDatum) && !('PenaltyState' in treasuryDatum)) {
+         return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Invalid Treasury State" }));
+    }
 
-    const memberRefName = treasuryDatum.TreasuryState.member_reference_tokenname;
-    const policyId = scripts.treasury.mint.policyId;
+    // Extract token name from state (check both variants)
+    const memberRefName = 'TreasuryState' in treasuryDatum 
+        ? treasuryDatum.TreasuryState.member_reference_tokenname 
+        : treasuryDatum.PenaltyState.member_reference_tokenname;
 
-    // Redeemer: TerminateGroup (Variant 1)
+    const policyId = treasuryPolicyId;
+
+    // Redeemer: TerminateGroup (Unit Variant)
     const redeemer = Data.to({
         TerminateGroup: "TerminateGroup" 
     }, TreasuryRedeemer);
 
-    const tx = yield* tryBuildTx("terminateGroup", async () => {
-        const t = lucid.newTx()
-            .readFrom([groupUtxo])
-            // Note: We use the same redeemer for both Spending (Treasury UTxO) and Minting (Burn).
-            // This assumes the Treasury Validator accepts TerminateGroup for both purposes.
-            .collectFrom([treasuryUtxo], redeemer) 
-            .mintAssets(
-                { [policyId + memberRefName]: -1n },
-                redeemer
-            )
-            .attach.MintingPolicy(scripts.treasury.mint.script)
-            .attach.SpendingValidator(scripts.treasury.spend.script)
-            .addSigner(await lucid.wallet().address());
-        
-        return t.complete();
-    });
+    const address = yield* getWalletAddress(lucid);
 
-    return tx;
+    // Note: same redeemer is used for both Spending (Treasury UTxO) and Minting (Burn).
+    return yield* lucid
+        .newTx()
+        .readFrom([groupUtxo])
+        .collectFrom([treasuryUtxo], redeemer)
+        .mintAssets(
+            { [policyId + memberRefName]: -1n },
+            redeemer
+        )
+        .attach.MintingPolicy(treasuryValidator.mintTreasury)
+        .attach.SpendingValidator(treasuryValidator.spendTreasury)
+        .addSigner(address)
+        .completeProgram()
+        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "terminateGroup", error: String(e) })));
   });

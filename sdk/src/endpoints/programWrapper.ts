@@ -1,6 +1,5 @@
 
-import { Effect } from "effect";
-import { TxSignBuilder, LucidEvolution } from "@lucid-evolution/lucid";
+import { LucidEvolution } from "@lucid-evolution/lucid";
 import { makeReturn } from "../core/utils/index.js";
 
 // Endpoint Imports
@@ -37,95 +36,47 @@ export const deleteAccount = (lucid: LucidEvolution, config: DeleteAccountConfig
 /**
  * Creates a generic DCU Group.
  */
-export async function createGroup(
-    lucid: LucidEvolution,
-    config: CreateGroupConfig
-): Promise<TxSignBuilder> {
-    return Effect.runPromise(
-        unsignedCreateGroupTxProgram(lucid, config)
-    );
-}
+export const createGroup = (lucid: LucidEvolution, config: CreateGroupConfig) =>
+    makeReturn(unsignedCreateGroupTxProgram(lucid, config));
 
 /**
  * Updates a DCU Group's parameters.
  */
-export async function updateGroup(
-    lucid: LucidEvolution,
-    config: UpdateGroupConfig
-): Promise<TxSignBuilder> {
-    return Effect.runPromise(
-        unsignedUpdateGroupTxProgram(lucid, config)
-    );
-}
+export const updateGroup = (lucid: LucidEvolution, config: UpdateGroupConfig) =>
+    makeReturn(unsignedUpdateGroupTxProgram(lucid, config));
 
 /**
  * Deletes (deactivates) a DCU Group.
  */
-export async function deleteGroup(
-    lucid: LucidEvolution,
-    config: DeleteGroupConfig
-): Promise<TxSignBuilder> {
-    return Effect.runPromise(
-        unsignedDeleteGroupTxProgram(lucid, config)
-    );
-}
+export const deleteGroup = (lucid: LucidEvolution, config: DeleteGroupConfig) =>
+    makeReturn(unsignedDeleteGroupTxProgram(lucid, config));
 
 /**
  * Joins a user to a DCU Group.
  */
-export async function joinGroup(
-    lucid: LucidEvolution,
-    config: JoinGroupConfig
-): Promise<TxSignBuilder> {
-    return Effect.runPromise(
-        unsignedJoinGroupTxProgram(lucid, config)
-    );
-}
+export const joinGroup = (lucid: LucidEvolution, config: JoinGroupConfig) =>
+    makeReturn(unsignedJoinGroupTxProgram(lucid, config));
 
 /**
  * Distributes payouts from a DCU Group Treasury to the assigned member.
  */
-export async function distributePayout(
-    lucid: LucidEvolution,
-    config: DistributePayoutConfig
-): Promise<TxSignBuilder> {
-    return Effect.runPromise(
-        unsignedDistributePayoutTxProgram(lucid, config)
-    );
-}
+export const distributePayout = (lucid: LucidEvolution, config: DistributePayoutConfig) =>
+    makeReturn(unsignedDistributePayoutTxProgram(lucid, config));
 
 /**
  * Withdraws a member's accumulated balance from the Treasury.
  */
-export async function memberWithdraw(
-    lucid: LucidEvolution,
-    config: MemberWithdrawConfig
-): Promise<TxSignBuilder> {
-    return Effect.runPromise(
-        unsignedMemberWithdrawTxProgram(lucid, config)
-    );
-}
+export const memberWithdraw = (lucid: LucidEvolution, config: MemberWithdrawConfig) =>
+    makeReturn(unsignedMemberWithdrawTxProgram(lucid, config));
 
 /**
- *Exits a member from a DCU Group, claiming refunds or paying penalties.
+ * Exits a member from a DCU Group, claiming refunds or paying penalties.
  */
-export async function exitGroup(
-    lucid: LucidEvolution,
-    config: ExitGroupConfig
-): Promise<TxSignBuilder> {
-    return Effect.runPromise(
-        unsignedExitGroupTxProgram(lucid, config)
-    );
-}
+export const exitGroup = (lucid: LucidEvolution, config: ExitGroupConfig) =>
+    makeReturn(unsignedExitGroupTxProgram(lucid, config));
 
 /**
- * Terminates a group, returning remaining treasury balance to admin.
+ * Terminates a group, burning the treasury membership token.
  */
-export async function terminateGroup(
-    lucid: LucidEvolution,
-    config: TerminateGroupConfig
-): Promise<TxSignBuilder> {
-    return Effect.runPromise(
-        unsignedTerminateGroupTxProgram(lucid, config)
-    );
-}
+export const terminateGroup = (lucid: LucidEvolution, config: TerminateGroupConfig) =>
+    makeReturn(unsignedTerminateGroupTxProgram(lucid, config));

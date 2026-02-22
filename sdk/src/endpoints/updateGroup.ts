@@ -1,8 +1,8 @@
-import { Constr, LucidEvolution, Data, UTxO, fromText, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, UTxO, fromText, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { getScriptAddress, tryBuildTx } from "../core/utils/index.js";
+import { getScriptAddress } from "../core/utils/index.js";
 import { groupValidator } from "../core/validators/constants.js";
 
 /**
@@ -57,7 +57,7 @@ export const unsignedUpdateGroupTxProgram = (
           inputs: [groupUtxo, adminUtxo]
       };
 
-      const tx = yield* tryBuildTx("updateGroup", () => lucid
+      return yield* lucid
         .newTx()
         .collectFrom([groupUtxo], redeemer)
         .collectFrom([adminUtxo])
@@ -67,8 +67,6 @@ export const unsignedUpdateGroupTxProgram = (
             { kind: "inline", value: Data.to(updatedDatum, GroupDatum) },
             groupUtxo.assets
         )
-        .complete()
-      );
-
-      return tx;
+        .completeProgram()
+        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "updateGroup", error: String(e) })));
   });

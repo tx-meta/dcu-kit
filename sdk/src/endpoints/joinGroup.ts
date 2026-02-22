@@ -14,9 +14,9 @@ import {
     GroupSpendRedeemer 
 } from "../core/types.js";
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
-import { accountValidator, accountPolicyId } from "../core/validators/constants.js";
+import { accountPolicyId } from "../core/validators/constants.js";
 import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
-import { getScriptAddress, tryBuildTx, fromHex, toHex } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress } from "../core/utils/index.js";
 import { 
     DcuError, 
     InvalidDatumError, 
@@ -112,11 +112,12 @@ export const unsignedJoinGroupTxProgram = (
         inputs: [groupUtxo, accountUtxo]
     };
 
+    const address = yield* getWalletAddress(lucid);
     const groupAddress = yield* getScriptAddress(lucid, groupValidator.spendGroup);
     const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
 
-    return yield* tryBuildTx("joinGroup", async () => {
-        return lucid.newTx()
+    return yield* lucid
+        .newTx()
         .collectFrom([groupUtxo], groupRedeemer)
         .collectFrom([accountUtxo])
         .collectFrom([adminUtxo])
@@ -134,14 +135,14 @@ export const unsignedJoinGroupTxProgram = (
         .pay.ToContract(
             treasuryAddress,
             { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) },
-            { 
+            {
                 lovelace: contributionAmount,
-                [treasuryPolicyId + accountAssetName]: 1n 
+                [treasuryPolicyId + accountAssetName]: 1n
             }
         )
-        .pay.ToAddress(await lucid.wallet().address(), accountUtxo.assets)
-        .addSigner(await lucid.wallet().address())
-        .complete();
-    });
+        .pay.ToAddress(address, accountUtxo.assets)
+        .addSigner(address)
+        .completeProgram()
+        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "joinGroup", error: String(e) })));
   });
 
