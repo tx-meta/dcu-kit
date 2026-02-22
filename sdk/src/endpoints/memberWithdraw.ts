@@ -50,7 +50,8 @@ export const unsignedMemberWithdrawTxProgram = (
     const treasuryDatum = (yield* parseSafeDatum(treasuryUtxo.datum, TreasuryDatumSchema)) as unknown as TreasuryDatum;
     if (!('TreasuryState' in treasuryDatum)) return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Expected TreasuryState" }));
 
-    const memberRefName = treasuryDatum.TreasuryState.member_reference_tokenname;
+    const ts = treasuryDatum.TreasuryState;
+    const memberRefName = ts.member_reference_tokenname;
     const policyId = treasuryPolicyId!;
 
     // Calculate remaining Treasury Balance
@@ -60,6 +61,19 @@ export const unsignedMemberWithdrawTxProgram = (
          return yield* Effect.fail(new TransactionBuildError({ operation: "memberWithdraw", error: "Insufficient funds in Treasury UTxO" }));
     }
     const remainingBalance = currentTreasuryBalance - withdrawAmount;
+
+    // Linear vesting: drop all claimable entries (consumed by this withdrawal)
+    const now = BigInt(Date.now());
+    const updatedDatum: TreasuryDatum = {
+        TreasuryState: {
+            group_reference_tokenname: ts.group_reference_tokenname,
+            member_reference_tokenname: ts.member_reference_tokenname,
+            membership_start: ts.membership_start,
+            assigned_slot: ts.assigned_slot,
+            slot_number: ts.slot_number,
+            contribution_list: ts.contribution_list.filter(c => c.claimable_at > now),
+        }
+    };
 
     const redeemer: RedeemerBuilder = {
         kind: "selected",
@@ -85,10 +99,10 @@ export const unsignedMemberWithdrawTxProgram = (
         .collectFrom([accountUtxo])
         .collectFrom([treasuryUtxo], redeemer)
         .attach.SpendingValidator(treasuryValidator.spendTreasury)
-        // Output 1: Return remaining balance to Treasury
+        // Output 0: Return remaining balance to Treasury with updated contribution_list
         .pay.ToContract(
             treasuryAddress,
-            { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) },
+            { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
             {
                 lovelace: remainingBalance,
                 [policyId + memberRefName]: 1n

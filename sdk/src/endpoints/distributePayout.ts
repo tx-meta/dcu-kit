@@ -77,9 +77,39 @@ export const unsignedDistributePayoutTxProgram = (
     if (!borrowerUtxo) {
         yield* Effect.fail(new TransactionBuildError({ operation: "distributePayout", error: `No member found for current slot ${currentSlot}` }));
     }
-    
+
+    // Calculate payout: sum each member's claimable contributions for the current time
+    const currentTime = BigInt(Date.now());
+    let payoutAmount = 0n;
+    const outputStates: { utxo: UTxO, datum: TreasuryDatum, remainingLovelace: bigint }[] = [];
+
+    for (const state of memberStates) {
+        if (!('TreasuryState' in state.datum)) continue;
+        const ts = state.datum.TreasuryState;
+
+        const claimable = ts.contribution_list.filter(c => c.claimable_at <= currentTime);
+        const contributed = claimable.reduce((sum, c) => sum + c.claimable_amount, 0n);
+        payoutAmount += contributed;
+
+        // Updated datum: remove claimable entries (mark as paid)
+        const updatedDatum: TreasuryDatum = {
+            TreasuryState: {
+                group_reference_tokenname: ts.group_reference_tokenname,
+                member_reference_tokenname: ts.member_reference_tokenname,
+                membership_start: ts.membership_start,
+                assigned_slot: ts.assigned_slot,
+                slot_number: ts.slot_number,
+                contribution_list: ts.contribution_list.filter(c => c.claimable_at > currentTime),
+            }
+        };
+        outputStates.push({ utxo: state.utxo, datum: updatedDatum, remainingLovelace: state.utxo.assets.lovelace - contributed });
+    }
+
+    if (payoutAmount === 0n) {
+        yield* Effect.fail(new TransactionBuildError({ operation: "distributePayout", error: "No claimable contributions found for the current interval" }));
+    }
+
     const borrowerAddress = yield* getWalletAddress(lucid);
-    const payoutAmount = 200_000_000n; 
 
     // Construct Redeemer using RedeemerBuilder
     const redeemer: RedeemerBuilder = {
@@ -90,8 +120,8 @@ export const unsignedDistributePayoutTxProgram = (
 
             return Data.to({
                 DistributePayout: {
-                    group_ref_input_index: 0n, 
-                    treasury_input_indices: inputIndices, 
+                    group_ref_input_index: 0n,
+                    treasury_input_indices: inputIndices,
                     treasury_output_indices: outputIndices,
                     borrower_output_index: 0n
                 }
@@ -106,20 +136,19 @@ export const unsignedDistributePayoutTxProgram = (
         .readFrom([groupUtxo])
         .collectFrom(treasuryUtxos, redeemer)
         .attach.SpendingValidator(treasuryValidator.spendTreasury)
-        
-        // Output 1: Borrower Payout
+
+        // Output 0: Borrower Payout (sum of all members' claimable contributions)
         .pay.ToAddress(borrowerAddress, { lovelace: payoutAmount });
 
-    // Output N: Return Treasury UTxOs
-    for (const state of memberStates) {
+    // Output N: Return Treasury UTxOs with updated datums and reduced balances
+    for (const state of outputStates) {
         if (!('TreasuryState' in state.datum)) continue;
         txBuilder.pay.ToContract(
             treasuryAddress,
             { kind: "inline", value: Data.to(state.datum, TreasuryDatum) },
-            { 
-                lovelace: 2_000_000n, // Locked min ADA
+            {
+                lovelace: state.remainingLovelace,
                 [treasuryPolicyId + state.datum.TreasuryState.member_reference_tokenname]: 1n
-                // Re-lock the Member Ref using the hex string from datum directly
             }
         );
     }

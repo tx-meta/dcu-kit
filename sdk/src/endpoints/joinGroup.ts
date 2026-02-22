@@ -7,11 +7,12 @@ import {
     RedeemerBuilder
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { 
-    GroupDatum, 
-    TreasuryDatum, 
-    TreasuryRedeemer, 
-    GroupSpendRedeemer 
+import {
+    GroupDatum,
+    TreasuryDatum,
+    TreasuryRedeemer,
+    GroupSpendRedeemer,
+    Contribution
 } from "../core/types.js";
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 import { accountPolicyId } from "../core/validators/constants.js";
@@ -74,14 +75,23 @@ export const unsignedJoinGroupTxProgram = (
     if (!accountAssetEntry) return yield* Effect.fail(new UtxoNotFoundError({ tokenName: "Account NFT", address: accountUtxo.address }));
     
     const accountAssetName = accountAssetEntry.slice(accountPolicy.length); 
+    // Pre-populate contribution schedule: one entry per interval, claimable at end of each period
+    const contributionList: Contribution[] = Array.from(
+        { length: Number(groupDatum.num_intervals) },
+        (_, i) => ({
+            claimable_at: groupDatum.start_time + BigInt(i + 1) * groupDatum.interval_length,
+            claimable_amount: groupDatum.contribution_fee,
+        })
+    );
+
     const treasuryDatum: TreasuryDatum = {
         TreasuryState: {
-            group_reference_tokenname: groupRefName, 
-            member_reference_tokenname: accountAssetName, 
+            group_reference_tokenname: groupRefName,
+            member_reference_tokenname: accountAssetName,
             membership_start: BigInt(Date.now()),
             assigned_slot: assignedSlot,
             slot_number: 0n,
-            contribution_list: []
+            contribution_list: contributionList
         }
     };
 
