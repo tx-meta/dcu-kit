@@ -6,7 +6,10 @@
   "scripts": {
     "clean": "rimraf dist",
     "build": "tsup *.ts --format esm --clean",
-    "create-account": "pnpm run build && node dist/create-account.js"
+    "create-account": "pnpm run build && node dist/create-account.js",
+    "create-group": "pnpm run build && node dist/create-group.js",
+    "join-group": "pnpm run build && node dist/join-group.js",
+    "rosca-lifecycle": "pnpm run build && node dist/rosca-lifecycle.js"
   },
   "dependencies": {
     "@dcu/sdk": "file:../dcu-sdk-0.1.1.tgz",

@@ -45,27 +45,48 @@ export const tryBuildTx = (
   });
 
 /**
- * Wraps an Effect program in a set of execution strategies.
+ * The three execution strategies returned by every DCU SDK endpoint.
  *
- * Provides three ways to run a program without committing to one at the call site:
- * - `unsafeRun()` — Promise that throws on failure (use in programWrapper / CLI).
- * - `safeRun()`   — Promise returning Either<E, A> (use when you need to inspect errors).
- * - `program()`   — Returns the raw Effect for further composition.
- *
- * @param program - Any Effect.Effect<A, E>.
- * @returns Object with `unsafeRun`, `safeRun`, and `program` methods.
- *
- * @example
- * ```typescript
- * export const createAccount = (lucid: LucidEvolution, config: CreateAccountConfig) =>
- *   makeReturn(unsignedCreateAccountTxProgram(lucid, config));
- *
- * // Caller chooses how to run it:
- * const tx = await createAccount(lucid, config).unsafeRun();
- * const result = await createAccount(lucid, config).safeRun(); // Either<DcuError, TxSignBuilder>
- * ```
+ * Choose the one that fits your call site:
+ * - `unsafeRun()` for scripts and examples (throws on error)
+ * - `safeRun()`   for application code that needs to inspect errors
+ * - `program()`   for Effect-native code that composes further
  */
-export const makeReturn = <A, E>(program: Effect.Effect<A, E>) => ({
+export interface ProgramRunner<A, E> {
+  /**
+   * Executes the program and returns a Promise.
+   * Throws if the program fails — best for top-level scripts and CLI usage.
+   *
+   * @example
+   * const tx = await createAccount(lucid, config).unsafeRun();
+   */
+  unsafeRun(): Promise<A>;
+
+  /**
+   * Executes the program and returns a Promise of `Either<E, A>`.
+   * Never throws — inspect `Either.isLeft` / `Either.isRight` to handle errors.
+   *
+   * @example
+   * const result = await createAccount(lucid, config).safeRun();
+   * if (Either.isLeft(result)) console.error(result.left);
+   */
+  safeRun(): Promise<Either.Either<A, E>>;
+
+  /**
+   * Returns the raw `Effect.Effect<A, E>` for composing with other Effects.
+   * Use this when you are inside an `Effect.gen` block.
+   *
+   * @example
+   * const tx = yield* createAccount(lucid, config).program();
+   */
+  program(): Effect.Effect<A, E>;
+}
+
+/**
+ * Wraps an Effect program in a `ProgramRunner` so callers can choose
+ * how to execute it without committing to Effect at the call site.
+ */
+export const makeReturn = <A, E>(program: Effect.Effect<A, E>): ProgramRunner<A, E> => ({
   unsafeRun: () => Effect.runPromise(program),
   safeRun:   () => Effect.runPromise(Effect.either(program)),
   program:   () => program,
