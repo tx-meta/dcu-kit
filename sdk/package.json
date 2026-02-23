@@ -1,6 +1,6 @@
 {
   "name": "@dcu/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Offchain SDK for DCU Toolkit",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,7 +14,9 @@
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "test": "vitest run",
-    "repack": "pnpm run build && pnpm pack"
+    "repack": "pnpm run build && pnpm pack",
+    "examples:setup": "pnpm run repack && cd examples && pnpm install",
+    "examples:create-account": "pnpm run examples:setup && cd examples && npx tsx create-account.ts"
   },
   "devDependencies": {
     "@effect/vitest": "^0.17.8",
@@ -33,5 +35,10 @@
     "@lucid-evolution/lucid": "0.4.29",
     "@noble/hashes": "^1.8.0",
     "effect": "^3.14.22"
+  },
+  "pnpm": {
+    "overrides": {
+      "libsodium-wrappers-sumo": "0.8.2"
+    }
   }
 }
