@@ -1,5 +1,5 @@
 import { mintingPolicyToId } from "@lucid-evolution/lucid";
-import * as blueprint from "../plutus.json" with { type: "json" };
+import blueprint from "../plutus.json" with { type: "json" };
 import { readValidators, getScript, Blueprint } from "./reader.js";
 import { Effect } from "effect";
 
