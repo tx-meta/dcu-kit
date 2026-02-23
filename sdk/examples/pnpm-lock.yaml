@@ -131,7 +131,7 @@ packages:
     resolution: {integrity: sha512-I3Z+6SWUoaljh3TBzCnCxjlUyN8tA+NAk5L6m9IxvCf1BENQTePzPMis97CoN/iMW1St3WN+AWCCRp+TTBRiDg==}
 
   '@dcu/sdk@file:../dcu-sdk-0.1.1.tgz':
-    resolution: {integrity: sha512-O3eW9FnNd0zGJflf7cAjMGDrocZykDBIa0YO47fkeRihVhkYwKjY4jcMGFgrrrEdQ/wEJAD4NIlWVvovR4oHWA==, tarball: file:../dcu-sdk-0.1.1.tgz}
+    resolution: {integrity: sha512-ZHrfKDqkNM1+Ev279LOjXXSTtf6RBcq97z8iuIARCqcaTSsfjeU8Le7yZ/dMgDN4c2vjyQKdNGBhYyX0sTXrkw==, tarball: file:../dcu-sdk-0.1.1.tgz}
     version: 0.1.1
 
   '@dnsquery/dns-packet@6.1.1':

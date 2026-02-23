@@ -15,7 +15,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "test": "vitest run",
     "repack": "pnpm run build && pnpm pack",
-    "examples:setup": "pnpm run repack && cd examples && pnpm install",
+    "examples:setup": "pnpm run repack && cd examples && pnpm add file:../dcu-sdk-$(node -p 'require(\"../package.json\").version').tgz --force",
     "examples:create-account": "pnpm run examples:setup && cd examples && npx tsx create-account.ts"
   },
   "devDependencies": {
