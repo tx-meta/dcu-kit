@@ -22,8 +22,8 @@ async function makeLucid() {
         );
         const lucid = await Lucid(blockfrost, "Preprod");
 
-        const seed = process.env.USER_SEED;
-        if (!seed) throw new Error("USER_SEED env var required for live network");
+        const seed = process.env.USER1_SEED;
+        if (!seed) throw new Error("USER1_SEED env var required for live network");
         lucid.selectWallet.fromSeed(seed);
         return lucid;
     }
@@ -60,6 +60,9 @@ async function main() {
     const signed = await tx.sign.withWallet().complete();
     const txHash = await signed.submit();
     console.log("Transaction submitted. Hash:", txHash);
+    if (process.env.BLOCKFROST_KEY) {
+        console.log(`View on Cexplorer: https://preprod.cexplorer.io/tx/${txHash}`);
+    }
 
     console.log("Waiting for confirmation...");
     await lucid.awaitTx(txHash);
