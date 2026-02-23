@@ -16,7 +16,10 @@
     "test": "vitest run",
     "repack": "pnpm run build && pnpm pack",
     "examples:setup": "pnpm run repack && cd examples && pnpm add file:../dcu-sdk-$(node -p 'require(\"../package.json\").version').tgz --force",
-    "examples:create-account": "pnpm run examples:setup && cd examples && npx tsx create-account.ts"
+    "examples:create-account": "pnpm run examples:setup && cd examples && npx tsx create-account.ts",
+    "examples:create-group": "pnpm run examples:setup && cd examples && npx tsx create-group.ts",
+    "examples:join-group": "pnpm run examples:setup && cd examples && npx tsx join-group.ts",
+    "examples:rosca-lifecycle": "pnpm run examples:setup && cd examples && npx tsx rosca-lifecycle.ts"
   },
   "devDependencies": {
     "@effect/vitest": "^0.17.8",
