@@ -14,8 +14,7 @@ import {
     TreasuryRedeemer 
 } from "../core/types.js";
 import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
-import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
-import { calculateCurrentSlot } from "../core/treasury.utils.js";
+import { getScriptAddress, getWalletAddress, parseSafeDatum, calculateCurrentSlot } from "../core/utils/index.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
 
 /**
