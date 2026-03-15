@@ -1,0 +1,93 @@
+---
+title: createGroup
+description: Initialize a new DCU Group and mint the GroupReference/GroupAdmin token pair.
+---
+
+The `createGroup` endpoint establishes a new Decentralized Credit Union. It defines the rules, payout rates, and administrators for a specific pod.
+
+<Callout title="Token Names Are Fixed by the Protocol" type="info">
+`createGroup` mints two tokens with fixed protocol-defined names: `GroupReference` (locked at the Group Validator) and `GroupAdmin` (sent to your wallet as the admin credential). These names are not derived from your UTxO. They are the same for every group.
+</Callout>
+
+### Core Responsibilities
+When this endpoint is executed, the SDK constructs a transaction that:
+1. Mints the Group Auth and Reference NFT pair under the Group Policy ID.
+2. Locks the `groupDatum` rules as an inline datum into a new UTxO at the `GroupValidator` address.
+3. Spends `utxoToSpend` to fund the transaction.
+
+## Configuration
+
+```ts
+import { UTxO } from "@lucid-evolution/lucid";
+import { GroupDatum } from "@dcu/sdk";
+
+export type CreateGroupConfig = {
+    /** The core ruleset of the newly created DCU Group */
+    groupDatum: GroupDatum;
+
+    /** The UTxO in your wallet that you are spending to fund the creation */
+    utxoToSpend: UTxO;
+};
+```
+
+### GroupDatum Fields
+
+All numeric fields are `bigint`. Time values are POSIX milliseconds.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `contribution_fee` | `bigint` | Lovelace amount each member locks per interval |
+| `contribution_fee_policyid` | `string` | Policy ID of the contribution asset. Use `""` for ADA |
+| `contribution_fee_assetname` | `string` | Asset name of the contribution token. Use `""` for ADA |
+| `joining_fee` | `bigint` | One-time lovelace fee paid when joining the group |
+| `joining_fee_policyid` | `string` | Policy ID of the joining fee asset |
+| `joining_fee_assetname` | `string` | Asset name of the joining fee asset |
+| `penalty_fee` | `bigint` | Lovelace deducted on early exit |
+| `penalty_fee_policyid` | `string` | Policy ID of the penalty asset |
+| `penalty_fee_assetname` | `string` | Asset name of the penalty asset |
+| `interval_length` | `bigint` | Duration of each rotation cycle in milliseconds |
+| `num_intervals` | `bigint` | Total number of rotation cycles (= max members) |
+| `member_count` | `bigint` | Current member count. Set to `0n` on creation |
+| `share_holding` | `boolean` | Whether the group uses a share-holding model |
+| `is_active` | `boolean` | Set to `true` on creation |
+| `start_time` | `bigint` | POSIX timestamp (ms) when the first interval begins |
+
+**Example:**
+
+```ts
+import { GroupDatum } from "@dcu/sdk";
+
+const groupDatum: GroupDatum = {
+  contribution_fee:          5_000_000n,  // 5 ADA per interval
+  contribution_fee_policyid: "",           // ADA
+  contribution_fee_assetname: "",
+  joining_fee:               2_000_000n,  // 2 ADA one-time
+  joining_fee_policyid:      "",
+  joining_fee_assetname:     "",
+  penalty_fee:               1_000_000n,  // 1 ADA early-exit penalty
+  penalty_fee_policyid:      "",
+  penalty_fee_assetname:     "",
+  interval_length:           2_592_000_000n, // 30 days in ms
+  num_intervals:             5n,             // 5-member group
+  member_count:              0n,             // always 0 on creation
+  share_holding:             false,
+  is_active:                 true,
+  start_time:                BigInt(Date.now()),
+};
+```
+
+## Usage
+
+Once the config is ready, pass it to `createGroup` and submit the signed transaction:
+
+```ts
+import { createGroup } from "@dcu/sdk";
+
+try {
+    const txBuilder = await createGroup(lucid, config).unsafeRun();
+    const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+    console.log("Group Created!", txHash);
+} catch (error) {
+    console.error("Failed to create group:", error);
+}
+```

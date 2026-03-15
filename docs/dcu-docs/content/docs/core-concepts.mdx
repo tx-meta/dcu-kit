@@ -1,0 +1,76 @@
+---
+title: Core Concepts
+description: Essential concepts to understand when building with the DCU SDK.
+---
+
+## What is a ROSCA?
+
+A **Rotating Savings and Credit Association (ROSCA)** is a time-tested group savings mechanism. A fixed number of members each contribute the same amount per cycle. Each cycle, one member receives the entire pooled pot, rotating through the group until every member has received a payout exactly once.
+
+The DCU Toolkit implements this model on Cardano:
+- **Members** lock ADA into a Treasury UTxO when they join.
+- **Intervals** advance on a fixed schedule encoded in the Group datum.
+- **Payouts** are distributed to the member whose `assigned_slot` matches the current interval, enforced by the on-chain Treasury Validator.
+
+---
+
+## CIP-68: Why Everything Comes in Pairs
+
+The DCU protocol uses the **CIP-68** token metadata standard. The key insight of CIP-68 is that smart contracts cannot efficiently read data stored inside a token sitting in a user's wallet. To solve this, every identity is represented as a **synchronized pair of tokens**:
+
+| Token | Where it lives | What it does |
+|-------|---------------|--------------|
+| **Reference NFT** (`(100)` prefix) | Locked at the validator | Stores the on-chain datum (readable by contracts) |
+| **User Auth NFT** (`(222)` prefix) | Held in the user's wallet | Proves ownership (required to authorise transactions) |
+
+When you call `createAccount`, both tokens are minted atomically. When the smart contract validates a transaction, it reads the Reference NFT's datum and verifies you hold the Auth NFT, without ever taking the Auth NFT from your wallet.
+
+The same pairing applies to groups: the **Group Reference NFT** lives at the Group Validator; the **Group Auth NFT** proves admin authority.
+
+---
+
+## UTxO Model: `selected_out_ref`
+
+Cardano uses a **UTxO (Unspent Transaction Output)** model. Every wallet balance is made up of individual UTxOs: discrete parcels of ADA or tokens that must be fully consumed when spent.
+
+Several endpoints (like `createAccount`) require a `selected_out_ref` parameter: a UTxO you own. This UTxO is consumed during the transaction, and its unique `txHash#index` is used as entropy to derive a globally unique CIP-68 token name. Because no two UTxOs can ever share the same identifier, your minted token pair is guaranteed unique on the entire chain.
+
+```ts
+// Pick any UTxO you own. It will be consumed and its ID used for token naming.
+const [selected_out_ref] = await lucid.wallet().getUtxos();
+```
+
+---
+
+## Action Wrappers (`ProgramRunner`)
+
+Because the DCU Toolkit interacts with financial smart contracts, transaction reliability is paramount.
+
+Unlike typical Node.js SDKs that immediately execute side-effects using basic `Promises`, the DCU Toolkit uses the [Effect](https://effect.website/) framework. Effect allows the SDK to build explicit, composable execution pipelines. If a transaction fails to build due to insufficient ADA, a missing UTxO, or an invalid datum, it fails gracefully without throwing uncatchable exceptions.
+
+Every endpoint returns a `ProgramRunner` with three execution modes:
+
+### 1. `unsafeRun()`
+Standard `async/await`. Throws on error. Best for scripts and quick prototyping.
+```ts
+const tx = await createAccount(lucid, config).unsafeRun();
+```
+
+### 2. `safeRun()`
+Returns an `Either`, no `try/catch` needed. Best for application-layer error handling.
+```ts
+import { Either } from "effect";
+
+const result = await createAccount(lucid, config).safeRun();
+if (Either.isRight(result)) {
+  console.log("Success:", result.right);
+} else {
+  console.error("Failed:", result.left);
+}
+```
+
+### 3. `program()`
+Returns a raw `Effect`. Compose multiple endpoints inside an `Effect.gen` block.
+```ts
+const tx = yield* createAccount(lucid, config).program();
+```

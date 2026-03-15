@@ -1,0 +1,41 @@
+---
+title: updateGroup
+description: Safely modify the configuration parameters of an existing DCU Group.
+---
+
+The `updateGroup` endpoint grants Group Administrators the capability to reconfigure their DCU pod.
+
+## Security Constraints
+Certain parameters inside a ROSCA pool (such as `interval_length` or `penalty_fee`) are incredibly sensitive. The `GroupValidator` smart contract will summarily reject any transaction attempting to mutate these core financial timelines unless the group is currently empty (`member_count == 0`).
+
+## Configuration
+
+```ts
+import { UTxO } from "@lucid-evolution/lucid";
+import { GroupDatum } from "@dcu/sdk";
+
+export type UpdateGroupConfig = {
+    /** The UTxO containing the active group state */
+    groupUtxo: UTxO;
+    
+    /** The newly desired parameter configuration */
+    updatedDatum: GroupDatum;
+    
+    /** The Administrator's authorization proof */
+    adminUtxo: UTxO;
+};
+```
+
+## Usage
+
+```ts
+import { updateGroup } from "@dcu/sdk";
+
+try {
+    const txBuilder = await updateGroup(lucid, config).unsafeRun();
+    const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+    console.log("Group Configuration updated! TxHash:", txHash);
+} catch (error) {
+    console.error("Failed to update group:", error);
+}
+```
