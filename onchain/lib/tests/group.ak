@@ -700,10 +700,8 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
 
   // Define what makes a datum "Invalid"
   let is_invalid =
-    datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.interval_length <= 0 || datum.num_intervals <= 0 || datum.member_count != 0 || // CreateGroup must have 0 members
-    !datum.is_active
+    datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.interval_length <= 0 || datum.num_intervals <= 0 || datum.num_intervals > 100 || datum.member_count != 0 || !datum.is_active
 
-  // CreateGroup must be active
   // The Property:
   // If the datum is invalid, validation MUST return False.
   // If the datum happens to be valid (rare but possible), we expect True.
@@ -712,4 +710,222 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
   } else {
     validate_create_group(policy_id, 0, 0, [input], [output], mint)
   }
+}
+
+// --- Security: num_intervals bound ---
+
+test create_group__rejects_excessive_num_intervals() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint =
+    assets.from_asset(policy_id, ref_tn, 1)
+      |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  // num_intervals = 101 exceeds the 100-interval cap
+  let datum =
+    GroupDatum { ..common.test_group_datum(policy_id), num_intervals: 101 }
+  let output =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      datum,
+    )
+  let input = common.test_input(output_ref, output)
+
+  !validate_create_group(policy_id, 0, 0, [input], [output], mint)
+}
+
+// --- Security: fee currency freeze (is_critical_update with members) ---
+
+test update_group__rejects_fee_currency_change_with_members() {
+  let policy_id = common.test_policy_id()
+  let alt_policy_id = common.test_hash_03()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  // Group has 3 members — critical fields must be frozen
+  let base_datum =
+    GroupDatum { ..common.test_group_datum(policy_id), member_count: 3 }
+  let group_input =
+    common.test_input(
+      output_ref,
+      common.test_script_utxo(
+        policy_id,
+        assets.from_asset(policy_id, ref_tn, 1),
+        base_datum,
+      ),
+    )
+  let admin_input =
+    common.test_input(
+      output_ref,
+      common.test_user_utxo(
+        common.test_pkh(),
+        assets.from_asset(policy_id, user_tn, 1),
+        base_datum,
+      ),
+    )
+
+  // Attempt to switch contribution_fee currency — economic rug-pull
+  let updated_datum =
+    GroupDatum {
+      ..base_datum,
+      contribution_fee_policyid: alt_policy_id,
+    }
+  let group_output =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      updated_datum,
+    )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// --- Security: ADA preservation on update ---
+
+test update_group__rejects_ada_drain() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = common.test_group_datum(policy_id)
+
+  // Input has 5 ADA locked alongside the ref token
+  let group_input_value =
+    assets.from_lovelace(5_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_input =
+    common.test_input(
+      output_ref,
+      common.test_script_utxo(policy_id, group_input_value, base_datum),
+    )
+  let admin_input =
+    common.test_input(
+      output_ref,
+      common.test_user_utxo(
+        common.test_pkh(),
+        assets.from_asset(policy_id, user_tn, 1),
+        base_datum,
+      ),
+    )
+
+  // Output only returns the ref token — ADA drained
+  let group_output =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      base_datum,
+    )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// --- Security: ADA preservation on remove ---
+
+test remove_group__rejects_ada_drain() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = common.test_group_datum(policy_id)
+
+  // Input has 5 ADA locked alongside the ref token
+  let group_input_value =
+    assets.from_lovelace(5_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_input =
+    common.test_input(
+      output_ref,
+      common.test_script_utxo(policy_id, group_input_value, base_datum),
+    )
+  let admin_input =
+    common.test_input(
+      output_ref,
+      common.test_user_utxo(
+        common.test_pkh(),
+        assets.from_asset(policy_id, user_tn, 1),
+        base_datum,
+      ),
+    )
+
+  // Output only returns the ref token — ADA drained
+  let updated_datum = GroupDatum { ..base_datum, is_active: False }
+  let group_output =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      updated_datum,
+    )
+
+  !validate_remove_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// --- Security: exact datum equality on remove (no silent field changes) ---
+
+test remove_group__rejects_simultaneous_field_change() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = common.test_group_datum(policy_id)
+
+  let group_input =
+    common.test_input(
+      output_ref,
+      common.test_script_utxo(
+        policy_id,
+        assets.from_asset(policy_id, ref_tn, 1),
+        base_datum,
+      ),
+    )
+  let admin_input =
+    common.test_input(
+      output_ref,
+      common.test_user_utxo(
+        common.test_pkh(),
+        assets.from_asset(policy_id, user_tn, 1),
+        base_datum,
+      ),
+    )
+
+  // Admin flips is_active AND silently raises the contribution_fee — must be rejected
+  let updated_datum =
+    GroupDatum {
+      ..base_datum,
+      is_active: False,
+      contribution_fee: base_datum.contribution_fee * 10,
+    }
+  let group_output =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      updated_datum,
+    )
+
+  !validate_remove_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
 }

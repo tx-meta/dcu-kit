@@ -42,7 +42,12 @@ validator group_validator {
         admin_input_index,
         group_input_index,
         group_output_index,
-      } ->
+      } -> {
+        // [security]: self-reference — group_input_index must resolve to the UTxO
+        // being spent, preventing cross-UTxO attacks that bypass member_count == 0.
+        expect Some(group_input) = list.at(inputs, group_input_index)
+        expect group_input.output_reference == utxo
+
         validate_update_group(
           policy_id,
           group_ref_token_name,
@@ -52,13 +57,18 @@ validator group_validator {
           inputs,
           outputs,
         )
+      }
 
       RemoveGroup {
         group_ref_token_name,
         admin_input_index,
         group_input_index,
         group_output_index,
-      } ->
+      } -> {
+        // [security]: self-reference — same pattern as UpdateGroup above
+        expect Some(group_input) = list.at(inputs, group_input_index)
+        expect group_input.output_reference == utxo
+
         validate_remove_group(
           policy_id,
           group_ref_token_name,
@@ -68,11 +78,13 @@ validator group_validator {
           inputs,
           outputs,
         )
+      }
     }
   }
 
+  // [security]: else branch must fail — prevents unauthorized staking withdrawals
+  // and governance votes from the group's script address.
   else(_) {
-    trace @"Group Validator - Fallback"
-    True
+    fail
   }
 }
