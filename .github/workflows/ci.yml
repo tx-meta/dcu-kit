@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "staging"]
   pull_request:
 
 permissions:
@@ -13,6 +13,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ------------------------------------------------------------
+  # Job: Verify SDK (TypeScript)
+  # ------------------------------------------------------------
+  sdk-verify:
+    name: 🔧 Verify SDK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./sdk
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: sdk/pnpm-lock.yaml
+
+      - name: 📦 Install Dependencies
+        run: pnpm install
+
+      - name: 🔍 Type Check
+        run: pnpm tsc --noEmit
+
+      - name: 🏗️ Build
+        run: pnpm run build
+
+      - name: 🧪 Run Tests
+        run: pnpm test
+
   # ------------------------------------------------------------
   # Job: Verify On-chain (Aiken)
   # ------------------------------------------------------------
@@ -45,14 +82,14 @@ jobs:
           RUST_BACKTRACE: 1
 
   # ------------------------------------------------------------
-  # Job: Verify Documentation (Typst)
+  # Job: Verify Design Specs (Typst)
   # ------------------------------------------------------------
   docs-verify:
-    name: 📄 Verify Docs
+    name: 📄 Verify Design Specs
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./docs/dcu-kit-design-specs
+        working-directory: ./docs/design-specs
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
@@ -61,7 +98,6 @@ jobs:
         uses: typst-community/setup-typst@v3
 
       - name: 🔨 Compile Design Specs
-        # compiling effectively checks for syntax errors and broken references
         run: typst compile dcu-kit.typ
 
   # ------------------------------------------------------------
@@ -69,7 +105,7 @@ jobs:
   # ------------------------------------------------------------
   ci-success:
     name: ✅ CI Success
-    needs: [aiken-verify, docs-verify]
+    needs: [sdk-verify, aiken-verify, docs-verify]
     if: always()
     runs-on: ubuntu-latest
     steps:

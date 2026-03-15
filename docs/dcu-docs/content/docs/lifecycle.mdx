@@ -1,0 +1,173 @@
+---
+title: ROSCA Lifecycle
+description: A complete end-to-end walkthrough of the DCU protocol from account creation to payout.
+---
+
+This page walks through a full Rotating Savings and Credit Association (ROSCA) lifecycle using the DCU Toolkit SDK, from identity creation to final payout distribution.
+
+<Callout title="Error handling omitted for brevity" type="info">
+The code examples below show the happy path without `try/catch` blocks to keep the flow readable. In production, wrap every `unsafeRun()` call in a `try/catch`. See [Getting Started](/docs/getting-started) for the full error handling pattern.
+</Callout>
+
+## The Protocol Flow
+
+```
+createAccount → createGroup → joinGroup (×N members) → distributePayout (×N cycles) → memberWithdraw / exitGroup
+```
+
+Each step below corresponds directly to an SDK endpoint.
+
+---
+
+## Step 1: Create an Account
+
+Every participant must establish their on-chain identity before interacting with any group.
+
+```ts
+import { createAccount } from "@dcu/sdk";
+
+// Select any UTxO you own. Used as entropy for CIP-68 token name derivation.
+const [selectedUtxo] = await lucid.wallet().getUtxos();
+
+const txBuilder = await createAccount(lucid, {
+  selected_out_ref: selectedUtxo,
+  account_datum: {
+    email_hash: "a3f1...",  // hex-encoded hash of user's email
+    phone_hash: "b2e4...",  // hex-encoded hash of user's phone
+  }
+}).unsafeRun();
+
+const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+```
+
+After this transaction confirms, your wallet holds a **User Auth NFT** and the **Account Reference NFT** is locked at the Account Validator.
+
+---
+
+## Step 2: Create a Group
+
+An administrator initialises the ROSCA, setting the rules for every future member.
+
+```ts
+import { createGroup, GroupDatum } from "@dcu/sdk";
+
+const groupDatum: GroupDatum = {
+  contribution_fee:           5_000_000n,      // 5 ADA per interval
+  contribution_fee_policyid:  "",
+  contribution_fee_assetname: "",
+  joining_fee:                2_000_000n,
+  joining_fee_policyid:       "",
+  joining_fee_assetname:      "",
+  penalty_fee:                1_000_000n,
+  penalty_fee_policyid:       "",
+  penalty_fee_assetname:      "",
+  interval_length:            2_592_000_000n,  // 30 days in ms
+  num_intervals:              5n,              // 5-member group, 5 rotation cycles
+  member_count:               0n,
+  share_holding:              false,
+  is_active:                  true,
+  start_time:                 BigInt(Date.now()),
+};
+
+const txBuilder = await createGroup(lucid, {
+  groupDatum,
+  utxoToSpend: adminUtxo,
+}).unsafeRun();
+
+const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+console.log("Group created:", txHash);
+```
+
+---
+
+## Step 3: Members Join
+
+Each member calls `joinGroup` with their identity credential. Repeat for every participant up to `num_intervals`.
+
+```ts
+import { joinGroup } from "@dcu/sdk";
+
+const txBuilder = await joinGroup(lucid, {
+  groupUtxo,       // the Group UTxO from Step 2
+  accountUtxo,     // the member's Account UTxO from Step 1
+  adminUtxo,       // the admin's credential UTxO
+  contributionAmount: 5_000_000n,  // must match group's contribution_fee
+}).unsafeRun();
+
+const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+```
+
+`joinGroup` mints a Treasury Membership NFT, locks the contribution, and assigns the member the next available rotation slot.
+
+---
+
+## Step 4: Distribute Payouts
+
+Once an interval elapses, the current rotation slot's borrower submits this transaction to claim the pooled contributions.
+
+```ts
+import { distributePayout } from "@dcu/sdk";
+
+const txBuilder = await distributePayout(lucid, {
+  groupUtxo,
+  treasuryUtxos,  // all active Treasury UTxOs for this group
+}).unsafeRun();
+
+const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+```
+
+The SDK calculates the current slot from the group's `start_time` and `interval_length`, sums all claimable contributions across Treasury UTxOs, and pays them to the transaction submitter's wallet.
+
+---
+
+## Step 5: Member Withdrawals (Independent Flow)
+
+`memberWithdraw` is a separate, independent action, not a follow-up to `distributePayout`. It allows any member to withdraw their own claimable contributed ADA directly from their Treasury position, based on the vesting schedule.
+
+```ts
+import { memberWithdraw } from "@dcu/sdk";
+
+const txBuilder = await memberWithdraw(lucid, {
+  groupUtxo,
+  accountUtxo,
+  treasuryUtxo,
+  withdrawAmount: 5_000_000n,
+}).unsafeRun();
+
+const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+```
+
+---
+
+## Step 6: Exit or Terminate
+
+When the group's cycles are complete, members exit and reclaim their remaining contributions.
+
+```ts
+import { exitGroup } from "@dcu/sdk";
+
+// Graceful exit after the group has run its full course
+const txBuilder = await exitGroup(lucid, {
+  groupUtxo,
+  accountUtxo,
+  treasuryUtxo,
+}).unsafeRun();
+
+const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+```
+
+For broken or stuck Treasury UTxOs, the admin can use [`terminateGroup`](/docs/api-reference/terminateGroup) to force-burn the membership token and recover the locked ADA.
+
+---
+
+## Summary
+
+| Step | Endpoint | Who calls it |
+|------|----------|--------------|
+| 1 | `createAccount` | Every participant |
+| 2 | `createGroup` | Admin |
+| 3 | `joinGroup` | Each member (×N) |
+| 4 | `distributePayout` | Current slot's borrower |
+| 5 | `memberWithdraw` | Member with claimable balance |
+| 6 | `exitGroup` | Member leaving |
+| - | `terminateGroup` | Admin (emergency cleanup) |

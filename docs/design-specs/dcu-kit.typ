@@ -1,0 +1,1959 @@
+#import "./resources/transaction.typ": *
+#let background-color = rect(width: 100%, height: 100%, fill: rgb("#102E4A"))
+#let image-foreground = image("./images/tx-logo.png", width: 100%, fit: "contain")
+#let image-header = image("./images/tx-logo-dark.png", height: 75%, fit: "contain")
+#let fund-link = link("https://projectcatalyst.io/funds/14/f14-cardano-use-cases-concept")[Catalyst Proposal]
+#let git-link = link("https://github.com/tx-meta/dcu-kit")[Main Github Repo]
+
+#set page(
+  background: background-color,
+  paper :"a4",
+  margin: (left : 20mm,right : 20mm,top : 40mm,bottom : 30mm)
+)
+
+// Set default text style
+#set text(15pt, font: "Barlow")
+
+#v(3cm) // Add vertical space
+
+#align(center)[
+  #box(
+    width: 60%,
+    stroke: none,
+    image-foreground,
+  )
+]
+
+#v(1cm) // Add vertical space
+
+// Set text style for the report title
+#set text(22pt, fill: white)
+
+// Center-align the report title
+#align(center)[#strong[Decentralized Credit Unions Toolkit]]
+#set text(20pt, fill: white)
+#align(center)[#strong[Design Specification]]
+
+#v(5cm)
+
+// Set text style for project details
+#set text(13pt, fill: white)
+
+
+// Reset text style to default
+#set text(fill: luma(0%))
+
+// Display project details
+#show link: underline
+#set terms(separator:[: ],hanging-indent: 18mm)
+
+#set par(justify: true)
+#set page(
+  paper: "a4",
+  margin: (left: 20mm, right: 20mm, top: 40mm, bottom: 35mm),
+  background: none,
+  header: [
+    #align(right)[
+      #image("./images/tx-logo-dark.png", width: 25%, fit: "contain")
+    ]
+    #line(length: 100%, stroke: 0.5pt)
+  ],
+)
+
+#v(20mm)
+#show link: underline
+#show outline.entry.where(level: 1): it => {
+  v(6mm, weak: true)
+  strong(it)
+}
+
+#outline(depth:3, indent: 1em)
+#pagebreak()
+#set text(size: 11pt)  // Reset text size to 11pt
+#set page(
+   footer: [
+    #line(length: 100%, stroke: 0.5pt)
+    #v(-3mm)
+    #align(center)[ 
+      #set text(size: 11pt, fill: black)
+      *TxMeta – *
+      #set text(size: 11pt, fill: gray)
+      *DCU-Toolkit*
+      #v(-3mm)
+      Project Design Specification
+      #v(-3mm)
+    ]
+    #v(-6mm)
+    #align(right)[
+      #context counter(page).display( "1/1",both: true)]
+  ] 
+)
+
+// Initialize page counter
+#counter(page).update(1)
+#v(100pt)
+// Display project details
+#set terms(separator:[: ],hanging-indent: 18mm)
+#align(center)[
+  #set text(size: 20pt)
+  #strong[Decentralized Credit Unions (DCU) Toolkit]]
+#v(20pt)
+\
+
+#set heading(numbering: "1.")
+#show heading: set text(rgb("#102E4A"))
+
+= Overview
+\
+
+The DCU-Toolkit (Decentralized Credit Unions Toolkit) is a smart contract infrastructure developed using Aiken for the Cardano blockchain. It is designed to facilitate automated cooperative finance operations including group savings, rotating fund distribution, democratic governance, and treasury management for traditional savings groups such as Chamas, SACCOs, Tontines, and similar cooperative finance models.
+
+This toolkit empowers members to seamlessly create accounts, form cooperative groups, contribute funds, participate in democratic decision-making, and manage shared treasuries directly from their wallets. It ensures secure and efficient transactions by automating group governance, fund rotation, and treasury operations within a decentralized framework.
+
+#pagebreak()
+\
+= Architecture
+
+\
+#figure(
+  image("./images/dcu-kit-architecture.png", width: 100%),
+  caption: [DCU Toolkit Architecture],
+)
+\
+
+There are three validators in this cooperative finance system.
+
++ *Account Validator* 
+  
+  A multi-validator responsible for creating member accounts by minting CIP-68 compliant Account NFT Assets and sending the user NFT to the member's wallet while sending the reference NFT to the spending endpoint. It enables members to update their account metadata and delete their accounts by burning the Account NFTs.
+
++ *Group Validator*
+  
+  A multi-validator responsible for creating cooperative groups by minting CIP-68 compliant Group NFT Assets. It manages group configuration including contribution fees, joining fees, penalties, subscription intervals, and democratic governance rules. The validator enables group administrators to update group metadata and deactivate groups when necessary given a signature threshold.
+
++ *Treasury Validator*
+  
+  This is the core validator responsible for managing prepaid contributions, rotating fund distribution, member participation, and withdrawal operations. The contract incorporates a linear vesting mechanism to gradually release funds to members according to the group's rotation schedule. It handles member joins, exits, administrative withdrawals, and penalty management within the cooperative finance framework.
+
+#pagebreak()
+
+\
+= Specification
+
+\
+== System Actors
+\ 
++ *Member*
+  
+  An entity who interacts with the Account Validator to create an account and join cooperative groups by depositing contributions to the Treasury Validator. A user becomes a member when they mint an Account NFT and can participate in multiple cooperative groups.
+
++ *Group Administrator*
+
+  An entity who interacts with the Group Validator to create cooperative groups and manage group configurations. A member becomes a group administrator when they create a group by minting a Group NFT. Administrators can update group parameters, manage member participation, and withdraw funds according to group rules.
+
+\
+== Tokens
+\
++ *Account NFT*
+
+  Can only be minted by a user when creating an account in the cooperative finance system and burned when the user deletes their account. A check must be included to verify that there are no active memberships in any Treasury before burning.
+
+  - *TokenName:* Defined in Account Validator using CIP-68 standards with transaction ID, output index, and appropriate prefix (`prefix_100` for reference NFT, `prefix_222` for user NFT).
+
++ *Group NFT*
+
+  Can only be minted when creating a cooperative group and held by the group administrator. This NFT represents ownership and administrative control over the group configuration and operations.
+
+  - *TokenName:* Defined in Group Validator using CIP-68 standards with transaction ID, output index, and appropriate prefix (`prefix_100` for reference NFT, `prefix_222` for user NFT).
+
++ *Membership NFT* 
+  
+  Can only be minted when a user joins a group and the Reference NFT is locked in the Treasury Validator while the User NFT is sent to the member.
+
+  - *TokenName:* Defined in Treasury Validator using CIP-68 standards with transaction ID, output index, and appropriate prefix (`prefix_100` for reference NFT, `prefix_222` for user NFT).
+
+
+
+\
+== Smart Contracts
+\
+=== Treasury Multi-validator
+\
+The Treasury Validator is the core contract responsible for managing member contributions, validating group memberships, and ensuring proper distribution of funds through rotating schedules and linear vesting. It facilitates member joins, exits, fund withdrawals, and penalty processing, allowing both members and administrators to interact securely within the cooperative finance framework.
+
+\
+==== Slot Assignment & Rotation Mechanism
+\
+The DCU-Toolkit implements a deterministic slot assignment system for ROSCA-style rotating fund distribution via on-chain calculation:
+
+1. *Assignment*: When a member joins a group, they are assigned a fixed slot position (0 to num_intervals-1) sequentially. This value is stored in their Treasury datum's `assigned_slot` field.
+
+2. *Calculation*: The current rotation slot is calculated as:
+   ```
+   current_slot = (current_time - group.start_time) / group.interval_length % num_intervals
+   ```
+
+3. *Validation*: During `DistributePayout`, the validator verifies that the borrower's `assigned_slot` matches the calculated `current_slot`. This ensures only the designated member for the current interval can receive the payout.
+
+\
+==== Parameters
+\
+- *`group_policy_id`* : Hash of the Group PolicyId
+
+- *`member_account_policy_id`* : Hash of the Account PolicyId
+\
+
+==== Minting Purpose
+\
+===== Redeemer
+\
+- *```rust
+  JoinGroup {
+    group_ref_input_index: Int,
+    member_input_index: Int,
+    treasury_output_index: Int,
+  }
+  ```*
+
+- *```rs 
+  TerminateGroup
+  ```*
+
+\
+===== Validation
+\
++ *JoinGroup* 
+  
+  The redeemer allows a member to join a cooperative group by minting one unique Membership Token representing their membership.
+
+  - Validate that the member's Account NFT is present in the transaction inputs.
+  
+  - A Group Input must be provided from the Group Validator (as a spending input, not reference) to update the member count.
+  
+  - The treasury output must be sent to the Treasury Script's address and contain a Treasury datum that is consistent with the Group datum.
+  
+  - Exactly one Membership Token (with token name "treasury-membership") is minted.
+  
+  - Validate that sufficient contribution fees and joining fees are locked in the Treasury UTxO according to the Group datum specifications.
+  
+  - Ensure that the User NFT doesn't go to the Script
+  - Ensure Membership token goes back to the script
+  \
+
++ *TerminateGroup*
+  
+  - The redeemer must burn exactly one Membership Token (i.e. a single token with the token name "treasury-membership" is burned).
+  
+  - Validate that the Group reference input provides valid Group datum.
+
+\
+
+==== Spend Purpose
+\
+==== Datum
+\
+This is a Sum type datum where one represents the treasury datum and the other represents a penalty datum.
+
+\
+===== Treasury datum <treasury-datum>
+\
+- *`group_reference_tokenname`: ```rs AssetName```* – Links to the Group Validator.
+
+- *`member_reference_tokenname`: ```rs AssetName```* – Identifies the member's Account NFT.
+
+- *`membership_start`: ```rs Int```*  – The timestamp when the member joined the group.
+
+- *`assigned_slot`: ```rs Int```* – The member's fixed slot position (0 to num_intervals-1) assigned at join time. Used for deterministic rotation schedule validation.
+
+- *`contribution_list`:* List of contributions – Each contribution specifies when and how much can be withdrawn based on the rotation schedule.
+
+  - *`Contribution`*:
+    - *`claimable_at` : ```rs Int```*  – Time after which the loan can be claimed.
+    - *`claimable_amount` : ```rs Int```*  – The loan amount available for withdrawal at that time.
+
+// - *`group_shares`: ```rs Int```* – The number of shares allocated to this member within the group.
+\
+===== Penalty datum <penalty-datum>
+
+\
+- *`group_reference_tokenname`: ```rs AssetName```* – Links to the Group Validator.
+
+- *`member_reference_tokenname`: ```rs AssetName```* – Identifies the member's Account NFT.
+
+\
+==== Redeemer
+
+\
+- *```rust 
+  DistributePayout {
+    group_ref_input_index: Int,
+    treasury_input_indices: List<Int>,
+    treasury_output_indices: List<Int>,
+    borrower_output_index: Int,
+  }
+  ```*
+
+- *```rust
+  ExitGroup {
+    group_ref_input_index: Int,
+    member_input_index: Int,
+    treasury_input_index: Int,
+    penalty_output_index: Int,
+  }
+  ```*
+
+- *```rust
+  MemberWithdraw {
+    group_ref_input_index: Int,
+    member_input_index: Int,
+    treasury_input_index: Int,
+    treasury_output_index: Int,
+    loans_withdrawn: Int,
+  } 
+  ```*
+
+\
+==== Validation
+
+\
++ *DistributePayout* 
+  
+  This redeemer allows the group (or an administrator/bot) to trigger the distribution of funds to the eligible member for the current interval. It utilizes a "trustless collection" pattern where multiple member inputs are aggregated and sent directly to the borrower.
+
+  - *Eligibility Check*: Validate that the "Borrower's" Treasury datum contains an `assigned_slot` that matches the calculated current rotation slot. This strictly enforces the rotation schedule.
+
+  - The `Treasury` UTxOs being spent (at *`treasury_input_indices`*) must be identified and contain valid Treasury datums.
+
+  - A Group datum must be supplied as a reference input (at *`group_ref_input_index`*) to determine the Rotation Schedule and current Borrower.
+
+  - The "Borrower" output (at *`borrower_output_index`*) must go to the address of the scheduled member.
+
+  - The value sent to the borrower must equal the sum of the collected `claimable_amount`s from the inputs (minus any transaction fees if applicable).
+
+  - The outputs at *`treasury_output_indices`* must return the Treasury UTxOs to the script address with updated datums (marking the current interval as "paid").
+
+  \
++ *ExitGroup* 
+
+  The redeemer allows a member to exit a cooperative group, unlocking remaining contributions to their wallet address provided they have no loans.
+
+  - The member must provide an input (at *`member_input_index`*) containing the appropriate Account NFT.
+
+  - The Treasury UTxO (from treasury_input_index) must have a valid Treasury datum.
+  
+  - The Group UTxO is provided as a spending input to decrement the member count.
+
+
+  - The decision branch is based on the membership timing:
+
+    // - *Without Penalty:* If the current time is past the membership period or if the Group is inactive, the Membership Token is burned.
+
+    - *Penalty:* If exiting early (active group), the transaction must produce an output (at penalty_output_index) carrying a Penalty datum. This output must include at least the minimum penalty fee as defined by the Group datum.
+
+  \
++ *MemberWithdraw* 
+  
+  The redeemer allows a member to withdraw their allocated funds when it's their turn in the rotation schedule.
+
+  - The member's input (at member_input_index) must contain the correct Account NFT.
+    
+  - The Treasury UTxO (from treasury_input_index) must have a valid Treasury datum.
+
+  - The Group datum (from the reference input at group_ref_input_index) must be validated for withdrawal eligibility.
+
+  - Implement linear vesting by verifying withdrawal amount against vesting schedule and member's share allocation, contribution and reputation score.
+  
+  - If group is inactive, allow full withdrawal and burn the Membership Token.
+
+#pagebreak()
+
+=== Group Validator
+\
+The Group Validator is responsible for creating cooperative groups, managing group configurations, and controlling group lifecycle operations including activation and deactivation.
+
+==== Parameter
+\
+Nothing
+
+\
+==== Minting Purpose
+
+===== Redeemer
+\
+- CreateGroup
+\
+===== Validation
+\
++ *CreateGroup* 
+
+  The redeemer allows creating a new cooperative group by minting one unique CIP-68 compliant Group Token.
+
+  - An input (at *`input_index`*) must be present to derive unique token names (using CIP68 prefixes).
+
+  - Validate that exactly one Reference Token and one User Token are minted as per the CIP68 compliance standards.
+  
+  - The unique tokens are derived from the transaction ID and output index of the input.
+  
+  - The output at *`group_output_index`* must be sent to the Group Script's address.
+  
+  - The output must contain a Group datum with the following requirements:
+
+    - *contribution_fee*: Must be greater than 0.
+    - *joining_fee*: Must be ≥ 0.
+    - *penalty_fee*: Must be ≥ 0.
+    - *interval_length*: Must be greater than 0.
+    - *num_intervals*: Must be > 0 and within a reasonable bound (e.g. ≤ 100).
+    - *member_count*: Must be initialized to 0.
+    - *is_active*: Must be set to true. 
+
+\
+
+==== Spend Purpose
+\
+===== Datum <group-datum>
+\
+
+- *`contribution_fee_policyid: PolicyId`* The PolicyId governing the asset used for the contribution fee.
+
+- *`contribution_fee_assetname: AssetName`* The AssetName of the contribution fee.
+
+- *`contribution_fee: Int`* An Int representing the contribution fee amount per interval.
+
+- *`joining_fee_policyid: PolicyId`* The PolicyId governing the asset used for the joining fee.
+
+- *`joining_fee_assetname: AssetName`* The AssetName of the joining fee.
+
+- *`joining_fee: Int`* An Int representing the one-time joining fee.
+
+- *`penalty_fee_policyid: PolicyId`* The PolicyId governing the asset used for the penalty fee.
+
+- *`penalty_fee_assetname: AssetName`* The AssetName of the penalty fee.
+
+- *`penalty_fee: Int`* An Int representing the fee deducted when a member exits early.
+
+- *`interval_length: Int`* An Int defining the duration of one contribution interval.
+
+- *`num_intervals: Int`* An Int representing the total number of intervals in the rotation cycle.
+
+- *`member_count: Int`* An Int tracking the number of active members in the group.
+
+- *`share_holding: Bool`* A Bool indicating if members can hold multiple shares.
+
+- *`is_active: Bool`* A Bool indicating whether the group is currently active.
+  
+*Note:* Contribution fees can be based on length of period the member commits to, e.g. If they pay for one cycle, the fees may differ from paying for multiple cycles. Group administrators can configure flexible pricing models.
+
+\
+
+===== Redeemer
+\
+-  *```rust
+  UpdateGroup {
+    group_ref_token_name: AssetName,
+    admin_input_index: Int,
+    group_input_index: Int,
+    group_output_index: Int,
+  }
+````````*
+  
+
+- *```rust
+  RemoveGroup {
+    group_ref_token_name: AssetName,
+    admin_input_index: Int,
+    group_input_index: Int,
+    group_output_index: Int,
+  }
+```````*
+\
+====== Validation
+\
++ *UpdateGroup*
+
+  This redeemer endpoint allows the administrator to update the group metadata attached to a Group UTxO.
+
+  - A Group UTxO containing the Group NFT must be provided (at group_input_index) with its output reference matching the provided reference.
+
+  - An administrator input (at admin_input_index) must be present to prove ownership of the Group NFT (derived from group_ref_token_name).
+  
+  - The output at group_output_index must be sent to the Group Script's address and must include an updated Group datum.
+  
+  - Validate that the metadata of the Reference NFT token is updated within acceptable bounds.
+  
+  - Critical metadata changes (fees, intervals) are *ONLY* allowed if `member_count == 0`.
+  
+  - The Group NFT must still be present in the output.
+
+  \
++ *RemoveGroup*
+
+  This redeemer endpoint allows an administrator to deactivate a group from the cooperative finance system.
+
+  - The transaction must include two script inputs:
+
+    - One input containing the Group UTxO with the Group NFT (at *`group_input_index`*).
+
+    - An administrator input (at *`admin_input_index`*) proving ownership of the Group NFT.
+
+  - Two script outputs must be produced, with one of them (at *`group_output_index`*) sent to the Group Script's address.
+  
+  - The output Group datum must indicate that the group is inactivated by setting is_active to false.
+  
+  - The Group NFT must still be present in the output to maintain correct state tracking.
+  
+  - `member_count` must be 0 to remove/deactivate a group.
+
+#pagebreak()
+
+=== Account Validator
+
+\
+The Account Validator handles the creation, update, and removal of member accounts within the cooperative finance system.
+
+\
+==== Parameter
+\  
+Nothing
+
+\
+==== Minting Purpose
+
+===== Redeemer
+\
+- *```rust 
+  CreateAccount { input_index: Int, output_index: Int }
+  ```*
+
+- *```rust 
+  DeleteAccount { reference_token_name: AssetName }
+  ```*
+
+\
+====== Validation
+\
++ *CreateAccount*
+  
+  The redeemer allows creating a new member account by minting one unique CIP-68 compliant Account Token.
+
+  - An input must be present to derive unique token names using CIP68 prefixes.
+
+  - Validate that exactly one Account Reference Token and one Account User Token are minted and the unique tokens are generated from the transaction's ID and output index.
+  
+  - Ensure the output (at* `output_index`*) must be sent to the Account Script's address and must carry an Account datum.
+  
+  - Ensure the datum includes valid account detail:
+
+    - *`email_hash`:* Must be 32 bytes long, or
+
+    - *`phone_hash`:* Must be 32 bytes long.  
+  
+  - The User NFT must not be sent to the script.
+  
+  - The Reference NFT must be preserved at the script address.
+
+  \
++ *DeleteAccount*
+
+  This redeemer endpoint allows for the removal of a member account by burning the associated Account Tokens.
+
+  _A Check That there are no active memberships should be done off-chain._
+
+  - Validate that the redeemer only burns one Account Reference Token and one Account User Token.
+
+  - There should be no remaining account-related tokens in the transaction after burning.
+
+\
+
+==== Spend Purpose
+
+===== Datum <account-datum>
+\
+- *`email_hash: Hash<ByteArray, Sha2_256>`:* A hash (using Sha2_256) of the member's email as a ByteArray. This must be exactly 32 bytes long.
+
+- *`phone_hash: Hash<ByteArray, Sha2_256>`:* A hash (using Sha2_256) of the member's phone number as a ByteArray. This must also be exactly 32 bytes long.
+\
+===== Redeemer
+\
+- *```rust
+  UpdateAccount {
+    reference_token_name: AssetName,
+    user_input_index: Int,
+    account_input_index: Int,
+    account_output_index: Int,
+  }
+```*
+
+- *```rust
+  RemoveAccount {
+    reference_token_name: AssetName,
+    user_input_index: Int,
+    account_input_index: Int,
+  }
+```*
+
+\
+====== Validation
+\
++ *UpdateAccount*
+
+  This redeemer endpoint allows a member to update the metadata attached to an Account UTxO.
+
+  - Validate that an Account UTxO containing the Account NFT must be present in the inputs (at *`account_input_index`*).
+
+  - A user input (at *`user_input_index`*) must include the Account User Token, proving ownership.
+  
+  - The output (at *`account_output_index`*) must be sent to the Account Script's address and it must carry an updated Account datum.
+  
+  - The updated Account datum must satisfy metadata validation, ensuring that contact details remain correctly formatted.
+  
+  - The Reference NFT must be forwarded correctly to the spending endpoint. 
+  
+  \
++ *RemoveAccount*
+  
+  The redeemer allows the removal of an account by a member from the cooperative finance system. 
+  
+  _Must Check That there are no active memberships in the off-chain code._
+ 
+  - The transaction must include an Account UTxO (at *`account_input_index`*) containing the Account NFT.
+
+  - A user input (at *`user_input_index`*) must be present to prove ownership via the Account User Token.
+
+  - The redeemer must burn the Account Reference NFT, which is validated by confirming that the minted value includes a burn (i.e. a negative quantity) for the reference token.
+
+#pagebreak()
+
+= Transactions
+\
+This section outlines the various transactions involved in the DCU-Toolkit on the Cardano blockchain. Each transaction type demonstrates the interaction patterns between members, administrators, and the three core validators.
+
+\
+== Account Validator
+\
+=== Mint :: CreateAccount
+\
+This transaction creates a new member account by minting Account NFTs. This transaction is performed by a user to establish their identity within the cooperative finance system and enable participation in multiple groups.
+
+\
+#transaction(
+  "CreateAccount",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 5000000,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Account Validator UTxO",
+      address: "account_validator",
+      value: (
+        ada: 2000000,
+        Ref_NFT: 1,
+      ),
+      datum: (
+        email_hash: "0x12..ef",
+        phone_hash: "0xab..89",
+      ),
+    ),
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 1000000, // Change
+        User_NFT: 1,
+      ),
+    ),
+  ),
+  show_mints: true,
+  notes: [Create Account Transaction],
+)
+
+\
+==== Inputs
+\
+  + *Member Wallet UTxO.*
+    - Address: Member's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - Any ADA required for the transaction.
+\
+==== Mints
+\
+  + *Account Multi-validator*
+    - Redeemer: CreateAccount
+
+    - Value: 
+
+      - +1 Account NFT Asset
+
+      - +1 Reference NFT Asset
+\
+==== Outputs
+\
+  + *Member Wallet UTxO:*
+
+    - Address: Member wallet address
+
+      - minimum ADA
+
+      - 1 Account NFT Asset
+  
+  + *Account Validator UTxO:*
+
+    - Address: Account Validator script address
+    - Datum:
+
+      - *`email_hash: Hash<ByteArray, Sha2_256>`:* A hash (using Sha2_256) of the member's email as a ByteArray. This must be exactly 32 bytes long.
+      - *`phone_hash: Hash<ByteArray, Sha2_256>`:* A hash (using Sha2_256) of the member's phone number as a ByteArray. This must also be exactly 32 bytes long.
+    
+    - Value:     
+
+      - 1 Account Reference NFT Asset
+#pagebreak()
+
+=== Spend :: UpdateAccount
+\
+
+This transaction updates the member's account metadata. It consumes both the Account NFT and the Reference NFT, then sends the updated Account NFT back to the member's wallet and the updated Reference NFT to the spending endpoint.
+
+\
+#transaction(
+  "UpdateAccount",
+  inputs: (
+    (
+      name: "Account Validator UTxO",
+      address: "account_validator",
+      value: (
+        ada: 2000000,
+        Ref_NFT: 1,
+      ),
+      datum: (
+        email_hash: "0x12..ef",
+        phone_hash: "0xab..89",
+      ),
+    ),
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 2000000,
+        User_NFT: 1,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Account Validator UTxO",
+      address: "account_validator",
+      value: (
+        ada: 2000000,
+        Ref_NFT: 1,
+      ),
+      datum: (
+        email_hash: "0xnew..",
+        phone_hash: "0xnew..",
+      ),
+    ),
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 1500000,
+        User_NFT: 1,
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Update Account Metadata],
+)
+\
+
+==== Inputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value:
+    
+      - Minimum ADA
+
+      - 1 Account NFT Asset
+
+  + *Account Validator UTxO*
+
+    - Address: Account validator script address
+
+    - Datum:
+
+      - existing_metadata: listed in @account-datum
+.
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Reference NFT Asset
+\
+==== Outputs
+\
+  + *Member Wallet UTxO*
+    - Address: Member wallet address
+
+    - Datum:
+      - updated_metadata: New metadata for the account.
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Account NFT Asset
+
+  + *Account Validator UTxO:*
+    - Address: Account validator script address
+
+    - Datum:
+      - updated_metadata: New metadata for the account    
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Reference NFT Asset
+
+
+
+#pagebreak()
+
+=== Mint :: DeleteAccount
+\
+This transaction removes a member account from the cooperative finance system by burning both the Account Reference NFT and the Account User NFT. The check that the member has no active group memberships must be performed off-chain before submitting this transaction.
+
+\
+#transaction(
+  "DeleteAccount",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 2000000,
+        User_NFT: 1,
+      ),
+    ),
+    (
+      name: "Account Validator UTxO",
+      address: "account_validator",
+      value: (
+        ada: 2000000,
+        Ref_NFT: 1,
+      ),
+      datum: (
+        email_hash: "0x12..ef",
+        phone_hash: "0xab..89",
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 3500000, // Reclaimed ADA
+      ),
+    ),
+  ),
+  show_mints: true,
+  notes: [Delete Account & Burn NFTs],
+)
+
+\
+==== Inputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Account User NFT Asset
+
+  + *Account Validator UTxO*
+
+    - Address: Account validator script address
+
+    - Datum:
+
+      - existing_datum: listed in @account-datum
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Account Reference NFT Asset
+\
+==== Mints
+\
+  + *Account Multi-validator (Mint)*
+
+    - Redeemer: DeleteAccount
+
+    - Value:
+
+      - -1 Account Reference NFT Asset
+
+      - -1 Account User NFT Asset
+
+  + *Account Multi-validator (Spend)*
+
+    - Redeemer: RemoveAccount
+
+    - Authorizes spending the Account Validator UTxO and proves ownership via the User NFT.
+\
+==== Outputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value:
+
+      - Reclaimed ADA (from both UTxOs)
+
+*Note:* No script output is produced. `RemoveAccount` (spend) and `DeleteAccount` (mint) execute in the same transaction — the spend validator authorizes unlocking the script UTxO while the mint validator burns both tokens. The check that the member has no active group memberships must be performed off-chain before submission.
+
+#pagebreak()
+
+== Group Validator
+\
+=== Mint :: CreateGroup
+\
+This transaction creates a new cooperative group by minting Group NFTs. This transaction is performed by a member who wishes to become a group administrator.
+
+\
+#transaction(
+  "CreateGroup",
+  inputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 10000000,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        joining_fee: 100,
+        contribution_fee: 10,
+        penalty_fee: 50,
+        interval: 86400,
+        member_count: 0, // Initialized
+        active: true,
+      ),
+    ),
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 1000000, // Change
+        Group_User: 1,
+      ),
+    ),
+  ),
+  show_mints: true,
+  notes: [Create Group Transaction],
+)
+\
+
+==== Inputs
+\
+  + *Administrator Wallet UTxO.*
+    - Address: Administrator's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - Any additional ADA required for the transaction
+\
+==== Mints
+\
+  + *Group Multi-validator*
+
+    - Redeemer: CreateGroup
+    
+    - Value:
+
+      - +1 Group NFT Asset
+
+      - +1 Reference NFT Asset
+\
+==== Outputs
+\
+  + *Administrator Wallet UTxO:*
+
+    - Address: Administrator wallet address
+
+    - Value:
+
+      - minimum ADA
+
+      - 1 Group NFT Asset
+  
+  + *Group Validator UTxO:*
+
+    - Address: Group validator script address
+
+    - Datum:
+
+      - *`contribution_fee_policyid: PolicyId`* The PolicyId governing the asset used for the contribution fee.
+      - *`contribution_fee_assetname: AssetName`* The AssetName of the contribution fee.
+      - *`contribution_fee: Int`* An Int representing the contribution fee amount per interval.
+      - *`joining_fee_policyid: PolicyId`* The PolicyId governing the asset used for the joining fee.
+      - *`joining_fee_assetname: AssetName`* The AssetName of the joining fee.
+      - *`joining_fee: Int`* An Int representing the one-time joining fee.
+      - *`penalty_fee_policyid: PolicyId`* The PolicyId governing the asset used for the penalty fee.
+      - *`penalty_fee_assetname: AssetName`* The AssetName of the penalty fee.
+      - *`penalty_fee: Int`* An Int representing the fee deducted when a member exits early.
+      - *`interval_length: Int`* An Int defining the duration of one contribution interval.
+      - *`num_intervals: Int`* An Int representing the total number of intervals in the rotation cycle.
+      - *`share_holding: Bool`* A Bool indicating if members can hold multiple shares.
+      - *`is_active: Bool`* A Bool indicating whether the group is currently active.
+
+    - Value:
+
+      - 1 Group Reference NFT Asset
+#pagebreak()
+
+=== Spend :: UpdateGroup
+\
+
+This transaction updates the group metadata attached to the Group UTxO at the script address. It enables administrators to adjust group parameters such as fees, intervals, and governance rules.
+
+\
+#transaction(
+  "UpdateGroup",
+  inputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 2000000,
+        Group_NFT: 1,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 0, // Must be 0
+        active: false,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 1000000,
+        Group_NFT: 1,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 0,
+        active: true,
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Update Group Metadata (Safe)],
+)
+\
+
+==== Inputs
+\
+  + *Administrator Wallet UTxO*
+
+    - Address: Administrator's wallet address
+
+    - Value:
+     
+      - Minimum ADA 
+
+      - Group NFT Asset
+
+  + *Group Validator UTxO*
+
+    - Address: Group validator script address
+
+    - Datum:
+
+      - existing_metadata: Current metadata listed in @group-datum.
+
+    - Value: 
+
+      - Minimum ADA
+
+      - 1 Reference NFT Asset
+\
+==== Outputs
+\
+  + *Administrator Wallet UTxO*
+    - Address: Administrator's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Group NFT Asset
+
+  + *Group Validator UTxO*
+    - Address: Group validator script address
+
+    - Datum:
+
+      - updated_metadata: updated metadata for the group listed in @group-datum
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Reference NFT Asset
+
+
+#pagebreak()
+
+=== Spend :: RemoveGroup
+\
+This transaction allows an administrator to deactivate a cooperative group by updating the Group UTxO datum so that `is_active` is set to `false`. The Group Reference NFT is preserved in the output to maintain correct on-chain state. The group must have zero active members (`member_count == 0`) before it can be deactivated.
+
+\
+#transaction(
+  "RemoveGroup",
+  inputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 2000000,
+        Group_NFT: 1,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 0, // Required
+        active: true,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 1500000,
+        Group_NFT: 1,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 0,
+        active: false, // Deactivated
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Deactivate Group],
+)
+
+\
+==== Inputs
+\
+  + *Administrator Wallet UTxO*
+
+    - Address: Administrator's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Group NFT Asset (proves ownership)
+
+  + *Group Validator UTxO*
+
+    - Address: Group validator script address
+
+    - Datum:
+
+      - existing_datum: listed in @group-datum, with `member_count == 0` and `is_active == true`
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Group Reference NFT Asset
+\
+==== Outputs
+\
+  + *Administrator Wallet UTxO*
+
+    - Address: Administrator's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Group NFT Asset
+
+  + *Group Validator UTxO*
+
+    - Address: Group validator script address
+
+    - Datum:
+
+      - updated_datum: Same fields as @group-datum with `is_active` set to `false`
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Group Reference NFT Asset
+
+*Note:* The Group Reference NFT is preserved in the output to maintain correct on-chain state. The group can no longer accept new members once `is_active` is `false`.
+
+#pagebreak()
+
+== Treasury Validator
+\
+=== Mint :: JoinGroup
+\
+This transaction occurs when a member joins a cooperative group by locking contribution funds in the Treasury Validator script address.
+
+\
+#transaction(
+  "JoinGroup",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 10000000,
+        Account_NFT: 1,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        joining_fee: 50,
+        contribution_fee: 100,
+        member_count: 5,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 9850000, 
+        Account_NFT: 1,
+        Member_User: 1, // Account Identity
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 100000000, 
+        Member_Ref: 1, // Locked State
+      ),
+      datum: (
+        start: 123456789,
+        contribution: 100,
+        assigned_slot: 6, // Slot #6
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 6, 
+      ),
+    ),
+  ),
+  show_mints: true,
+  notes: [Join & Lock Funds],
+)
+\
+
+==== Inputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value: 
+
+      - 100 ADA: Contribution amount to lock in the Treasury Contract.
+
+      - 1 Account NFT Asset
+
+  + *Group Reference UTxO*
+
+    - Address: Group Contract Address
+
+    - Datum:
+
+      - group_datum: listed in @group-datum
+
+    - Value: 
+
+      - 1 Group Reference NFT Asset
+      - Minimum Ada
+\
+==== Mints
+\
+  + *Treasury Validator*
+    - Redeemer: JoinGroup
+
+    - Value: 
+
+      - +1 Treasury NFT Asset
+      
+\
+==== Outputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value:
+
+      - Change ADA
+
+      - 1 Account NFT Asset
+
+  + *Treasury Validator UTxO*
+
+    - Address: Treasury validator script address
+
+    - Datum: 
+      - treasury datum as listed in @treasury-datum
+
+    - Value:
+    
+      - 100 ADA: Contribution funds to be managed by the group
+
+      - 1 Treasury NFT Asset
+#pagebreak()
+
+=== Spend :: MemberWithdraw
+\
+This transaction allows a member to withdraw their allocated funds when it's their turn in the rotation schedule.
+
+\
+#transaction(
+  "MemberWithdraw",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 2000000,
+        Account_NFT: 1,
+        Member_User: 1, // Account Identity
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 500000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        start: 123456789,
+        contribution: 100,
+        assigned_slot: 6,
+      ),
+    ),
+    (
+      reference: true,
+      name: "Group Reference UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 102000000, // +100 ADA withdrawn
+        Account_NFT: 1,
+        Member_User: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 400000000, // Remaining
+        Member_Ref: 1,
+      ),
+      datum: (
+        start: 123456789,
+        contribution: 0, 
+        member_index: 6,
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Member Withdraws Funds],
+)
+\
+
+==== Inputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value: 
+
+      - Minimum ADA
+
+      - 1 Account NFT Asset
+
+  + *Treasury Validator UTxO*
+
+    - Address: Treasury validator script address
+
+    - Datum:
+      - datum listed in @treasury-datum
+
+    - Value:
+
+      - Locked contribution funds
+
+      - 1 Treasury NFT Asset
+
+  + *Group Reference UTxO*
+
+    - Address: Group Contract Address
+
+    - Datum:
+
+      - group_datum: listed in @group-datum
+
+    - Value: 
+
+      - 1 Group Reference NFT Asset
+      - Minimum Ada
+\
+==== Outputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value:
+    
+      - Minimum ADA
+      
+      - Withdrawn funds according to vesting schedule
+      
+      - 1 Account NFT Asset
+
+  + *Treasury Validator UTxO*
+
+    - Address: Treasury validator script address
+
+    - Datum:
+
+      - datum listed in @treasury-datum with updated installments
+
+    - Value:
+    
+      - Remaining funds after withdrawal
+
+      - 1 Treasury NFT Asset
+
+#pagebreak()
+
+=== Spend :: ExitGroup
+\
+This transaction allows a member to exit a cooperative group by spending a Treasury UTxO, unlocking the remaining contribution to their wallet address and potentially creating a Penalty UTxO.
+
+\
+#transaction(
+  "ExitGroup",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 2000000,
+        Account_NFT: 1,
+        Member_User: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 500000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        start: 123456789,
+        contribution: 500,
+        assigned_slot: 6,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 6,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 452000000, // Refund - Penalty
+        Account_NFT: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 50000000, // Penalty Locked
+        Member_Ref: 1,
+      ),
+      datum: (
+        penalty: 50,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        member_count: 5, // Decremented
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Exit Group & Update Count],
+)
+\
+
+==== Inputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value: 
+
+      - Minimum ADA 
+
+      - 1 Account NFT Asset
+
+  + *Treasury Validator UTxO*
+
+    - Address: Treasury validator script address
+
+    - Datum:
+
+      - current_datum: Current treasury metadata listed in @treasury-datum
+
+    - Value:
+
+      - Remaining contribution funds
+
+      - Treasury NFT Asset
+
+  + *Group Reference UTxO*
+
+    - Address: Group Contract Address
+
+    - Datum:
+
+      - group_datum: listed in @group-datum
+
+    - Value: 
+
+      - 1 Group Reference NFT Asset
+      - Minimum Ada
+\
+==== Outputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - Remaining contribution funds (minus any penalties)
+
+      - 1 Account NFT Asset
+
+  + *Treasury Validator UTxO* (if exiting early with penalty)
+
+    - Address: Treasury validator script address
+
+    - Datum:
+
+      - penalty_datum: Metadata indicating the penalty for early exit as listed in @penalty-datum
+
+    - Value:
+    
+      - Penalty ADA
+
+      - Treasury NFT Asset
+
+*Note:* If the group is inactive or membership period has ended, the Treasury NFT is burned.
+
+#pagebreak()
+
+=== Spend :: DistributePayout
+\
+This transaction aggregates contributions from multiple members and distributes the lump sum "pot" to the eligible winner of the current rotation interval. It ensures trustless delivery of funds.
+
+\
+#transaction(
+  "DistributePayout",
+  inputs: (
+    (
+      name: "Borrower Wallet",
+      address: "member_wallet", // Borrower
+      value: (
+        ada: 2000000,
+        Member_User: 1, // Account Identity
+      ),
+    ),
+    (
+      name: "Treasury UTxO (A)",
+      address: "treasury_validator",
+      value: (
+        ada: 100000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        assigned_slot: 0,
+      ),
+    ),
+    (
+      name: "Treasury UTxO (B)",
+      address: "treasury_validator",
+      value: (
+        ada: 100000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        assigned_slot: 1,
+      ),
+    ),
+    (
+      reference: true,
+      name: "Group Reference UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Borrower Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 200000000, // Pot
+      ),
+    ),
+    (
+      name: "Treasury UTxO (A)",
+      address: "treasury_validator",
+      value: (
+        ada: 2000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        status: "paid",
+      ),
+    ),
+    (
+      name: "Treasury UTxO (B)",
+      address: "treasury_validator",
+      value: (
+        ada: 2000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        status: "paid",
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Distribute Payout to Borrower],
+)
+\
+
+==== Inputs:
+\
++ *Treasury Validator UTxOs (Multiple)*
+
+  - Address: Treasury validator script address
+
+  - Datum:
+    - treasury_datum: listed in @treasury-datum (for Member A)
+    - treasury_datum: listed in @treasury-datum (for Member B)
+    - ...
+
+  - Value:
+    - Locked contribution funds per member
+    - Treasury NFT Assets
+
++ *Group Reference UTxO*
+
+    - Address: Group Contract Address
+
+    - Datum:
+
+      - group_datum: listed in @group-datum
+
+    - Value: 
+
+      - 1 Group Reference NFT Asset
+      - Minimum Ada
+\
+==== Outputs:
+\
++ *Borrower Wallet UTxO*
+
+  - Address: Scheduled Borrower's wallet address
+
+  - Value:
+
+    - Minimum ADA
+
+    - Total collected "Pot" amount (Sum of inputs)
+
++ *Treasury Validator UTxOs (Multiple)*
+
+  - Address: Treasury validator script address
+
+  - Datum:
+
+    - updated_datum: Metadata reflecting the payout ("Paid" status) for each member
+    
+  - Value:
+
+    - Minimum ADA (or remaining balance)
+
+    - Treasury NFT Assets
+#pagebreak()
+
+
+=== Spend :: Penalty Withdraw
+\
+This transaction allows a group administrator with a Group NFT to unlock penalty funds from the Penalty UTxO, burning the Treasury NFT attached to the UTxO.
+
+\
+#transaction(
+  "PenaltyWithdraw",
+  inputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 2000000,
+        Group_NFT: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 50000000,
+        Treasury_NFT: 1,
+      ),
+      datum: (
+        type: "Penalty",
+      ),
+    ),
+    (
+      reference: true,
+      name: "Group Reference UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 52000000, // Withdrawn Penalty
+        Group_NFT: 1,
+      ),
+    ),
+  ),
+  show_mints: true,
+  notes: [Withdraw Penalty Funds],
+)
+\
+
+==== Inputs:
+\
++ *Administrator Wallet UTxO*
+
+  - Address: Administrator's wallet address
+
+  - Value:
+
+    - Minimum ADA
+
+    - Group NFT Asset
+
++ *Treasury Validator UTxO*
+
+  - Address: Treasury validator script address
+
+  - Penalty Datum: as listed in @penalty-datum
+
+  - Value:
+
+    - Penalty funds
+
+    - Treasury NFT Asset
+
++ *Group Reference UTxO*
+
+    - Address: Group Contract Address
+
+    - Datum:
+
+      - group_datum: listed in @group-datum
+
+    - Value: 
+
+      - 1 Group Reference NFT Asset
+      - Minimum Ada
+\
+==== Mints
+\
+  + *Treasury Validator*
+    - Redeemer: TerminateGroup
+
+    - Value: 
+
+      - -1 Treasury NFT Asset
+
+\
+==== Outputs:
+\
++ *Administrator Wallet UTxO*
+
+  - Address: Administrator's wallet address
+
+  - Value:
+
+    - Minimum ADA
+
+    - Withdrawn penalty funds
+    
+    - Group NFT Asset
+
++ *Treasury Validator UTxO*
+
+  - Address: Treasury validator script address
+
+  - Value:
+
+    - Remaining ADA after withdrawal (if any)
+
+
+#pagebreak()
+
+// Additional Features for Future Versions
+
+// TODO:(V2) Member funds should be associated with their own staking credentials so they can earn staking rewards even while funds are locked in the contract.
+
+// TODO:(V2) Implement multiplier for discounts and penalties. The longer members participate, the less penalty they pay for early exit.
+
+// TODO:(V2) Groups should be deletable after a specified time period following inactivation.
+
+// TODO:(V2) Democratic governance features: on-chain voting for group decisions, proposal systems, and member-driven parameter adjustments.
+
+// TODO:(V2) Multi-signature requirements for administrative actions in larger groups.
+

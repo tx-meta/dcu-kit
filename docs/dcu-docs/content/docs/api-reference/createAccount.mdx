@@ -1,0 +1,55 @@
+---
+title: createAccount
+description: Generate an unsigned transaction to mint a new User Auth NFT and Reference NFT.
+---
+
+The `createAccount` endpoint is the first step for any new user entering the DCU ecosystem. 
+
+### Why Mint Two NFTs?
+Under the Cardano **CIP-68 standard**, smart contracts cannot easily read data from tokens held directly in a user's wallet. To solve this, `createAccount` mints a synchronized pair:
+1. **User Auth NFT**: This token goes directly into the user's wallet. It acts as their cryptographic "keycard".
+2. **Reference NFT**: This token is locked permanently in the `Account Validator` smart contract. It holds the user's `account_datum` (their encrypted metadata).
+
+When a user tries to join a group, the smart contract checks their wallet for the Auth NFT, and then reads the Reference NFT's data to verify their identity.
+
+## Configuration
+
+This endpoint requires a specific configuration object:
+
+```ts
+import { UTxO } from "@lucid-evolution/lucid";
+import { AccountDatum } from "@dcu/sdk";
+
+export type CreateAccountConfig = {
+  /** The UTxO consumed as entropy for CIP-68 token name derivation */
+  selected_out_ref: UTxO;
+
+  /** The user's encrypted personal metadata to be locked in the Reference NFT */
+  account_datum: AccountDatum;
+};
+```
+
+## Usage
+
+Like all endpoints, this returns a `ProgramRunner` giving you execution flexibility.
+
+```ts
+import { createAccount } from "@dcu/sdk";
+
+const [selectedUtxo] = await lucid.wallet().getUtxos();
+
+try {
+  const txBuilder = await createAccount(lucid, {
+    selected_out_ref: selectedUtxo,
+    account_datum: {
+      email_hash: "a3f1b2e4...", // hex-encoded hash of user's email
+      phone_hash: "c9d8f012...", // hex-encoded hash of user's phone number
+    }
+  }).unsafeRun();
+
+  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+  console.log("Account created! TxHash:", txHash);
+} catch (error) {
+  console.error("Failed to create account:", error);
+}
+```
