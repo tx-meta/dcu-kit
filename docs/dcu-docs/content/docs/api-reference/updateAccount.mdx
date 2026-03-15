@@ -1,0 +1,56 @@
+---
+title: updateAccount
+description: Modify the encrypted Identity Metadata stored inside your Account Reference NFT.
+---
+
+The `updateAccount` endpoint allows a user to cycle or refresh the `AccountDatum` held directly inside the `Account Validator`. It guarantees that any metadata attached to the user (such as an encrypted email hash or phone number) stays up to date.
+
+## Configuration
+
+To authorize this update, the smart contract demands cryptographic proof. You must prove you hold the exact `User Auth NFT` that corresponds to the `Reference NFT` being modified.
+
+```ts
+import { UTxO } from "@lucid-evolution/lucid";
+import { AccountDatum } from "@dcu/sdk";
+
+export type UpdateAccountConfig = {
+    /** The on-chain Reference UTxO sitting at the Account Validator */
+    account_utxo: UTxO;
+    
+    /** The Auth UTxO residing securely in your local wallet */
+    user_utxo: UTxO;
+    
+    /** The newly constructed AccountDatum payload containing your updated hashes */
+    account_datum: AccountDatum;
+};
+```
+
+## Security Constraints
+
+Underneath the hood, this transaction:
+1. Validates that the `account_utxo` and `user_utxo` form a cryptographically valid CIP-68 pair.
+2. Sweeps the wallet's `user_utxo` as an input to enforce transaction authorization.
+3. Reposits the new `account_datum` as an inline datum securely back into the Account Validator script while paying the original Auth NFT safely back into your wallet.
+
+## Usage
+
+```ts
+import { updateAccount } from "@dcu/sdk";
+
+const config = {
+  account_utxo, // Reference UTxO sitting at the Account Validator
+  user_utxo,    // Auth UTxO in the user's wallet
+  account_datum: {
+    email_hash: "newEmailHash999...",
+    phone_hash: "newPhoneHash888..."
+  }
+};
+
+try {
+  const txBuilder = await updateAccount(lucid, config).unsafeRun();
+  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+  console.log("Account metadata updated! TxHash:", txHash);
+} catch (error) {
+  console.error("Failed to update account:", error);
+}
+```
