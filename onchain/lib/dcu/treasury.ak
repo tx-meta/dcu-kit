@@ -12,6 +12,8 @@ pub type TreasuryDatum {
     group_reference_tokenname: AssetName,
     member_reference_tokenname: AssetName,
     membership_start: Int,
+    assigned_slot: Int,
+    slot_number: Int,
     contribution_list: List<Contribution>,
   }
   PenaltyState {

@@ -1,0 +1,55 @@
+---
+title: memberWithdraw
+description: Withdraw claimable contributed ADA from your Treasury position based on the vesting schedule.
+---
+
+The `memberWithdraw` endpoint acts as the direct fund extraction mechanism for users participating in the DCU.
+
+## Context within the SDK
+`memberWithdraw` is the action a member signs to pull their own ADA from the `Treasury Validator` directly to their wallet. It is distinct from `distributePayout`, which calculates and pays out the pooled ROSCA pot to the current rotation slot's borrower. `memberWithdraw` handles a member's personal balance, for example, withdrawing contributed funds that have become eligible based on the vesting schedule.
+
+## Configuration
+
+```ts
+import { UTxO } from "@lucid-evolution/lucid";
+
+export type MemberWithdrawConfig = {
+    /** The primary Group Parameters reference */
+    groupUtxo: UTxO;
+    
+    /** The user's secure Auth identity */
+    accountUtxo: UTxO;
+    
+    /** The specific Treasury UTxO tracking this user's claimable balance */
+    treasuryUtxo: UTxO;
+    
+    /** The exact lovelace amount to extract */
+    withdrawAmount: bigint;
+};
+```
+
+## Linear Vesting & Execution Checks
+When withdrawing, the SDK executes strict mathematical checks:
+1. It verifies the Treasury actually possesses the requested ADA (leaving min-ADA intact).
+2. It filters the user's `contribution_list` against the absolute blockchain time to drop all legally claimed vesting periods.
+3. It dynamically pays the remaining pool balance back to the Treasury address, while routing the `withdrawAmount` safely to the executing user's wallet.
+
+## Usage
+
+```ts
+import { memberWithdraw } from "@dcu/sdk";
+
+try {
+  const txBuilder = await memberWithdraw(lucid, {
+    groupUtxo,
+    accountUtxo,
+    treasuryUtxo,
+    withdrawAmount: 5_000_000n, // 5 ADA
+  }).unsafeRun();
+
+  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+  console.log("Withdrawal complete! TxHash:", txHash);
+} catch (error) {
+  console.error("Failed to withdraw:", error);
+}
+```

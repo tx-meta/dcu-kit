@@ -1,0 +1,115 @@
+
+import { 
+    Data, 
+    LucidEvolution, 
+    UTxO, 
+    TxSignBuilder,
+    RedeemerBuilder 
+} from "@lucid-evolution/lucid";
+import { Effect } from "effect";
+import { 
+    TreasuryDatum, 
+    TreasuryDatumSchema, 
+    TreasuryRedeemer 
+} from "../core/types.js";
+import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
+import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
+import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
+
+/**
+ * Creates an unsigned transaction for a member withdrawal from the Treasury.
+ * 
+ * **Functionality:**
+ * - Allows a member to withdraw their allocated funds (loan/payout).
+ * - Ensures remaining Treasury funds are preserved and returned to the script.
+ * 
+ * @param lucid - Lucid instance with wallet selected.
+ * @param config - Member Withdraw Configuration.
+ * @returns Effect yielding TxSignBuilder.
+ * 
+ * @example
+ * ```typescript
+ * const program = unsignedMemberWithdrawTxProgram(lucid, 
+ *   { groupUtxo, accountUtxo, treasuryUtxo, withdrawAmount }
+ * );
+ * ```
+ */
+export type MemberWithdrawConfig = {
+    groupUtxo: UTxO;
+    accountUtxo: UTxO;
+    treasuryUtxo: UTxO;
+    withdrawAmount: bigint;
+};
+
+export const unsignedMemberWithdrawTxProgram = (
+  lucid: LucidEvolution,
+  config: MemberWithdrawConfig
+): Effect.Effect<TxSignBuilder, DcuError, never> =>
+  Effect.gen(function* () {
+    const { groupUtxo, accountUtxo, treasuryUtxo, withdrawAmount } = config;
+    const treasuryDatum = (yield* parseSafeDatum(treasuryUtxo.datum, TreasuryDatumSchema)) as unknown as TreasuryDatum;
+    if (!('TreasuryState' in treasuryDatum)) return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Expected TreasuryState" }));
+
+    const ts = treasuryDatum.TreasuryState;
+    const memberRefName = ts.member_reference_tokenname;
+    const policyId = treasuryPolicyId!;
+
+    // Calculate remaining Treasury Balance
+    const currentTreasuryBalance = treasuryUtxo.assets.lovelace;
+    if (currentTreasuryBalance < withdrawAmount + 2_000_000n) {
+         // Basic safety check: Ensure enough remains for min ADA
+         return yield* Effect.fail(new TransactionBuildError({ operation: "memberWithdraw", error: "Insufficient funds in Treasury UTxO" }));
+    }
+    const remainingBalance = currentTreasuryBalance - withdrawAmount;
+
+    // Linear vesting: drop all claimable entries (consumed by this withdrawal)
+    const now = BigInt(Date.now());
+    const updatedDatum: TreasuryDatum = {
+        TreasuryState: {
+            group_reference_tokenname: ts.group_reference_tokenname,
+            member_reference_tokenname: ts.member_reference_tokenname,
+            membership_start: ts.membership_start,
+            assigned_slot: ts.assigned_slot,
+            slot_number: ts.slot_number,
+            contribution_list: ts.contribution_list.filter(c => c.claimable_at > now),
+        }
+    };
+
+    const redeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (inputIndices: bigint[]) => {
+            return Data.to({
+                MemberWithdraw: {
+                    group_ref_input_index: 0n, // Only 1 ref input (groupUtxo) -> Index 0
+                    member_input_index: inputIndices[0],
+                    treasury_input_index: inputIndices[1],
+                    treasury_output_index: 0n,
+                    loans_withdrawn: withdrawAmount
+                }
+            }, TreasuryRedeemer);
+        },
+        inputs: [accountUtxo, treasuryUtxo]
+    };
+
+    const address = yield* getWalletAddress(lucid);
+    const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
+
+    return yield* lucid.newTx()
+        .readFrom([groupUtxo])
+        .collectFrom([accountUtxo])
+        .collectFrom([treasuryUtxo], redeemer)
+        .attach.SpendingValidator(treasuryValidator.spendTreasury)
+        // Output 0: Return remaining balance to Treasury with updated contribution_list
+        .pay.ToContract(
+            treasuryAddress,
+            { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
+            {
+                lovelace: remainingBalance,
+                [policyId + memberRefName]: 1n
+            }
+        )
+        // Output 2: User Withdrawal
+        .pay.ToAddress(address, { lovelace: withdrawAmount })
+        .completeProgram()
+        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "memberWithdraw", error: String(e) })));
+  });
