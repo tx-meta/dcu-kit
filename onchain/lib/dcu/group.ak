@@ -1,7 +1,7 @@
 use aiken/collection/dict
 use aiken/collection/list
 use aiken/primitive/bytearray
-use cardano/address.{Script}
+use cardano/address.{Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output}
 use dcu/cip68
@@ -58,6 +58,8 @@ pub type GroupSpendRedeemer {
 //                       contribution_list growth in treasury datums)
 // [spec CreateGroup 9]: member_count == 0 at creation
 // [spec CreateGroup 10]: is_active == True at creation
+// [spec CreateGroup 11]: user (222) token must go to a VerificationKey address —
+//                        if sent to a script, admin authority is permanently lost
 pub fn validate_create_group(
   policy_id: PolicyId,
   input_index: Int,
@@ -82,6 +84,17 @@ pub fn validate_create_group(
   expect Some(1) = dict.get(minted_tokens, user_token_name)
   let exact_mint_quantity = dict.size(minted_tokens) == 2
 
+  expect Some(user_output) =
+    list.find(
+      outputs,
+      fn(o) { assets.quantity_of(o.value, policy_id, user_token_name) == 1 },
+    )
+  let user_token_to_wallet =
+    when user_output.address.payment_credential is {
+      VerificationKey(_) -> True
+      Script(_) -> False
+    }
+
   let output_at_script_address =
     output.address.payment_credential == Script(policy_id)
 
@@ -92,6 +105,7 @@ pub fn validate_create_group(
     exact_mint_quantity?,
     output_at_script_address?,
     output_has_ref_token?,
+    user_token_to_wallet?,
     (datum.contribution_fee > 0)?,
     (datum.joining_fee >= 0)?,
     (datum.penalty_fee >= 0)?,

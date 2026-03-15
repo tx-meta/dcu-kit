@@ -1,3 +1,4 @@
+use aiken/fuzz
 use aiken/primitive/bytearray
 use cardano/assets
 use dcu/cip68
@@ -28,8 +29,16 @@ test create_group_success() {
   // 5. Build Input
   let input = common.test_input(output_ref, output)
 
+  // 6. Build user token output at wallet address
+  let user_output =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
+
   let inputs = [input]
-  let outputs = [output]
+  let outputs = [output, user_output]
 
   // Expectation: returns True
   validate_create_group(policy_id, 0, 0, inputs, outputs, mint)
@@ -47,8 +56,14 @@ test create_group_invalid_fee() {
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
   let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
+  let user_output =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
 
-  !validate_create_group(policy_id, 0, 0, [input], [output], mint)
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
 test create_group_invalid_member_count() {
@@ -64,8 +79,14 @@ test create_group_invalid_member_count() {
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
   let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
+  let user_output =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
 
-  !validate_create_group(policy_id, 0, 0, [input], [output], mint)
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
 test create_group_invalid_intervals() {
@@ -81,8 +102,14 @@ test create_group_invalid_intervals() {
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
   let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
+  let user_output =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
 
-  !validate_create_group(policy_id, 0, 0, [input], [output], mint)
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
 test create_group_inactive() {
@@ -98,8 +125,14 @@ test create_group_inactive() {
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
   let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
+  let user_output =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
 
-  !validate_create_group(policy_id, 0, 0, [input], [output], mint)
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
 test create_group_wrong_token_names() fail {
@@ -151,8 +184,14 @@ test create_group_wrong_output_address_fails() {
   // FAILURE CASE: Wrong Address (not script address)
   let output = common.test_user_utxo(common.test_pkh(), output_value, datum)
   let input = common.test_input(output_ref, output)
+  let user_output =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
 
-  !validate_create_group(policy_id, 0, 0, [input], [output], mint)
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
 test create_group_missing_ref_token_fails() {
@@ -167,8 +206,14 @@ test create_group_missing_ref_token_fails() {
   let output_value = assets.zero
   let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
+  let user_output =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
 
-  !validate_create_group(policy_id, 0, 0, [input], [output], mint)
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
 // --- Update Group Tests ---
@@ -697,6 +742,12 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
   let output_value = assets.from_asset(policy_id, ref_tn, 1)
   let output = common.test_script_utxo(policy_id, output_value, datum)
   let input = common.test_input(output_ref, output)
+  let user_output =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
 
   // Define what makes a datum "Invalid"
   let is_invalid =
@@ -706,9 +757,9 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
   // If the datum is invalid, validation MUST return False.
   // If the datum happens to be valid (rare but possible), we expect True.
   if is_invalid {
-    !validate_create_group(policy_id, 0, 0, [input], [output], mint)
+    !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
   } else {
-    validate_create_group(policy_id, 0, 0, [input], [output], mint)
+    validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
   }
 }
 
@@ -731,8 +782,14 @@ test create_group__rejects_excessive_num_intervals() {
       datum,
     )
   let input = common.test_input(output_ref, output)
+  let user_output =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
 
-  !validate_create_group(policy_id, 0, 0, [input], [output], mint)
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
 // --- Security: fee currency freeze (is_critical_update with members) ---
@@ -920,6 +977,139 @@ test remove_group__rejects_simultaneous_field_change() {
     )
 
   !validate_remove_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// --- Security: user token must go to a wallet, not a script ---
+
+test create__rejects_user_token_to_script() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint =
+    assets.from_asset(policy_id, ref_tn, 1)
+      |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let datum = common.test_group_datum(policy_id)
+  let group_output =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      datum,
+    )
+  // User token sent to a script address — admin authority permanently lost
+  let user_output =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
+  let input = common.test_input(output_ref, group_output)
+
+  !validate_create_group(
+    policy_id,
+    0,
+    0,
+    [input],
+    [group_output, user_output],
+    mint,
+  )
+}
+
+// --- Non-critical: share_holding can change while members are active ---
+
+test update__allows_share_holding_change_with_members() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  // Group has active members — critical fields are frozen, but share_holding is not
+  let base_datum =
+    GroupDatum { ..common.test_group_datum(policy_id), member_count: 5 }
+  let group_input =
+    common.test_input(
+      output_ref,
+      common.test_script_utxo(
+        policy_id,
+        assets.from_asset(policy_id, ref_tn, 1),
+        base_datum,
+      ),
+    )
+  let admin_input =
+    common.test_input(
+      output_ref,
+      common.test_user_utxo(
+        common.test_pkh(),
+        assets.from_asset(policy_id, user_tn, 1),
+        base_datum,
+      ),
+    )
+
+  // Toggle share_holding — non-critical field, allowed with members present
+  let updated_datum = GroupDatum { ..base_datum, share_holding: True }
+  let group_output =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      updated_datum,
+    )
+
+  validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// --- Property: update rejects critical field change when members are active ---
+
+test prop_update_group__rejects_critical_change_with_members(
+  new_fee via fuzz.int_at_least(1),
+) {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  let base_datum =
+    GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
+  let group_input =
+    common.test_input(
+      output_ref,
+      common.test_script_utxo(
+        policy_id,
+        assets.from_asset(policy_id, ref_tn, 1),
+        base_datum,
+      ),
+    )
+  let admin_input =
+    common.test_input(
+      output_ref,
+      common.test_user_utxo(
+        common.test_pkh(),
+        assets.from_asset(policy_id, user_tn, 1),
+        base_datum,
+      ),
+    )
+
+  // Any change to contribution_fee is a critical update — blocked with members
+  let updated_datum =
+    GroupDatum { ..base_datum, contribution_fee: new_fee + 1 }
+  let group_output =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      updated_datum,
+    )
+
+  !validate_update_group(
     policy_id,
     ref_tn,
     1,
