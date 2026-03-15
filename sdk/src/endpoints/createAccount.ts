@@ -29,12 +29,17 @@ export type CreateAccountConfig = {
  * @returns Effect yielding TxSignBuilder.
  *
  * @example
- * ```typescript
- * const program = unsignedCreateAccountTxProgram(lucid, {
- *   selected_out_ref: utxo,
- *   account_datum: { email_hash: "...", phone_hash: "..." }
- * });
- * ```
+ * ```ts
+import { createAccount } from "@dcu/sdk";
+
+const program = createAccount(lucid, {
+  selected_out_ref: utxo,
+  account_datum: { 
+     email_hash: "abcd...", 
+     phone_hash: "1234..." 
+  }
+});
+```
  */
 export const unsignedCreateAccountTxProgram = (
   lucid: LucidEvolution,
