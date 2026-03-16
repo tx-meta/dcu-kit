@@ -1,4 +1,5 @@
 use aiken/fuzz
+use dcu/account.{AccountDatum}
 use dcu/group.{GroupDatum}
 
 // --- Group Datum Fuzzer ---
@@ -37,4 +38,13 @@ pub fn gen_group_datum() {
       is_active,
     },
   )
+}
+
+// --- Account Datum Fuzzer ---
+
+pub fn gen_account_datum() {
+  let email_hash <- fuzz.and_then(fuzz.bytearray())
+  let phone_hash <- fuzz.and_then(fuzz.bytearray())
+
+  fuzz.constant(AccountDatum { email_hash, phone_hash })
 }
