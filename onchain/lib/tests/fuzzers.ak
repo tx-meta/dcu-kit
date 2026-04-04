@@ -17,8 +17,8 @@ pub fn gen_group_datum() {
   let interval_length <- fuzz.and_then(fuzz.int())
   let num_intervals <- fuzz.and_then(fuzz.int())
   let member_count <- fuzz.and_then(fuzz.int())
-  let share_holding <- fuzz.and_then(fuzz.bool())
   let is_active <- fuzz.and_then(fuzz.bool())
+  let start_time <- fuzz.and_then(fuzz.int())
 
   fuzz.constant(
     GroupDatum {
@@ -34,8 +34,8 @@ pub fn gen_group_datum() {
       interval_length,
       num_intervals,
       member_count,
-      share_holding,
       is_active,
+      start_time,
     },
   )
 }

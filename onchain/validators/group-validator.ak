@@ -3,12 +3,13 @@ use cardano/address.{Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{OutputReference, Transaction}
 use dcu/group.{
-  CreateGroup, GroupDatum, GroupMintRedeemer, GroupSpendRedeemer, RemoveGroup,
-  UpdateGroup, validate_create_group, validate_remove_group,
+  CreateGroup, GroupDatum, GroupMintRedeemer, GroupSpendRedeemer, MemberExit,
+  MemberJoin, RemoveGroup, UpdateGroup, validate_create_group,
+  validate_member_exit, validate_member_join, validate_remove_group,
   validate_update_group,
 }
 
-validator group_validator {
+validator group_validator(treasury_policy_id: PolicyId) {
   mint(redeemer: GroupMintRedeemer, policy_id: PolicyId, tx: Transaction) {
     let Transaction { inputs, outputs, mint, .. } = tx
 
@@ -77,6 +78,40 @@ validator group_validator {
           group_output_index,
           inputs,
           outputs,
+        )
+      }
+
+      MemberJoin { group_ref_token_name, group_input_index, group_output_index } -> {
+        // [security]: self-reference — group_input_index must resolve to this UTxO
+        expect Some(group_input) = list.at(inputs, group_input_index)
+        expect group_input.output_reference == utxo
+
+        validate_member_join(
+          policy_id,
+          treasury_policy_id,
+          group_ref_token_name,
+          group_input_index,
+          group_output_index,
+          inputs,
+          outputs,
+          self.mint,
+        )
+      }
+
+      MemberExit { group_ref_token_name, group_input_index, group_output_index } -> {
+        // [security]: self-reference — same pattern as above
+        expect Some(group_input) = list.at(inputs, group_input_index)
+        expect group_input.output_reference == utxo
+
+        validate_member_exit(
+          policy_id,
+          treasury_policy_id,
+          group_ref_token_name,
+          group_input_index,
+          group_output_index,
+          inputs,
+          outputs,
+          self.mint,
         )
       }
     }

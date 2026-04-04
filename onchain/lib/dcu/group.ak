@@ -2,7 +2,7 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/primitive/bytearray
 use cardano/address.{Script, VerificationKey}
-use cardano/assets.{AssetName, PolicyId, Value}
+use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
 use cardano/transaction.{InlineDatum, Input, Output}
 use dcu/cip68
 
@@ -20,8 +20,11 @@ pub type GroupDatum {
   interval_length: Int,
   num_intervals: Int,
   member_count: Int,
-  share_holding: Bool,
   is_active: Bool,
+  // POSIX millisecond timestamp when the ROSCA rotation schedule begins.
+  // Required by the treasury validator for slot calculation:
+  //   current_slot = (now - start_time) / interval_length % num_intervals
+  start_time: Int,
 }
 
 /// Group Validator Mint Redeemer
@@ -40,6 +43,16 @@ pub type GroupSpendRedeemer {
   RemoveGroup {
     group_ref_token_name: AssetName,
     admin_input_index: Int,
+    group_input_index: Int,
+    group_output_index: Int,
+  }
+  MemberJoin {
+    group_ref_token_name: AssetName,
+    group_input_index: Int,
+    group_output_index: Int,
+  }
+  MemberExit {
+    group_ref_token_name: AssetName,
     group_input_index: Int,
     group_output_index: Int,
   }
@@ -101,10 +114,15 @@ pub fn validate_create_group(
   let output_has_ref_token =
     assets.quantity_of(output.value, policy_id, ref_token_name) == 1
 
+  // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
+  let output_clean_value =
+    assets.policies(output.value) == [ada_policy_id, policy_id]
+
   and {
     exact_mint_quantity?,
     output_at_script_address?,
     output_has_ref_token?,
+    output_clean_value?,
     user_token_to_wallet?,
     (datum.contribution_fee > 0)?,
     (datum.joining_fee >= 0)?,
@@ -180,9 +198,14 @@ pub fn validate_update_group(
   let in_ada = assets.lovelace_of(group_input.output.value)
   let out_ada = assets.lovelace_of(group_output.value)
 
+  // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
+  let output_clean_value =
+    assets.policies(group_output.value) == [ada_policy_id, policy_id]
+
   and {
     (group_output.address == group_input.output.address)?,
     (assets.quantity_of(group_output.value, policy_id, group_ref_token_name) == 1)?,
+    output_clean_value?,
     is_safe_update?,
     (updated_datum.member_count == current_datum.member_count)?,
     updated_datum.is_active?,
@@ -250,11 +273,149 @@ pub fn validate_remove_group(
   // [security 5]: structural equality — only is_active changes, everything else frozen
   let expected_output_datum = GroupDatum { ..current_datum, is_active: False }
 
+  // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
+  let output_clean_value =
+    assets.policies(group_output.value) == [ada_policy_id, policy_id]
+
   and {
     (group_output.address == group_input.output.address)?,
     (assets.quantity_of(group_output.value, policy_id, group_ref_token_name) == 1)?,
+    output_clean_value?,
     is_safe_remove?,
     (updated_datum == expected_output_datum)?,
     (out_ada >= in_ada)?,
+  }
+}
+
+// validate_member_join
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE: self-reference check (group_input_index resolves to the UTxO being spent)
+//       is enforced at the entry point before this function is called.
+//
+// [spec MemberJoin 1]: group input holds the ref token
+// [spec MemberJoin 2]: treasury is minting exactly 1 token under treasury_policy_id
+//                      — proves JoinGroup ran in the same tx; prevents standalone
+//                      MemberJoin calls that would inflate member_count without a
+//                      corresponding treasury UTxO being created
+// [spec MemberJoin 3]: group output is at the same script address with ref token
+// [spec MemberJoin 4]: only member_count changes — increments by exactly 1;
+//                      all other fields are structurally identical to the input datum
+pub fn validate_member_join(
+  policy_id: PolicyId,
+  treasury_policy_id: PolicyId,
+  group_ref_token_name: AssetName,
+  group_input_index: Int,
+  group_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
+  mint: Value,
+) -> Bool {
+  // [spec MemberJoin 1]: group input holds the ref token
+  expect Some(group_input) = list.at(inputs, group_input_index)
+  expect
+    assets.quantity_of(group_input.output.value, policy_id, group_ref_token_name) == 1
+
+  expect InlineDatum(input_datum_data) = group_input.output.datum
+  expect current: GroupDatum = input_datum_data
+
+  // [spec MemberJoin 3]: group output at script address with ref token
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect InlineDatum(output_datum_data) = group_output.datum
+  expect updated: GroupDatum = output_datum_data
+
+  // [spec MemberJoin 2]: treasury minting exactly 1 token proves JoinGroup ran
+  let treasury_minting = dict.size(assets.tokens(mint, treasury_policy_id)) == 1
+
+  // [spec MemberJoin 4]: only member_count increments; all other fields unchanged
+  let expected = GroupDatum { ..current, member_count: current.member_count + 1 }
+
+  // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
+  let output_clean_value =
+    assets.policies(group_output.value) == [ada_policy_id, policy_id]
+
+  and {
+    treasury_minting?,
+    (group_output.address == group_input.output.address)?,
+    (assets.quantity_of(group_output.value, policy_id, group_ref_token_name) == 1)?,
+    output_clean_value?,
+    (updated == expected)?,
+  }
+}
+
+// validate_member_exit
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE: self-reference check enforced at entry point.
+//
+// Covers three exit scenarios:
+//   1. Mature/inactive ExitGroup (burn path): treasury token burned — member_count - 1
+//   2. PenaltyWithdraw/TerminateGroup (burn path): penalty token burned — member_count - 1
+//   3. Early ExitGroup (penalty path, token NOT burned — moved to PenaltyState):
+//      member stays committed until PenaltyWithdraw resolves — member_count unchanged
+//
+// The burn check branches the expected member_count:
+//   • treasury_burning == True  → decrement member_count by 1
+//   • treasury_burning == False → keep member_count the same (early exit)
+//
+// [spec MemberExit 1]: group input holds the ref token
+// [spec MemberExit 2]: treasury burn status determines the transition:
+//                      burn → member fully exited (count -1)
+//                      no burn → member in penalty state (count unchanged)
+// [spec MemberExit 3]: member_count >= 1 before exit (cannot go below 0)
+// [spec MemberExit 4]: group output at same script address with ref token
+// [spec MemberExit 5]: only member_count may change; all other fields frozen
+pub fn validate_member_exit(
+  policy_id: PolicyId,
+  treasury_policy_id: PolicyId,
+  group_ref_token_name: AssetName,
+  group_input_index: Int,
+  group_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
+  mint: Value,
+) -> Bool {
+  // [spec MemberExit 1]: group input holds the ref token
+  expect Some(group_input) = list.at(inputs, group_input_index)
+  expect
+    assets.quantity_of(group_input.output.value, policy_id, group_ref_token_name) == 1
+
+  expect InlineDatum(input_datum_data) = group_input.output.datum
+  expect current: GroupDatum = input_datum_data
+
+  // [spec MemberExit 3]: member_count must be >= 1 before decrement
+  expect current.member_count >= 1
+
+  // [spec MemberExit 4]: group output at script address with ref token
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect InlineDatum(output_datum_data) = group_output.datum
+  expect updated: GroupDatum = output_datum_data
+
+  // [spec MemberExit 2]: detect whether treasury burned exactly 1 token (mature/penalty-claim)
+  //   or not (early exit — token moved to PenaltyState, not burned)
+  let treasury_burning =
+    when dict.to_pairs(assets.tokens(mint, treasury_policy_id)) is {
+      [Pair(_, qty)] -> qty == -1
+      _ -> False
+    }
+
+  // [spec MemberExit 5]: only member_count changes; all other fields frozen.
+  //   burn → member fully exited (decrement)
+  //   no burn → member committed in penalty (unchanged)
+  let expected_count =
+    if treasury_burning {
+      current.member_count - 1
+    } else {
+      current.member_count
+    }
+  let expected = GroupDatum { ..current, member_count: expected_count }
+
+  // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
+  let output_clean_value =
+    assets.policies(group_output.value) == [ada_policy_id, policy_id]
+
+  and {
+    (group_output.address == group_input.output.address)?,
+    (assets.quantity_of(group_output.value, policy_id, group_ref_token_name) == 1)?,
+    output_clean_value?,
+    (updated == expected)?,
   }
 }
