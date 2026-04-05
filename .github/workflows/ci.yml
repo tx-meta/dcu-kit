@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./onchain/dcu
+        working-directory: ./onchain
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4

@@ -166,11 +166,9 @@ There are three validators in this cooperative finance system.
 
   - *TokenName:* Defined in Group Validator using CIP-68 standards with transaction ID, output index, and appropriate prefix (`prefix_100` for reference NFT, `prefix_222` for user NFT).
 
-+ *Membership NFT* 
-  
-  Can only be minted when a user joins a group and the Reference NFT is locked in the Treasury Validator while the User NFT is sent to the member.
++ *Membership NFT*
 
-  - *TokenName:* Defined in Treasury Validator using CIP-68 standards with transaction ID, output index, and appropriate prefix (`prefix_100` for reference NFT, `prefix_222` for user NFT).
+  Can only be minted when a user joins a group. Exactly one membership token is minted and locked in the Treasury Validator at the member's Treasury UTxO. The token name is derived from the member's account user token name (CIP-68 prefix_222 form).
 
 
 
@@ -210,6 +208,7 @@ The DCU-Toolkit implements a deterministic slot assignment system for ROSCA-styl
 - *```rust
   JoinGroup {
     group_ref_input_index: Int,
+    group_output_index: Int,
     member_input_index: Int,
     treasury_output_index: Int,
   }
@@ -222,22 +221,25 @@ The DCU-Toolkit implements a deterministic slot assignment system for ROSCA-styl
 \
 ===== Validation
 \
-+ *JoinGroup* 
-  
++ *JoinGroup*
+
   The redeemer allows a member to join a cooperative group by minting one unique Membership Token representing their membership.
 
+  - The group must be active (`is_active == True`) — members cannot join deactivated groups.
+
   - Validate that the member's Account NFT is present in the transaction inputs.
-  
-  - A Group Input must be provided from the Group Validator (as a spending input, not reference) to update the member count.
-  
-  - The treasury output must be sent to the Treasury Script's address and contain a Treasury datum that is consistent with the Group datum.
-  
-  - Exactly one Membership Token (with token name "treasury-membership") is minted.
-  
-  - Validate that sufficient contribution fees and joining fees are locked in the Treasury UTxO according to the Group datum specifications.
-  
-  - Ensure that the User NFT doesn't go to the Script
-  - Ensure Membership token goes back to the script
+
+  - A Group Input must be provided from the Group Validator (as a spending input) to update the member count; the group output must have `member_count + 1`.
+
+  - The treasury output must be sent to the Treasury Script's address and contain a TreasuryState datum consistent with the Group datum: `assigned_slot == group.member_count`, correct `contribution_list`, `group_reference_tokenname` linking to the group, `member_payment_credential` recording the member's wallet PKH, and `membership_start` equal to the transaction's validity range lower bound.
+
+  - Exactly one Membership Token is minted under the Treasury policy; the token name matches `member_reference_tokenname` in the datum.
+
+  - Sufficient fees are locked: `contribution_fee + joining_fee`. When both fees are the same asset, the combined sum is required (not two independent checks).
+
+  - The Account NFT (member user token) must not go to a script address.
+
+  - The treasury output must hold only ADA + the membership token (no unbounded value accumulation).
   \
 
 + *TerminateGroup*
@@ -261,7 +263,7 @@ This is a Sum type datum where one represents the treasury datum and the other r
 
 - *`member_reference_tokenname`: ```rs AssetName```* – Identifies the member's Account NFT.
 
-- *`membership_start`: ```rs Int```*  – The timestamp when the member joined the group.
+- *`membership_start`: ```rs Int```*  – The timestamp when the member joined the group. Must equal the transaction's validity range lower bound at join time (enforced by JoinGroup). Frozen from that point on by MemberWithdraw's structural equality check.
 
 - *`assigned_slot`: ```rs Int```* – The member's fixed slot position (0 to num_intervals-1) assigned at join time. Used for deterministic rotation schedule validation.
 
@@ -296,6 +298,7 @@ This is a Sum type datum where one represents the treasury datum and the other r
 - *```rust
   ExitGroup {
     group_ref_input_index: Int,
+    group_output_index: Int,
     member_input_index: Int,
     treasury_input_index: Int,
     penalty_output_index: Int,
@@ -308,8 +311,8 @@ This is a Sum type datum where one represents the treasury datum and the other r
     member_input_index: Int,
     treasury_input_index: Int,
     treasury_output_index: Int,
-    loans_withdrawn: Int,
-  } 
+    withdrawal_amount: Int,
+  }
   ```*
 
 \
@@ -437,8 +440,6 @@ Nothing
 
 - *`member_count: Int`* An Int tracking the number of active members in the group.
 
-- *`share_holding: Bool`* A Bool indicating if members can hold multiple shares.
-
 - *`is_active: Bool`* A Bool indicating whether the group is currently active.
   
 *Note:* Contribution fees can be based on length of period the member commits to, e.g. If they pay for one cycle, the fees may differ from paying for multiple cycles. Group administrators can configure flexible pricing models.
@@ -465,6 +466,23 @@ Nothing
     group_output_index: Int,
   }
 ```````*
+
+- *```rust
+  MemberJoin {
+    group_ref_token_name: AssetName,
+    group_input_index: Int,
+    group_output_index: Int,
+  }
+  ```*
+
+- *```rust
+  MemberExit {
+    group_ref_token_name: AssetName,
+    group_input_index: Int,
+    group_output_index: Int,
+  }
+  ```*
+
 \
 ====== Validation
 \
@@ -502,6 +520,30 @@ Nothing
   - The Group NFT must still be present in the output to maintain correct state tracking.
   
   - `member_count` must be 0 to remove/deactivate a group.
+
+  \
++ *MemberJoin*
+
+  This redeemer is invoked by the Treasury validator's JoinGroup mint path in the same transaction. It atomically updates the group state when a new member joins.
+
+  - The Treasury validator must mint exactly one membership token in the same transaction — proves JoinGroup ran and a corresponding Treasury UTxO was created.
+
+  - The group output (at `group_output_index`) must be at the same script address as the group input and retain the Group NFT.
+
+  - Only `member_count` changes — it must increment by exactly 1; all other datum fields are structurally identical to the input datum.
+
+  \
++ *MemberExit*
+
+  This redeemer is invoked when a member exits a group. It handles three scenarios based on whether the treasury membership token is burned in the same transaction:
+
+  - *Mature/inactive exit (burn path)*: If the Treasury validator burns exactly one membership token, `member_count` decrements by 1.
+
+  - *PenaltyWithdraw (burn path)*: Same as mature exit — token is burned, `member_count` decrements by 1.
+
+  - *Early exit (no-burn path)*: If no treasury token is burned (token moves to a PenaltyState UTxO), `member_count` stays unchanged — the member remains committed until the penalty is resolved.
+
+  - `member_count` must be ≥ 1 before exit. The group output must be at the same script address with the Group NFT retained.
 
 #pagebreak()
 
@@ -1031,7 +1073,6 @@ This transaction creates a new cooperative group by minting Group NFTs. This tra
       - *`penalty_fee: Int`* An Int representing the fee deducted when a member exits early.
       - *`interval_length: Int`* An Int defining the duration of one contribution interval.
       - *`num_intervals: Int`* An Int representing the total number of intervals in the rotation cycle.
-      - *`share_holding: Bool`* A Bool indicating if members can hold multiple shares.
       - *`is_active: Bool`* A Bool indicating whether the group is currently active.
 
     - Value:
