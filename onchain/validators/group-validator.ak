@@ -25,12 +25,15 @@ validator group_validator(treasury_policy_id: PolicyId) {
   }
 
   spend(
-    _datum: Option<GroupDatum>,
+    datum: Option<GroupDatum>,
     redeemer: GroupSpendRedeemer,
     utxo: OutputReference,
     self: Transaction,
   ) {
     let Transaction { inputs, outputs, .. } = self
+
+    // [security]: datum must be present — guards against datum-less UTxO injection
+    expect Some(_) = datum
 
     // Extract own PolicyId from the input being spent
     expect Some(own_input) =

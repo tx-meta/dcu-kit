@@ -1076,6 +1076,7 @@ test distribute_payout__rejects_duplicate_output_index() {
 // ─── validate_exit_group ──────────────────────────────────────────────────────
 
 // Early exit: group is_active && current_time < maturity (0 + 3*1000 = 3000)
+// Penalty output holds ≥ penalty_fee; member reclaims the remainder as change.
 test exit_group__accepts_early_exit_with_penalty() {
   let tp = treasury_policy()
 
@@ -1085,14 +1086,16 @@ test exit_group__accepts_early_exit_with_penalty() {
 
   let datum = test_treasury_state(0)
 
-  // Penalty output: PenaltyState datum + membership token + penalty_fee ADA
   let penalty_datum =
     PenaltyState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
     }
+  // Penalty output holds exactly penalty_fee (500K ADA) + membership token.
+  // Remaining locked contributions flow back to the member as change — this is
+  // the intended spec behaviour: member exits early, forfeits only penalty_fee.
   let penalty_value =
-    assets.from_lovelace(2_000_000)
+    assets.from_lovelace(500_000)
       |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let penalty_output =
     Output {
@@ -1222,13 +1225,14 @@ test exit_group__rejects_member_input_without_user_token() {
     }
 
   let datum = test_treasury_state(0)
+
   let penalty_datum =
     PenaltyState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
     }
   let penalty_value =
-    assets.from_lovelace(2_000_000)
+    assets.from_lovelace(500_000)
       |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let penalty_output =
     Output {
@@ -1309,7 +1313,7 @@ test exit_group__rejects_early_exit_missing_penalty_fee() {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
     }
-  // Penalty output with NO ADA (penalty_fee = 500_000 ADA required)
+  // Penalty output with NO ADA — penalty_fee_locked (500K required) fails.
   let penalty_value = assets.from_asset(tp, member_tn(), 1)
   let penalty_output =
     Output {
@@ -1331,6 +1335,48 @@ test exit_group__rejects_early_exit_missing_penalty_fee() {
     }
 
   !validate_exit_group(tp, account_policy(), 0, 1, 1, 0, datum, tx)
+}
+
+// Exploit: member exits early with penalty output holding only penalty_fee ADA (500K),
+// draining 4.5M locked contributions as change. penalty_preserves_ada fails.
+// Spec [ExitGroup 4a]: penalty output holds only penalty_fee (500K ADA) — member
+// reclaims remaining locked contributions (4.5M) as wallet change. Valid per spec.
+test exit_group__accepts_member_reclaims_refund() {
+  let tp = treasury_policy()
+
+  let current_time = 1500
+  let group_input = test_group_input()
+  let member_input = test_member_input()
+  let datum = test_treasury_state(0)
+
+  let penalty_datum =
+    PenaltyState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: member_tn(),
+    }
+  // Penalty output holds exactly penalty_fee (500K) — spec allows member to reclaim the rest
+  let penalty_value =
+    assets.from_lovelace(500_000)
+      |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let penalty_output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value: penalty_value,
+      datum: InlineDatum(penalty_datum),
+      reference_script: None,
+    }
+
+  let group_out = test_group_output(0)
+
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [group_input, member_input],
+      outputs: [penalty_output, group_out],
+      validity_range: interval.after(current_time),
+    }
+
+  validate_exit_group(tp, account_policy(), 0, 1, 1, 0, datum, tx)
 }
 
 // ─── validate_member_withdraw ─────────────────────────────────────────────────
@@ -1416,6 +1462,7 @@ test member_withdraw__rejects_over_withdrawal() {
   // 3M > 2M claimable → should fail
   !validate_member_withdraw(treasury_policy(), account_policy(), 0, 1, 0, 3_000_000, datum, utxo, tx)
 }
+
 
 test member_withdraw__rejects_zero_withdrawal() {
   let (tx, datum, utxo) = setup_member_withdraw()

@@ -1033,6 +1033,10 @@ test create__rejects_user_token_to_script() {
 }
 
 // --- Property: update rejects critical field change when members are active ---
+//
+// NOTE: group input and output include ADA so output_clean_value and out_ada >= in_ada
+// both pass. The property exercises is_safe_update exclusively: any fee change with
+// member_count > 0 must be rejected regardless of the new fee value.
 
 test prop_update_group__rejects_critical_change_with_members(
   new_fee via fuzz.int_at_least(1),
@@ -1047,7 +1051,8 @@ test prop_update_group__rejects_critical_change_with_members(
       output_ref,
       common.test_script_utxo(
         policy_id,
-        assets.from_asset(policy_id, ref_tn, 1),
+        assets.from_lovelace(2_000_000)
+          |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
         base_datum,
       ),
     )
@@ -1061,13 +1066,19 @@ test prop_update_group__rejects_critical_change_with_members(
       ),
     )
 
-  // Any change to contribution_fee is a critical update — blocked with members
+  // Any change to contribution_fee is a critical update — blocked with members.
+  // base_datum.contribution_fee + new_fee >= base_fee + 1, so it always differs
+  // from base_datum.contribution_fee regardless of the base value.
   let updated_datum =
-    GroupDatum { ..base_datum, contribution_fee: new_fee + 1 }
+    GroupDatum {
+      ..base_datum,
+      contribution_fee: base_datum.contribution_fee + new_fee,
+    }
   let group_output =
     common.test_script_utxo(
       policy_id,
-      assets.from_asset(policy_id, ref_tn, 1),
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
       updated_datum,
     )
 
@@ -1097,7 +1108,10 @@ fn group_input_with_count(
 ) -> Input {
   let datum =
     GroupDatum { ..common.test_group_datum(policy_id), member_count }
-  let value = assets.from_asset(policy_id, ref_tn, 1)
+  // Include 2 ADA so the ADA preservation check (out_ada >= in_ada) is non-trivial
+  let value =
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
   let output = common.test_script_utxo(policy_id, value, datum)
   common.test_input(
     OutputReference {
@@ -1295,4 +1309,68 @@ test member_exit__accepts_early_exit_no_burn() {
   let mint = assets.zero
 
   validate_member_exit(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
+}
+
+// Group input holds 5M ADA; member_join output returns only ref token — ADA drained
+test member_join__rejects_group_ada_drain() {
+  let policy_id = common.test_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let tp = treasury_policy_id()
+
+  let base_datum = GroupDatum { ..common.test_group_datum(policy_id), member_count: 0 }
+  let group_in =
+    common.test_input(
+      OutputReference {
+        transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+        output_index: 0,
+      },
+      common.test_script_utxo(
+        policy_id,
+        assets.from_lovelace(5_000_000)
+          |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+        base_datum,
+      ),
+    )
+  // Output: member_count incremented but ADA stripped — out_ada (0) < in_ada (5M)
+  let group_out =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      GroupDatum { ..base_datum, member_count: 1 },
+    )
+  let mint = assets.from_asset(tp, #"aa", 1)
+
+  !validate_member_join(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
+}
+
+// Group input holds 5M ADA; member_exit output returns only ref token — ADA drained
+test member_exit__rejects_group_ada_drain() {
+  let policy_id = common.test_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let tp = treasury_policy_id()
+
+  let base_datum = GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
+  let group_in =
+    common.test_input(
+      OutputReference {
+        transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+        output_index: 0,
+      },
+      common.test_script_utxo(
+        policy_id,
+        assets.from_lovelace(5_000_000)
+          |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+        base_datum,
+      ),
+    )
+  // Output: member_count decremented (burn path) but ADA stripped — out_ada (0) < in_ada (5M)
+  let group_out =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      GroupDatum { ..base_datum, member_count: 0 },
+    )
+  let mint = assets.from_asset(tp, #"aa", -1)
+
+  !validate_member_exit(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
 }

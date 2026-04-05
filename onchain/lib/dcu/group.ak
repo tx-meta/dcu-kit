@@ -329,6 +329,10 @@ pub fn validate_member_join(
   // [spec MemberJoin 4]: only member_count increments; all other fields unchanged
   let expected = GroupDatum { ..current, member_count: current.member_count + 1 }
 
+  // [security]: ADA must not decrease — member cannot drain group UTxO during join
+  let in_ada = assets.lovelace_of(group_input.output.value)
+  let out_ada = assets.lovelace_of(group_output.value)
+
   // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
   let output_clean_value =
     assets.policies(group_output.value) == [ada_policy_id, policy_id]
@@ -339,6 +343,7 @@ pub fn validate_member_join(
     (assets.quantity_of(group_output.value, policy_id, group_ref_token_name) == 1)?,
     output_clean_value?,
     (updated == expected)?,
+    (out_ada >= in_ada)?,
   }
 }
 
@@ -408,6 +413,10 @@ pub fn validate_member_exit(
     }
   let expected = GroupDatum { ..current, member_count: expected_count }
 
+  // [security]: ADA must not decrease — member cannot drain group UTxO during exit
+  let in_ada = assets.lovelace_of(group_input.output.value)
+  let out_ada = assets.lovelace_of(group_output.value)
+
   // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
   let output_clean_value =
     assets.policies(group_output.value) == [ada_policy_id, policy_id]
@@ -417,5 +426,6 @@ pub fn validate_member_exit(
     (assets.quantity_of(group_output.value, policy_id, group_ref_token_name) == 1)?,
     output_clean_value?,
     (updated == expected)?,
+    (out_ada >= in_ada)?,
   }
 }

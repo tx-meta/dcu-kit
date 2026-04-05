@@ -467,6 +467,11 @@ pub fn validate_distribute_payout(
   expect InlineDatum(group_datum_data) = group_ref_input.output.datum
   expect group: GroupDatum = group_datum_data
 
+  // [spec DistributePayout 2 — intentional]: group.is_active is NOT required.
+  // Contributions whose claimable_at <= current_time are due regardless of
+  // whether the group is still active. Members retain the right to claim
+  // already-accrued contributions after group deactivation.
+
   // Compute current rotation slot
   expect current_time >= group.start_time
   let current_slot =
@@ -626,8 +631,9 @@ pub fn validate_distribute_payout(
 //                     (group is being updated to decrement member count in same tx)
 // [spec ExitGroup 4a]: Penalty path (group active AND within rotation period):
 //                      penalty output at penalty_output_index has PenaltyState datum,
-//                      retains the membership token, and contains ≥ penalty_fee of
-//                      the penalty asset
+//                      retains the membership token, contains ≥ penalty_fee of the
+//                      penalty asset, AND preserves all treasury input ADA —
+//                      prevents the member from draining locked contributions during exit
 // [spec ExitGroup 4b]: Mature/inactive path (group inactive OR past rotation end):
 //                      membership token is burned in this transaction
 pub fn validate_exit_group(
@@ -719,9 +725,18 @@ pub fn validate_exit_group(
     // Penalty datum references the same member token name
     let penalty_datum_matches = penalty_member_tn == member_reference_tokenname
 
-    // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
+    // [security]: penalty output holds only ADA, own policy (membership token), and the
+    // group's penalty fee policy — prevents unbounded value accumulation while supporting
+    // native token penalty fees set at group creation.
+    // ada_policy_id and own_policy_id are always present (every UTxO has ADA; membership
+    // token is enforced by token_in_penalty), so they must be in the whitelist.
     let clean_penalty_value =
-      assets.policies(penalty_output.value) == [ada_policy_id, own_policy_id]
+      list.all(
+        assets.policies(penalty_output.value),
+        fn(p) {
+          p == ada_policy_id || p == own_policy_id || p == group.penalty_fee_policyid
+        },
+      )
 
     // [spec ExitGroup 3]: penalty path — member slot held until penalty resolved,
     //   so member_count stays unchanged (MemberExit fires on PenaltyWithdraw instead)
@@ -844,7 +859,9 @@ pub fn validate_member_withdraw(
       list.find(inputs, fn(i) { i.output_reference == utxo })
     let input_ada = assets.lovelace_of(own_input.output.value)
 
-    // [spec MemberWithdraw 4]: withdrawal_amount ≤ total claimable amount (linear vesting)
+    // [spec MemberWithdraw 4]: withdrawal_amount ≤ total claimable amount — member may
+    // claim less than the full claimable sum (e.g. to satisfy min-ADA on the output UTxO).
+    // Any unclaimed ADA remains in the UTxO and is recovered on ExitGroup.
     let total_claimable = claimable_sum(contribution_list, current_time)
     let withdrawal_valid = withdrawal_amount <= total_claimable && withdrawal_amount > 0
 

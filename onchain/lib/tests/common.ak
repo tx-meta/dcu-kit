@@ -93,7 +93,7 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     joining_fee_policyid: policy_id,
     joining_fee_assetname: "",
     joining_fee: 100,
-    penalty_fee_policyid: policy_id,
+    penalty_fee_policyid: #"",
     penalty_fee_assetname: "",
     penalty_fee: 100,
     interval_length: 1000,
