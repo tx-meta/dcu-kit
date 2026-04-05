@@ -37,6 +37,6 @@
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.29",
     "@noble/hashes": "^1.8.0",
-    "effect": "^3.14.22"
+    "effect": "^3.21.0"
   }
 }
