@@ -108,13 +108,11 @@ validator group_validator(treasury_policy_id: PolicyId) {
 
         validate_member_exit(
           policy_id,
-          treasury_policy_id,
           group_ref_token_name,
           group_input_index,
           group_output_index,
           inputs,
           outputs,
-          self.mint,
         )
       }
     }

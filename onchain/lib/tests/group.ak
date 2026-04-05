@@ -1218,97 +1218,50 @@ test member_join__rejects_member_count_over_incremented() {
 
 // ─── validate_member_exit ─────────────────────────────────────────────────────
 
-// MemberExit: member exits — member_count 1 → 0, token burned
+// MemberExit: mature exit — member_count 1 → 0 (token burned by treasury)
 test member_exit__accepts_valid_exit() {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
-  let tp = treasury_policy_id()
 
   let group_in = group_input_with_count(policy_id, ref_tn, 1)
   let group_out = group_output_with_count(policy_id, ref_tn, 0)
 
-  // Treasury burning exactly 1 token proves mature ExitGroup or PenaltyWithdraw ran
-  let mint = assets.from_asset(tp, #"aabb", -1)
-
-  validate_member_exit(
-    policy_id,
-    tp,
-    ref_tn,
-    0,
-    0,
-    [group_in],
-    [group_out],
-    mint,
-  )
+  validate_member_exit(policy_id, ref_tn, 0, 0, [group_in], [group_out])
 }
 
 // MemberExit: member_count 2 → 1 (partial exit with remaining members)
 test member_exit__accepts_partial_exit() {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
-  let tp = treasury_policy_id()
 
   let group_in = group_input_with_count(policy_id, ref_tn, 2)
   let group_out = group_output_with_count(policy_id, ref_tn, 1)
-  let mint = assets.from_asset(tp, #"aabb", -1)
 
-  validate_member_exit(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
-}
-
-// MemberExit: no treasury burn — ExitGroup/PenaltyWithdraw did NOT run → rejected
-test member_exit__rejects_no_treasury_burn() {
-  let policy_id = common.test_policy_id()
-  let (_, ref_tn, _) = common.setup_cip68(policy_id)
-  let tp = treasury_policy_id()
-
-  let group_in = group_input_with_count(policy_id, ref_tn, 1)
-  let group_out = group_output_with_count(policy_id, ref_tn, 0)
-  // No burn
-  let mint = assets.zero
-
-  !validate_member_exit(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
+  validate_member_exit(policy_id, ref_tn, 0, 0, [group_in], [group_out])
 }
 
 // MemberExit: group output member_count not decremented → rejected
 test member_exit__rejects_member_count_not_decremented() {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
-  let tp = treasury_policy_id()
 
   let group_in = group_input_with_count(policy_id, ref_tn, 1)
   // Output: member_count still 1 — not decremented
   let group_out = group_output_with_count(policy_id, ref_tn, 1)
-  let mint = assets.from_asset(tp, #"aabb", -1)
 
-  !validate_member_exit(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
+  !validate_member_exit(policy_id, ref_tn, 0, 0, [group_in], [group_out])
 }
 
 // MemberExit: cannot exit when member_count == 0 (expect crashes)
 test member_exit__rejects_exit_when_no_members() fail {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
-  let tp = treasury_policy_id()
 
   let group_in = group_input_with_count(policy_id, ref_tn, 0)
   let group_out = group_output_with_count(policy_id, ref_tn, -1)
-  let mint = assets.from_asset(tp, #"aabb", -1)
 
   // expect current.member_count >= 1 crashes when member_count == 0
-  validate_member_exit(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
-}
-
-// Early exit (penalty path): no treasury burn — member_count stays unchanged
-test member_exit__accepts_early_exit_no_burn() {
-  let policy_id = common.test_policy_id()
-  let (_, ref_tn, _) = common.setup_cip68(policy_id)
-  let tp = treasury_policy_id()
-
-  let group_in = group_input_with_count(policy_id, ref_tn, 1)
-  // No burn → count stays at 1
-  let group_out = group_output_with_count(policy_id, ref_tn, 1)
-  let mint = assets.zero
-
-  validate_member_exit(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
+  validate_member_exit(policy_id, ref_tn, 0, 0, [group_in], [group_out])
 }
 
 // Group input holds 5M ADA; member_join output returns only ref token — ADA drained
@@ -1347,7 +1300,6 @@ test member_join__rejects_group_ada_drain() {
 test member_exit__rejects_group_ada_drain() {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
-  let tp = treasury_policy_id()
 
   let base_datum = GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
   let group_in =
@@ -1363,14 +1315,13 @@ test member_exit__rejects_group_ada_drain() {
         base_datum,
       ),
     )
-  // Output: member_count decremented (burn path) but ADA stripped — out_ada (0) < in_ada (5M)
+  // Output: member_count decremented but ADA stripped — out_ada (0) < in_ada (5M)
   let group_out =
     common.test_script_utxo(
       policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
       GroupDatum { ..base_datum, member_count: 0 },
     )
-  let mint = assets.from_asset(tp, #"aa", -1)
 
-  !validate_member_exit(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
+  !validate_member_exit(policy_id, ref_tn, 0, 0, [group_in], [group_out])
 }

@@ -150,15 +150,22 @@ validator treasury(account_policy_id: PolicyId) {
         )
       }
 
-      TerminateGroup { group_input_index, admin_input_index } ->
+      TerminateGroup { group_input_index, admin_input_index } -> {
+        // Derive group_policy_id from the group input's script credential.
+        // TerminateGroup does NOT update group state — only reads it for admin auth.
+        expect Some(group_input) = list.at(inputs, group_input_index)
+        expect Script(group_policy_id) =
+          group_input.output.address.payment_credential
+
         validate_spend_terminate_group(
           policy_id_from_utxo(inputs, utxo),
           treasury_datum,
-          group_input_index,
+          group_policy_id,
           admin_input_index,
           inputs,
           mint,
         )
+      }
 
       // JoinGroup is a mint redeemer — reject at spend
       _ -> fail

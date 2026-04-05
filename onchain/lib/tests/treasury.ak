@@ -208,24 +208,6 @@ fn group_admin_tn() -> assets.AssetName {
   cip68.convert_ref_to_user_token(group_ref_tn())
 }
 
-// Minimal group input at Script(group_policy) for TerminateGroup tests.
-// The validator only reads the payment_credential to extract group_policy_id.
-fn test_terminate_group_input() -> Input {
-  let gp = group_policy()
-  Input {
-    output_reference: OutputReference {
-      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
-      output_index: 0,
-    },
-    output: Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
-      value: assets.from_lovelace(2_000_000),
-      datum: NoDatum,
-      reference_script: None,
-    },
-  }
-}
-
 // Admin input holding the group user (222) token under group_policy.
 fn test_admin_input() -> Input {
   let gp = group_policy()
@@ -1077,11 +1059,28 @@ test distribute_payout__rejects_duplicate_output_index() {
 
 // Early exit: group is_active && current_time < maturity (0 + 3*1000 = 3000)
 // Penalty output holds ≥ penalty_fee; member reclaims the remainder as change.
+// member_count decrements immediately — slot freed, rotation continues unblocked.
 test exit_group__accepts_early_exit_with_penalty() {
   let tp = treasury_policy()
+  let gp = group_policy()
 
   let current_time = 1500
-  let group_input = test_group_input()
+  // Group input with member_count: 1 (the exiting member)
+  let active_group_datum = GroupDatum { ..test_group_datum(), member_count: 1 }
+  let group_input =
+    Input {
+      output_reference: OutputReference {
+        transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+        output_index: 0,
+      },
+      output: Output {
+        address: Address { payment_credential: Script(gp), stake_credential: None },
+        value: assets.from_lovelace(2_000_000)
+          |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+        datum: InlineDatum(active_group_datum),
+        reference_script: None,
+      },
+    }
   let member_input = test_member_input()
 
   let datum = test_treasury_state(0)
@@ -1092,8 +1091,7 @@ test exit_group__accepts_early_exit_with_penalty() {
       member_reference_tokenname: member_tn(),
     }
   // Penalty output holds exactly penalty_fee (500K ADA) + membership token.
-  // Remaining locked contributions flow back to the member as change — this is
-  // the intended spec behaviour: member exits early, forfeits only penalty_fee.
+  // Remaining locked contributions flow back to the member as change.
   let penalty_value =
     assets.from_lovelace(500_000)
       |> assets.merge(assets.from_asset(tp, member_tn(), 1))
@@ -1108,7 +1106,7 @@ test exit_group__accepts_early_exit_with_penalty() {
       reference_script: None,
     }
 
-  // Group output: member_count unchanged (penalty path — member stays committed)
+  // Group output: member_count 1 → 0 (slot freed immediately)
   let group_out = test_group_output(0)
 
   let tx =
@@ -1204,7 +1202,8 @@ test exit_group__rejects_member_input_without_user_token() {
   let tp = treasury_policy()
 
   let current_time = 1500
-  let group_input = test_group_input()
+  // member_count: 1 so the decrement (→ 0) is valid; test fails on member_authorized only
+  let group_input = test_group_input_with_member_count(1)
 
   // Member input holds only ADA — no account user token
   let no_token_input =
@@ -1242,7 +1241,7 @@ test exit_group__rejects_member_input_without_user_token() {
       reference_script: None,
     }
 
-  // Group output: member_count unchanged (penalty path)
+  // Group output: member_count 1 → 0 (early exit now decrements)
   let group_out = test_group_output(0)
 
   let tx =
@@ -1303,7 +1302,7 @@ test exit_group__rejects_early_exit_missing_penalty_fee() {
   let tp = treasury_policy()
 
   let current_time = 1500
-  let group_input = test_group_input()
+  let group_input = test_group_input_with_member_count(1)
   let member_input = test_member_input()
 
   let datum = test_treasury_state(0)
@@ -1337,15 +1336,14 @@ test exit_group__rejects_early_exit_missing_penalty_fee() {
   !validate_exit_group(tp, account_policy(), 0, 1, 1, 0, datum, tx)
 }
 
-// Exploit: member exits early with penalty output holding only penalty_fee ADA (500K),
-// draining 4.5M locked contributions as change. penalty_preserves_ada fails.
 // Spec [ExitGroup 4a]: penalty output holds only penalty_fee (500K ADA) — member
-// reclaims remaining locked contributions (4.5M) as wallet change. Valid per spec.
+// reclaims remaining locked contributions as wallet change. Valid per spec.
+// member_count decrements immediately so the group rotation continues unblocked.
 test exit_group__accepts_member_reclaims_refund() {
   let tp = treasury_policy()
 
   let current_time = 1500
-  let group_input = test_group_input()
+  let group_input = test_group_input_with_member_count(1)
   let member_input = test_member_input()
   let datum = test_treasury_state(0)
 
@@ -1700,18 +1698,16 @@ test spend_terminate_group__accepts_penalty_burn() {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
     }
-  let inputs = [test_terminate_group_input(), test_admin_input()]
   let mint = assets.from_asset(tp, member_tn(), -1)
-  validate_spend_terminate_group(tp, datum, 0, 1, inputs, mint)
+  validate_spend_terminate_group(tp, datum, group_policy(), 0, [test_admin_input()], mint)
 }
 
 // fail: expect PenaltyState crashes when datum is TreasuryState
 test spend_terminate_group__rejects_treasury_state_datum() fail {
   let tp = treasury_policy()
   let datum = test_treasury_state(0)
-  let inputs = [test_terminate_group_input(), test_admin_input()]
   let mint = assets.from_asset(tp, member_tn(), -1)
-  validate_spend_terminate_group(tp, datum, 0, 1, inputs, mint)
+  validate_spend_terminate_group(tp, datum, group_policy(), 0, [test_admin_input()], mint)
 }
 
 test spend_terminate_group__rejects_no_burn() {
@@ -1721,10 +1717,9 @@ test spend_terminate_group__rejects_no_burn() {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
     }
-  let inputs = [test_terminate_group_input(), test_admin_input()]
   // No burn in mint
   let mint = assets.zero
-  !validate_spend_terminate_group(tp, datum, 0, 1, inputs, mint)
+  !validate_spend_terminate_group(tp, datum, group_policy(), 0, [test_admin_input()], mint)
 }
 
 test spend_terminate_group__rejects_wrong_token_burned() {
@@ -1734,11 +1729,10 @@ test spend_terminate_group__rejects_wrong_token_burned() {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
     }
-  let inputs = [test_terminate_group_input(), test_admin_input()]
   // Burning a different token name
   let wrong_tn = #"dddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
   let mint = assets.from_asset(tp, wrong_tn, -1)
-  !validate_spend_terminate_group(tp, datum, 0, 1, inputs, mint)
+  !validate_spend_terminate_group(tp, datum, group_policy(), 0, [test_admin_input()], mint)
 }
 
 // Admin input holds no group (222) token — authorization check fails
@@ -1763,7 +1757,6 @@ test spend_terminate_group__rejects_no_admin_token() {
         reference_script: None,
       },
     }
-  let inputs = [test_terminate_group_input(), no_token_admin_input]
   let mint = assets.from_asset(tp, member_tn(), -1)
-  !validate_spend_terminate_group(tp, datum, 0, 1, inputs, mint)
+  !validate_spend_terminate_group(tp, datum, group_policy(), 0, [no_token_admin_input], mint)
 }

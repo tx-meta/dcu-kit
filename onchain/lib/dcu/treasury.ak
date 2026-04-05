@@ -41,7 +41,10 @@ pub type TreasuryRedeemer {
     treasury_output_index: Int,
   }
   TerminateGroup {
-    // group input (spending) to derive the group policy for admin token check
+    // group input (reference or spending) to derive the group policy_id for admin token check.
+    // TerminateGroup does NOT spend or update the group UTxO — member_count was already
+    // decremented at ExitGroup time. This index is only needed to read the group's script
+    // credential so the admin (222) token name can be validated.
     group_input_index: Int,
     // admin input holding the group (222) user token
     admin_input_index: Int,
@@ -677,9 +680,10 @@ pub fn validate_exit_group(
     group.start_time + group.num_intervals * group.interval_length
   let is_early_exit = group.is_active && current_time < maturity_time
 
-  // [spec ExitGroup 3]: group output — member_count transition depends on exit path:
-  //   penalty path: member stays committed (token held as penalty) → member_count unchanged
-  //   mature/inactive path: member fully exits (token burned) → member_count - 1
+  // [spec ExitGroup 3]: group output — member_count decrements on BOTH paths.
+  //   penalty path: slot freed immediately so rotation continues unblocked
+  //   mature/inactive path: token burned, slot freed
+  //   TerminateGroup handles penalty ADA independently; it does not touch group state.
   expect Some(group_output_utxo) = list.at(outputs, group_output_index)
   expect InlineDatum(go_data) = group_output_utxo.datum
   expect updated_group: GroupDatum = go_data
@@ -738,10 +742,12 @@ pub fn validate_exit_group(
         },
       )
 
-    // [spec ExitGroup 3]: penalty path — member slot held until penalty resolved,
-    //   so member_count stays unchanged (MemberExit fires on PenaltyWithdraw instead)
-    let group_count_unchanged =
-      updated_group.member_count == group.member_count
+    // [spec ExitGroup 3]: penalty path — member exits immediately, freeing the slot.
+    //   member_count decrements now; TerminateGroup later only burns the penalty token
+    //   and releases ADA to the admin — it does not touch group state.
+    //   This prevents one member's early exit from stalling the group's rotation.
+    let group_count_decremented =
+      updated_group.member_count == group.member_count - 1
 
     and {
       member_authorized?,
@@ -750,7 +756,7 @@ pub fn validate_exit_group(
       penalty_fee_locked?,
       penalty_datum_matches?,
       clean_penalty_value?,
-      group_count_unchanged?,
+      group_count_decremented?,
       group_output_at_correct_address?,
       group_output_has_ref_token?,
     }
@@ -926,10 +932,14 @@ pub fn validate_member_withdraw(
 // [spec PenaltyWithdraw 3]: admin must hold the group (222) user token derived
 //                           from group_reference_tokenname in the PenaltyState datum —
 //                           prevents any wallet from draining penalty UTxOs
+//
+// NOTE: group state is NOT touched here. member_count was already decremented at
+//       ExitGroup time, so the rotation continued unblocked. TerminateGroup only
+//       burns the penalty token and releases the locked ADA to the admin.
 pub fn validate_spend_terminate_group(
   own_policy_id: PolicyId,
   datum: TreasuryDatum,
-  group_input_index: Int,
+  group_policy_id: PolicyId,
   admin_input_index: Int,
   inputs: List<Input>,
   mint: Value,
@@ -940,11 +950,7 @@ pub fn validate_spend_terminate_group(
     group_reference_tokenname,
   } = datum
 
-  // [spec PenaltyWithdraw 3]: derive the group policy ID from the group input's address
-  //   and the admin (222) user token name from the group reference token name
-  expect Some(group_input) = list.at(inputs, group_input_index)
-  expect Script(group_policy_id) = group_input.output.address.payment_credential
-
+  // [spec PenaltyWithdraw 3]: admin (222) user token derived from group reference token name
   let admin_token_name =
     cip68.prefix_222
       |> bytearray.concat(

@@ -351,32 +351,26 @@ pub fn validate_member_join(
 // ─────────────────────────────────────────────────────────────────────────────
 // NOTE: self-reference check enforced at entry point.
 //
-// Covers three exit scenarios:
-//   1. Mature/inactive ExitGroup (burn path): treasury token burned — member_count - 1
-//   2. PenaltyWithdraw/TerminateGroup (burn path): penalty token burned — member_count - 1
-//   3. Early ExitGroup (penalty path, token NOT burned — moved to PenaltyState):
-//      member stays committed until PenaltyWithdraw resolves — member_count unchanged
+// Covers all exit scenarios — member_count ALWAYS decrements:
+//   1. Mature/inactive ExitGroup (burn path): token burned, slot freed immediately
+//   2. Early ExitGroup (penalty path): token moves to PenaltyState, slot freed immediately
+//      TerminateGroup later burns the penalty token; it does NOT touch group state.
 //
-// The burn check branches the expected member_count:
-//   • treasury_burning == True  → decrement member_count by 1
-//   • treasury_burning == False → keep member_count the same (early exit)
+// Decrementing immediately on early exit prevents one member from stalling the
+// group's rotation until an admin resolves the penalty.
 //
 // [spec MemberExit 1]: group input holds the ref token
-// [spec MemberExit 2]: treasury burn status determines the transition:
-//                      burn → member fully exited (count -1)
-//                      no burn → member in penalty state (count unchanged)
+// [spec MemberExit 2]: member_count always decrements by exactly 1
 // [spec MemberExit 3]: member_count >= 1 before exit (cannot go below 0)
 // [spec MemberExit 4]: group output at same script address with ref token
 // [spec MemberExit 5]: only member_count may change; all other fields frozen
 pub fn validate_member_exit(
   policy_id: PolicyId,
-  treasury_policy_id: PolicyId,
   group_ref_token_name: AssetName,
   group_input_index: Int,
   group_output_index: Int,
   inputs: List<Input>,
   outputs: List<Output>,
-  mint: Value,
 ) -> Bool {
   // [spec MemberExit 1]: group input holds the ref token
   expect Some(group_input) = list.at(inputs, group_input_index)
@@ -394,24 +388,8 @@ pub fn validate_member_exit(
   expect InlineDatum(output_datum_data) = group_output.datum
   expect updated: GroupDatum = output_datum_data
 
-  // [spec MemberExit 2]: detect whether treasury burned exactly 1 token (mature/penalty-claim)
-  //   or not (early exit — token moved to PenaltyState, not burned)
-  let treasury_burning =
-    when dict.to_pairs(assets.tokens(mint, treasury_policy_id)) is {
-      [Pair(_, qty)] -> qty == -1
-      _ -> False
-    }
-
-  // [spec MemberExit 5]: only member_count changes; all other fields frozen.
-  //   burn → member fully exited (decrement)
-  //   no burn → member committed in penalty (unchanged)
-  let expected_count =
-    if treasury_burning {
-      current.member_count - 1
-    } else {
-      current.member_count
-    }
-  let expected = GroupDatum { ..current, member_count: expected_count }
+  // [spec MemberExit 2 & 5]: member_count decrements by 1; all other fields frozen
+  let expected = GroupDatum { ..current, member_count: current.member_count - 1 }
 
   // [security]: ADA must not decrease — member cannot drain group UTxO during exit
   let in_ada = assets.lovelace_of(group_input.output.value)
