@@ -8,10 +8,10 @@ use cardano/transaction.{
 use dcu/cip68
 use dcu/group.{GroupDatum}
 use dcu/treasury.{
-  Contribution, TreasuryDatum, TreasuryState, PenaltyState,
-  claimable_sum, remove_claimable, validate_distribute_payout,
-  validate_exit_group, validate_join_group, validate_member_withdraw,
-  validate_spend_terminate_group, validate_terminate_group,
+  Contribution, PenaltyState, TreasuryDatum, TreasuryState, claimable_sum,
+  remove_claimable, validate_distribute_payout, validate_exit_group,
+  validate_join_group, validate_member_withdraw, validate_spend_terminate_group,
+  validate_terminate_group,
 }
 use tests/common
 
@@ -44,14 +44,14 @@ fn group_ref_tn() -> assets.AssetName {
 fn test_group_input() -> Input {
   let gp = group_policy()
   let value =
-    assets.from_lovelace(2_000_000) |> assets.merge(assets.from_asset(
-      gp,
-      group_ref_tn(),
-      1,
-    ))
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
   let output =
     Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value,
       datum: InlineDatum(test_group_datum()),
       reference_script: None,
@@ -137,10 +137,7 @@ fn test_treasury_output(datum: TreasuryDatum, value: assets.Value) -> Output {
 }
 
 // Treasury input wrapping an output
-fn test_treasury_input(
-  output_ref: OutputReference,
-  output: Output,
-) -> Input {
+fn test_treasury_input(output_ref: OutputReference, output: Output) -> Input {
   Input { output_reference: output_ref, output }
 }
 
@@ -251,7 +248,9 @@ test remove_claimable__keeps_all_when_none_due() {
 
 test remove_claimable__removes_past_entries() {
   let remaining = remove_claimable(test_contribution_list(), 2000)
-  remaining == [Contribution { claimable_at: 3000, claimable_amount: 2_000_000 }]
+  remaining == [
+    Contribution { claimable_at: 3000, claimable_amount: 2_000_000 },
+  ]
 }
 
 test remove_claimable__removes_all() {
@@ -469,7 +468,10 @@ test join_group__rejects_inactive_group() {
   let inactive_datum = GroupDatum { ..test_group_datum(), is_active: False }
   let inactive_group_output =
     Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
       datum: InlineDatum(inactive_datum),
@@ -658,8 +660,7 @@ test join_group__rejects_wrong_group_link() {
   let member_input = test_member_input()
 
   // datum group_reference_tokenname doesn't match the actual group token
-  let wrong_group_tn =
-    #"ffff00ffff00ffff00ffff00ffff00ffff00ffff00ffff00ffff00"
+  let wrong_group_tn = #"ffff00ffff00ffff00ffff00ffff00ffff00ffff00ffff00ffff00"
   let datum = build_treasury_state(0, wrong_group_tn, test_contribution_list())
   let output_value =
     assets.from_lovelace(5_000_000)
@@ -696,7 +697,10 @@ fn test_group_input_with_member_count(member_count: Int) -> Input {
       |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
   let output =
     Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value,
       datum: InlineDatum(datum),
       reference_script: None,
@@ -845,7 +849,8 @@ fn setup_distribute_payout() -> (Transaction, TreasuryDatum, OutputReference) {
   // Treasury input: assigned_slot = 2 (the borrower)
   let treasury_datum = test_treasury_state(2)
   let treasury_in_value = treasury_value()
-  let treasury_in_output = test_treasury_output(treasury_datum, treasury_in_value)
+  let treasury_in_output =
+    test_treasury_output(treasury_datum, treasury_in_value)
   let utxo_ref = treasury_utxo_ref()
   let treasury_in = test_treasury_input(utxo_ref, treasury_in_output)
 
@@ -925,8 +930,7 @@ test distribute_payout__rejects_no_ada_reduction() {
       |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let bad_treasury_out =
     Output { ..old_treasury_out, value: no_reduction_value }
-  let new_outputs =
-    list.concat([bad_treasury_out], list.drop(outputs, 1))
+  let new_outputs = list.concat([bad_treasury_out], list.drop(outputs, 1))
 
   let bad_tx =
     Transaction {
@@ -950,7 +954,8 @@ test distribute_payout__rejects_wrong_datum_update() {
   // Replace treasury output datum with original (not pruned) contribution list
   expect Some(old_treasury_out) = list.at(outputs, 0)
   let stale_datum = test_treasury_state(2)
-  let bad_treasury_out = Output { ..old_treasury_out, datum: InlineDatum(stale_datum) }
+  let bad_treasury_out =
+    Output { ..old_treasury_out, datum: InlineDatum(stale_datum) }
   let new_outputs = list.concat([bad_treasury_out], list.drop(outputs, 1))
 
   let bad_tx =
@@ -1006,7 +1011,10 @@ test distribute_payout__rejects_when_borrower_absent() fail {
 
   let group_ref_output =
     Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
       datum: InlineDatum(test_group_datum()),
@@ -1023,7 +1031,8 @@ test distribute_payout__rejects_when_borrower_absent() fail {
 
   // assigned_slot = 1 — NOT the borrower for slot 2
   let wrong_slot_datum = test_treasury_state(1)
-  let treasury_in_output = test_treasury_output(wrong_slot_datum, treasury_value())
+  let treasury_in_output =
+    test_treasury_output(wrong_slot_datum, treasury_value())
   let utxo_ref = treasury_utxo_ref()
   let treasury_in = test_treasury_input(utxo_ref, treasury_in_output)
 
@@ -1074,7 +1083,10 @@ test exit_group__accepts_early_exit_with_penalty() {
         output_index: 0,
       },
       output: Output {
-        address: Address { payment_credential: Script(gp), stake_credential: None },
+        address: Address {
+          payment_credential: Script(gp),
+          stake_credential: None,
+        },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
         datum: InlineDatum(active_group_datum),
@@ -1131,7 +1143,10 @@ test exit_group__accepts_mature_exit_with_burn() {
   let gp = group_policy()
   let inactive_group_output =
     Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
       datum: InlineDatum(inactive_group_datum),
@@ -1235,7 +1250,10 @@ test exit_group__rejects_member_input_without_user_token() {
       |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let penalty_output =
     Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(tp),
+        stake_credential: None,
+      },
       value: penalty_value,
       datum: InlineDatum(penalty_datum),
       reference_script: None,
@@ -1264,7 +1282,10 @@ test exit_group__rejects_mature_exit_without_burn() {
   let gp = group_policy()
   let inactive_group_output =
     Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
       datum: InlineDatum(inactive_group_datum),
@@ -1316,7 +1337,10 @@ test exit_group__rejects_early_exit_missing_penalty_fee() {
   let penalty_value = assets.from_asset(tp, member_tn(), 1)
   let penalty_output =
     Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(tp),
+        stake_credential: None,
+      },
       value: penalty_value,
       datum: InlineDatum(penalty_datum),
       reference_script: None,
@@ -1358,7 +1382,10 @@ test exit_group__accepts_member_reclaims_refund() {
       |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let penalty_output =
     Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(tp),
+        stake_credential: None,
+      },
       value: penalty_value,
       datum: InlineDatum(penalty_datum),
       reference_script: None,
@@ -1389,7 +1416,10 @@ fn setup_member_withdraw() -> (Transaction, TreasuryDatum, OutputReference) {
   // Group as reference input
   let group_ref_output =
     Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
       datum: InlineDatum(test_group_datum()),
@@ -1458,14 +1488,33 @@ test member_withdraw__accepts_valid_withdrawal() {
 test member_withdraw__rejects_over_withdrawal() {
   let (tx, datum, utxo) = setup_member_withdraw()
   // 3M > 2M claimable → should fail
-  !validate_member_withdraw(treasury_policy(), account_policy(), 0, 1, 0, 3_000_000, datum, utxo, tx)
+  !validate_member_withdraw(
+    treasury_policy(),
+    account_policy(),
+    0,
+    1,
+    0,
+    3_000_000,
+    datum,
+    utxo,
+    tx,
+  )
 }
-
 
 test member_withdraw__rejects_zero_withdrawal() {
   let (tx, datum, utxo) = setup_member_withdraw()
   // loans_withdrawn must be > 0
-  !validate_member_withdraw(treasury_policy(), account_policy(), 0, 1, 0, 0, datum, utxo, tx)
+  !validate_member_withdraw(
+    treasury_policy(),
+    account_policy(),
+    0,
+    1,
+    0,
+    0,
+    datum,
+    utxo,
+    tx,
+  )
 }
 
 // fail: expect TreasuryState crashes when datum is PenaltyState
@@ -1498,7 +1547,10 @@ test member_withdraw__rejects_member_input_without_user_token() {
   let current_time = 1500
   let group_ref_output =
     Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
       datum: InlineDatum(test_group_datum()),
@@ -1556,7 +1608,17 @@ test member_withdraw__rejects_member_input_without_user_token() {
       validity_range: interval.after(current_time),
     }
 
-  !validate_member_withdraw(treasury_policy(), account_policy(), 0, 1, 0, 2_000_000, datum, utxo_ref, tx)
+  !validate_member_withdraw(
+    treasury_policy(),
+    account_policy(),
+    0,
+    1,
+    0,
+    2_000_000,
+    datum,
+    utxo_ref,
+    tx,
+  )
 }
 
 // Output contribution list is NOT updated (stale datum) — entries not pruned
@@ -1576,7 +1638,17 @@ test member_withdraw__rejects_wrong_datum_update() {
       outputs: [bad_out],
       validity_range,
     }
-  !validate_member_withdraw(treasury_policy(), account_policy(), 0, 1, 0, 2_000_000, datum, utxo, bad_tx)
+  !validate_member_withdraw(
+    treasury_policy(),
+    account_policy(),
+    0,
+    1,
+    0,
+    2_000_000,
+    datum,
+    utxo,
+    bad_tx,
+  )
 }
 
 // Inactive group: member withdraws all remaining contributions and burns their token
@@ -1584,10 +1656,14 @@ test member_withdraw__accepts_inactive_group_full_withdrawal() {
   let tp = treasury_policy()
   let gp = group_policy()
 
-  let inactive_group_datum = GroupDatum { ..test_group_datum(), is_active: False }
+  let inactive_group_datum =
+    GroupDatum { ..test_group_datum(), is_active: False }
   let group_ref_output =
     Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
       datum: InlineDatum(inactive_group_datum),
@@ -1622,7 +1698,17 @@ test member_withdraw__accepts_inactive_group_full_withdrawal() {
     }
 
   // loans_withdrawn = 0 on inactive path (burn path doesn't check amount)
-  validate_member_withdraw(tp, account_policy(), 0, 1, 0, 0, datum, utxo_ref, tx)
+  validate_member_withdraw(
+    tp,
+    account_policy(),
+    0,
+    1,
+    0,
+    0,
+    datum,
+    utxo_ref,
+    tx,
+  )
 }
 
 // Inactive group: member tries to exit without burning — must fail
@@ -1630,10 +1716,14 @@ test member_withdraw__rejects_inactive_group_no_burn() {
   let tp = treasury_policy()
   let gp = group_policy()
 
-  let inactive_group_datum = GroupDatum { ..test_group_datum(), is_active: False }
+  let inactive_group_datum =
+    GroupDatum { ..test_group_datum(), is_active: False }
   let group_ref_output =
     Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
       datum: InlineDatum(inactive_group_datum),
@@ -1665,7 +1755,17 @@ test member_withdraw__rejects_inactive_group_no_burn() {
       validity_range: interval.after(500),
     }
 
-  !validate_member_withdraw(tp, account_policy(), 0, 1, 0, 0, datum, utxo_ref, tx)
+  !validate_member_withdraw(
+    tp,
+    account_policy(),
+    0,
+    1,
+    0,
+    0,
+    datum,
+    utxo_ref,
+    tx,
+  )
 }
 
 // Output ADA doesn't decrease by loans_withdrawn — balance check fails
@@ -1686,7 +1786,17 @@ test member_withdraw__rejects_wrong_ada_balance() {
       outputs: [bad_out],
       validity_range,
     }
-  !validate_member_withdraw(treasury_policy(), account_policy(), 0, 1, 0, 2_000_000, datum, utxo, bad_tx)
+  !validate_member_withdraw(
+    treasury_policy(),
+    account_policy(),
+    0,
+    1,
+    0,
+    2_000_000,
+    datum,
+    utxo,
+    bad_tx,
+  )
 }
 
 // ─── validate_spend_terminate_group ──────────────────────────────────────────
@@ -1699,7 +1809,14 @@ test spend_terminate_group__accepts_penalty_burn() {
       member_reference_tokenname: member_tn(),
     }
   let mint = assets.from_asset(tp, member_tn(), -1)
-  validate_spend_terminate_group(tp, datum, group_policy(), 0, [test_admin_input()], mint)
+  validate_spend_terminate_group(
+    tp,
+    datum,
+    group_policy(),
+    0,
+    [test_admin_input()],
+    mint,
+  )
 }
 
 // fail: expect PenaltyState crashes when datum is TreasuryState
@@ -1707,7 +1824,14 @@ test spend_terminate_group__rejects_treasury_state_datum() fail {
   let tp = treasury_policy()
   let datum = test_treasury_state(0)
   let mint = assets.from_asset(tp, member_tn(), -1)
-  validate_spend_terminate_group(tp, datum, group_policy(), 0, [test_admin_input()], mint)
+  validate_spend_terminate_group(
+    tp,
+    datum,
+    group_policy(),
+    0,
+    [test_admin_input()],
+    mint,
+  )
 }
 
 test spend_terminate_group__rejects_no_burn() {
@@ -1719,7 +1843,14 @@ test spend_terminate_group__rejects_no_burn() {
     }
   // No burn in mint
   let mint = assets.zero
-  !validate_spend_terminate_group(tp, datum, group_policy(), 0, [test_admin_input()], mint)
+  !validate_spend_terminate_group(
+    tp,
+    datum,
+    group_policy(),
+    0,
+    [test_admin_input()],
+    mint,
+  )
 }
 
 test spend_terminate_group__rejects_wrong_token_burned() {
@@ -1732,7 +1863,14 @@ test spend_terminate_group__rejects_wrong_token_burned() {
   // Burning a different token name
   let wrong_tn = #"dddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
   let mint = assets.from_asset(tp, wrong_tn, -1)
-  !validate_spend_terminate_group(tp, datum, group_policy(), 0, [test_admin_input()], mint)
+  !validate_spend_terminate_group(
+    tp,
+    datum,
+    group_policy(),
+    0,
+    [test_admin_input()],
+    mint,
+  )
 }
 
 // Admin input holds no group (222) token — authorization check fails
@@ -1751,12 +1889,22 @@ test spend_terminate_group__rejects_no_admin_token() {
         output_index: 0,
       },
       output: Output {
-        address: Address { payment_credential: VerificationKey(common.test_pkh()), stake_credential: None },
+        address: Address {
+          payment_credential: VerificationKey(common.test_pkh()),
+          stake_credential: None,
+        },
         value: assets.from_lovelace(2_000_000),
         datum: NoDatum,
         reference_script: None,
       },
     }
   let mint = assets.from_asset(tp, member_tn(), -1)
-  !validate_spend_terminate_group(tp, datum, group_policy(), 0, [no_token_admin_input], mint)
+  !validate_spend_terminate_group(
+    tp,
+    datum,
+    group_policy(),
+    0,
+    [no_token_admin_input],
+    mint,
+  )
 }

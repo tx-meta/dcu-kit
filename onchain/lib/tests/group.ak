@@ -1,8 +1,8 @@
 use aiken/fuzz
 use aiken/primitive/bytearray
 use cardano/assets
-use dcu/cip68
 use cardano/transaction.{Input, Output, OutputReference}
+use dcu/cip68
 use dcu/group.{
   GroupDatum, validate_create_group, validate_member_exit, validate_member_join,
   validate_remove_group, validate_update_group,
@@ -767,7 +767,14 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
   // If the datum is invalid, validation MUST return False.
   // If the datum happens to be valid (rare but possible), we expect True.
   if is_invalid {
-    !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+    !validate_create_group(
+      policy_id,
+      0,
+      0,
+      [input],
+      [output, user_output],
+      mint,
+    )
   } else {
     validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
   }
@@ -833,10 +840,7 @@ test update_group__rejects_fee_currency_change_with_members() {
 
   // Attempt to switch contribution_fee currency — economic rug-pull
   let updated_datum =
-    GroupDatum {
-      ..base_datum,
-      contribution_fee_policyid: alt_policy_id,
-    }
+    GroupDatum { ..base_datum, contribution_fee_policyid: alt_policy_id }
   let group_output =
     common.test_script_utxo(
       policy_id,
@@ -1106,8 +1110,7 @@ fn group_input_with_count(
   ref_tn: ByteArray,
   member_count: Int,
 ) -> Input {
-  let datum =
-    GroupDatum { ..common.test_group_datum(policy_id), member_count }
+  let datum = GroupDatum { ..common.test_group_datum(policy_id), member_count }
   // Include 2 ADA so the ADA preservation check (out_ada >= in_ada) is non-trivial
   let value =
     assets.from_lovelace(2_000_000)
@@ -1129,8 +1132,7 @@ fn group_output_with_count(
   ref_tn: ByteArray,
   member_count: Int,
 ) -> Output {
-  let datum =
-    GroupDatum { ..common.test_group_datum(policy_id), member_count }
+  let datum = GroupDatum { ..common.test_group_datum(policy_id), member_count }
   let value =
     assets.from_lovelace(2_000_000)
       |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
@@ -1171,7 +1173,16 @@ test member_join__accepts_second_member() {
   let group_out = group_output_with_count(policy_id, ref_tn, 2)
   let mint = assets.from_asset(tp, #"aabb", 1)
 
-  validate_member_join(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
+  validate_member_join(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
 }
 
 // MemberJoin: no treasury mint — proves JoinGroup did NOT run → rejected
@@ -1185,7 +1196,16 @@ test member_join__rejects_no_treasury_mint() {
   // Mint is empty — no treasury token minted
   let mint = assets.zero
 
-  !validate_member_join(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
+  !validate_member_join(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
 }
 
 // MemberJoin: group output has wrong member_count (not incremented) → rejected
@@ -1199,7 +1219,16 @@ test member_join__rejects_member_count_not_incremented() {
   let group_out = group_output_with_count(policy_id, ref_tn, 0)
   let mint = assets.from_asset(tp, #"aabb", 1)
 
-  !validate_member_join(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
+  !validate_member_join(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
 }
 
 // MemberJoin: group output has over-incremented member_count → rejected
@@ -1213,7 +1242,16 @@ test member_join__rejects_member_count_over_incremented() {
   let group_out = group_output_with_count(policy_id, ref_tn, 2)
   let mint = assets.from_asset(tp, #"aabb", 1)
 
-  !validate_member_join(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
+  !validate_member_join(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
 }
 
 // ─── validate_member_exit ─────────────────────────────────────────────────────
@@ -1270,7 +1308,8 @@ test member_join__rejects_group_ada_drain() {
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
   let tp = treasury_policy_id()
 
-  let base_datum = GroupDatum { ..common.test_group_datum(policy_id), member_count: 0 }
+  let base_datum =
+    GroupDatum { ..common.test_group_datum(policy_id), member_count: 0 }
   let group_in =
     common.test_input(
       OutputReference {
@@ -1293,7 +1332,16 @@ test member_join__rejects_group_ada_drain() {
     )
   let mint = assets.from_asset(tp, #"aa", 1)
 
-  !validate_member_join(policy_id, tp, ref_tn, 0, 0, [group_in], [group_out], mint)
+  !validate_member_join(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
 }
 
 // Group input holds 5M ADA; member_exit output returns only ref token — ADA drained
@@ -1301,7 +1349,8 @@ test member_exit__rejects_group_ada_drain() {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
 
-  let base_datum = GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
+  let base_datum =
+    GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
   let group_in =
     common.test_input(
       OutputReference {

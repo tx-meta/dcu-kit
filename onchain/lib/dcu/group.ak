@@ -313,7 +313,11 @@ pub fn validate_member_join(
   // [spec MemberJoin 1]: group input holds the ref token
   expect Some(group_input) = list.at(inputs, group_input_index)
   expect
-    assets.quantity_of(group_input.output.value, policy_id, group_ref_token_name) == 1
+    assets.quantity_of(
+      group_input.output.value,
+      policy_id,
+      group_ref_token_name,
+    ) == 1
 
   expect InlineDatum(input_datum_data) = group_input.output.datum
   expect current: GroupDatum = input_datum_data
@@ -327,7 +331,8 @@ pub fn validate_member_join(
   let treasury_minting = dict.size(assets.tokens(mint, treasury_policy_id)) == 1
 
   // [spec MemberJoin 4]: only member_count increments; all other fields unchanged
-  let expected = GroupDatum { ..current, member_count: current.member_count + 1 }
+  let expected =
+    GroupDatum { ..current, member_count: current.member_count + 1 }
 
   // [security]: ADA must not decrease — member cannot drain group UTxO during join
   let in_ada = assets.lovelace_of(group_input.output.value)
@@ -375,7 +380,11 @@ pub fn validate_member_exit(
   // [spec MemberExit 1]: group input holds the ref token
   expect Some(group_input) = list.at(inputs, group_input_index)
   expect
-    assets.quantity_of(group_input.output.value, policy_id, group_ref_token_name) == 1
+    assets.quantity_of(
+      group_input.output.value,
+      policy_id,
+      group_ref_token_name,
+    ) == 1
 
   expect InlineDatum(input_datum_data) = group_input.output.datum
   expect current: GroupDatum = input_datum_data
@@ -389,7 +398,8 @@ pub fn validate_member_exit(
   expect updated: GroupDatum = output_datum_data
 
   // [spec MemberExit 2 & 5]: member_count decrements by 1; all other fields frozen
-  let expected = GroupDatum { ..current, member_count: current.member_count - 1 }
+  let expected =
+    GroupDatum { ..current, member_count: current.member_count - 1 }
 
   // [security]: ADA must not decrease — member cannot drain group UTxO during exit
   let in_ada = assets.lovelace_of(group_input.output.value)

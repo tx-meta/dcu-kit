@@ -4,7 +4,9 @@ use aiken/interval.{Finite}
 use aiken/primitive/bytearray
 use cardano/address.{Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
-use cardano/transaction.{InlineDatum, Input, Output, OutputReference, Transaction}
+use cardano/transaction.{
+  InlineDatum, Input, Output, OutputReference, Transaction,
+}
 use dcu/cip68
 use dcu/group.{GroupDatum}
 
@@ -75,7 +77,10 @@ pub type TreasuryRedeemer {
 
 // claimable_sum
 // Returns the sum of all `claimable_amount`s where `claimable_at <= current_time`.
-pub fn claimable_sum(contributions: List<Contribution>, current_time: Int) -> Int {
+pub fn claimable_sum(
+  contributions: List<Contribution>,
+  current_time: Int,
+) -> Int {
   list.foldl(
     contributions,
     0,
@@ -111,7 +116,13 @@ fn validate_contribution_list_at_join(
 ) -> Bool {
   let length_valid = list.length(contributions) == num_intervals
   let entries_valid =
-    check_entries(contributions, start_time, interval_length, contribution_fee, 0)
+    check_entries(
+      contributions,
+      start_time,
+      interval_length,
+      contribution_fee,
+      0,
+    )
   and {
     length_valid?,
     entries_valid?,
@@ -285,7 +296,8 @@ pub fn validate_join_group(
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(go_data) = group_output.datum
   expect updated_group: GroupDatum = go_data
-  let member_count_incremented = updated_group.member_count == group.member_count + 1
+  let member_count_incremented =
+    updated_group.member_count == group.member_count + 1
 
   // [spec JoinGroup Minor 9]: group output must be at the group script address and
   //   retain the ref token — prevents substituting a fake group output datum
@@ -365,7 +377,11 @@ pub fn validate_join_group(
         // If an output holds the member_reference_tokenname under the account policy,
         // it must be at a wallet (VerificationKey), not a script
         let has_user_token =
-          assets.quantity_of(o.value, account_policy_id, member_reference_tokenname) > 0
+          assets.quantity_of(
+            o.value,
+            account_policy_id,
+            member_reference_tokenname,
+          ) > 0
         if has_user_token {
           when o.address.payment_credential is {
             VerificationKey(_) -> True
@@ -382,11 +398,9 @@ pub fn validate_join_group(
     exact_mint?,
     (treasury_output.address.payment_credential == Script(own_policy_id))?,
     // [spec JoinGroup 5]: exact token check — exactly 1 membership token, prevents token stuffing
-    (
-      dict.to_pairs(assets.tokens(treasury_output.value, own_policy_id)) == [
-        Pair(member_reference_tokenname, 1),
-      ]
-    )?,
+    (dict.to_pairs(assets.tokens(treasury_output.value, own_policy_id)) == [
+      Pair(member_reference_tokenname, 1),
+    ])?,
     // [security]: only ADA + own policy in treasury output — prevents unbounded value accumulation
     (assets.policies(treasury_output.value) == [ada_policy_id, own_policy_id])?,
     group_link_valid?,
@@ -417,7 +431,7 @@ pub fn validate_terminate_group(own_policy_id: PolicyId, mint: Value) -> Bool {
   let minted_tokens = assets.tokens(mint, own_policy_id)
   // Exactly one entry, with quantity -1
   expect [Pair(_, qty)] = dict.to_pairs(minted_tokens)
-  ( qty == -1 )?
+  (qty == -1)?
 }
 
 // ─── Spend: DistributePayout ──────────────────────────────────────────────────
@@ -466,7 +480,8 @@ pub fn validate_distribute_payout(
   let current_time = get_lower_bound(tx)
 
   // [spec DistributePayout 2]: group reference input with GroupDatum
-  expect Some(group_ref_input) = list.at(reference_inputs, group_ref_input_index)
+  expect Some(group_ref_input) =
+    list.at(reference_inputs, group_ref_input_index)
   expect InlineDatum(group_datum_data) = group_ref_input.output.datum
   expect group: GroupDatum = group_datum_data
 
@@ -474,7 +489,6 @@ pub fn validate_distribute_payout(
   // Contributions whose claimable_at <= current_time are due regardless of
   // whether the group is still active. Members retain the right to claim
   // already-accrued contributions after group deactivation.
-
   // Compute current rotation slot
   expect current_time >= group.start_time
   let current_slot =
@@ -593,7 +607,8 @@ pub fn validate_distribute_payout(
   //   Prevents the claimable entries from being marked paid without value being released.
   //   Each UTxO's validator enforces its own share; the aggregate payout to the borrower
   //   follows as a consequence across all treasury inputs.
-  expect Some(own_input) = list.find(inputs, fn(i) { i.output_reference == utxo })
+  expect Some(own_input) =
+    list.find(inputs, fn(i) { i.output_reference == utxo })
   let own_claimable = claimable_sum(contribution_list, current_time)
   let input_ada = assets.lovelace_of(own_input.output.value)
   let output_ada = assets.lovelace_of(own_output.value)
@@ -703,10 +718,8 @@ pub fn validate_exit_group(
     // [spec ExitGroup 4a]: penalty output required
     expect Some(penalty_output) = list.at(outputs, penalty_output_index)
     expect InlineDatum(penalty_datum_data) = penalty_output.datum
-    expect PenaltyState {
-      member_reference_tokenname: penalty_member_tn,
-      ..
-    }: TreasuryDatum = penalty_datum_data
+    expect PenaltyState { member_reference_tokenname: penalty_member_tn, .. }: TreasuryDatum =
+      penalty_datum_data
 
     // [spec ExitGroup 4a]: penalty output retains the membership token (exact check)
     let token_in_penalty =
@@ -833,7 +846,8 @@ pub fn validate_member_withdraw(
   let current_time = get_lower_bound(tx)
 
   // [spec MemberWithdraw 3]: group reference input with valid GroupDatum
-  expect Some(group_ref_input) = list.at(reference_inputs, group_ref_input_index)
+  expect Some(group_ref_input) =
+    list.at(reference_inputs, group_ref_input_index)
   expect InlineDatum(group_datum_data) = group_ref_input.output.datum
   expect group: GroupDatum = group_datum_data
 
@@ -869,7 +883,8 @@ pub fn validate_member_withdraw(
     // claim less than the full claimable sum (e.g. to satisfy min-ADA on the output UTxO).
     // Any unclaimed ADA remains in the UTxO and is recovered on ExitGroup.
     let total_claimable = claimable_sum(contribution_list, current_time)
-    let withdrawal_valid = withdrawal_amount <= total_claimable && withdrawal_amount > 0
+    let withdrawal_valid =
+      withdrawal_amount <= total_claimable && withdrawal_amount > 0
 
     // [spec MemberWithdraw 5]: treasury output with updated datum
     expect Some(treasury_output) = list.at(outputs, treasury_output_index)
@@ -945,10 +960,8 @@ pub fn validate_spend_terminate_group(
   mint: Value,
 ) -> Bool {
   // [spec PenaltyWithdraw 1]: datum must be PenaltyState
-  expect PenaltyState {
-    member_reference_tokenname,
-    group_reference_tokenname,
-  } = datum
+  expect PenaltyState { member_reference_tokenname, group_reference_tokenname } =
+    datum
 
   // [spec PenaltyWithdraw 3]: admin (222) user token derived from group reference token name
   let admin_token_name =
@@ -959,7 +972,11 @@ pub fn validate_spend_terminate_group(
 
   expect Some(admin_input) = list.at(inputs, admin_input_index)
   let admin_authorized =
-    assets.quantity_of(admin_input.output.value, group_policy_id, admin_token_name) == 1
+    assets.quantity_of(
+      admin_input.output.value,
+      group_policy_id,
+      admin_token_name,
+    ) == 1
 
   // [spec PenaltyWithdraw 2]: membership token burned in same tx
   // (the mint handler also enforces exactly 1 token burned — belt-and-suspenders)

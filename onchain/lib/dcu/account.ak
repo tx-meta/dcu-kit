@@ -101,7 +101,9 @@ pub fn validate_create_account(
     exact_mint_quantity?,
     (output.address.payment_credential == Script(policy_id))?,
     // [spec CreateAccount 4]: output holds EXACTLY the ref (100) token — prevents token stuffing
-    (dict.to_pairs(assets.tokens(output.value, policy_id)) == [Pair(ref_token_name, 1)])?,
+    (dict.to_pairs(assets.tokens(output.value, policy_id)) == [
+      Pair(ref_token_name, 1),
+    ])?,
     // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
     (assets.policies(output.value) == [ada_policy_id, policy_id])?,
     is_account_datum_valid(datum)?,
@@ -185,7 +187,9 @@ pub fn validate_update_account(
     (output.address == account_input.output.address)?,
     // [spec UpdateAccount 4]: output retains EXACTLY the ref (100) token —
     //                         prevents account-merge when two accounts updated in one tx
-    (dict.to_pairs(assets.tokens(output.value, policy_id)) == [Pair(reference_token_name, 1)])?,
+    (dict.to_pairs(assets.tokens(output.value, policy_id)) == [
+      Pair(reference_token_name, 1),
+    ])?,
     // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
     (assets.policies(output.value) == [ada_policy_id, policy_id])?,
     is_account_datum_valid(datum)?,
