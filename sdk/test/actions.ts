@@ -349,7 +349,6 @@ export const deleteGroupTestCase = (
 export type JoinGroupTestParams = {
     groupUtxo: UTxO;
     accountUtxo: UTxO;
-    adminUtxo: UTxO;
     contributionAmount: bigint;
     userSeed: string; // User joining
 };
@@ -360,14 +359,13 @@ export const joinGroupTestCase = (
 ): Effect.Effect<JoinGroupResult, Error, never> => {
     return Effect.gen(function* () {
         const { lucid } = context;
-        const { groupUtxo, accountUtxo, adminUtxo, contributionAmount, userSeed } = params;
-        
+        const { groupUtxo, accountUtxo, contributionAmount, userSeed } = params;
+
         selectWalletFromSeed(lucid, userSeed);
-        
+
         const joinConfig: JoinGroupConfig = {
             groupUtxo,
             accountUtxo,
-            adminUtxo,
             contributionAmount
         };
 

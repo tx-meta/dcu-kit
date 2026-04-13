@@ -75,28 +75,27 @@ export const unsignedExitGroupTxProgram = (
         member_count: groupDatum.member_count - 1n
     };
 
-    // Group validator redeemer: UpdateGroup (accountUtxo serves as member proof)
+    // Group validator redeemer: MemberExit (no admin required)
     const groupRedeemer: RedeemerBuilder = {
         kind: "selected",
         makeRedeemer: (inputIndices: bigint[]) => Data.to({
-            UpdateGroup: {
+            MemberExit: {
                 group_ref_token_name: groupRefName,
                 group_input_index: inputIndices[0],
-                admin_input_index: inputIndices[1],
                 group_output_index: 0n
             }
         }, GroupSpendRedeemer),
-        inputs: [groupUtxo, accountUtxo]
+        inputs: [groupUtxo]
     };
 
     // Treasury validator redeemer: ExitGroup
-    // Group UTxO is now a spending input, so group_ref_input_index is dynamic.
     // Output layout: [0] Group UTxO, [1] Penalty (early exit only)
     const treasuryRedeemer: RedeemerBuilder = {
         kind: "selected",
         makeRedeemer: (inputIndices: bigint[]) => Data.to({
             ExitGroup: {
                 group_ref_input_index: inputIndices[0],
+                group_output_index: 0n,
                 member_input_index: inputIndices[1],
                 treasury_input_index: inputIndices[2],
                 penalty_output_index: isEarlyExit ? 1n : 0n

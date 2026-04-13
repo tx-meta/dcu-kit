@@ -175,7 +175,6 @@ export const setupMembership = (
             {
                 groupUtxo,
                 accountUtxo: userUtxo, // Maps from SetupResult userUtxo (Account)
-                adminUtxo,
                 contributionAmount,
                 userSeed: users.user1.seedPhrase
             }

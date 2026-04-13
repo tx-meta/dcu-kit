@@ -42,7 +42,6 @@ export const createDefaultGroupDatum = (
   interval_length: 3600000n, // 1 hour
   num_intervals: 10n,
   member_count: 0n,
-  share_holding: false,
   is_active: true,
   start_time: BigInt(Date.now()),
   ...overrides,
@@ -71,7 +70,7 @@ export const createDefaultGroupDatum = (
 export const createDefaultAccountDatum = (
   overrides?: Partial<AccountDatum>
 ): AccountDatum => ({
-  email_hash: fromText("test_email"),
-  phone_hash: fromText("test_phone"),
+  email_hash: "00".repeat(32),
+  phone_hash: "00".repeat(32),
   ...overrides,
 });

@@ -1,6 +1,6 @@
-import { UTxO } from "@lucid-evolution/lucid";
+import { UTxO, Data, Constr } from "@lucid-evolution/lucid";
 import { bytesToHex, concatBytes, hexToBytes } from "@noble/hashes/utils";
-import { sha3_256 } from "@noble/hashes/sha3";
+import { blake2b } from "@noble/hashes/blake2";
 import { Effect } from "effect";
 import { UtxoNotFoundError } from "../errors.js";
 
@@ -18,22 +18,36 @@ export const assetNameLabels = {
 };
 
 /**
- * Generates a unique asset name based on an input UTxO using SHA3-256.
- * 
- * This ensures that assets minted in different transactions have unique names
- * even if they use the same minting policy.
- * 
- * @param utxo - The UTxO being spent to seed the uniqueness.
- * @param prefixHex - The CIP-68 label prefix (hex).
+ * Generates a unique CIP-68 asset name from a seed UTxO.
+ *
+ * Matches the Aiken on-chain algorithm (`dcu/cip68.unique_token_name`):
+ *   1. CBOR-serialise OutputReference as Plutus data:
+ *      Constr(0, [txHash_bytes, outputIndex_int])
+ *      (TransactionId is a ByteArray alias in stdlib v3, not a wrapper Constr)
+ *   2. blake2b_256 of the CBOR bytes → 32-byte hash
+ *   3. Take the first 28 bytes  (CIP-68 prefix occupies the remaining 4)
+ *   4. Prepend the 4-byte CIP-68 label prefix → 32-byte asset name
+ *
+ * @param utxo      - The UTxO being consumed to seed uniqueness.
+ * @param prefixHex - The 4-byte CIP-68 label prefix in hex (e.g. "000643b0" for ref).
  * @returns Effect yielding a 32-byte hex string asset name.
  */
-export const generateUniqueAssetName = (utxo: UTxO, prefixHex: string): Effect.Effect<string> => 
+export const generateUniqueAssetName = (utxo: UTxO, prefixHex: string): Effect.Effect<string> =>
     Effect.sync(() => {
-        const txIdHash = sha3_256(hexToBytes(utxo.txHash));
-        const indexByte = new Uint8Array([utxo.outputIndex]);
-        const concatIndex = concatBytes(indexByte, txIdHash);
-        const concatPrefix = concatBytes(hexToBytes(prefixHex), concatIndex);
-        return bytesToHex(concatPrefix.slice(0, 32));
+        // Matches Aiken's `cbor.serialise(OutputReference { transaction_id, output_index })`.
+        // OutputReference serialises as Plutus data: Constr(0, [ByteArray(txHash), Int(outputIndex)]).
+        // TransactionId is a ByteArray alias in stdlib v3 (not a nested Constr wrapper).
+        // Data.to() produces the correct Plutus-data CBOR (tag 0xD879 + indefinite array).
+        const outputRefCbor = Data.to(
+            new Constr(0, [utxo.txHash, BigInt(utxo.outputIndex)])
+        );
+
+        // blake2b_256 → 32-byte hash, take first 28 bytes.
+        // JS .slice(0, 28) is exclusive-end = 28 bytes.
+        // Matches Aiken: bytearray.slice(hash, 0, 27) which is inclusive-end = 28 bytes.
+        const hash   = blake2b(hexToBytes(outputRefCbor), { dkLen: 32 });
+        const chopped = hash.slice(0, 28);
+        return bytesToHex(concatBytes(hexToBytes(prefixHex), chopped));
     });
 
 /**

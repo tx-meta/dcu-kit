@@ -1,10 +1,11 @@
-import { 
-    Data, 
-    LucidEvolution, 
-    UTxO, 
-    TxSignBuilder, 
+import {
+    Data,
+    LucidEvolution,
+    UTxO,
+    TxSignBuilder,
     fromText,
-    RedeemerBuilder
+    RedeemerBuilder,
+    paymentCredentialOf
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -46,7 +47,6 @@ import {
 export type JoinGroupConfig = {
     groupUtxo: UTxO;
     accountUtxo: UTxO;
-    adminUtxo: UTxO;
     contributionAmount: bigint;
 };
 
@@ -55,7 +55,7 @@ export const unsignedJoinGroupTxProgram = (
   config: JoinGroupConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupUtxo, accountUtxo, adminUtxo, contributionAmount } = config;
+    const { groupUtxo, accountUtxo, contributionAmount } = config;
     const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
 
     const assignedSlot = groupDatum.member_count; 
@@ -84,28 +84,30 @@ export const unsignedJoinGroupTxProgram = (
         })
     );
 
+    const address = yield* getWalletAddress(lucid);
+    const memberPaymentCredential = paymentCredentialOf(address).hash;
+
     const treasuryDatum: TreasuryDatum = {
         TreasuryState: {
             group_reference_tokenname: groupRefName,
             member_reference_tokenname: accountAssetName,
             membership_start: BigInt(Date.now()),
             assigned_slot: assignedSlot,
-            slot_number: 0n,
-            contribution_list: contributionList
+            contribution_list: contributionList,
+            member_payment_credential: memberPaymentCredential,
         }
     };
 
     const groupRedeemer: RedeemerBuilder = {
         kind: "selected",
         makeRedeemer: (inputIndices: bigint[]) => Data.to({
-            UpdateGroup: {
+            MemberJoin: {
                 group_ref_token_name: groupRefName,
                 group_input_index: inputIndices[0],
-                admin_input_index: inputIndices[1],
                 group_output_index: 0n
             }
         }, GroupSpendRedeemer),
-        inputs: [groupUtxo, adminUtxo]
+        inputs: [groupUtxo]
     };
 
     const treasuryRedeemer: RedeemerBuilder = {
@@ -113,6 +115,7 @@ export const unsignedJoinGroupTxProgram = (
         makeRedeemer: (inputIndices: bigint[]) => Data.to({
             JoinGroup: {
                 group_ref_input_index: inputIndices[0],
+                group_output_index: 0n,
                 member_input_index: inputIndices[1],
                 treasury_output_index: 1n
             }
@@ -120,7 +123,6 @@ export const unsignedJoinGroupTxProgram = (
         inputs: [groupUtxo, accountUtxo]
     };
 
-    const address = yield* getWalletAddress(lucid);
     const groupAddress = yield* getScriptAddress(lucid, groupValidator.spendGroup);
     const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
 
@@ -128,7 +130,6 @@ export const unsignedJoinGroupTxProgram = (
         .newTx()
         .collectFrom([groupUtxo], groupRedeemer)
         .collectFrom([accountUtxo])
-        .collectFrom([adminUtxo])
         .mintAssets(
             { [treasuryPolicyId + accountAssetName]: 1n },
             treasuryRedeemer

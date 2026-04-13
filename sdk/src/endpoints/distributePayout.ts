@@ -97,8 +97,8 @@ export const unsignedDistributePayoutTxProgram = (
                 member_reference_tokenname: ts.member_reference_tokenname,
                 membership_start: ts.membership_start,
                 assigned_slot: ts.assigned_slot,
-                slot_number: ts.slot_number,
                 contribution_list: ts.contribution_list.filter(c => c.claimable_at > currentTime),
+                member_payment_credential: ts.member_payment_credential,
             }
         };
         outputStates.push({ utxo: state.utxo, datum: updatedDatum, remainingLovelace: state.utxo.assets.lovelace - contributed });

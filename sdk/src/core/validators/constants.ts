@@ -26,8 +26,8 @@ export const accountScript = {
 
 // --- Group ---
 export const groupValidator = {
-  spendGroup: getValidator("group_validator.group.spend"),
-  mintGroup: getValidator("group_validator.group.mint"),
+  spendGroup: getValidator("group_validator.group_validator.spend"),
+  mintGroup: getValidator("group_validator.group_validator.mint"),
 };
 
 export const groupPolicyId = mintingPolicyToId(groupValidator.mintGroup);

@@ -73,8 +73,8 @@ pub fn validate_create_account(
 
   // [spec CreateAccount 2]: exactly two tokens minted — ref (100) qty 1, user (222) qty 1
   let minted_tokens = assets.tokens(mint, policy_id)
-  expect Some(1) = dict.get(minted_tokens, ref_token_name)
-  expect Some(1) = dict.get(minted_tokens, user_token_name)
+  let ref_minted = dict.get(minted_tokens, ref_token_name) == Some(1)
+  let user_minted = dict.get(minted_tokens, user_token_name) == Some(1)
   let exact_mint_quantity = dict.size(minted_tokens) == 2
 
   // [spec CreateAccount 3]: output at output_index is at the Account Script address
@@ -97,15 +97,23 @@ pub fn validate_create_account(
       Script(_) -> False
     }
 
+  let output_at_script_address =
+    output.address.payment_credential == Script(policy_id)
+
+  let output_has_ref_token =
+    assets.quantity_of(output.value, policy_id, ref_token_name) == 1
+
+  // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
+  let output_clean_value =
+    assets.policies(output.value) == [ada_policy_id, policy_id]
+
   and {
     exact_mint_quantity?,
-    (output.address.payment_credential == Script(policy_id))?,
-    // [spec CreateAccount 4]: output holds EXACTLY the ref (100) token — prevents token stuffing
-    (dict.to_pairs(assets.tokens(output.value, policy_id)) == [
-      Pair(ref_token_name, 1),
-    ])?,
-    // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
-    (assets.policies(output.value) == [ada_policy_id, policy_id])?,
+    ref_minted?,
+    user_minted?,
+    output_at_script_address?,
+    output_has_ref_token?,
+    output_clean_value?,
     is_account_datum_valid(datum)?,
     user_token_to_wallet?,
   }

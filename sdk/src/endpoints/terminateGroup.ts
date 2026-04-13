@@ -1,36 +1,42 @@
 
-import { 
-    Data, 
-    LucidEvolution, 
-    UTxO, 
-    TxSignBuilder 
+import {
+    Data,
+    LucidEvolution,
+    UTxO,
+    TxSignBuilder,
+    fromText,
+    RedeemerBuilder
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { 
-    TreasuryDatum, 
-    TreasuryDatumSchema, 
-    TreasuryRedeemer 
+import {
+    GroupDatum,
+    GroupSpendRedeemer,
+    TreasuryDatum,
+    TreasuryDatumSchema,
+    TreasuryRedeemer
 } from "../core/types.js";
-import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
+import { treasuryValidator, treasuryPolicyId, groupValidator, groupPolicyId } from "../core/validators/constants.js";
 import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
-import { getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
 
 // --- Configuration ---
 
 export type TerminateGroupConfig = {
-    groupUtxo: UTxO;
-    treasuryUtxo: UTxO;
+    groupUtxo: UTxO;   // Must be spending input — treasury reads its script credential
+    adminUtxo: UTxO;   // Must hold the group (222) admin token for auth
+    treasuryUtxo: UTxO; // Must be PenaltyState
 };
 
 // --- Endpoint ---
 
 /**
- * Creates an unsigned transaction for terminating a Group membership.
- * 
+ * Creates an unsigned transaction for terminating a Group membership (penalty withdrawal).
+ *
  * **Functionality:**
- * - Irreversibly burns a Treasury Membership token.
- * - Destroys the Treasury UTxO state and refunds remaining ADA (to the script/admin control).
- * 
+ * - Admin withdraws a PenaltyState Treasury UTxO after member early exit.
+ * - Burns the membership token and releases locked ADA to the admin.
+ * - Requires the group UTxO as a spending input (to derive group policy for admin auth).
+ *
  * @param lucid - Lucid instance with wallet selected.
  * @param config - TerminateGroupConfig.
  * @returns Effect yielding TxSignBuilder.
@@ -40,40 +46,73 @@ export const unsignedTerminateGroupTxProgram = (
   config: TerminateGroupConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupUtxo, treasuryUtxo } = config;
+    const { groupUtxo, adminUtxo, treasuryUtxo } = config;
 
     const treasuryDatum = (yield* parseSafeDatum(treasuryUtxo.datum, TreasuryDatumSchema)) as unknown as TreasuryDatum;
-    // Check for valid state variant
-    if (!('TreasuryState' in treasuryDatum) && !('PenaltyState' in treasuryDatum)) {
-        return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Expected TreasuryState or PenaltyState" }));
+    if (!('PenaltyState' in treasuryDatum)) {
+        return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Expected PenaltyState for TerminateGroup" }));
     }
 
-    // Extract token name from state (check both variants)
-    const memberRefName = 'TreasuryState' in treasuryDatum 
-        ? treasuryDatum.TreasuryState.member_reference_tokenname 
-        : treasuryDatum.PenaltyState.member_reference_tokenname;
-
+    const memberRefName = treasuryDatum.PenaltyState.member_reference_tokenname;
     const policyId = treasuryPolicyId;
 
-    // Redeemer: TerminateGroup (Unit Variant)
-    const redeemer = Data.to({
-        TerminateGroup: "TerminateGroup" 
-    }, TreasuryRedeemer);
+    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
+
+    const groupRefAssetEntry = Object.keys(groupUtxo.assets).find(k => k.startsWith(groupPolicyId!));
+    const groupRefName = groupRefAssetEntry
+        ? groupRefAssetEntry.slice(groupPolicyId!.length)
+        : fromText("GroupReference");
+
+    // Group validator redeemer: UpdateGroup — admin spends group UTxO and returns it unchanged.
+    // This is required because the treasury validator reads the group input from tx.inputs
+    // (spending inputs) to derive the group policy ID for admin token verification.
+    const groupRedeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (inputIndices: bigint[]) => Data.to({
+            UpdateGroup: {
+                group_ref_token_name: groupRefName,
+                admin_input_index: inputIndices[1],
+                group_input_index: inputIndices[0],
+                group_output_index: 0n
+            }
+        }, GroupSpendRedeemer),
+        inputs: [groupUtxo, adminUtxo]
+    };
+
+    // Treasury validator redeemer: TerminateGroup
+    const treasuryRedeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (inputIndices: bigint[]) => Data.to({
+            TerminateGroup: {
+                group_input_index: inputIndices[0],
+                admin_input_index: inputIndices[1],
+            }
+        }, TreasuryRedeemer),
+        inputs: [groupUtxo, adminUtxo]
+    };
 
     const address = yield* getWalletAddress(lucid);
+    const groupAddress = yield* getScriptAddress(lucid, groupValidator.spendGroup);
 
-    // Note: same redeemer is used for both Spending (Treasury UTxO) and Minting (Burn).
     return yield* lucid
         .newTx()
-        .readFrom([groupUtxo])
-        .collectFrom([treasuryUtxo], redeemer)
+        .collectFrom([groupUtxo], groupRedeemer)
+        .collectFrom([adminUtxo])
+        .collectFrom([treasuryUtxo], treasuryRedeemer)
         .mintAssets(
             { [policyId + memberRefName]: -1n },
-            redeemer
+            treasuryRedeemer
         )
         .attach.MintingPolicy(treasuryValidator.mintTreasury)
         .attach.SpendingValidator(treasuryValidator.spendTreasury)
+        .attach.SpendingValidator(groupValidator.spendGroup)
         .addSigner(address)
+        // Output 0: Return Group UTxO unchanged (UpdateGroup path)
+        .pay.ToContract(
+            groupAddress,
+            { kind: "inline", value: Data.to(groupDatum, GroupDatum) },
+            groupUtxo.assets
+        )
         .completeProgram()
         .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "terminateGroup", error: String(e) })));
   });

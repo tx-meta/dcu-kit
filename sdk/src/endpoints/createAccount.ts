@@ -1,5 +1,5 @@
 
-import { LucidEvolution, Data, UTxO, TxSignBuilder } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
 import { AccountDatum, AccountRedeemer } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
@@ -51,10 +51,18 @@ export const unsignedCreateAccountTxProgram = (
     const { refTokenName, userTokenName } = yield* createCip68TokenNames(config.selected_out_ref);
 
     const datum = Data.to(config.account_datum, AccountDatum);
-    const redeemer = Data.to(
-        { CreateAccount: { input_index: 0n, output_index: 0n } },
-        AccountRedeemer
-    );
+
+    // RedeemerBuilder resolves the actual sorted index of selected_out_ref at build time.
+    // The validator uses input_index to re-derive the CIP-68 names — it must point to
+    // the same UTxO the SDK used to compute refTokenName/userTokenName.
+    const redeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (inputIndices: bigint[]) => Data.to(
+            { CreateAccount: { input_index: inputIndices[0], output_index: 0n } },
+            AccountRedeemer
+        ),
+        inputs: [config.selected_out_ref],
+    };
 
     return yield* lucid
       .newTx()

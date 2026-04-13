@@ -56,7 +56,6 @@ export const GroupDatumSchema = Data.Object({
   interval_length: Data.Integer(),
   num_intervals: Data.Integer(),
   member_count: Data.Integer(),
-  share_holding: Data.Boolean(),
   is_active: Data.Boolean(),
   start_time: Data.Integer(),
 });
@@ -64,15 +63,19 @@ export const GroupDatumSchema = Data.Object({
 export type GroupDatum = Data.Static<typeof GroupDatumSchema>;
 export const GroupDatum = GroupDatumSchema as unknown as GroupDatum;
 
-export const GroupMintRedeemerSchema = Data.Any();
+export const GroupMintRedeemerSchema = Data.Enum([
+  Data.Object({
+    CreateGroup: Data.Object({
+      input_index: Data.Integer(),
+      output_index: Data.Integer(),
+    }),
+  }),
+]);
 
 export type GroupMintRedeemer = Data.Static<typeof GroupMintRedeemerSchema>;
 export const GroupMintRedeemer = GroupMintRedeemerSchema as unknown as GroupMintRedeemer;
 
 export const GroupSpendRedeemerSchema = Data.Enum([
-  Data.Object({
-    CreateGroup: Data.Literal("CreateGroup")
-  }),
   Data.Object({
     UpdateGroup: Data.Object({
       group_ref_token_name: Data.Bytes(),
@@ -85,6 +88,20 @@ export const GroupSpendRedeemerSchema = Data.Enum([
     RemoveGroup: Data.Object({
       group_ref_token_name: Data.Bytes(),
       admin_input_index: Data.Integer(),
+      group_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    MemberJoin: Data.Object({
+      group_ref_token_name: Data.Bytes(),
+      group_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    MemberExit: Data.Object({
+      group_ref_token_name: Data.Bytes(),
       group_input_index: Data.Integer(),
       group_output_index: Data.Integer(),
     }),
@@ -109,8 +126,8 @@ export const TreasuryDatumSchema = Data.Enum([
             member_reference_tokenname: Data.Bytes(),
             membership_start: Data.Integer(),
             assigned_slot: Data.Integer(),
-            slot_number: Data.Integer(),
             contribution_list: Data.Array(ContributionSchema),
+            member_payment_credential: Data.Bytes(),
         })
     }),
     Data.Object({
@@ -128,13 +145,17 @@ export const TreasuryRedeemerSchema = Data.Enum([
     Data.Object({
         JoinGroup: Data.Object({
             group_ref_input_index: Data.Integer(),
+            group_output_index: Data.Integer(),
             member_input_index: Data.Integer(),
             treasury_output_index: Data.Integer(),
         })
     }),
     Data.Object({
-        TerminateGroup: Data.Literal("TerminateGroup")
-    }), // TerminateGroup is a unit variant in Aiken? Or Enum? Checked: "TerminateGroup" unit.
+        TerminateGroup: Data.Object({
+            group_input_index: Data.Integer(),
+            admin_input_index: Data.Integer(),
+        })
+    }),
     Data.Object({
         DistributePayout: Data.Object({
             group_ref_input_index: Data.Integer(),
@@ -146,6 +167,7 @@ export const TreasuryRedeemerSchema = Data.Enum([
     Data.Object({
         ExitGroup: Data.Object({
             group_ref_input_index: Data.Integer(),
+            group_output_index: Data.Integer(),
             member_input_index: Data.Integer(),
             treasury_input_index: Data.Integer(),
             penalty_output_index: Data.Integer(),
@@ -157,7 +179,7 @@ export const TreasuryRedeemerSchema = Data.Enum([
             member_input_index: Data.Integer(),
             treasury_input_index: Data.Integer(),
             treasury_output_index: Data.Integer(),
-            loans_withdrawn: Data.Integer(),
+            withdrawal_amount: Data.Integer(),
         })
     })
 ]);

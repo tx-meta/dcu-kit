@@ -70,8 +70,8 @@ export const unsignedMemberWithdrawTxProgram = (
             member_reference_tokenname: ts.member_reference_tokenname,
             membership_start: ts.membership_start,
             assigned_slot: ts.assigned_slot,
-            slot_number: ts.slot_number,
             contribution_list: ts.contribution_list.filter(c => c.claimable_at > now),
+            member_payment_credential: ts.member_payment_credential,
         }
     };
 
@@ -84,7 +84,7 @@ export const unsignedMemberWithdrawTxProgram = (
                     member_input_index: inputIndices[0],
                     treasury_input_index: inputIndices[1],
                     treasury_output_index: 0n,
-                    loans_withdrawn: withdrawAmount
+                    withdrawal_amount: withdrawAmount
                 }
             }, TreasuryRedeemer);
         },

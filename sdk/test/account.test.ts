@@ -46,8 +46,8 @@ describe("Account Endpoints", () => {
             accountUtxo: baseSetup.accountUtxo,
             userUtxo: baseSetup.userUtxo,
             updatedDatum: createDefaultAccountDatum({
-              email_hash: fromText("updated"),
-              phone_hash: fromText("updated"),
+              email_hash: "ff".repeat(32),
+              phone_hash: "ff".repeat(32),
             })
         }
       );

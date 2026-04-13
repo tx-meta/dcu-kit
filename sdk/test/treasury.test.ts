@@ -8,9 +8,10 @@ import {
   distributePayoutTestCase,
 } from "./actions.js";
 import { setupBase, setupGroup, setupAccount, setupMembership } from "./setup.js";
-import { fromText } from "@lucid-evolution/lucid";
 import { unsignedTerminateGroupTxProgram } from "../src/endpoints/terminateGroup.js";
-import { signAndSubmit, findUtxoWithToken } from "../src/core/utils/index.js";
+import { unsignedDistributePayoutTxProgram } from "../src/endpoints/distributePayout.js";
+import { unsignedMemberWithdrawTxProgram } from "../src/endpoints/memberWithdraw.js";
+import { signAndSubmit, selectWalletFromSeed } from "../src/core/utils/index.js";
 import { SetupError } from "../src/core/errors.js";
 
 describe("Treasury Endpoints", () => {
@@ -19,25 +20,17 @@ describe("Treasury Endpoints", () => {
     Effect.gen(function* () {
       const base = yield* setupBase();
 
-      const { context, scripts, groupUtxo } = yield* setupGroup(base);
+      const { context, groupUtxo } = yield* setupGroup(base);
       const { userUtxo } = yield* setupAccount(base);
-      const { users, lucid } = context;
+      const { users } = context;
 
       if (!userUtxo) return yield* Effect.die(new SetupError({ message: "User Account UTxO not found" }));
-
-      // Refetch Admin UTxO as it might have been spent by setupAccount
-      const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-      const adminTokenName = fromText("GroupAdmin");
-      const adminUtxo = yield* findUtxoWithToken(walletUtxos, scripts.group.mint.policyId!, adminTokenName).pipe(
-        Effect.catchAll(() => Effect.die(new SetupError({ message: "Admin UTxO not found" })))
-      );
 
       const result = yield* joinGroupTestCase(
         context,
         {
             groupUtxo,
             accountUtxo: userUtxo,
-            adminUtxo,
             contributionAmount: 50_000_000n,
             userSeed: users.user1.seedPhrase
         }
@@ -51,7 +44,7 @@ describe("Treasury Endpoints", () => {
     Effect.gen(function* () {
       const base = yield* setupBase();
 
-      const { context, scripts, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base);
+      const { context, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base);
       const { users } = context;
 
       const result = yield* exitGroupTestCase(
@@ -78,7 +71,7 @@ describe("Treasury Endpoints", () => {
       const now = BigInt(Date.now());
       const oldStartTime = now - 11n * oneHour;
 
-      const { context, scripts, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base, 50_000_000n, { start_time: oldStartTime });
+      const { context, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base, 50_000_000n, { start_time: oldStartTime });
       const { users } = context;
 
       const result = yield* exitGroupTestCase(
@@ -99,20 +92,40 @@ describe("Treasury Endpoints", () => {
   it.effect("should allow terminating a membership (burn)", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
-      
-      const { context, scripts, groupUtxo, memberUtxo, userUtxo } = yield* setupMembership(base);
-      const { lucid } = context;
 
-      // Group Reference 
-       const groupName = fromText("GroupReference");
-       // Re-verify Group Reference from setupMembership result or refetch if logic requires latest
-       // setupMembership returns latest groupUtxo after join
-      
+      // Default start_time = now → member is in active (non-mature) window → early exit
+      const { context, scripts, groupUtxo, memberUtxo, userUtxo, adminUtxo } = yield* setupMembership(base);
+      const { lucid, users } = context;
+
+      // Step 1: Member does an early exit → creates a PenaltyState treasury UTxO
+      const exitResult = yield* exitGroupTestCase(
+        context,
+        {
+          groupUtxo,
+          accountUtxo: userUtxo,
+          treasuryUtxo: memberUtxo,
+          userSeed: users.user1.seedPhrase,
+        }
+      );
+
+      // Step 2: Find the PenaltyState UTxO and refreshed group UTxO from the exit tx
+      const [penaltyUtxo, refreshedGroupUtxo] = yield* Effect.promise(async () => {
+        const treasuryUtxos = await lucid.utxosAt(scripts.treasury.spend.address);
+        const groupUtxos    = await lucid.utxosAt(scripts.group.spend.address);
+        const penalty = treasuryUtxos.find(u => u.txHash === exitResult.txHash);
+        const group   = groupUtxos.find(u => u.txHash === exitResult.txHash);
+        if (!penalty) throw new Error("Penalty UTxO not found after early exit");
+        if (!group)   throw new Error("Group UTxO not found after early exit");
+        return [penalty, group] as const;
+      });
+
+      // Step 3: Admin terminates the penalty UTxO (wallet is already user1/admin after exitGroupTestCase)
       const unsignedTx = yield* unsignedTerminateGroupTxProgram(
         lucid,
         {
-          groupUtxo,
-          treasuryUtxo: memberUtxo,
+          groupUtxo: refreshedGroupUtxo,
+          adminUtxo,
+          treasuryUtxo: penaltyUtxo,
         }
       );
 
@@ -126,7 +139,7 @@ describe("Treasury Endpoints", () => {
     Effect.gen(function* () {
       const base = yield* setupBase();
       
-      const { context, scripts, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base);
+      const { context, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base);
       const { users } = context;
 
       const result = yield* memberWithdrawTestCase(
@@ -157,7 +170,7 @@ describe("Treasury Endpoints", () => {
       const now = BigInt(Date.now());
       const oldStartTime = now - 20n * oneHour;
 
-      const { context, scripts, groupUtxo, memberUtxo } = yield* setupMembership(
+      const { context, groupUtxo, memberUtxo } = yield* setupMembership(
         base,
         50_000_000n,
         { start_time: oldStartTime, contribution_fee: 2_000_000n }
@@ -175,6 +188,51 @@ describe("Treasury Endpoints", () => {
 
       expect(result.txHash).toBeDefined();
       expect(result.txHash).toHaveLength(64);
+    }),
+  );
+
+  // --- Negative: distributePayout with no claimable entries ---
+  it.effect("should reject payout when no contributions are claimable yet", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+
+      // Default start_time = now → all claimable_at are in the future → payoutAmount = 0
+      const { context, groupUtxo, memberUtxo } = yield* setupMembership(base);
+      const { lucid, users } = context;
+
+      selectWalletFromSeed(lucid, users.user1.seedPhrase);
+
+      const err = yield* Effect.flip(
+        unsignedDistributePayoutTxProgram(lucid, { groupUtxo, treasuryUtxos: [memberUtxo] })
+      );
+
+      expect(err._tag).toBe("TransactionBuildError");
+      expect((err as any).error).toContain("No claimable");
+    }),
+  );
+
+  // --- Negative: memberWithdraw exceeding treasury balance ---
+  it.effect("should reject withdrawal that exceeds treasury balance", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+
+      // contribution = 50 ADA → treasury holds ~50 ADA; withdraw 60 ADA must fail
+      const { context, groupUtxo, userUtxo, memberUtxo } = yield* setupMembership(base, 50_000_000n);
+      const { lucid, users } = context;
+
+      selectWalletFromSeed(lucid, users.user1.seedPhrase);
+
+      const err = yield* Effect.flip(
+        unsignedMemberWithdrawTxProgram(lucid, {
+          groupUtxo,
+          accountUtxo: userUtxo,
+          treasuryUtxo: memberUtxo,
+          withdrawAmount: 60_000_000n,
+        })
+      );
+
+      expect(err._tag).toBe("TransactionBuildError");
+      expect((err as any).error).toContain("Insufficient funds");
     }),
   );
 });

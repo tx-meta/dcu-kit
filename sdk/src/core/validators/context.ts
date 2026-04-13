@@ -61,8 +61,8 @@ export const makeValidators = (
         mint: getMinting("account_validator.account.mint"),
       },
       group: {
-        spend: getSpending("group_validator.group.spend"),
-        mint: getMinting("group_validator.group.mint"),
+        spend: getSpending("group_validator.group_validator.spend"),
+        mint: getMinting("group_validator.group_validator.mint"),
       },
       treasury: {
         spend: getSpending("treasury_validator.treasury.spend"),
