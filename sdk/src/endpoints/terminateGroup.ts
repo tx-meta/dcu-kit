@@ -4,8 +4,9 @@ import {
     LucidEvolution,
     UTxO,
     TxSignBuilder,
-    fromText,
-    RedeemerBuilder
+    RedeemerBuilder,
+    Assets,
+    toUnit
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -16,7 +17,7 @@ import {
     TreasuryRedeemer
 } from "../core/types.js";
 import { treasuryValidator, treasuryPolicyId, groupValidator, groupPolicyId } from "../core/validators/constants.js";
-import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
+import { DcuError, InvalidDatumError, TransactionBuildError, UtxoNotFoundError } from "../core/errors.js";
 import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
 
 // --- Configuration ---
@@ -54,14 +55,16 @@ export const unsignedTerminateGroupTxProgram = (
     }
 
     const memberRefName = treasuryDatum.PenaltyState.member_reference_tokenname;
-    const policyId = treasuryPolicyId;
 
     const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
 
     const groupRefAssetEntry = Object.keys(groupUtxo.assets).find(k => k.startsWith(groupPolicyId!));
-    const groupRefName = groupRefAssetEntry
-        ? groupRefAssetEntry.slice(groupPolicyId!.length)
-        : fromText("GroupReference");
+    if (!groupRefAssetEntry) return yield* Effect.fail(new UtxoNotFoundError({ tokenName: "GroupReference (100)", address: groupUtxo.address }));
+    const groupRefName = groupRefAssetEntry.slice(groupPolicyId!.length);
+
+    const memberToken = toUnit(treasuryPolicyId!, memberRefName);
+    const burnAssets: Assets = { [memberToken]: -1n };
+    const groupAssets: Assets = { ...groupUtxo.assets };
 
     // Group validator redeemer: UpdateGroup — admin spends group UTxO and returns it unchanged.
     // This is required because the treasury validator reads the group input from tx.inputs
@@ -79,8 +82,8 @@ export const unsignedTerminateGroupTxProgram = (
         inputs: [groupUtxo, adminUtxo]
     };
 
-    // Treasury validator redeemer: TerminateGroup
-    const treasuryRedeemer: RedeemerBuilder = {
+    // Treasury validator spend redeemer: TerminateGroup
+    const treasurySpendRedeemer: RedeemerBuilder = {
         kind: "selected",
         makeRedeemer: (inputIndices: bigint[]) => Data.to({
             TerminateGroup: {
@@ -91,28 +94,29 @@ export const unsignedTerminateGroupTxProgram = (
         inputs: [groupUtxo, adminUtxo]
     };
 
+    // The mint handler (TerminateGroup branch) calls validate_terminate_group which
+    // ignores all redeemer fields. Use a plain redeemer to avoid sharing a
+    // RedeemerBuilder between spend and mint contexts.
+    const mintBurnRedeemer = Data.to(
+        { TerminateGroup: { group_input_index: 0n, admin_input_index: 0n } },
+        TreasuryRedeemer
+    );
+
     const address = yield* getWalletAddress(lucid);
     const groupAddress = yield* getScriptAddress(lucid, groupValidator.spendGroup);
 
-    return yield* lucid
+    const tx = yield* lucid
         .newTx()
         .collectFrom([groupUtxo], groupRedeemer)
         .collectFrom([adminUtxo])
-        .collectFrom([treasuryUtxo], treasuryRedeemer)
-        .mintAssets(
-            { [policyId + memberRefName]: -1n },
-            treasuryRedeemer
-        )
+        .collectFrom([treasuryUtxo], treasurySpendRedeemer)
+        .mintAssets(burnAssets, mintBurnRedeemer)
+        .addSigner(address)
+        .pay.ToContract(groupAddress, { kind: "inline", value: Data.to(groupDatum, GroupDatum) }, groupAssets)
         .attach.MintingPolicy(treasuryValidator.mintTreasury)
         .attach.SpendingValidator(treasuryValidator.spendTreasury)
         .attach.SpendingValidator(groupValidator.spendGroup)
-        .addSigner(address)
-        // Output 0: Return Group UTxO unchanged (UpdateGroup path)
-        .pay.ToContract(
-            groupAddress,
-            { kind: "inline", value: Data.to(groupDatum, GroupDatum) },
-            groupUtxo.assets
-        )
         .completeProgram()
         .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "terminateGroup", error: String(e) })));
+    return tx;
   });

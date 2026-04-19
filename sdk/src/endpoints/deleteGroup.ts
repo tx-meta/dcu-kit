@@ -1,9 +1,9 @@
-import { LucidEvolution, Data, UTxO, fromText, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder, Assets } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
-import { DcuError, TransactionBuildError } from "../core/errors.js";
+import { DcuError, TransactionBuildError, UtxoNotFoundError } from "../core/errors.js";
 import { getScriptAddress } from "../core/utils/index.js";
-import { groupValidator } from "../core/validators/constants.js";
+import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 
 /**
  * Creates an unsigned transaction for deleting (deactivating) a DCU Group.
@@ -43,38 +43,39 @@ export const unsignedDeleteGroupTxProgram = (
       const { groupUtxo, currentDatum, adminUtxo } = config;
       const address = yield* getScriptAddress(lucid, groupValidator.spendGroup);
 
-      // Construct Updated Datum (Soft Delete / Deactivate)
       const deactivatedDatum: GroupDatum = {
           ...currentDatum,
           is_active: false
       };
 
+      const groupRefAsset = Object.keys(groupUtxo.assets).find(k => k.startsWith(groupPolicyId!));
+      if (!groupRefAsset) return yield* Effect.fail(new UtxoNotFoundError({ tokenName: "GroupReference (100)", address: groupUtxo.address }));
+      const groupRefName = groupRefAsset.slice(groupPolicyId!.length);
+
+      const groupAssets: Assets = { ...groupUtxo.assets };
+
       const redeemer: RedeemerBuilder = {
           kind: "selected",
           makeRedeemer: (inputIndices: bigint[]) => {
-               // [groupUtxo, adminUtxo] -> [groupIndex, adminIndex]
               return Data.to({
                   RemoveGroup: {
-                      group_ref_token_name: fromText("GroupReference"),
+                      group_ref_token_name: groupRefName,
                       group_input_index: inputIndices[0],
                       admin_input_index: inputIndices[1],
-                      group_output_index: 0n 
+                      group_output_index: 0n
                   }
               }, GroupSpendRedeemer);
           },
           inputs: [groupUtxo, adminUtxo]
       };
 
-      return yield* lucid
+      const tx = yield* lucid
         .newTx()
         .collectFrom([groupUtxo], redeemer)
         .collectFrom([adminUtxo])
+        .pay.ToContract(address, { kind: "inline", value: Data.to(deactivatedDatum, GroupDatum) }, groupAssets)
         .attach.SpendingValidator(groupValidator.spendGroup)
-        .pay.ToContract(
-            address,
-            { kind: "inline", value: Data.to(deactivatedDatum, GroupDatum) },
-            groupUtxo.assets
-        )
         .completeProgram()
         .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "deleteGroup", error: String(e) })));
+      return tx;
   });

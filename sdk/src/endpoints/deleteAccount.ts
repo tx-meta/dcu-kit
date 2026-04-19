@@ -1,5 +1,5 @@
 
-import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder, Assets, toUnit } from "@lucid-evolution/lucid";
 import { AccountRedeemer, TreasuryDatumSchema, TreasuryDatum } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
@@ -68,6 +68,11 @@ export const unsignedDeleteAccountTxProgram = (
         }));
     }
 
+    const refToken = toUnit(accountPolicyId, refTokenName);
+    const userToken = toUnit(accountPolicyId, userTokenName);
+
+    const burnAssets: Assets = { [refToken]: -1n, [userToken]: -1n };
+
     const spendRedeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) => Data.to(
@@ -86,20 +91,15 @@ export const unsignedDeleteAccountTxProgram = (
       AccountRedeemer
     );
 
-    return yield* lucid
+    const tx = yield* lucid
       .newTx()
       .collectFrom([user_utxo])
       .collectFrom([account_utxo], spendRedeemer)
+      .mintAssets(burnAssets, mintRedeemer)
+      .addSigner(address)
       .attach.SpendingValidator(accountValidator.spendAccount)
       .attach.MintingPolicy(accountValidator.mintAccount)
-      .mintAssets(
-          {
-              [accountPolicyId + refTokenName]: -1n,
-              [accountPolicyId + userTokenName]: -1n,
-          },
-          mintRedeemer
-      )
-      .addSigner(address)
       .completeProgram()
       .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "deleteAccount", error: String(e) })));
+    return tx;
   });

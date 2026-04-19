@@ -6,57 +6,44 @@ import {
   createAccountTestCase,
   updateAccountTestCase,
   deleteAccountTestCase,
-  createGroupTestCase,
-  joinGroupTestCase
 } from "./actions.js";
-import { fromText } from "@lucid-evolution/lucid";
-import { AccountDatum } from "../src/core/types.js";
 import { createDefaultAccountDatum } from "./utils.js";
 import { SetupError } from "../src/core/errors.js";
+import { unsignedDeleteAccountTxProgram } from "../src/endpoints/deleteAccount.js";
 
 describe("Account Endpoints", () => {
   // --- Create Account ---
-  it.effect(
-    "should create an account successfully",
-    () =>
-      Effect.gen(function* () {
-        const baseSetup = yield* setupBase();
-        const { txHash, outputs } = yield* createAccountTestCase(
-          baseSetup.context,
-        );
+  it.effect("should create an account successfully", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const { txHash, outputs } = yield* createAccountTestCase(base.context);
 
-        expect(txHash).toBeDefined();
-        expect(outputs.accountUtxo).toBeDefined();
-      }).pipe(Effect.asVoid),
+      expect(txHash).toBeDefined();
+      expect(txHash).toHaveLength(64);
+      expect(outputs.accountUtxo).toBeDefined();
+    }).pipe(Effect.asVoid),
   );
 
   // --- Update Account ---
   it.effect("should update an account successfully", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
-      const baseSetup = yield* setupAccount(base);
-      const { emulator } = baseSetup.context;
+      const { context, accountUtxo, userUtxo } = yield* setupAccount(base);
 
-      if (!baseSetup.accountUtxo || !baseSetup.userUtxo)
+      if (!accountUtxo || !userUtxo)
         return yield* Effect.die(new SetupError({ message: "Setup failure" }));
 
-      const { txHash } = yield* updateAccountTestCase(
-        baseSetup.context,
-        {
-            accountUtxo: baseSetup.accountUtxo,
-            userUtxo: baseSetup.userUtxo,
-            updatedDatum: createDefaultAccountDatum({
-              email_hash: "ff".repeat(32),
-              phone_hash: "ff".repeat(32),
-            })
-        }
-      );
+      const { txHash } = yield* updateAccountTestCase(context, {
+        accountUtxo,
+        userUtxo,
+        updatedDatum: createDefaultAccountDatum({
+          email_hash: "ff".repeat(32),
+          phone_hash: "ff".repeat(32),
+        }),
+      });
 
       expect(txHash).toBeDefined();
-
-      if (emulator && base.network === "Custom") {
-        yield* Effect.sync(() => emulator.awaitBlock(1));
-      }
+      expect(txHash).toHaveLength(64);
     }),
   );
 
@@ -64,42 +51,46 @@ describe("Account Endpoints", () => {
   it.effect("should delete an account successfully", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
-      const baseSetup = yield* setupAccount(base);
-      const { context, accountUtxo, userUtxo } = baseSetup;
-      const { emulator } = context;
+      const { context, accountUtxo, userUtxo } = yield* setupAccount(base);
 
-      if (!accountUtxo || !userUtxo) return yield* Effect.die(new SetupError({ message: "Setup failure" }));
+      if (!accountUtxo || !userUtxo)
+        return yield* Effect.die(new SetupError({ message: "Setup failure" }));
 
-      const result = yield* deleteAccountTestCase(
-        baseSetup.context,
-        { accountUtxo, userUtxo }
-      );
+      const { txHash } = yield* deleteAccountTestCase(context, { accountUtxo, userUtxo });
 
-      if (emulator && base.network === "Custom") {
-        yield* Effect.sync(() => emulator.awaitBlock(1));
-      }
+      expect(txHash).toBeDefined();
+      expect(txHash).toHaveLength(64);
     }),
   );
 
-  it.effect("should fail to delete an account with active membership", () =>
+  // --- Negative: delete account with active membership ---
+  it.effect("should reject deleting an account that has an active group membership", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
-      
-      // Setup Group, Account, and Join Membership
-      const { context, scripts, userUtxo } = yield* setupMembership(base);
+      // setupMembership: account created → group created → user joined
+      const { context, scripts, userUtxo: accountAuthUtxo } = yield* setupMembership(base);
+      const { lucid } = context;
 
-      // Try Delete Account (Should fail)
-      // Note: deleteAccount logic queries Treasury. If membership exists, it fails.
-      
-      // Need to refetch Account UTxO because setupMembership might return an older utxo version?
-      // setupMembership returns `userUtxo` (Account UTxO) after Join.
-      
-      const result = yield* deleteAccountTestCase(
-        context,
-        { accountUtxo: userUtxo, userUtxo } 
-      ).pipe(Effect.flip); // Expect failure
+      // userUtxo from setupMembership is the wallet-side 222 auth token.
+      // deleteAccount also needs the script-side 100 reference token.
+      const scriptUtxos = yield* Effect.promise(() =>
+        lucid.utxosAt(scripts.account.spend.address)
+      );
+      const accountRefUtxo = scriptUtxos.find(u =>
+        Object.keys(u.assets).some(k => k.startsWith(scripts.account.mint.policyId))
+      );
+      if (!accountRefUtxo)
+        return yield* Effect.die(new SetupError({ message: "Account ref UTxO not found at script" }));
 
-      expect(result).toBeInstanceOf(Error);
+      const err = yield* Effect.flip(
+        unsignedDeleteAccountTxProgram(lucid, {
+          user_utxo: accountAuthUtxo,
+          account_utxo: accountRefUtxo,
+        })
+      );
+
+      expect(err._tag).toBe("TransactionBuildError");
+      expect((err as any).error).toContain("active membership");
     }),
   );
 });

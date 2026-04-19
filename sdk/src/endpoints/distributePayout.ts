@@ -1,10 +1,13 @@
 
-import { 
-    Data, 
-    LucidEvolution, 
-    UTxO, 
+import {
+    Data,
+    LucidEvolution,
+    UTxO,
     TxSignBuilder,
-    RedeemerBuilder 
+    RedeemerBuilder,
+    Assets,
+    toUnit,
+    credentialToAddress
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { 
@@ -14,7 +17,7 @@ import {
     TreasuryRedeemer 
 } from "../core/types.js";
 import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
-import { getScriptAddress, getWalletAddress, parseSafeDatum, calculateCurrentSlot } from "../core/utils/index.js";
+import { getScriptAddress, parseSafeDatum, calculateCurrentSlot } from "../core/utils/index.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
 
 /**
@@ -63,6 +66,7 @@ export const unsignedDistributePayoutTxProgram = (
     );
 
     let borrowerUtxo: UTxO | undefined;
+    let borrowerPaymentCred: string | undefined;
     const memberStates: { utxo: UTxO, datum: TreasuryDatum }[] = [];
 
     for (const state of parsedStates) {
@@ -70,14 +74,16 @@ export const unsignedDistributePayoutTxProgram = (
         memberStates.push(state);
         if (Number(state.datum.TreasuryState.assigned_slot) === currentSlot) {
             borrowerUtxo = state.utxo;
+            borrowerPaymentCred = state.datum.TreasuryState.member_payment_credential;
         }
     }
 
-    if (!borrowerUtxo) {
+    if (!borrowerUtxo || !borrowerPaymentCred) {
         yield* Effect.fail(new TransactionBuildError({ operation: "distributePayout", error: `No member found for current slot ${currentSlot}` }));
     }
 
-    // Calculate payout: sum each member's claimable contributions for the current time
+    // Use a single `now` for both claimable calculations and validFrom —
+    // Aiken reads get_lower_bound(tx) for all time comparisons.
     const currentTime = BigInt(Date.now());
     let payoutAmount = 0n;
     const outputStates: { utxo: UTxO, datum: TreasuryDatum, remainingLovelace: bigint }[] = [];
@@ -108,7 +114,10 @@ export const unsignedDistributePayoutTxProgram = (
         yield* Effect.fail(new TransactionBuildError({ operation: "distributePayout", error: "No claimable contributions found for the current interval" }));
     }
 
-    const borrowerAddress = yield* getWalletAddress(lucid);
+    // Aiken checks borrower_output.address.payment_credential == VerificationKey(member_payment_credential).
+    // Must use the credential stored at join time, not the caller's wallet.
+    const network = lucid.config().network!;
+    const borrowerAddress = credentialToAddress(network, { type: "Key", hash: borrowerPaymentCred! });
 
     // Construct Redeemer using RedeemerBuilder
     const redeemer: RedeemerBuilder = {
@@ -131,28 +140,26 @@ export const unsignedDistributePayoutTxProgram = (
 
     const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
 
-    const txBuilder = lucid.newTx()
-        .readFrom([groupUtxo])
-        .collectFrom(treasuryUtxos, redeemer)
+    const tx = yield* outputStates
+        .reduce((builder, state) => {
+            if (!('TreasuryState' in state.datum)) return builder;
+            const memberToken = toUnit(treasuryPolicyId!, state.datum.TreasuryState.member_reference_tokenname);
+            const memberTreasuryAssets: Assets = { lovelace: state.remainingLovelace, [memberToken]: 1n };
+            return builder.pay.ToContract(
+                treasuryAddress,
+                { kind: "inline", value: Data.to(state.datum, TreasuryDatum) },
+                memberTreasuryAssets
+            );
+        }, lucid.newTx()
+            .readFrom([groupUtxo])
+            .collectFrom(treasuryUtxos, redeemer)
+            .pay.ToAddress(borrowerAddress, { lovelace: payoutAmount }))
+        .validFrom(Number(currentTime))
         .attach.SpendingValidator(treasuryValidator.spendTreasury)
-
-        // Output 0: Borrower Payout (sum of all members' claimable contributions)
-        .pay.ToAddress(borrowerAddress, { lovelace: payoutAmount });
-
-    // Output N: Return Treasury UTxOs with updated datums and reduced balances
-    for (const state of outputStates) {
-        if (!('TreasuryState' in state.datum)) continue;
-        txBuilder.pay.ToContract(
-            treasuryAddress,
-            { kind: "inline", value: Data.to(state.datum, TreasuryDatum) },
-            {
-                lovelace: state.remainingLovelace,
-                [treasuryPolicyId + state.datum.TreasuryState.member_reference_tokenname]: 1n
-            }
-        );
-    }
-    
-    return yield* txBuilder
-        .completeProgram()
+        // localUPLCEval: false — the Lucid Evolution UPLC wasm does not pass reference_inputs
+        // to PlutusV3 scripts correctly. The emulator accepts zero ex_units; live networks
+        // use the provider's evaluateTx (real Cardano node) which handles reference inputs.
+        .completeProgram({ localUPLCEval: false })
         .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "distributePayout", error: String(e) })));
+    return tx;
   });

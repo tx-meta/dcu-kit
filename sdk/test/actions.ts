@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Schedule } from "effect";
 import {
   LucidEvolution,
   UTxO,
@@ -100,7 +100,7 @@ export const createAccountTestCase = (
         u.assets.lovelace > 2_000_000n
     ) || utxos[0];
 
-    if (!selectedUTxO) return yield* Effect.die(new SetupError({ message: "No UTxOs found for user1" }));
+    if (!selectedUTxO) return yield* Effect.fail(new SetupError({ message: "No UTxOs found for user1" }));
 
     const accountDatum = createDefaultAccountDatum(datumOverride);
     
@@ -116,29 +116,35 @@ export const createAccountTestCase = (
       accountConfig
     );
     const txHash = yield* signAndSubmit(createAccountTx);
-    yield* Effect.promise(() => lucid.awaitTx(txHash));
+    context.emulator?.awaitBlock(1);
 
-    // 4. Verify & Fetch Outputs
+    // 4. Verify & Fetch Outputs — retry until indexer has the tx
     const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
-    
-    // We filter specifically by the txHash to ensure we get the FRESHLY created tokens,
-    // avoiding stale tokens from previous test runs on shared/live environments.
-    
-    const scriptUtxos = yield* Effect.promise(() => lucid.utxosAt(accountScriptAddress));
-    const accountUtxo = scriptUtxos.find(u => 
-        u.txHash === txHash && 
-        Object.keys(u.assets).some(k => k.startsWith(accountPolicyId))
+    const accountUtxo = yield* Effect.tryPromise({
+        try: async () => {
+            const u = await lucid.utxosAt(accountScriptAddress);
+            const found = u.find(x => x.txHash === txHash && Object.keys(x.assets).some(k => k.startsWith(accountPolicyId)));
+            if (!found) throw new Error("Account UTxO not indexed yet");
+            return found;
+        },
+        catch: (e) => e
+    }).pipe(
+        Effect.retry({ schedule: Schedule.spaced(5000).pipe(Schedule.upTo(60000)) }),
+        Effect.catchAll(() => Effect.fail(new Error("Account UTxO not found in script after creation")))
     );
-    
-    if (!accountUtxo) return yield* Effect.die(new Error("Account UTxO not found in script after creation"));
 
-    const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-    const userUtxo = walletUtxos.find(u => 
-        u.txHash === txHash &&
-        Object.keys(u.assets).some(k => k.startsWith(accountPolicyId))
+    const userUtxo = yield* Effect.tryPromise({
+        try: async () => {
+            const u = await lucid.wallet().getUtxos();
+            const found = u.find(x => x.txHash === txHash && Object.keys(x.assets).some(k => k.startsWith(accountPolicyId)));
+            if (!found) throw new Error("User token not indexed yet");
+            return found;
+        },
+        catch: (e) => e
+    }).pipe(
+        Effect.retry({ schedule: Schedule.spaced(5000).pipe(Schedule.upTo(60000)) }),
+        Effect.catchAll(() => Effect.fail(new Error("User Auth Token not found in wallet after creation")))
     );
-    
-    if (!userUtxo) return yield* Effect.die(new Error("User Auth Token not found in wallet after creation"));
 
     return {
       txHash,
@@ -176,23 +182,25 @@ export const updateAccountTestCase = (
       updateConfig
     );
     const txHash = yield* signAndSubmit(updateAccountTx);
-    yield* Effect.promise(() => lucid.awaitTx(txHash));
+    context.emulator?.awaitBlock(1);
 
     const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
-    const allScriptUtxos = yield* Effect.promise(() => lucid.utxosAt(accountScriptAddress));
-    
-    // Filter for the same Ref Token
     const refTokenId = Object.keys(accountUtxo.assets).find(k => k.startsWith(accountPolicyId));
-    if (!refTokenId) return yield* Effect.die(new Error("Could not identify Ref Token in old UTxO"));
-    const tokenId = refTokenId; // clear type narrowing
+    if (!refTokenId) return yield* Effect.fail(new Error("Could not identify Ref Token in old UTxO"));
+    const tokenId = refTokenId;
 
-    const newAccountUtxo = allScriptUtxos.find(u => Object.keys(u.assets).includes(tokenId));
-
-    if (!newAccountUtxo) {
-        return yield* Effect.die(new Error(`Account UTxO not found after update for token ${refTokenId}`));
-    }
-    
-    const outputUtxo: UTxO = newAccountUtxo;
+    const outputUtxo = yield* Effect.tryPromise({
+        try: async () => {
+            const u = await lucid.utxosAt(accountScriptAddress);
+            const found = u.find(x => x.txHash === txHash && Object.keys(x.assets).includes(tokenId));
+            if (!found) throw new Error("Updated account UTxO not indexed yet");
+            return found as UTxO;
+        },
+        catch: (e) => e
+    }).pipe(
+        Effect.retry({ schedule: Schedule.spaced(5000).pipe(Schedule.upTo(60000)) }),
+        Effect.catchAll(() => Effect.fail(new Error(`Account UTxO not found after update for token ${refTokenId}`)))
+    );
 
     return {
       txHash,
@@ -227,7 +235,7 @@ export const deleteAccountTestCase = (
       deleteConfig,
     );
     const txHash = yield* signAndSubmit(deleteAccountTx);
-    yield* Effect.promise(() => lucid.awaitTx(txHash));
+    context.emulator?.awaitBlock(1);
 
     return {
       txHash,
@@ -252,10 +260,10 @@ export const createGroupTestCase = (
         
         // Use provided creator (default ADMIN)
         selectWalletFromSeed(lucid, creatorSeed || users.admin.seedPhrase);
-        
+
         const utxos = yield* getWalletUtxos(lucid);
         const selectedUTxO = utxos[0];
-        if (!selectedUTxO) return yield* Effect.die(new SetupError({ message: "No UTxOs found for Admin" }));
+        if (!selectedUTxO) return yield* Effect.fail(new SetupError({ message: "No UTxOs found for Admin" }));
 
         const groupDatum = createDefaultGroupDatum(datumOverride);
 
@@ -264,12 +272,9 @@ export const createGroupTestCase = (
             utxoToSpend: selectedUTxO
         };
 
-        const createGroupTx = yield* unsignedCreateGroupTxProgram(
-            lucid,
-            groupConfig
-        );
+        const createGroupTx = yield* unsignedCreateGroupTxProgram(lucid, groupConfig);
         const txHash = yield* signAndSubmit(createGroupTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+        context.emulator?.awaitBlock(1);
 
         return {
             txHash,
@@ -303,7 +308,7 @@ export const updateGroupTestCase = (
             updateConfig
         );
         const txHash = yield* signAndSubmit(updateGroupTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+        context.emulator?.awaitBlock(1);
 
         return {
             txHash,
@@ -336,7 +341,7 @@ export const deleteGroupTestCase = (
             deleteConfig
         );
         const txHash = yield* signAndSubmit(deleteGroupTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+        context.emulator?.awaitBlock(1);
 
         return {
             txHash,
@@ -363,10 +368,15 @@ export const joinGroupTestCase = (
 
         selectWalletFromSeed(lucid, userSeed);
 
+        const currentTime = BigInt(
+            context.emulator ? context.emulator.now() : Date.now()
+        );
+
         const joinConfig: JoinGroupConfig = {
             groupUtxo,
             accountUtxo,
-            contributionAmount
+            contributionAmount,
+            currentTime
         };
 
         const joinTx = yield* unsignedJoinGroupTxProgram(
@@ -374,7 +384,7 @@ export const joinGroupTestCase = (
             joinConfig
         );
         const txHash = yield* signAndSubmit(joinTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+        context.emulator?.awaitBlock(1);
 
         return { txHash };
     });
@@ -406,7 +416,7 @@ export const distributePayoutTestCase = (
             payoutConfig
         );
         const txHash = yield* signAndSubmit(payoutTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+        context.emulator?.awaitBlock(1);
 
         return { txHash };
     });
@@ -442,7 +452,7 @@ export const memberWithdrawTestCase = (
             withdrawConfig
         );
         const txHash = yield* signAndSubmit(withdrawTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+        context.emulator?.awaitBlock(1);
 
         return { txHash };
     });
@@ -476,7 +486,7 @@ export const exitGroupTestCase = (
             exitConfig
         );
         const txHash = yield* signAndSubmit(exitTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+        context.emulator?.awaitBlock(1);
 
         return { txHash };
     });

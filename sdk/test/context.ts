@@ -12,6 +12,17 @@ import {
 import { ConfigurationError } from "../src/core/errors.js";
 import { Effect } from "effect";
 
+// Patch global fetch with a 30s timeout to prevent Maestro API calls from hanging indefinitely.
+// The Maestro provider has no built-in timeout; stalled connections would block the test fiber.
+{
+  const _fetch = globalThis.fetch;
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error("fetch timeout (30s)")), 30_000);
+    return _fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+  };
+}
+
 export type OnChainNetwork = Extract<Network, "Mainnet" | "Preprod" | "Preview">;
 
 // --- Types ---
@@ -38,27 +49,34 @@ export type ContextConfig = {
   provider: Provider;
 };
 
-const DEFAULT_CONFIG: ContextConfig = {
-  network: "Preprod",
-  provider: "Emulator",
-};
-
 // --- Config Loading ---
 
 const loadConfigFromEnv = (): ContextConfig => {
-  const network = (process.env.NETWORK as Network) || "Preprod";
+  const networkRaw = process.env.NETWORK;
+
+  // "Emulator" is not a valid Lucid Network — normalise to "Custom".
+  // When the network is local/emulated, ignore PROVIDER and API keys entirely.
+  if (!networkRaw || networkRaw === "Emulator" || networkRaw === "Custom") {
+    return { network: "Custom", provider: "Emulator" };
+  }
+
+  // Live network path — NETWORK must be Preprod | Preview | Mainnet
+  const network = networkRaw as Network;
   const providerEnv = process.env.PROVIDER as Provider | undefined;
 
-  let provider: Provider = "Emulator";
-
-  if (providerEnv) {
+  let provider: Provider;
+  if (providerEnv && providerEnv !== "Emulator") {
     provider = providerEnv;
-  } else if (process.env.BLOCKFROST_KEY) {
+  } else if (process.env.BLOCKFROST_KEY && process.env.BLOCKFROST_URL) {
     provider = "Blockfrost";
   } else if (process.env.MAESTRO_API_KEY) {
     provider = "Maestro";
   } else if (process.env.OGMIOS_URL && process.env.KUPO_URL) {
     provider = "Kupmios";
+  } else {
+    throw new Error(
+      `NETWORK=${network} requires a provider. Set PROVIDER= or supply BLOCKFROST_KEY / MAESTRO_API_KEY / OGMIOS_URL+KUPO_URL.`,
+    );
   }
 
   return { network, provider };
@@ -189,7 +207,7 @@ export const makeLucidContext = (overrideConfig?: Partial<ContextConfig>) =>
     const config = { ...envConfig, ...overrideConfig };
 
     if (config.provider === "Emulator") {
-      console.log("Context: Emulator");
+      console.log("Context: Emulator (local)");
     } else {
       console.log(`Context: ${config.provider} on ${config.network}`);
     }

@@ -1,20 +1,24 @@
 import {
     Network,
     UTxO,
-    fromText,
 } from "@lucid-evolution/lucid";
 import { Effect, Schedule } from "effect";
 import { DcuValidators, makeValidators } from "../src/core/validators/context.js";
-import { findUtxoWithToken } from "../src/core/utils/index.js";
-import { 
-    createAccountTestCase, 
-    createGroupTestCase, 
-    joinGroupTestCase 
+import {
+    groupPolicyId,
+    groupValidator,
+    treasuryValidator,
+    accountPolicyId,
+} from "../src/core/validators/constants.js";
+import {
+    createAccountTestCase,
+    createGroupTestCase,
+    joinGroupTestCase
 } from "./actions.js";
 import { AccountDatum, GroupDatum } from "../src/core/types.js";
 import { LucidContext, makeLucidContext } from "./context.js";
 import { SetupError } from "../src/core/errors.js";
-import { assetNameLabels, findCip68TokenPair, waitForTx } from "../src/core/utils/index.js";
+import { assetNameLabels, getScriptAddress } from "../src/core/utils/index.js";
 
 // --- Test Helper Setup ---
 
@@ -35,7 +39,7 @@ export const setupBase = (): Effect.Effect<BaseSetup, Error, never> => {
   return Effect.gen(function* (_) {
     const { lucid, users, emulator } = yield* makeLucidContext();
     const network = lucid.config().network;
-    if (!network) return yield* Effect.die(new SetupError({ message: "Invalid Network selection" }));
+    if (!network) return yield* Effect.fail(new SetupError({ message: "Invalid Network selection" }));
 
     const scripts = yield* makeValidators(network);
 
@@ -55,7 +59,7 @@ export const setupAccount = (
     const { lucid, users, emulator } = base.context;
     const { scripts } = base;
 
-    const { txHash, outputs } = yield* createAccountTestCase(
+    const { outputs } = yield* createAccountTestCase(
       { lucid, users, emulator },
       { datumOverride },
     );
@@ -94,45 +98,54 @@ export const setupGroup = (
          base.context,
          {
              datumOverride,
-             creatorSeed: users.user1.seedPhrase 
+             creatorSeed: users.user1.seedPhrase
          }
      );
-     
+
      if (emulator && base.network === "Custom") {
         yield* Effect.sync(() => emulator.awaitBlock(5));
-      }
+     }
 
-     const groupPolicyId = scripts.group.mint.policyId!;
-     const groupRefTokenName = fromText("GroupReference");
-     
-     const utxosAtAddress = yield* Effect.promise(() => 
-         lucid.utxosAt(scripts.group.spend.address)
+     const groupScriptAddress = yield* getScriptAddress(lucid, groupValidator.spendGroup);
+
+     const groupUtxo = yield* Effect.tryPromise({
+         try: async () => {
+             const timeout = new Promise<never>((_, reject) =>
+                 setTimeout(() => reject(new Error("utxosAt timeout")), 20_000)
+             );
+             const u = await Promise.race([lucid.utxosAt(groupScriptAddress), timeout]);
+             const found = u.find(
+                 (x) => x.txHash === txHash &&
+                 Object.keys(x.assets).some(k => k.startsWith(groupPolicyId!))
+             );
+             if (!found) throw new Error("Group UTxO not indexed yet");
+             return found;
+         },
+         catch: (e) => e,
+     }).pipe(
+         Effect.retry({ schedule: Schedule.spaced(5000).pipe(Schedule.upTo(120_000)) }),
+         Effect.catchAll((e) => Effect.fail(new SetupError({ message: `Group UTxO not found after creation: ${e}` })))
      );
-     
-     // Filter by txHash to ensure we get the specific UTxO created in this test run
-     const groupUtxo = utxosAtAddress.find(
-       (u) => 
-         u.txHash === txHash && 
-         Object.keys(u.assets).includes(groupPolicyId + groupRefTokenName)
+
+     const walletUtxos = yield* Effect.tryPromise({
+         try: () => lucid.wallet().getUtxos(),
+         catch: (e) => new SetupError({ message: `Failed to get wallet UTxOs: ${e}` })
+     });
+
+     const adminUtxo = walletUtxos.find(u =>
+         Object.keys(u.assets).some(k =>
+             k.startsWith(groupPolicyId!) &&
+             k.slice(groupPolicyId!.length).startsWith(assetNameLabels.prefix222)
+         )
      );
-
-     if (!groupUtxo) return yield* Effect.die(new SetupError({ message: "Group UTxO not found after creation" }));
-
-     const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-
-     // Find the Admin UTxO by token, falling back to the first UTxO if not found.
-     const adminTokenName = fromText("GroupAdmin");
-    const adminUtxo = yield* findUtxoWithToken(walletUtxos, scripts.group.mint.policyId!, adminTokenName).pipe(
-        Effect.catchAll(() => Effect.die(new SetupError({ message: "Admin UTxO not found" })))
-    );
-
+     if (!adminUtxo) return yield* Effect.fail(new SetupError({ message: "Admin UTxO not found" }));
 
      return {
          context: base.context,
          scripts,
          groupDatum,
          groupUtxo,
-         adminUtxo: adminUtxo
+         adminUtxo,
      };
   });
 
@@ -151,24 +164,26 @@ export const setupMembership = (
     groupDatumOverride?: Partial<GroupDatum>
 ): Effect.Effect<MembershipSetupResult, Error, never> => 
     Effect.gen(function* (_) {
-        const { context, scripts, groupUtxo, adminUtxo } = yield* setupGroup(base, groupDatumOverride);
+        const { context, scripts, groupUtxo } = yield* setupGroup(base, groupDatumOverride);
         const { userUtxo } = yield* setupAccount(base);
         const { lucid, users } = context;
 
-        if (!userUtxo) return yield* Effect.die(new SetupError({ message: "User Account UTxO not found" }));
+        if (!userUtxo) return yield* Effect.fail(new SetupError({ message: "User Account UTxO not found" }));
 
-        const groupPolicyId = scripts.group.mint.policyId!;
-        const groupRefTokenName = fromText("GroupReference");
+        const walletUtxos = yield* Effect.tryPromise({
+            try: () => lucid.wallet().getUtxos(),
+            catch: (e) => new SetupError({ message: `Failed to get wallet UTxOs: ${e}` })
+        });
 
-        // Refetch Admin UTxO (User1 is now Admin, so it should be in walletUtxos)
-        const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-        
-        const adminTokenName = fromText("GroupAdmin");
-        const refreshedAdminUtxo = yield* findUtxoWithToken(walletUtxos, groupPolicyId, adminTokenName).pipe(
-             Effect.catchAll(() => Effect.die(new SetupError({ 
-                 message: `Admin UTxO not found after Account setup. Policy: ${groupPolicyId}` 
-             })))
+        const refreshedAdminUtxo = walletUtxos.find(u =>
+            Object.keys(u.assets).some(k =>
+                k.startsWith(groupPolicyId!) &&
+                k.slice(groupPolicyId!.length).startsWith(assetNameLabels.prefix222)
+            )
         );
+        if (!refreshedAdminUtxo) return yield* Effect.fail(new SetupError({
+            message: `Admin UTxO not found after Account setup. Policy: ${groupPolicyId}`
+        }));
 
         const { txHash } = yield* joinGroupTestCase(
             context,
@@ -180,50 +195,43 @@ export const setupMembership = (
             }
         );
 
-        // --- Wait for Confirmation ---
-        if (context.emulator && base.network === "Custom") {
-            yield* Effect.sync(() => context.emulator!.awaitBlock(1));
-        } else {
-            // Poll for confirmation on live network (Maestro/Preprod)
-            yield* waitForTx(lucid, txHash);
-        }
-
         // --- Refetch All States (With Retries for Indexers) ---
         
+        const groupScriptAddress = yield* getScriptAddress(lucid, groupValidator.spendGroup);
+        const treasuryScriptAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
+
         // 1. Account UTxO
-        const accountPolicy = scripts.account.mint.policyId;
         const accountUtxo2 = yield* Effect.tryPromise({
             try: async () => {
                 const u = await lucid.wallet().getUtxos();
-                const found = u.find((x) => x.txHash === txHash && Object.keys(x.assets).some((k) => k.startsWith(accountPolicy)));
+                const found = u.find((x) => x.txHash === txHash && Object.keys(x.assets).some((k) => k.startsWith(accountPolicyId)));
                 if (!found) throw new Error("Account not indexed");
                 return found;
             },
             catch: (e) => e
         }).pipe(
             Effect.retry({ schedule: Schedule.spaced(5000).pipe(Schedule.upTo(60000)) }),
-            Effect.catchAll(() => Effect.die(new SetupError({ message: "Account UTxO not found after Join" })))
+            Effect.catchAll(() => Effect.fail(new SetupError({ message: "Account UTxO not found after Join" })))
         );
 
-         // 2. Group UTxO
-         const groupScriptAddr = scripts.group.spend.address;
-         const groupUtxo2 = yield* Effect.tryPromise({
-             try: async () => {
-                 const u = await lucid.utxosAt(groupScriptAddr);
-                 const found = u.find((x) => x.txHash === txHash && Object.keys(x.assets).some((k) => k.includes(groupRefTokenName)));
-                 if (!found) throw new Error("Group not indexed");
-                 return found;
-             },
-             catch: (e) => e
-         }).pipe(
-             Effect.retry({ schedule: Schedule.spaced(5000).pipe(Schedule.upTo(60000)) }),
-             Effect.catchAll(() => Effect.die(new SetupError({ message: "Group UTxO not found after Join" })))
-         );
+        // 2. Group UTxO
+        const groupUtxo2 = yield* Effect.tryPromise({
+            try: async () => {
+                const u = await lucid.utxosAt(groupScriptAddress);
+                const found = u.find((x) => x.txHash === txHash && Object.keys(x.assets).some((k) => k.startsWith(groupPolicyId!)));
+                if (!found) throw new Error("Group not indexed");
+                return found;
+            },
+            catch: (e) => e
+        }).pipe(
+            Effect.retry({ schedule: Schedule.spaced(5000).pipe(Schedule.upTo(60000)) }),
+            Effect.catchAll(() => Effect.fail(new SetupError({ message: "Group UTxO not found after Join" })))
+        );
 
-         // 3. Treasury UTxO (Member)
+        // 3. Treasury UTxO (Member)
         const memberUtxo = yield* Effect.tryPromise({
             try: async () => {
-                const u = await lucid.utxosAt(scripts.treasury.spend.address);
+                const u = await lucid.utxosAt(treasuryScriptAddress);
                 const found = u.find((x) => x.txHash === txHash);
                 if (!found) throw new Error("Treasury not indexed");
                 return found;
@@ -231,7 +239,7 @@ export const setupMembership = (
             catch: (e) => e
         }).pipe(
             Effect.retry({ schedule: Schedule.spaced(5000).pipe(Schedule.upTo(60000)) }),
-            Effect.catchAll(() => Effect.die(new SetupError({ message: "Member Treasury UTxO not found after Join" })))
+            Effect.catchAll(() => Effect.fail(new SetupError({ message: "Member Treasury UTxO not found after Join" })))
         );
 
 

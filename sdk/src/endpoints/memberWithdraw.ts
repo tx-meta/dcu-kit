@@ -1,10 +1,12 @@
 
-import { 
-    Data, 
-    LucidEvolution, 
-    UTxO, 
+import {
+    Data,
+    LucidEvolution,
+    UTxO,
     TxSignBuilder,
-    RedeemerBuilder 
+    RedeemerBuilder,
+    Assets,
+    toUnit
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { 
@@ -52,7 +54,7 @@ export const unsignedMemberWithdrawTxProgram = (
 
     const ts = treasuryDatum.TreasuryState;
     const memberRefName = ts.member_reference_tokenname;
-    const policyId = treasuryPolicyId!;
+    const memberToken = toUnit(treasuryPolicyId!, memberRefName);
 
     // Calculate remaining Treasury Balance
     const currentTreasuryBalance = treasuryUtxo.assets.lovelace;
@@ -62,7 +64,8 @@ export const unsignedMemberWithdrawTxProgram = (
     }
     const remainingBalance = currentTreasuryBalance - withdrawAmount;
 
-    // Linear vesting: drop all claimable entries (consumed by this withdrawal)
+    // Use a single `now` for both the datum and validFrom — Aiken reads
+    // get_lower_bound(tx) for the claimable_at comparison.
     const now = BigInt(Date.now());
     const updatedDatum: TreasuryDatum = {
         TreasuryState: {
@@ -91,25 +94,23 @@ export const unsignedMemberWithdrawTxProgram = (
         inputs: [accountUtxo, treasuryUtxo]
     };
 
+    const treasuryAssets: Assets = { lovelace: remainingBalance, [memberToken]: 1n };
+
     const address = yield* getWalletAddress(lucid);
     const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
 
-    return yield* lucid.newTx()
+    const tx = yield* lucid.newTx()
         .readFrom([groupUtxo])
         .collectFrom([accountUtxo])
         .collectFrom([treasuryUtxo], redeemer)
-        .attach.SpendingValidator(treasuryValidator.spendTreasury)
-        // Output 0: Return remaining balance to Treasury with updated contribution_list
-        .pay.ToContract(
-            treasuryAddress,
-            { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
-            {
-                lovelace: remainingBalance,
-                [policyId + memberRefName]: 1n
-            }
-        )
-        // Output 2: User Withdrawal
+        .pay.ToContract(treasuryAddress, { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) }, treasuryAssets)
         .pay.ToAddress(address, { lovelace: withdrawAmount })
-        .completeProgram()
+        .validFrom(Number(now))
+        .attach.SpendingValidator(treasuryValidator.spendTreasury)
+        // localUPLCEval: false — the Lucid Evolution UPLC wasm does not pass reference_inputs
+        // to PlutusV3 scripts correctly. The emulator accepts zero ex_units; live networks
+        // use the provider's evaluateTx (real Cardano node) which handles reference inputs.
+        .completeProgram({ localUPLCEval: false })
         .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "memberWithdraw", error: String(e) })));
+    return tx;
   });

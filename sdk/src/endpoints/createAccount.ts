@@ -1,5 +1,5 @@
 
-import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder, Assets, toUnit } from "@lucid-evolution/lucid";
 import { AccountDatum, AccountRedeemer } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
@@ -52,6 +52,13 @@ export const unsignedCreateAccountTxProgram = (
 
     const datum = Data.to(config.account_datum, AccountDatum);
 
+    const refToken = toUnit(accountPolicyId, refTokenName);
+    const userToken = toUnit(accountPolicyId, userTokenName);
+
+    const mintingAssets: Assets = { [refToken]: 1n, [userToken]: 1n };
+    const scriptAssets: Assets = { [refToken]: 1n };
+    const walletAssets: Assets = { [userToken]: 1n };
+
     // RedeemerBuilder resolves the actual sorted index of selected_out_ref at build time.
     // The validator uses input_index to re-derive the CIP-68 names — it must point to
     // the same UTxO the SDK used to compute refTokenName/userTokenName.
@@ -64,26 +71,15 @@ export const unsignedCreateAccountTxProgram = (
         inputs: [config.selected_out_ref],
     };
 
-    return yield* lucid
+    const tx = yield* lucid
       .newTx()
       .collectFrom([config.selected_out_ref])
-      .mintAssets(
-        {
-          [accountPolicyId + refTokenName]: 1n,
-          [accountPolicyId + userTokenName]: 1n,
-        },
-        redeemer,
-      )
-      .pay.ToAddressWithData(
-        accountScriptAddress,
-        { kind: "inline", value: datum },
-        { [accountPolicyId + refTokenName]: 1n },
-      )
-      .pay.ToAddress(address, {
-        [accountPolicyId + userTokenName]: 1n
-      })
-      .attach.MintingPolicy(accountValidator.mintAccount)
+      .mintAssets(mintingAssets, redeemer)
+      .pay.ToAddressWithData(accountScriptAddress, { kind: "inline", value: datum }, scriptAssets)
+      .pay.ToAddress(address, walletAssets)
       .addSigner(address)
+      .attach.MintingPolicy(accountValidator.mintAccount)
       .completeProgram()
       .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "createAccount", error: String(e) })));
+    return tx;
   });

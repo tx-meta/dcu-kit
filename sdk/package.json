@@ -25,6 +25,7 @@
     "@effect/vitest": "^0.17.8",
     "@sinclair/typebox": "^0.34.28",
     "@types/node": "^22.13.5",
+    "dotenv": "^17.4.2",
     "eslint": "^9.21.0",
     "libsodium-wrappers": "^0.8.2",
     "libsodium-wrappers-sumo": "^0.8.2",

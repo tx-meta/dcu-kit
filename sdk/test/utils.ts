@@ -5,7 +5,6 @@
  * Eliminates boilerplate and ensures consistency across tests.
  */
 
-import { fromText } from "@lucid-evolution/lucid";
 import { GroupDatum } from "../src/core/types.js";
 import { AccountDatum } from "../src/core/types.js";
 
@@ -30,16 +29,20 @@ import { AccountDatum } from "../src/core/types.js";
 export const createDefaultGroupDatum = (
   overrides?: Partial<GroupDatum>
 ): GroupDatum => ({
-  contribution_fee_policyid: "00",
-  contribution_fee_assetname: "00",
-  contribution_fee: 100n,
-  joining_fee_policyid: "00",
-  joining_fee_assetname: "00",
-  joining_fee: 100n,
-  penalty_fee_policyid: "00",
-  penalty_fee_assetname: "00",
-  penalty_fee: 100n,
-  interval_length: 3600000n, // 1 hour
+  // ADA is represented as empty bytes "" — NOT "00" (which is a 1-byte non-ADA token).
+  // The Aiken validator uses assets.quantity_of(value, policyid, assetname) for fee checks;
+  // quantity_of(value, "", "") returns lovelace. Using "00" would look up a non-existent
+  // token and return 0, causing fees_locked? to fail with "exited prematurely".
+  contribution_fee_policyid: "",
+  contribution_fee_assetname: "",
+  contribution_fee: 2_000_000n,  // 2 ADA — must be > 0 per Aiken CreateGroup check
+  joining_fee_policyid: "",
+  joining_fee_assetname: "",
+  joining_fee: 0n,
+  penalty_fee_policyid: "",
+  penalty_fee_assetname: "",
+  penalty_fee: 2_000_000n,      // 2 ADA — must be >= 0
+  interval_length: 3_600_000n,  // 1 hour in milliseconds
   num_intervals: 10n,
   member_count: 0n,
   is_active: true,

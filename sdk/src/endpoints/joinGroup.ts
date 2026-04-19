@@ -3,9 +3,10 @@ import {
     LucidEvolution,
     UTxO,
     TxSignBuilder,
-    fromText,
     RedeemerBuilder,
-    paymentCredentialOf
+    paymentCredentialOf,
+    Assets,
+    toUnit
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -48,6 +49,7 @@ export type JoinGroupConfig = {
     groupUtxo: UTxO;
     accountUtxo: UTxO;
     contributionAmount: bigint;
+    currentTime?: bigint; // POSIX ms — emulator.now() for emulator, Date.now() for live
 };
 
 export const unsignedJoinGroupTxProgram = (
@@ -55,7 +57,7 @@ export const unsignedJoinGroupTxProgram = (
   config: JoinGroupConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupUtxo, accountUtxo, contributionAmount } = config;
+    const { groupUtxo, accountUtxo, contributionAmount, currentTime } = config;
     const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
 
     const assignedSlot = groupDatum.member_count; 
@@ -64,17 +66,13 @@ export const unsignedJoinGroupTxProgram = (
         member_count: groupDatum.member_count + 1n
     };
 
-    const groupPolicy = groupPolicyId!;
-    const groupRefAssetEntry = Object.keys(groupUtxo.assets).find(k => k.startsWith(groupPolicy));
-    const groupRefName = groupRefAssetEntry 
-        ? groupRefAssetEntry.slice(groupPolicy.length) 
-        : fromText("GroupReference");
+    const groupRefAssetEntry = Object.keys(groupUtxo.assets).find(k => k.startsWith(groupPolicyId!));
+    if (!groupRefAssetEntry) return yield* Effect.fail(new UtxoNotFoundError({ tokenName: "GroupReference (100)", address: groupUtxo.address }));
+    const groupRefName = groupRefAssetEntry.slice(groupPolicyId!.length);
 
-    const accountPolicy = accountPolicyId!;
-    const accountAssetEntry = Object.keys(accountUtxo.assets).find(k => k.startsWith(accountPolicy));
+    const accountAssetEntry = Object.keys(accountUtxo.assets).find(k => k.startsWith(accountPolicyId!));
     if (!accountAssetEntry) return yield* Effect.fail(new UtxoNotFoundError({ tokenName: "Account NFT", address: accountUtxo.address }));
-    
-    const accountAssetName = accountAssetEntry.slice(accountPolicy.length); 
+    const accountAssetName = accountAssetEntry.slice(accountPolicyId!.length); 
     // Pre-populate contribution schedule: one entry per interval, claimable at end of each period
     const contributionList: Contribution[] = Array.from(
         { length: Number(groupDatum.num_intervals) },
@@ -84,14 +82,24 @@ export const unsignedJoinGroupTxProgram = (
         })
     );
 
+    const treasuryMemberToken = toUnit(treasuryPolicyId!, accountAssetName);
+
+    const mintingAssets: Assets = { [treasuryMemberToken]: 1n };
+    const treasuryAssets: Assets = { lovelace: contributionAmount, [treasuryMemberToken]: 1n };
+
     const address = yield* getWalletAddress(lucid);
     const memberPaymentCredential = paymentCredentialOf(address).hash;
+
+    // Use a single `now` for both the datum and validFrom — Aiken checks
+    // membership_start == get_lower_bound(tx), so they must match exactly.
+    // Pass emulator.now() from the test layer when running on the emulator.
+    const now = currentTime ?? BigInt(Date.now());
 
     const treasuryDatum: TreasuryDatum = {
         TreasuryState: {
             group_reference_tokenname: groupRefName,
             member_reference_tokenname: accountAssetName,
-            membership_start: BigInt(Date.now()),
+            membership_start: now,
             assigned_slot: assignedSlot,
             contribution_list: contributionList,
             member_payment_credential: memberPaymentCredential,
@@ -126,32 +134,20 @@ export const unsignedJoinGroupTxProgram = (
     const groupAddress = yield* getScriptAddress(lucid, groupValidator.spendGroup);
     const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
 
-    return yield* lucid
+    const tx = yield* lucid
         .newTx()
         .collectFrom([groupUtxo], groupRedeemer)
         .collectFrom([accountUtxo])
-        .mintAssets(
-            { [treasuryPolicyId + accountAssetName]: 1n },
-            treasuryRedeemer
-        )
-        .attach.MintingPolicy(treasuryValidator.mintTreasury)
-        .attach.SpendingValidator(groupValidator.spendGroup)
-        .pay.ToContract(
-            groupAddress,
-            { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
-            groupUtxo.assets
-        )
-        .pay.ToContract(
-            treasuryAddress,
-            { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) },
-            {
-                lovelace: contributionAmount,
-                [treasuryPolicyId + accountAssetName]: 1n
-            }
-        )
+        .mintAssets(mintingAssets, treasuryRedeemer)
+        .pay.ToContract(groupAddress, { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) }, groupUtxo.assets)
+        .pay.ToContract(treasuryAddress, { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) }, treasuryAssets)
         .pay.ToAddress(address, accountUtxo.assets)
         .addSigner(address)
+        .validFrom(Number(now))
+        .attach.MintingPolicy(treasuryValidator.mintTreasury)
+        .attach.SpendingValidator(groupValidator.spendGroup)
         .completeProgram()
         .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "joinGroup", error: String(e) })));
+    return tx;
   });
 

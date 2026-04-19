@@ -21,14 +21,14 @@ export class LucidError extends Data.TaggedError("LucidError")<{
 
 // --- UTxO Errors ---
 
-export class UtxoNotFoundError extends Data.TaggedError("UtxoNotFound")<{
+export class UtxoNotFoundError extends Data.TaggedError("UtxoNotFoundError")<{
   readonly tokenName: string;
   readonly address: string;
   readonly message?: string;
   readonly cause?: unknown;
 }> {}
 
-export class InsufficientUtxosError extends Data.TaggedError("InsufficientUtxos")<{
+export class InsufficientUtxosError extends Data.TaggedError("InsufficientUtxosError")<{
   readonly required: number;
   readonly available: number;
   readonly message?: string;
@@ -37,7 +37,7 @@ export class InsufficientUtxosError extends Data.TaggedError("InsufficientUtxos"
 
 // --- Datum Errors ---
 
-export class InvalidDatumError extends Data.TaggedError("InvalidDatum")<{
+export class InvalidDatumError extends Data.TaggedError("InvalidDatumError")<{
   readonly field: string;
   readonly reason: string;
   readonly message?: string;
@@ -75,7 +75,7 @@ export class TransactionSubmitError extends Data.TaggedError("TransactionSubmitE
 
 // --- Validator Errors ---
 
-export class ValidatorNotFoundError extends Data.TaggedError("ValidatorNotFound")<{
+export class ValidatorNotFoundError extends Data.TaggedError("ValidatorNotFoundError")<{
   readonly validatorName: string;
   readonly message?: string;
   readonly cause?: unknown;

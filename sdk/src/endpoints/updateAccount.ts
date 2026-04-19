@@ -1,5 +1,5 @@
 
-import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder, Assets, toUnit } from "@lucid-evolution/lucid";
 import { AccountRedeemer, AccountDatum } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
@@ -48,6 +48,12 @@ export const unsignedUpdateAccountTxProgram = (
     const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
     const datum = Data.to(account_datum, AccountDatum);
 
+    const refToken = toUnit(accountPolicyId, refTokenName);
+    const userToken = toUnit(accountPolicyId, userTokenName);
+
+    const scriptAssets: Assets = { [refToken]: 1n };
+    const walletAssets: Assets = { [userToken]: 1n };
+
     const redeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) => Data.to(
@@ -62,20 +68,15 @@ export const unsignedUpdateAccountTxProgram = (
       inputs: [user_utxo, account_utxo],
     };
 
-    return yield* lucid
+    const tx = yield* lucid
       .newTx()
       .collectFrom([user_utxo])
       .collectFrom([account_utxo], redeemer)
-      .attach.SpendingValidator(accountValidator.spendAccount)
-      .pay.ToAddressWithData(
-        accountScriptAddress,
-        { kind: "inline", value: datum },
-        { [accountPolicyId + refTokenName]: 1n },
-      )
-      .pay.ToAddress(address, {
-        [accountPolicyId + userTokenName]: 1n
-      })
+      .pay.ToAddressWithData(accountScriptAddress, { kind: "inline", value: datum }, scriptAssets)
+      .pay.ToAddress(address, walletAssets)
       .addSigner(address)
+      .attach.SpendingValidator(accountValidator.spendAccount)
       .completeProgram()
       .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "updateAccount", error: String(e) })));
+    return tx;
   });
