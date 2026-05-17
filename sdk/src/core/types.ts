@@ -55,9 +55,11 @@ export const GroupDatumSchema = Data.Object({
   penalty_fee: Data.Integer(),
   interval_length: Data.Integer(),
   num_intervals: Data.Integer(),
+  max_members: Data.Integer(),
   member_count: Data.Integer(),
   is_active: Data.Boolean(),
   start_time: Data.Integer(),
+  admin_payment_credential: Data.Bytes(),
 });
 
 export type GroupDatum = Data.Static<typeof GroupDatumSchema>;

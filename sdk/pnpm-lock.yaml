@@ -6,6 +6,7 @@ settings:
 
 overrides:
   libsodium-wrappers-sumo: 0.8.2
+  libsodium-sumo: 0.8.2
 
 importers:
 

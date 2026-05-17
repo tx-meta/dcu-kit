@@ -5,14 +5,17 @@
  *
  *   1. Admin creates a group
  *   2. Member creates an account
- *   3. Member joins the group (deposits 10 ADA into Treasury)
+ *   3. Member joins the group
  *   4. Distribute payout to the current slot borrower (member, slot 0)
- *   5. Member withdraws their remaining Treasury balance
+ *   5. Member exits the group (mature exit — no penalty since group has matured)
+ *   6. Admin deletes the group (member_count = 0)
  *
  * Time setup:
- *   - start_time is set 3 intervals in the past so currentSlot = 0 and
- *     all contribution_list entries are already claimable.
+ *   - start_time is set 3 intervals in the past so currentSlot = 3 % 3 = 0 and
+ *     all contribution_list entries are past their claimable_at timestamp.
  *   - The member who joined first is assigned slot 0, so they are the borrower.
+ *   - contributionAmount includes a 2 ADA min-ADA buffer above the contribution total,
+ *     so the treasury remains spendable after the full payout is distributed.
  */
 
 import "dotenv/config";
@@ -21,32 +24,29 @@ import {
     Emulator,
     PROTOCOL_PARAMETERS_DEFAULT,
     generateEmulatorAccount,
-    validatorToAddress,
-    fromText,
+    getAddressDetails,
 } from "@lucid-evolution/lucid";
 import {
     createAccount,
     createGroup,
     joinGroup,
     distributePayout,
-    memberWithdraw,
+    exitGroup,
+    deleteGroup,
     CreateAccountConfig,
     CreateGroupConfig,
     JoinGroupConfig,
     DistributePayoutConfig,
-    MemberWithdrawConfig,
+    ExitGroupConfig,
+    DeleteGroupConfig,
     GroupDatum,
-    accountValidator,
-    groupValidator,
-    treasuryValidator,
-    accountPolicyId,
     groupPolicyId,
-    treasuryPolicyId,
+    accountPolicyId,
+    assetNameLabels,
 } from "@dcu/sdk";
+import { logError } from "./context.js";
 
 const NETWORK = "Custom"; // emulator network
-
-// --- Helpers ---
 
 type LucidInstance = Awaited<ReturnType<typeof Lucid>>;
 
@@ -57,7 +57,13 @@ async function submitAndAwait(lucid: LucidInstance, txBuilder: any): Promise<str
     return txHash;
 }
 
-// --- Main ---
+function extractSuffix(assets: Record<string, bigint>, policyId: string, prefix: string): string {
+    const key = Object.keys(assets).find(k =>
+        k.startsWith(policyId) && k.slice(policyId.length).startsWith(prefix)
+    );
+    if (!key) throw new Error(`Token not found: policyId=${policyId} prefix=${prefix}`);
+    return key.slice(policyId.length + prefix.length);
+}
 
 async function main() {
     // Two wallets: admin creates the group, member joins and receives payout
@@ -66,25 +72,31 @@ async function main() {
     const emulator = new Emulator([admin, member], { ...PROTOCOL_PARAMETERS_DEFAULT });
     const lucid = await Lucid(emulator, NETWORK);
 
-    // Script addresses for UTxO queries
-    const accountScriptAddr = validatorToAddress(NETWORK, accountValidator.spendAccount);
-    const groupScriptAddr = validatorToAddress(NETWORK, groupValidator.spendGroup);
-    const treasuryScriptAddr = validatorToAddress(NETWORK, treasuryValidator.spendTreasury);
-
-    // --- Timing: set start_time in the past so all contributions are claimable ---
-    // With num_intervals=3 and start_time = now - 3*interval - buffer:
-    //   currentSlot = floor((now - start_time) / interval) % 3 = floor(3.016) % 3 = 0
-    //   All contribution_list entries have claimable_at <= now
-    const NUM_INTERVALS = 3n;
+    // --- Timing: set start_time 3 intervals in the past so:
+    //   - currentSlot = floor(3 + ε) % 3 = 0 → member (slot 0) is the borrower
+    //   - all 3 contribution_list entries (claimable_at = start + i*interval) are past due
+    const NUM_INTERVALS   = 3n;
     const INTERVAL_LENGTH = 3_600_000n; // 1 hour in ms
-    const CONTRIBUTION_FEE = 2_000_000n; // 2 ADA
-    const start_time = BigInt(Date.now()) - NUM_INTERVALS * INTERVAL_LENGTH - 60_000n;
+    const CONTRIBUTION_FEE = 2_000_000n; // 2 ADA per interval
+    const start_time = BigInt(emulator.now()) - NUM_INTERVALS * INTERVAL_LENGTH - 60_000n;
+
+    // contributionAmount = total contribution + 2 ADA min-ADA buffer.
+    // After all 3 contributions (6 ADA) are distributed as payout, the treasury
+    // still holds 2 ADA so the output UTxO meets Cardano's minimum ADA requirement.
+    const contributionAmount = NUM_INTERVALS * CONTRIBUTION_FEE + 2_000_000n; // 8 ADA total
 
     // ─────────────────────────────────────────────────────────────────────────
     // Step 1: Admin creates the group
     // ─────────────────────────────────────────────────────────────────────────
     lucid.selectWallet.fromSeed(admin.seedPhrase);
-    let adminUtxos = await lucid.wallet().getUtxos();
+    const adminUtxos = await lucid.wallet().getUtxos();
+
+    const adminAddress = await lucid.wallet().address();
+    const { paymentCredential: adminCred } = getAddressDetails(adminAddress);
+    if (!adminCred || adminCred.type !== "Key") {
+        throw new Error("Admin wallet must be a key-hash address (not a script address).");
+    }
+    const adminPkh = adminCred.hash;
 
     const groupDatum: GroupDatum = {
         contribution_fee_policyid: "",
@@ -101,10 +113,12 @@ async function main() {
 
         interval_length: INTERVAL_LENGTH,
         num_intervals: NUM_INTERVALS,
+        max_members: 10n,
+
         member_count: 0n,
-        share_holding: false,
         is_active: true,
         start_time,
+        admin_payment_credential: adminPkh,
     };
 
     const createGroupTx = await createGroup(lucid, {
@@ -116,135 +130,107 @@ async function main() {
     const createGroupHash = await submitAndAwait(lucid, createGroupTx);
     console.log("   Hash:", createGroupHash);
 
+    // Extract the permanent group token suffix from output 0
+    const [groupMintUtxo] = await lucid.utxosByOutRef([{ txHash: createGroupHash, outputIndex: 0 }]);
+    if (!groupMintUtxo) throw new Error("Could not fetch group mint UTxO");
+    const groupTokenSuffix = extractSuffix(groupMintUtxo.assets, groupPolicyId!, assetNameLabels.prefix100);
+    console.log("   groupTokenSuffix:", groupTokenSuffix);
+
     // ─────────────────────────────────────────────────────────────────────────
     // Step 2: Member creates an account
     // ─────────────────────────────────────────────────────────────────────────
     lucid.selectWallet.fromSeed(member.seedPhrase);
-    let memberUtxos = await lucid.wallet().getUtxos();
+    const memberUtxos = await lucid.wallet().getUtxos();
 
     const createAccountTx = await createAccount(lucid, {
         selected_out_ref: memberUtxos[0],
-        account_datum: {
-            email_hash: fromText("member@dcu.io"),
-            phone_hash: fromText("555-0001"),
-        },
+        email: "member@dcu.io",
+        phone: "555-0001",
     } as CreateAccountConfig).unsafeRun();
 
     console.log("2. Creating member account...");
     const createAccountHash = await submitAndAwait(lucid, createAccountTx);
     console.log("   Hash:", createAccountHash);
 
+    // Extract the permanent account token suffix from output 0
+    const [accountMintUtxo] = await lucid.utxosByOutRef([{ txHash: createAccountHash, outputIndex: 0 }]);
+    if (!accountMintUtxo) throw new Error("Could not fetch account mint UTxO");
+    const accountTokenSuffix = extractSuffix(accountMintUtxo.assets, accountPolicyId, assetNameLabels.prefix100);
+    console.log("   accountTokenSuffix:", accountTokenSuffix);
+
     // ─────────────────────────────────────────────────────────────────────────
-    // Step 3: Member joins the group
-    //   - Deposits 10 ADA into Treasury
-    //   - Gets assigned_slot = 0 (first member, currentSlot = 0 → they are borrower)
-    //   - Admin co-signs since their GroupAdmin NFT is spent as auth proof
+    // Step 3: Member joins the group (assigned_slot = 0 → borrower for currentSlot 0)
+    //   Locks contributionAmount (8 ADA) in the Treasury NFT UTxO.
     // ─────────────────────────────────────────────────────────────────────────
-
-    // Find UTxOs needed for joinGroup
-    const groupRefAssetId = groupPolicyId + fromText("GroupReference");
-    const groupUtxo = (await lucid.utxosAt(groupScriptAddr))
-        .find(u => (u.assets[groupRefAssetId] ?? 0n) > 0n);
-    if (!groupUtxo) throw new Error("Group UTxO not found");
-
-    const accountScriptUtxos = await lucid.utxosAt(accountScriptAddr);
-    const accountUtxo = accountScriptUtxos.find(u =>
-        Object.keys(u.assets).some(k => k.startsWith(accountPolicyId))
-    );
-    if (!accountUtxo) throw new Error("Account UTxO not found");
-
-    lucid.selectWallet.fromSeed(admin.seedPhrase);
-    adminUtxos = await lucid.wallet().getUtxos();
-    const adminNftAssetId = groupPolicyId + fromText("GroupAdmin");
-    const adminNftUtxo = adminUtxos.find(u => (u.assets[adminNftAssetId] ?? 0n) > 0n);
-    if (!adminNftUtxo) throw new Error("Admin GroupAdmin NFT not found");
-
     lucid.selectWallet.fromSeed(member.seedPhrase);
+
     const joinTxBuilder = await joinGroup(lucid, {
-        groupUtxo,
-        accountUtxo,
-        adminUtxo: adminNftUtxo,
-        contributionAmount: 10_000_000n, // 10 ADA deposited
+        groupTokenSuffix,
+        accountTokenSuffix,
+        contributionAmount,
+        currentTime: BigInt(emulator.now()),
     } as JoinGroupConfig).unsafeRun();
 
-    console.log("3. Member joining group (member + admin co-sign)...");
-    lucid.selectWallet.fromSeed(member.seedPhrase);
-    const partialJoin = joinTxBuilder.sign.withWallet();
-    lucid.selectWallet.fromSeed(admin.seedPhrase);
-    const joinTx = await partialJoin.sign.withWallet().complete();
-    const joinHash = await joinTx.submit();
-    await lucid.awaitTx(joinHash);
+    console.log("3. Member joining group (8 ADA deposited, assigned slot 0)...");
+    const joinHash = await submitAndAwait(lucid, joinTxBuilder);
     console.log("   Hash:", joinHash);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Step 4: Distribute payout to the current slot borrower (member, slot 0)
-    //   - Payout = sum of claimable contributions = 3 intervals × 2 ADA = 6 ADA
-    //   - Sent to caller's wallet (member is both borrower and trigger here)
+    //   All 3 entries claimable → payout = 3 × 2 ADA = 6 ADA → member wallet.
+    //   Treasury retains 2 ADA (the min-ADA buffer).
     // ─────────────────────────────────────────────────────────────────────────
-
-    // Find updated group UTxO and all treasury UTxOs
-    const updatedGroupUtxo = (await lucid.utxosAt(groupScriptAddr))
-        .find(u => (u.assets[groupRefAssetId] ?? 0n) > 0n);
-    if (!updatedGroupUtxo) throw new Error("Updated group UTxO not found");
-
-    const treasuryUtxos = (await lucid.utxosAt(treasuryScriptAddr))
-        .filter(u => Object.keys(u.assets).some(k => k.startsWith(treasuryPolicyId)));
-    if (treasuryUtxos.length === 0) throw new Error("No treasury UTxOs found");
-
     lucid.selectWallet.fromSeed(member.seedPhrase);
+
     const distributePayoutTx = await distributePayout(lucid, {
-        groupUtxo: updatedGroupUtxo,
-        treasuryUtxos,
+        groupTokenSuffix,
     } as DistributePayoutConfig).unsafeRun();
 
-    console.log("4. Distributing payout to slot-0 borrower (6 ADA → member)...");
+    console.log("4. Distributing payout to slot-0 borrower (6 ADA → member wallet)...");
     const distributeHash = await submitAndAwait(lucid, distributePayoutTx);
     console.log("   Hash:", distributeHash);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Step 5: Member withdraws their remaining Treasury balance (2 ADA)
-    //   Treasury after payout: 10 ADA − 6 ADA = 4 ADA remaining
-    //   Withdraw 2 ADA; 2 ADA stays in treasury as min-ADA
+    // Step 5: Member exits the group (mature exit — no penalty)
+    //   The group has matured: now >= start_time + num_intervals * interval_length.
+    //   is_early_exit = is_active && now < maturity → False → mature exit.
+    //   Treasury NFT is burned, remaining 2 ADA returned to the member.
+    //   Group member_count decrements to 0.
     // ─────────────────────────────────────────────────────────────────────────
-
-    // Find updated treasury UTxO and member's account UTxO (now in wallet after joinGroup)
-    const updatedTreasuryUtxo = (await lucid.utxosAt(treasuryScriptAddr))
-        .find(u => Object.keys(u.assets).some(k => k.startsWith(treasuryPolicyId)));
-    if (!updatedTreasuryUtxo) throw new Error("Updated treasury UTxO not found");
-
-    // After joinGroup, the account reference NFT is returned to the member's wallet
     lucid.selectWallet.fromSeed(member.seedPhrase);
-    memberUtxos = await lucid.wallet().getUtxos();
-    const accountUtxoInWallet = memberUtxos.find(u =>
-        Object.keys(u.assets).some(k => k.startsWith(accountPolicyId))
-    );
-    if (!accountUtxoInWallet) throw new Error("Account UTxO not found in member wallet");
 
-    const finalGroupUtxo = (await lucid.utxosAt(groupScriptAddr))
-        .find(u => (u.assets[groupRefAssetId] ?? 0n) > 0n);
-    if (!finalGroupUtxo) throw new Error("Final group UTxO not found");
+    const exitGroupTx = await exitGroup(lucid, {
+        groupTokenSuffix,
+        accountTokenSuffix,
+    } as ExitGroupConfig).unsafeRun();
 
-    const memberWithdrawTx = await memberWithdraw(lucid, {
-        groupUtxo: finalGroupUtxo,
-        accountUtxo: accountUtxoInWallet,
-        treasuryUtxo: updatedTreasuryUtxo,
-        withdrawAmount: 2_000_000n, // 2 ADA
-    } as MemberWithdrawConfig).unsafeRun();
+    console.log("5. Member exiting group (mature exit — 2 ADA returned, no penalty)...");
+    const exitHash = await submitAndAwait(lucid, exitGroupTx);
+    console.log("   Hash:", exitHash);
 
-    console.log("5. Member withdrawing 2 ADA from treasury...");
-    const withdrawHash = await submitAndAwait(lucid, memberWithdrawTx);
-    console.log("   Hash:", withdrawHash);
+    // ─────────────────────────────────────────────────────────────────────────
+    // Step 6: Admin deletes the group (member_count = 0)
+    //   RemoveGroup redeemer enforces member_count == 0. Group tokens are burned,
+    //   ADA is reclaimed by the admin.
+    // ─────────────────────────────────────────────────────────────────────────
+    lucid.selectWallet.fromSeed(admin.seedPhrase);
+
+    const deleteGroupTx = await deleteGroup(lucid, {
+        groupTokenSuffix,
+    } as DeleteGroupConfig).unsafeRun();
+
+    console.log("6. Admin deleting group (member_count = 0, ADA reclaimed)...");
+    const deleteHash = await submitAndAwait(lucid, deleteGroupTx);
+    console.log("   Hash:", deleteHash);
 
     // ─────────────────────────────────────────────────────────────────────────
     console.log("\nROSCA lifecycle complete!");
     console.log("  Group created      ✓");
     console.log("  Account created    ✓");
-    console.log("  Group joined       ✓  (10 ADA deposited)");
-    console.log("  Payout distributed ✓  (6 ADA → member)");
-    console.log("  Member withdrew    ✓  (2 ADA from treasury)");
+    console.log("  Group joined       ✓  (8 ADA deposited, slot 0 assigned)");
+    console.log("  Payout distributed ✓  (6 ADA → member, 2 ADA remaining in treasury)");
+    console.log("  Group exited       ✓  (mature exit, 2 ADA returned, NFT burned)");
+    console.log("  Group deleted      ✓  (admin reclaimed ADA, group tokens burned)");
 }
 
-main().catch((e) => {
-    console.error("Error:", e);
-    process.exit(1);
-});
+main().catch(logError);

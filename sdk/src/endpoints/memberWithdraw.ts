@@ -2,21 +2,20 @@
 import {
     Data,
     LucidEvolution,
-    UTxO,
     TxSignBuilder,
     RedeemerBuilder,
     Assets,
     toUnit
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { 
-    TreasuryDatum, 
-    TreasuryDatumSchema, 
-    TreasuryRedeemer 
+import {
+    TreasuryDatum,
+    TreasuryDatumSchema,
+    TreasuryRedeemer
 } from "../core/types.js";
-import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
-import { DcuError, InvalidDatumError, TransactionBuildError } from "../core/errors.js";
-import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
+import { treasuryValidator, treasuryPolicyId, groupValidator, groupPolicyId, accountPolicyId } from "../core/validators/constants.js";
+import { DcuError, InvalidDatumError, TransactionBuildError, UtxoNotFoundError } from "../core/errors.js";
+import { getScriptAddress, getWalletAddress, parseSafeDatum, patchInlineDatum, assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
 
 /**
  * Creates an unsigned transaction for a member withdrawal from the Treasury.
@@ -37,9 +36,8 @@ import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/util
  * ```
  */
 export type MemberWithdrawConfig = {
-    groupUtxo: UTxO;
-    accountUtxo: UTxO;
-    treasuryUtxo: UTxO;
+    groupTokenSuffix: string;
+    accountTokenSuffix: string;
     withdrawAmount: bigint;
 };
 
@@ -48,12 +46,40 @@ export const unsignedMemberWithdrawTxProgram = (
   config: MemberWithdrawConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupUtxo, accountUtxo, treasuryUtxo, withdrawAmount } = config;
+    const { groupTokenSuffix, accountTokenSuffix, withdrawAmount } = config;
+
+    const groupRefUnit   = groupPolicyId!   + assetNameLabels.prefix100 + groupTokenSuffix;
+    const accountUserUnit = accountPolicyId + assetNameLabels.prefix222 + accountTokenSuffix;
+
+    const groupUtxoRaw   = yield* resolveUtxoByUnit(lucid, groupRefUnit);
+    const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUserUnit);
+    const groupUtxo   = patchInlineDatum(groupUtxoRaw);
+    const accountUtxo = patchInlineDatum(accountUtxoRaw);
+
+    const memberRefName    = assetNameLabels.prefix222 + accountTokenSuffix;
+    const treasuryAddress  = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
+    const allTreasuryUtxos = yield* Effect.tryPromise({
+        try: () => lucid.utxosAt(treasuryAddress),
+        catch: (e) => new TransactionBuildError({ operation: "queryTreasury", error: String(e) }),
+    });
+
+    const treasuryUtxoRaw = yield* Effect.gen(function* () {
+        for (const u of allTreasuryUtxos) {
+            const parsed = yield* parseSafeDatum(u.datum, TreasuryDatumSchema).pipe(
+                Effect.map(d => d as unknown as TreasuryDatum),
+                Effect.orElse(() => Effect.succeed(null)),
+            );
+            if (parsed && 'TreasuryState' in parsed && parsed.TreasuryState.member_reference_tokenname === memberRefName) {
+                return u;
+            }
+        }
+        return yield* Effect.fail(new UtxoNotFoundError({ tokenName: memberRefName, address: treasuryAddress }));
+    });
+    const treasuryUtxo = patchInlineDatum(treasuryUtxoRaw);
     const treasuryDatum = (yield* parseSafeDatum(treasuryUtxo.datum, TreasuryDatumSchema)) as unknown as TreasuryDatum;
     if (!('TreasuryState' in treasuryDatum)) return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Expected TreasuryState" }));
 
     const ts = treasuryDatum.TreasuryState;
-    const memberRefName = ts.member_reference_tokenname;
     const memberToken = toUnit(treasuryPolicyId!, memberRefName);
 
     // Calculate remaining Treasury Balance
@@ -97,7 +123,6 @@ export const unsignedMemberWithdrawTxProgram = (
     const treasuryAssets: Assets = { lovelace: remainingBalance, [memberToken]: 1n };
 
     const address = yield* getWalletAddress(lucid);
-    const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
 
     const tx = yield* lucid.newTx()
         .readFrom([groupUtxo])
@@ -107,9 +132,6 @@ export const unsignedMemberWithdrawTxProgram = (
         .pay.ToAddress(address, { lovelace: withdrawAmount })
         .validFrom(Number(now))
         .attach.SpendingValidator(treasuryValidator.spendTreasury)
-        // localUPLCEval: false — the Lucid Evolution UPLC wasm does not pass reference_inputs
-        // to PlutusV3 scripts correctly. The emulator accepts zero ex_units; live networks
-        // use the provider's evaluateTx (real Cardano node) which handles reference inputs.
         .completeProgram({ localUPLCEval: false })
         .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "memberWithdraw", error: String(e) })));
     return tx;

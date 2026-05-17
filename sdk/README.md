@@ -33,6 +33,28 @@ pnpm repack
 }
 ```
 
+## Testing
+
+Run all tests in lifecycle order (Account → Group → Treasury):
+
+```sh
+pnpm test
+```
+
+Run a specific suite:
+
+```sh
+pnpm test test/account.test.ts
+pnpm test test/group.test.ts
+pnpm test test/treasury.test.ts
+```
+
+Run tests matching a name pattern:
+
+```sh
+pnpm test -- -t "should create an account"
+```
+
 ## API Overview
 
 The SDK exposes `unsigned...Program` functions that return `Effect` blueprints yielding a `Lucid` `TxSignBuilder`.

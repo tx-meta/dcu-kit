@@ -15,7 +15,7 @@ import {
     createGroupTestCase,
     joinGroupTestCase
 } from "./actions.js";
-import { AccountDatum, GroupDatum } from "../src/core/types.js";
+import { GroupDatum } from "../src/core/types.js";
 import { LucidContext, makeLucidContext } from "./context.js";
 import { SetupError } from "../src/core/errors.js";
 import { assetNameLabels, getScriptAddress } from "../src/core/utils/index.js";
@@ -53,7 +53,6 @@ export const setupBase = (): Effect.Effect<BaseSetup, Error, never> => {
 
 export const setupAccount = (
   base: BaseSetup,
-  datumOverride?: Partial<AccountDatum>,
 ): Effect.Effect<SetupResult, Error, never> =>
   Effect.gen(function* (_) {
     const { lucid, users, emulator } = base.context;
@@ -61,7 +60,6 @@ export const setupAccount = (
 
     const { outputs } = yield* createAccountTestCase(
       { lucid, users, emulator },
-      { datumOverride },
     );
 
     const { accountUtxo, userUtxo } = outputs;

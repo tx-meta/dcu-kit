@@ -7,14 +7,24 @@
     "clean": "rimraf dist",
     "build": "tsup *.ts --format esm --clean",
     "create-account": "pnpm run build && node dist/create-account.js",
+    "update-account": "pnpm run build && node dist/update-account.js",
+    "delete-account": "pnpm run build && node dist/delete-account.js",
     "create-group": "pnpm run build && node dist/create-group.js",
+    "update-group": "pnpm run build && node dist/update-group.js",
+    "delete-group": "pnpm run build && node dist/delete-group.js",
     "join-group": "pnpm run build && node dist/join-group.js",
-    "rosca-lifecycle": "pnpm run build && node dist/rosca-lifecycle.js"
+    "distribute-payout": "pnpm run build && node dist/distribute-payout.js",
+    "member-withdraw": "pnpm run build && node dist/member-withdraw.js",
+    "exit-group": "pnpm run build && node dist/exit-group.js",
+    "terminate-group": "pnpm run build && node dist/terminate-group.js",
+    "rosca-lifecycle": "pnpm run build && node dist/rosca-lifecycle.js",
+    "generate-wallets": "tsup generate-wallets.ts --format esm --clean && node dist/generate-wallets.js"
   },
   "dependencies": {
     "@dcu/sdk": "file:../dcu-sdk-0.1.1.tgz",
     "@lucid-evolution/lucid": "0.4.29",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "effect": "3.21.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -27,11 +37,13 @@
     "onlyBuiltDependencies": [
       "cbor-extract",
       "esbuild",
+      "libsodium-sumo",
       "libsodium-wrappers",
       "libsodium-wrappers-sumo"
     ],
     "overrides": {
-      "libsodium-wrappers-sumo": "0.8.2"
+      "libsodium-wrappers-sumo": "0.8.2",
+      "libsodium-sumo": "0.8.2"
     }
   }
 }

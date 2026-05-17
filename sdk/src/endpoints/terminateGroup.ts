@@ -2,7 +2,6 @@
 import {
     Data,
     LucidEvolution,
-    UTxO,
     TxSignBuilder,
     RedeemerBuilder,
     Assets,
@@ -18,14 +17,13 @@ import {
 } from "../core/types.js";
 import { treasuryValidator, treasuryPolicyId, groupValidator, groupPolicyId } from "../core/validators/constants.js";
 import { DcuError, InvalidDatumError, TransactionBuildError, UtxoNotFoundError } from "../core/errors.js";
-import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress, parseSafeDatum, patchInlineDatum, assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
 
 // --- Configuration ---
 
 export type TerminateGroupConfig = {
-    groupUtxo: UTxO;   // Must be spending input — treasury reads its script credential
-    adminUtxo: UTxO;   // Must hold the group (222) admin token for auth
-    treasuryUtxo: UTxO; // Must be PenaltyState
+    groupTokenSuffix: string;
+    memberAccountTokenSuffix: string; // suffix of the account whose PenaltyState UTxO to claim
 };
 
 // --- Endpoint ---
@@ -47,14 +45,41 @@ export const unsignedTerminateGroupTxProgram = (
   config: TerminateGroupConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupUtxo, adminUtxo, treasuryUtxo } = config;
+    const { groupTokenSuffix, memberAccountTokenSuffix } = config;
+
+    const groupRefUnit = groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+    const adminUnit    = groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+
+    const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
+    const adminUtxo    = yield* resolveUtxoByUnit(lucid, adminUnit);
+    const groupUtxo    = patchInlineDatum(groupUtxoRaw);
+
+    // Find the PenaltyState treasury UTxO for this member
+    const memberRefName   = assetNameLabels.prefix222 + memberAccountTokenSuffix;
+    const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
+    const allTreasury     = yield* Effect.tryPromise({
+        try: () => lucid.utxosAt(treasuryAddress),
+        catch: (e) => new TransactionBuildError({ operation: "queryTreasury", error: String(e) }),
+    });
+
+    const treasuryUtxoRaw = yield* Effect.gen(function* () {
+        for (const u of allTreasury) {
+            const parsed = yield* parseSafeDatum(u.datum, TreasuryDatumSchema).pipe(
+                Effect.map(d => d as unknown as TreasuryDatum),
+                Effect.orElse(() => Effect.succeed(null)),
+            );
+            if (parsed && 'PenaltyState' in parsed && parsed.PenaltyState.member_reference_tokenname === memberRefName) {
+                return u;
+            }
+        }
+        return yield* Effect.fail(new UtxoNotFoundError({ tokenName: memberRefName, address: treasuryAddress }));
+    });
+    const treasuryUtxo = patchInlineDatum(treasuryUtxoRaw);
 
     const treasuryDatum = (yield* parseSafeDatum(treasuryUtxo.datum, TreasuryDatumSchema)) as unknown as TreasuryDatum;
     if (!('PenaltyState' in treasuryDatum)) {
         return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Expected PenaltyState for TerminateGroup" }));
     }
-
-    const memberRefName = treasuryDatum.PenaltyState.member_reference_tokenname;
 
     const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
 

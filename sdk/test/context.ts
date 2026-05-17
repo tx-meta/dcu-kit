@@ -12,16 +12,6 @@ import {
 import { ConfigurationError } from "../src/core/errors.js";
 import { Effect } from "effect";
 
-// Patch global fetch with a 30s timeout to prevent Maestro API calls from hanging indefinitely.
-// The Maestro provider has no built-in timeout; stalled connections would block the test fiber.
-{
-  const _fetch = globalThis.fetch;
-  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error("fetch timeout (30s)")), 30_000);
-    return _fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
-  };
-}
 
 export type OnChainNetwork = Extract<Network, "Mainnet" | "Preprod" | "Preview">;
 

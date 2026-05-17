@@ -6,18 +6,12 @@ config({ path: ".env" });
 export default defineConfig({
   test: {
     reporters: "verbose",
-    // Explicit lifecycle order: account → group → treasury.
-    // Do NOT use glob here — filesystem discovery order is non-deterministic on Linux.
-    include: [
-      "./test/account.test.ts",
-      "./test/group.test.ts",
-      "./test/treasury.test.ts",
-    ],
+    include: ["./test/**/*.test.ts"],
     testTimeout: 600000,
-    fileParallelism: false, // Prevent wallet UTxO contention on live network
-    bail: 1,              // Stop entire run on first failure — lifecycle is strictly ordered
+    fileParallelism: false,
+    bail: 3,
     sequence: {
-      shuffle: false,     // Never randomise file or test order
+      shuffle: false,
     },
   },
 });

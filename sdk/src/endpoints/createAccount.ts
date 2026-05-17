@@ -1,16 +1,19 @@
 
-import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder, Assets, toUnit } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, OutRef, TxSignBuilder, RedeemerBuilder, Assets, toUnit } from "@lucid-evolution/lucid";
 import { AccountDatum, AccountRedeemer } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { getScriptAddress, createCip68TokenNames, getWalletAddress } from "../core/utils/index.js";
+import { getScriptAddress, createCip68TokenNames, getWalletAddress, resolveUtxoByOutRef } from "../core/utils/index.js";
 import { accountValidator, accountPolicyId } from "../core/validators/constants.js";
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 
 // --- Configuration ---
 
 export type CreateAccountConfig = {
-    selected_out_ref: UTxO;
-    account_datum: AccountDatum;
+    selected_out_ref: OutRef;
+    email: string;
+    phone: string;
 };
 
 // --- Endpoint ---
@@ -48,9 +51,14 @@ export const unsignedCreateAccountTxProgram = (
   Effect.gen(function* () {
     const address = yield* getWalletAddress(lucid);
     const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
-    const { refTokenName, userTokenName } = yield* createCip68TokenNames(config.selected_out_ref);
+    const selectedUtxo = yield* resolveUtxoByOutRef(lucid, config.selected_out_ref);
+    const { refTokenName, userTokenName } = yield* createCip68TokenNames(selectedUtxo);
 
-    const datum = Data.to(config.account_datum, AccountDatum);
+    const accountDatum: AccountDatum = {
+      email_hash: bytesToHex(sha256(utf8ToBytes(config.email))),
+      phone_hash: bytesToHex(sha256(utf8ToBytes(config.phone))),
+    };
+    const datum = Data.to(accountDatum, AccountDatum);
 
     const refToken = toUnit(accountPolicyId, refTokenName);
     const userToken = toUnit(accountPolicyId, userTokenName);
@@ -68,12 +76,12 @@ export const unsignedCreateAccountTxProgram = (
             { CreateAccount: { input_index: inputIndices[0], output_index: 0n } },
             AccountRedeemer
         ),
-        inputs: [config.selected_out_ref],
+        inputs: [selectedUtxo],
     };
 
     const tx = yield* lucid
       .newTx()
-      .collectFrom([config.selected_out_ref])
+      .collectFrom([selectedUtxo])
       .mintAssets(mintingAssets, redeemer)
       .pay.ToAddressWithData(accountScriptAddress, { kind: "inline", value: datum }, scriptAssets)
       .pay.ToAddress(address, walletAssets)

@@ -1,16 +1,15 @@
 
-import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder, Assets, toUnit } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, TxSignBuilder, RedeemerBuilder, Assets, toUnit } from "@lucid-evolution/lucid";
 import { AccountRedeemer, TreasuryDatumSchema, TreasuryDatum } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { getScriptAddress, findCip68TokenPair, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
+import { getScriptAddress, findCip68TokenPair, getWalletAddress, parseSafeDatum, patchInlineDatum, assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
 import { accountValidator, accountPolicyId, treasuryValidator } from "../core/validators/constants.js";
 
 // --- Configuration ---
 
 export type DeleteAccountConfig = {
-    user_utxo: UTxO;
-    account_utxo: UTxO;
+    accountTokenSuffix: string;
 };
 
 // --- Endpoint ---
@@ -31,7 +30,14 @@ export const unsignedDeleteAccountTxProgram = (
   config: DeleteAccountConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { user_utxo, account_utxo } = config;
+    const { accountTokenSuffix } = config;
+
+    const refUnit  = accountPolicyId + assetNameLabels.prefix100 + accountTokenSuffix;
+    const userUnit = accountPolicyId + assetNameLabels.prefix222 + accountTokenSuffix;
+
+    const account_utxo_raw = yield* resolveUtxoByUnit(lucid, refUnit);
+    const user_utxo        = yield* resolveUtxoByUnit(lucid, userUnit);
+    const account_utxo     = patchInlineDatum(account_utxo_raw);
 
     const address = yield* getWalletAddress(lucid);
     const { userTokenName, refTokenName } = yield* findCip68TokenPair([user_utxo, account_utxo], accountPolicyId);

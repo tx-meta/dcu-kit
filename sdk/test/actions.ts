@@ -1,8 +1,6 @@
 import { Effect, Schedule } from "effect";
 import {
-  LucidEvolution,
   UTxO,
-  fromText,
 } from "@lucid-evolution/lucid";
 import { unsignedCreateAccountTxProgram, CreateAccountConfig } from "../src/endpoints/createAccount.js";
 import { unsignedUpdateAccountTxProgram, UpdateAccountConfig } from "../src/endpoints/updateAccount.js";
@@ -15,26 +13,25 @@ import { unsignedDistributePayoutTxProgram, DistributePayoutConfig } from "../sr
 import { unsignedMemberWithdrawTxProgram, MemberWithdrawConfig } from "../src/endpoints/memberWithdraw.js";
 import { unsignedExitGroupTxProgram, ExitGroupConfig } from "../src/endpoints/exitGroup.js";
 
-import { AccountDatum, GroupDatum } from "../src/core/types.js";
+import { GroupDatum } from "../src/core/types.js";
 import { LucidContext } from "./context.js";
-import { DcuValidators } from "../src/core/validators/context.js";
-import { accountValidator, accountPolicyId } from "../src/core/validators/constants.js";
+import { accountValidator, accountPolicyId, groupPolicyId } from "../src/core/validators/constants.js";
 import {
   selectWalletFromSeed,
   getWalletAddress,
   getUtxosAt,
   signAndSubmit,
   getWalletUtxos,
-  getScriptAddress
+  getScriptAddress,
+  assetNameLabels,
 } from "../src/core/index.js";
-import { createDefaultAccountDatum, createDefaultGroupDatum } from "./utils.js";
+import { createDefaultGroupDatum, extractTokenSuffix } from "./utils.js";
 import { SetupError } from "../src/core/errors.js";
 
 // --- Types ---
 
 export type CreateAccountResult = {
   txHash: string;
-  accountConfig: AccountDatum;
 };
 
 export type UpdateAccountResult = {
@@ -77,7 +74,8 @@ export type ExitGroupResult = {
 // --- Account Actions ---
 
 export type CreateAccountTestParams = {
-    datumOverride?: Partial<AccountDatum>;
+    email?: string;
+    phone?: string;
 };
 
 export const createAccountTestCase = (
@@ -86,7 +84,7 @@ export const createAccountTestCase = (
 ): Effect.Effect<CreateAccountResult & { outputs: { accountUtxo: UTxO, userUtxo: UTxO } }, Error, never> => {
   return Effect.gen(function* () {
     const { lucid, users } = context;
-    const { datumOverride } = params;
+    const { email = "test@dcu.io", phone = "555-0001" } = params;
 
     // 1. Arrange
     selectWalletFromSeed(lucid, users.user1.seedPhrase);
@@ -94,26 +92,25 @@ export const createAccountTestCase = (
     const address = yield* getWalletAddress(lucid);
     const utxos = yield* getUtxosAt(lucid, address);
 
-    const adminTokenHex = "47726f757041646d696e"; 
-    const selectedUTxO = utxos.find(u => 
-        !Object.keys(u.assets).some(k => k.endsWith(adminTokenHex)) && 
+    const adminTokenHex = "47726f757041646d696e";
+    const selectedUTxO = utxos.find(u =>
+        !Object.keys(u.assets).some(k => k.endsWith(adminTokenHex)) &&
         u.assets.lovelace > 2_000_000n
-    ) || utxos[0];
+    );
 
-    if (!selectedUTxO) return yield* Effect.fail(new SetupError({ message: "No UTxOs found for user1" }));
+    if (!selectedUTxO) return yield* Effect.fail(new SetupError({ message: "No UTxO with sufficient lovelace found for user1" }));
 
-    const accountDatum = createDefaultAccountDatum(datumOverride);
-    
     // 2. Construct Config
     const accountConfig: CreateAccountConfig = {
         selected_out_ref: selectedUTxO,
-        account_datum: accountDatum
+        email,
+        phone,
     };
 
     // 3. Act
-    const createAccountTx = yield* unsignedCreateAccountTxProgram(
-      lucid,
-      accountConfig
+    const createAccountTx = yield* unsignedCreateAccountTxProgram(lucid, accountConfig).pipe(
+      Effect.timeout("60 seconds"),
+      Effect.catchTag("TimeoutException", () => Effect.fail(new SetupError({ message: "createAccount completeProgram timed out — check Blockfrost/Maestro connectivity" })))
     );
     const txHash = yield* signAndSubmit(createAccountTx);
     context.emulator?.awaitBlock(1);
@@ -148,7 +145,6 @@ export const createAccountTestCase = (
 
     return {
       txHash,
-      accountConfig: accountDatum,
       outputs: {
           accountUtxo: accountUtxo as UTxO,
           userUtxo: userUtxo as UTxO
@@ -159,8 +155,8 @@ export const createAccountTestCase = (
 
 export type UpdateAccountTestParams = {
     accountUtxo: UTxO;
-    userUtxo: UTxO;
-    updatedDatum: AccountDatum;
+    email: string;
+    phone: string;
 };
 
 export const updateAccountTestCase = (
@@ -169,12 +165,13 @@ export const updateAccountTestCase = (
 ): Effect.Effect<UpdateAccountResult & { outputs: { accountUtxo: UTxO } }, Error, never> => {
   return Effect.gen(function* () {
     const { lucid } = context;
-    const { accountUtxo, userUtxo, updatedDatum } = params;
+    const { accountUtxo, email, phone } = params;
 
+    const accountTokenSuffix = extractTokenSuffix(accountUtxo, accountPolicyId, assetNameLabels.prefix100);
     const updateConfig: UpdateAccountConfig = {
-      account_utxo: accountUtxo,
-      user_utxo: userUtxo,
-      account_datum: updatedDatum
+      accountTokenSuffix,
+      email,
+      phone,
     };
 
     const updateAccountTx = yield* unsignedUpdateAccountTxProgram(
@@ -213,7 +210,6 @@ export const updateAccountTestCase = (
 
 export type DeleteAccountTestParams = {
     accountUtxo: UTxO;
-    userUtxo: UTxO;
 };
 
 export const deleteAccountTestCase = (
@@ -222,12 +218,11 @@ export const deleteAccountTestCase = (
 ): Effect.Effect<DeleteAccountResult, Error, never> => {
   return Effect.gen(function* () {
     const { lucid } = context;
-    const { accountUtxo, userUtxo } = params;
-    
-    // 1. Construct Config
+    const { accountUtxo } = params;
+
+    const accountTokenSuffix = extractTokenSuffix(accountUtxo, accountPolicyId, assetNameLabels.prefix100);
     const deleteConfig: DeleteAccountConfig = {
-        user_utxo: userUtxo,
-        account_utxo: accountUtxo
+        accountTokenSuffix,
     };
 
     const deleteAccountTx = yield* unsignedDeleteAccountTxProgram(
@@ -286,7 +281,6 @@ export const createGroupTestCase = (
 export type UpdateGroupTestParams = {
     groupUtxo: UTxO;
     updatedDatum: GroupDatum;
-    adminUtxo: UTxO;
 };
 
 export const updateGroupTestCase = (
@@ -295,12 +289,12 @@ export const updateGroupTestCase = (
 ): Effect.Effect<UpdateGroupResult, Error, never> => {
     return Effect.gen(function* () {
         const { lucid } = context;
-        const { groupUtxo, updatedDatum, adminUtxo } = params;
+        const { groupUtxo, updatedDatum } = params;
 
+        const groupTokenSuffix = extractTokenSuffix(groupUtxo, groupPolicyId!, assetNameLabels.prefix100);
         const updateConfig: UpdateGroupConfig = {
-            groupUtxo,
+            groupTokenSuffix,
             updatedDatum,
-            adminUtxo
         };
 
         const updateGroupTx = yield* unsignedUpdateGroupTxProgram(
@@ -318,8 +312,6 @@ export const updateGroupTestCase = (
 
 export type DeleteGroupTestParams = {
     groupUtxo: UTxO;
-    currentDatum: GroupDatum;
-    adminUtxo: UTxO;
 };
 
 export const deleteGroupTestCase = (
@@ -328,12 +320,11 @@ export const deleteGroupTestCase = (
 ): Effect.Effect<DeleteGroupResult, Error, never> => {
     return Effect.gen(function* () {
         const { lucid } = context;
-        const { groupUtxo, currentDatum, adminUtxo } = params;
+        const { groupUtxo } = params;
 
+        const groupTokenSuffix = extractTokenSuffix(groupUtxo, groupPolicyId!, assetNameLabels.prefix100);
         const deleteConfig: DeleteGroupConfig = {
-            groupUtxo,
-            currentDatum,
-            adminUtxo
+            groupTokenSuffix,
         };
 
         const deleteGroupTx = yield* unsignedDeleteGroupTxProgram(
@@ -372,9 +363,12 @@ export const joinGroupTestCase = (
             context.emulator ? context.emulator.now() : Date.now()
         );
 
+        const groupTokenSuffix   = extractTokenSuffix(groupUtxo,   groupPolicyId!,   assetNameLabels.prefix100);
+        const accountTokenSuffix = extractTokenSuffix(accountUtxo, accountPolicyId, assetNameLabels.prefix222);
+
         const joinConfig: JoinGroupConfig = {
-            groupUtxo,
-            accountUtxo,
+            groupTokenSuffix,
+            accountTokenSuffix,
             contributionAmount,
             currentTime
         };
@@ -392,8 +386,7 @@ export const joinGroupTestCase = (
 
 export type DistributePayoutTestParams = {
     groupUtxo: UTxO;
-    treasuryUtxos: UTxO[];
-    callerSeed: string; 
+    callerSeed: string;
 };
 
 export const distributePayoutTestCase = (
@@ -402,13 +395,13 @@ export const distributePayoutTestCase = (
 ): Effect.Effect<DistributePayoutResult, Error, never> => {
     return Effect.gen(function* () {
         const { lucid } = context;
-        const { groupUtxo, treasuryUtxos, callerSeed } = params;
+        const { groupUtxo, callerSeed } = params;
 
         selectWalletFromSeed(lucid, callerSeed);
 
+        const groupTokenSuffix = extractTokenSuffix(groupUtxo, groupPolicyId!, assetNameLabels.prefix100);
         const payoutConfig: DistributePayoutConfig = {
-            groupUtxo,
-            treasuryUtxos
+            groupTokenSuffix,
         };
 
         const payoutTx = yield* unsignedDistributePayoutTxProgram(
@@ -425,7 +418,6 @@ export const distributePayoutTestCase = (
 export type MemberWithdrawTestParams = {
     groupUtxo: UTxO;
     accountUtxo: UTxO;
-    treasuryUtxo: UTxO;
     withdrawAmount: bigint;
     userSeed: string;
 };
@@ -436,15 +428,17 @@ export const memberWithdrawTestCase = (
 ): Effect.Effect<MemberWithdrawResult, Error, never> => {
     return Effect.gen(function* () {
         const { lucid } = context;
-        const { groupUtxo, accountUtxo, treasuryUtxo, withdrawAmount, userSeed } = params;
+        const { groupUtxo, accountUtxo, withdrawAmount, userSeed } = params;
 
         selectWalletFromSeed(lucid, userSeed);
-        
+
+        const groupTokenSuffix   = extractTokenSuffix(groupUtxo,   groupPolicyId!, assetNameLabels.prefix100);
+        const accountTokenSuffix = extractTokenSuffix(accountUtxo, accountPolicyId, assetNameLabels.prefix222);
+
         const withdrawConfig: MemberWithdrawConfig = {
-            groupUtxo,
-            accountUtxo,
-            treasuryUtxo,
-            withdrawAmount
+            groupTokenSuffix,
+            accountTokenSuffix,
+            withdrawAmount,
         };
 
         const withdrawTx = yield* unsignedMemberWithdrawTxProgram(
@@ -461,7 +455,6 @@ export const memberWithdrawTestCase = (
 export type ExitGroupTestParams = {
     groupUtxo: UTxO;
     accountUtxo: UTxO;
-    treasuryUtxo: UTxO;
     userSeed: string;
 };
 
@@ -471,14 +464,16 @@ export const exitGroupTestCase = (
 ): Effect.Effect<ExitGroupResult, Error, never> => {
     return Effect.gen(function* () {
         const { lucid } = context;
-        const { groupUtxo, accountUtxo, treasuryUtxo, userSeed } = params;
+        const { groupUtxo, accountUtxo, userSeed } = params;
 
         selectWalletFromSeed(lucid, userSeed);
-        
+
+        const groupTokenSuffix   = extractTokenSuffix(groupUtxo,   groupPolicyId!, assetNameLabels.prefix100);
+        const accountTokenSuffix = extractTokenSuffix(accountUtxo, accountPolicyId, assetNameLabels.prefix222);
+
         const exitConfig: ExitGroupConfig = {
-            groupUtxo,
-            accountUtxo,
-            treasuryUtxo
+            groupTokenSuffix,
+            accountTokenSuffix,
         };
 
         const exitTx = yield* unsignedExitGroupTxProgram(

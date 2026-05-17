@@ -1,7 +1,6 @@
 import {
     Data,
     LucidEvolution,
-    UTxO,
     TxSignBuilder,
     RedeemerBuilder,
     paymentCredentialOf,
@@ -19,7 +18,7 @@ import {
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 import { accountPolicyId } from "../core/validators/constants.js";
 import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
-import { getScriptAddress, getWalletAddress, parseSafeDatum } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress, parseSafeDatum, patchInlineDatum, assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
 import {
     DcuError,
     UtxoNotFoundError,
@@ -46,8 +45,8 @@ import {
  * ```
  */
 export type JoinGroupConfig = {
-    groupUtxo: UTxO;
-    accountUtxo: UTxO;
+    groupTokenSuffix: string;
+    accountTokenSuffix: string;
     contributionAmount: bigint;
     currentTime?: bigint; // POSIX ms — emulator.now() for emulator, Date.now() for live
 };
@@ -57,7 +56,15 @@ export const unsignedJoinGroupTxProgram = (
   config: JoinGroupConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupUtxo, accountUtxo, contributionAmount, currentTime } = config;
+    const { groupTokenSuffix, accountTokenSuffix, contributionAmount, currentTime } = config;
+
+    const groupRefUnit   = groupPolicyId!   + assetNameLabels.prefix100 + groupTokenSuffix;
+    const accountUserUnit = accountPolicyId + assetNameLabels.prefix222 + accountTokenSuffix;
+
+    const groupUtxoRaw   = yield* resolveUtxoByUnit(lucid, groupRefUnit);
+    const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUserUnit);
+    const groupUtxo   = patchInlineDatum(groupUtxoRaw);
+    const accountUtxo = patchInlineDatum(accountUtxoRaw);
     const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
 
     const assignedSlot = groupDatum.member_count; 
@@ -92,8 +99,22 @@ export const unsignedJoinGroupTxProgram = (
 
     // Use a single `now` for both the datum and validFrom — Aiken checks
     // membership_start == get_lower_bound(tx), so they must match exactly.
-    // Pass emulator.now() from the test layer when running on the emulator.
-    const now = currentTime ?? BigInt(Date.now());
+    //
+    // On live networks (no currentTime): subtract 120s for clock drift, then truncate to a
+    // 1000ms boundary. Preprod/Mainnet genesis times are 1000ms-aligned, so
+    // (t - t%1000) equals the slot begin time and survives the validFrom round-trip.
+    //
+    // On the emulator (currentTime provided by emulator.now()): Lucid sets the Custom
+    // network's zeroTime = emulator.now(), which may NOT be 1000ms-aligned. Truncating
+    // would push `now` before the genesis, causing validFrom to compute slot -1 and
+    // return the wrong lower bound. Use rawNow directly — emulator.now() is always
+    // exactly zeroTime + slot*1000, so it is already slot-aligned.
+    const rawNow = currentTime !== undefined
+        ? currentTime
+        : BigInt(Date.now()) - 120_000n;
+    const now = currentTime !== undefined
+        ? rawNow
+        : rawNow - rawNow % 1000n;
 
     const treasuryDatum: TreasuryDatum = {
         TreasuryState: {

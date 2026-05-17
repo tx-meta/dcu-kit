@@ -450,6 +450,50 @@ The test context supports four providers via environment variables:
 
 ---
 
+## CIP-68 on-chain identity — token suffix, not UTxO reference
+
+**Never save a `txHash + outputIndex` as the durable identity of a CIP-68 entity.** Every spend
+invalidates those coordinates. Save the **token suffix** instead — the 28-byte hex string derived
+from the mint `OutputReference` via `blake2b_256(cbor(outref))[0..28]`. It never changes.
+
+```typescript
+// ✅ Correct — permanent, survives every update/withdraw
+state.accountTokenSuffix = "181aee6df0d0a437ee3ef1e197ec133f8b1a83adc256472e2082f70b";
+
+// ❌ Wrong — stale after the next transaction that spends the UTxO
+state.accountUtxo = { txHash: "30135f...", outputIndex: 0 };
+```
+
+**Endpoint configs take `tokenSuffix: string`, not `UTxO` objects.** The SDK resolves the current
+UTxO on-chain via `lucid.utxoByUnit(policyId + prefix + suffix)` at call time. Callers never need to
+track which UTxO holds the token — only the suffix.
+
+**In examples / scripts:**
+- After `createAccount` / `createGroup`: fetch output 0 via `lucid.utxosByOutRef`, extract the
+  `prefix100` token key, slice off `policyId + prefix100` to get the suffix, write it to `state.json`.
+- All subsequent scripts load the suffix and pass it directly — no UTxO queries needed by the caller.
+
+**`resolveUtxoByUnit(lucid, unit)`** (in `src/core/utils/resolve.ts`) wraps `lucid.utxoByUnit` in
+an Effect that fails with `UtxoNotFoundError` on `undefined` (emulator) or network error:
+
+```typescript
+export const resolveUtxoByUnit = (
+    lucid: LucidEvolution,
+    unit: string,
+): Effect.Effect<UTxO, UtxoNotFoundError> =>
+    Effect.tryPromise({
+        try: () => lucid.utxoByUnit(unit),
+        catch: () => new UtxoNotFoundError({ tokenName: unit, address: "chain" }),
+    }).pipe(
+        Effect.filterOrFail(
+            (utxo): utxo is UTxO => utxo != null,
+            () => new UtxoNotFoundError({ tokenName: unit, address: "chain" }),
+        ),
+    );
+```
+
+---
+
 ## Common mistakes
 
 | Mistake | Fix |
@@ -462,3 +506,6 @@ The test context supports four providers via environment variables:
 | Missing `Effect.mapError` on `completeProgram()` | Always pipe to `TransactionBuildError` |
 | Batching multiple endpoints in one commit | One commit per endpoint (after tests pass) |
 | Changing a datum type without updating spec first | Update spec → update types → retest |
+| Saving `{ txHash, outputIndex }` as entity identity | Save `tokenSuffix` — survives every spend |
+| Passing `UTxO` objects in endpoint configs | Configs take `tokenSuffix: string`; SDK resolves UTxOs |
+| Calling `lucid.utxoByUnit()` directly in endpoint | Use `resolveUtxoByUnit()` — handles `undefined` on emulator |

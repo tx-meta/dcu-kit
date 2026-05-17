@@ -232,7 +232,10 @@ fn indices_in_ascending_order(indices: List<Int>) -> Bool {
 //                     assigned_slot == group.member_count (slot assigned sequentially),
 //                     contribution_list has num_intervals entries with correct amounts,
 //                     member_payment_credential records the member's wallet pkh
-// [spec JoinGroup 7]: treasury output ADA ≥ contribution_fee + joining_fee
+// [spec JoinGroup 7]: treasury output holds at least contribution_fee in the contribution asset
+// [spec JoinGroup 8]: if joining_fee > 0, admin's wallet (admin_payment_credential) receives
+//                     at least joining_fee in the joining fee asset — fee routed at join time,
+//                     not locked in treasury
 // [security        ]: member user token must NOT go to any script address —
 //                     if trapped in a script, membership control is permanently lost
 pub fn validate_join_group(
@@ -320,33 +323,37 @@ pub fn validate_join_group(
       group.num_intervals,
     )
 
-  // [spec JoinGroup 7]: sufficient fees locked — contribution_fee + joining_fee.
-  //
-  // When both fees are the same asset (e.g. both ADA), two independent `quantity_of >= fee`
-  // checks are insufficient: a deposit of max(contribution_fee, joining_fee) would satisfy
-  // both while only the larger is actually locked. We detect this case and require the SUM.
-  let same_fee_asset =
-    group.contribution_fee_policyid == group.joining_fee_policyid && group.contribution_fee_assetname == group.joining_fee_assetname
-
+  // [spec JoinGroup 7]: treasury output holds at least contribution_fee in the
+  //   contribution asset. The joining_fee is routed separately to the admin (spec 8).
   let fees_locked =
-    if same_fee_asset {
-      // Same asset: require the combined amount in a single check
-      assets.quantity_of(
-        treasury_output.value,
-        group.contribution_fee_policyid,
-        group.contribution_fee_assetname,
-      ) >= group.contribution_fee + group.joining_fee
+    assets.quantity_of(
+      treasury_output.value,
+      group.contribution_fee_policyid,
+      group.contribution_fee_assetname,
+    ) >= group.contribution_fee
+
+  // [spec JoinGroup 8]: if joining_fee > 0, an output at the admin's payment credential
+  //   (group.admin_payment_credential) must receive at least joining_fee in the joining
+  //   fee asset. The fee goes directly to the admin's wallet at join time, not into the
+  //   treasury. When joining_fee == 0 this check is trivially satisfied.
+  let joining_fee_routed =
+    if group.joining_fee == 0 {
+      True
     } else {
-      // Different assets: each is independently satisfied
-      assets.quantity_of(
-        treasury_output.value,
-        group.contribution_fee_policyid,
-        group.contribution_fee_assetname,
-      ) >= group.contribution_fee && assets.quantity_of(
-        treasury_output.value,
-        group.joining_fee_policyid,
-        group.joining_fee_assetname,
-      ) >= group.joining_fee
+      list.any(
+        outputs,
+        fn(o) {
+          when o.address.payment_credential is {
+            VerificationKey(pkh) ->
+              pkh == group.admin_payment_credential && assets.quantity_of(
+                o.value,
+                group.joining_fee_policyid,
+                group.joining_fee_assetname,
+              ) >= group.joining_fee
+            Script(_) -> False
+          }
+        },
+      )
     }
 
   // [spec JoinGroup 1]: member input must hold the Account NFT under account_policy_id
@@ -395,6 +402,8 @@ pub fn validate_join_group(
 
   and {
     group_active?,
+    // [spec JoinGroup 1a]: group must not be at capacity
+    (group.member_count < group.max_members)?,
     exact_mint?,
     (treasury_output.address.payment_credential == Script(own_policy_id))?,
     // [spec JoinGroup 5]: exact token check — exactly 1 membership token, prevents token stuffing
@@ -410,6 +419,7 @@ pub fn validate_join_group(
     group_output_has_ref_token?,
     list_valid?,
     fees_locked?,
+    joining_fee_routed?,
     member_authorized?,
     member_cred_matches?,
     membership_start_valid?,

@@ -19,12 +19,17 @@ pub type GroupDatum {
   penalty_fee: Int,
   interval_length: Int,
   num_intervals: Int,
+  max_members: Int,
   member_count: Int,
   is_active: Bool,
   // POSIX millisecond timestamp when the ROSCA rotation schedule begins.
   // Required by the treasury validator for slot calculation:
   //   current_slot = (now - start_time) / interval_length % num_intervals
   start_time: Int,
+  // 28-byte payment key hash of the group admin's wallet.
+  // Joining fees are paid directly to this credential at join time.
+  // Frozen as a critical field once any member has joined.
+  admin_payment_credential: ByteArray,
 }
 
 /// Group Validator Mint Redeemer
@@ -73,6 +78,9 @@ pub type GroupSpendRedeemer {
 // [spec CreateGroup 10]: is_active == True at creation
 // [spec CreateGroup 11]: user (222) token must go to a VerificationKey address —
 //                        if sent to a script, admin authority is permanently lost
+// [spec CreateGroup 12]: admin_payment_credential must be exactly 28 bytes —
+//                        enforces a valid payment key hash; shorter values would
+//                        not address any real wallet
 pub fn validate_create_group(
   policy_id: PolicyId,
   input_index: Int,
@@ -130,8 +138,12 @@ pub fn validate_create_group(
     (datum.interval_length > 0)?,
     (datum.num_intervals > 0)?,
     (datum.num_intervals <= 100)?,
+    // [spec CreateGroup 11a]: max_members must be > 0 — a group of zero capacity is invalid
+    (datum.max_members > 0)?,
     (datum.member_count == 0)?,
     datum.is_active?,
+    // [spec CreateGroup 12]: admin_payment_credential must be a valid 28-byte PKH
+    (bytearray.length(datum.admin_payment_credential) == 28)?,
   }
 }
 
@@ -190,7 +202,7 @@ pub fn validate_update_group(
   // Switching fee currency (e.g. ADA → admin-controlled token) is an economic rug-pull
   // equivalent to raising the fee — both must be frozen while any member is active.
   let is_critical_update =
-    updated_datum.contribution_fee != current_datum.contribution_fee || updated_datum.contribution_fee_policyid != current_datum.contribution_fee_policyid || updated_datum.contribution_fee_assetname != current_datum.contribution_fee_assetname || updated_datum.joining_fee != current_datum.joining_fee || updated_datum.joining_fee_policyid != current_datum.joining_fee_policyid || updated_datum.joining_fee_assetname != current_datum.joining_fee_assetname || updated_datum.penalty_fee != current_datum.penalty_fee || updated_datum.penalty_fee_policyid != current_datum.penalty_fee_policyid || updated_datum.penalty_fee_assetname != current_datum.penalty_fee_assetname || updated_datum.interval_length != current_datum.interval_length || updated_datum.num_intervals != current_datum.num_intervals
+    updated_datum.contribution_fee != current_datum.contribution_fee || updated_datum.contribution_fee_policyid != current_datum.contribution_fee_policyid || updated_datum.contribution_fee_assetname != current_datum.contribution_fee_assetname || updated_datum.joining_fee != current_datum.joining_fee || updated_datum.joining_fee_policyid != current_datum.joining_fee_policyid || updated_datum.joining_fee_assetname != current_datum.joining_fee_assetname || updated_datum.penalty_fee != current_datum.penalty_fee || updated_datum.penalty_fee_policyid != current_datum.penalty_fee_policyid || updated_datum.penalty_fee_assetname != current_datum.penalty_fee_assetname || updated_datum.interval_length != current_datum.interval_length || updated_datum.num_intervals != current_datum.num_intervals || updated_datum.admin_payment_credential != current_datum.admin_payment_credential
 
   let is_safe_update = !is_critical_update || current_datum.member_count == 0
 

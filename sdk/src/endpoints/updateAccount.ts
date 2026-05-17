@@ -1,17 +1,19 @@
 
-import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder, Assets, toUnit } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, TxSignBuilder, RedeemerBuilder, Assets, toUnit } from "@lucid-evolution/lucid";
 import { AccountRedeemer, AccountDatum } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { getScriptAddress, findCip68TokenPair, getWalletAddress } from "../core/utils/index.js";
+import { getScriptAddress, findCip68TokenPair, getWalletAddress, patchInlineDatum, assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
 import { accountValidator, accountPolicyId } from "../core/validators/constants.js";
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 
 // --- Configuration ---
 
 export type UpdateAccountConfig = {
-    account_utxo: UTxO;
-    user_utxo: UTxO;
-    account_datum: AccountDatum;
+    accountTokenSuffix: string;
+    email: string;
+    phone: string;
 };
 
 // --- Endpoint ---
@@ -41,14 +43,26 @@ export const unsignedUpdateAccountTxProgram = (
   config: UpdateAccountConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { account_utxo, user_utxo, account_datum } = config;
+    const { accountTokenSuffix, email, phone } = config;
+
+    const refUnit  = accountPolicyId + assetNameLabels.prefix100 + accountTokenSuffix;
+    const userUnit = accountPolicyId + assetNameLabels.prefix222 + accountTokenSuffix;
+
+    const account_utxo_raw = yield* resolveUtxoByUnit(lucid, refUnit);
+    const user_utxo        = yield* resolveUtxoByUnit(lucid, userUnit);
+    const account_utxo     = patchInlineDatum(account_utxo_raw);
 
     const address = yield* getWalletAddress(lucid);
     const { userTokenName, refTokenName } = yield* findCip68TokenPair([user_utxo, account_utxo], accountPolicyId);
     const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
-    const datum = Data.to(account_datum, AccountDatum);
 
-    const refToken = toUnit(accountPolicyId, refTokenName);
+    const accountDatum: AccountDatum = {
+      email_hash: bytesToHex(sha256(utf8ToBytes(email))),
+      phone_hash: bytesToHex(sha256(utf8ToBytes(phone))),
+    };
+    const datum = Data.to(accountDatum, AccountDatum);
+
+    const refToken  = toUnit(accountPolicyId, refTokenName);
     const userToken = toUnit(accountPolicyId, userTokenName);
 
     const scriptAssets: Assets = { [refToken]: 1n };

@@ -7,9 +7,11 @@ import {
   updateAccountTestCase,
   deleteAccountTestCase,
 } from "./actions.js";
-import { createDefaultAccountDatum } from "./utils.js";
 import { SetupError } from "../src/core/errors.js";
 import { unsignedDeleteAccountTxProgram } from "../src/endpoints/deleteAccount.js";
+import { accountPolicyId } from "../src/core/validators/constants.js";
+import { assetNameLabels } from "../src/core/utils/index.js";
+import { extractTokenSuffix } from "./utils.js";
 
 describe("Account Endpoints", () => {
   // --- Create Account ---
@@ -28,18 +30,15 @@ describe("Account Endpoints", () => {
   it.effect("should update an account successfully", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
-      const { context, accountUtxo, userUtxo } = yield* setupAccount(base);
+      const { context, accountUtxo } = yield* setupAccount(base);
 
-      if (!accountUtxo || !userUtxo)
+      if (!accountUtxo)
         return yield* Effect.die(new SetupError({ message: "Setup failure" }));
 
       const { txHash } = yield* updateAccountTestCase(context, {
         accountUtxo,
-        userUtxo,
-        updatedDatum: createDefaultAccountDatum({
-          email_hash: "ff".repeat(32),
-          phone_hash: "ff".repeat(32),
-        }),
+        email: "updated@dcu.io",
+        phone: "555-9999",
       });
 
       expect(txHash).toBeDefined();
@@ -51,12 +50,12 @@ describe("Account Endpoints", () => {
   it.effect("should delete an account successfully", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
-      const { context, accountUtxo, userUtxo } = yield* setupAccount(base);
+      const { context, accountUtxo } = yield* setupAccount(base);
 
-      if (!accountUtxo || !userUtxo)
+      if (!accountUtxo)
         return yield* Effect.die(new SetupError({ message: "Setup failure" }));
 
-      const { txHash } = yield* deleteAccountTestCase(context, { accountUtxo, userUtxo });
+      const { txHash } = yield* deleteAccountTestCase(context, { accountUtxo });
 
       expect(txHash).toBeDefined();
       expect(txHash).toHaveLength(64);
@@ -68,11 +67,11 @@ describe("Account Endpoints", () => {
     Effect.gen(function* () {
       const base = yield* setupBase();
       // setupMembership: account created → group created → user joined
-      const { context, scripts, userUtxo: accountAuthUtxo } = yield* setupMembership(base);
+      const { context, scripts } = yield* setupMembership(base);
       const { lucid } = context;
 
       // userUtxo from setupMembership is the wallet-side 222 auth token.
-      // deleteAccount also needs the script-side 100 reference token.
+      // deleteAccount needs the script-side 100 reference token to derive the suffix.
       const scriptUtxos = yield* Effect.promise(() =>
         lucid.utxosAt(scripts.account.spend.address)
       );
@@ -82,11 +81,10 @@ describe("Account Endpoints", () => {
       if (!accountRefUtxo)
         return yield* Effect.die(new SetupError({ message: "Account ref UTxO not found at script" }));
 
+      const accountTokenSuffix = extractTokenSuffix(accountRefUtxo, accountPolicyId, assetNameLabels.prefix100);
+
       const err = yield* Effect.flip(
-        unsignedDeleteAccountTxProgram(lucid, {
-          user_utxo: accountAuthUtxo,
-          account_utxo: accountRefUtxo,
-        })
+        unsignedDeleteAccountTxProgram(lucid, { accountTokenSuffix })
       );
 
       expect(err._tag).toBe("TransactionBuildError");

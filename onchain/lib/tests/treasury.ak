@@ -65,7 +65,9 @@ fn test_group_input() -> Input {
   }
 }
 
-// Group datum with ADA fees (so treasury output policy guard passes)
+// Group datum with ADA fees (so treasury output policy guard passes).
+// joining_fee = 0 by default so existing tests don't need an admin payment output.
+// Override with a non-zero joining_fee to test joining_fee_routed logic.
 fn test_group_datum() -> GroupDatum {
   GroupDatum {
     // fees in ADA — policy guard: policies(treasury_output) == [ada, treasury_policy]
@@ -74,15 +76,17 @@ fn test_group_datum() -> GroupDatum {
     contribution_fee: 2_000_000,
     joining_fee_policyid: assets.ada_policy_id,
     joining_fee_assetname: #"",
-    joining_fee: 1_000_000,
+    joining_fee: 0,
     penalty_fee_policyid: assets.ada_policy_id,
     penalty_fee_assetname: #"",
     penalty_fee: 500_000,
     interval_length: 1000,
     num_intervals: 3,
+    max_members: 30,
     member_count: 0,
     is_active: True,
     start_time: 0,
+    admin_payment_credential: common.test_pkh(),
   }
 }
 
@@ -288,7 +292,7 @@ test join_group__accepts_valid_join() {
   let member_input = test_member_input()
 
   let datum = test_treasury_state(0)
-  // Value: enough ADA for contribution_fee(2M) + joining_fee(1M) + treasury token
+  // Value: enough ADA for contribution_fee (2M) + treasury token; joining_fee = 0 so no admin output needed
   let output_value =
     assets.from_lovelace(5_000_000)
       |> assets.merge(assets.from_asset(tp, member_tn(), 1))
@@ -410,7 +414,7 @@ test join_group__rejects_insufficient_fees() {
   let member_input = test_member_input()
 
   let datum = test_treasury_state(0)
-  // Only 1 ADA — not enough for 2M contribution + 1M joining = 3M required
+  // Only 1 ADA — not enough for 2M contribution_fee required
   let output_value =
     assets.from_lovelace(1_000_000)
       |> assets.merge(assets.from_asset(tp, member_tn(), 1))
@@ -431,32 +435,127 @@ test join_group__rejects_insufficient_fees() {
   !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
-// Same-asset fees (both ADA): 2M locked but 2M+1M=3M required — fees_locked fails
-test join_group__rejects_same_asset_fees_underpaid() {
+// joining_fee > 0 but no output at admin_payment_credential — joining_fee_routed fails
+test join_group__rejects_joining_fee_not_routed_to_admin() {
   let tp = treasury_policy()
 
-  let group_input = test_group_input()
+  // Override joining_fee to 1M — requires an admin payment output
+  let group_datum_with_fee = GroupDatum { ..test_group_datum(), joining_fee: 1_000_000 }
+  let gp = group_policy()
+  let group_input =
+    Input {
+      output_reference: OutputReference {
+        transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+        output_index: 0,
+      },
+      output: Output {
+        address: Address {
+          payment_credential: Script(gp),
+          stake_credential: None,
+        },
+        value: assets.from_lovelace(2_000_000)
+          |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+        datum: InlineDatum(group_datum_with_fee),
+        reference_script: None,
+      },
+    }
   let member_input = test_member_input()
 
   let datum = test_treasury_state(0)
-  // 2M ADA — satisfies contribution_fee alone (2M) but not combined sum (3M)
+  // 2M ADA — satisfies contribution_fee but no admin output for joining_fee
   let output_value =
     assets.from_lovelace(2_000_000)
       |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let treasury_output = test_treasury_output(datum, output_value)
-  let group_out = test_group_output(1)
+  // Group output: member_count 0 → 1
+  let group_out =
+    Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(GroupDatum { ..group_datum_with_fee, member_count: 1 }),
+      reference_script: None,
+    }
   let mint = assets.from_asset(tp, member_tn(), 1)
 
   let tx =
     Transaction {
       ..transaction.placeholder,
       inputs: [group_input, member_input],
+      // No admin payment output — joining_fee_routed must fail
       outputs: [treasury_output, group_out],
       mint,
       validity_range: interval.after(0),
     }
 
   !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+}
+
+// joining_fee > 0 and admin output at admin_payment_credential — should pass
+test join_group__accepts_joining_fee_routed_to_admin() {
+  let tp = treasury_policy()
+
+  // Override joining_fee to 1M
+  let group_datum_with_fee = GroupDatum { ..test_group_datum(), joining_fee: 1_000_000 }
+  let gp = group_policy()
+  let group_input =
+    Input {
+      output_reference: OutputReference {
+        transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+        output_index: 0,
+      },
+      output: Output {
+        address: Address {
+          payment_credential: Script(gp),
+          stake_credential: None,
+        },
+        value: assets.from_lovelace(2_000_000)
+          |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+        datum: InlineDatum(group_datum_with_fee),
+        reference_script: None,
+      },
+    }
+  let member_input = test_member_input()
+
+  let datum = test_treasury_state(0)
+  // 2M ADA — satisfies contribution_fee
+  let output_value =
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_output = test_treasury_output(datum, output_value)
+  // Group output: member_count 0 → 1
+  let group_out =
+    Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(GroupDatum { ..group_datum_with_fee, member_count: 1 }),
+      reference_script: None,
+    }
+  // Admin payment output at admin_payment_credential (test_pkh) with >= joining_fee (1M)
+  let admin_output =
+    Output {
+      address: Address {
+        payment_credential: VerificationKey(common.test_pkh()),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(1_000_000),
+      datum: NoDatum,
+      reference_script: None,
+    }
+  let mint = assets.from_asset(tp, member_tn(), 1)
+
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [group_input, member_input],
+      outputs: [treasury_output, group_out, admin_output],
+      mint,
+      validity_range: interval.after(0),
+    }
+
+  // group_ref_input_index=0, group_output_index=1, member_input_index=1, treasury_output_index=0
+  validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group is deactivated — group_active check fails
@@ -499,6 +598,66 @@ test join_group__rejects_inactive_group() {
     Transaction {
       ..transaction.placeholder,
       inputs: [inactive_group_input, member_input],
+      outputs: [treasury_output, group_out],
+      mint,
+      validity_range: interval.after(0),
+    }
+
+  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+}
+
+// Group is at max capacity (member_count == max_members) — join must be rejected
+test join_group__rejects_group_at_capacity() {
+  let tp = treasury_policy()
+  let gp = group_policy()
+
+  // Set member_count == max_members (group is full)
+  let full_datum =
+    GroupDatum { ..test_group_datum(), max_members: 3, member_count: 3 }
+  let full_group_output =
+    Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(full_datum),
+      reference_script: None,
+    }
+  let full_group_input =
+    Input {
+      output_reference: OutputReference {
+        transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+        output_index: 0,
+      },
+      output: full_group_output,
+    }
+
+  let member_input = test_member_input()
+  let datum = test_treasury_state(3)
+  let output_value =
+    assets.from_lovelace(5_000_000)
+      |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_output = test_treasury_output(datum, output_value)
+  // Group output must show incremented count for the redeemer's group_output_index to resolve
+  let group_out =
+    Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(GroupDatum { ..full_datum, member_count: 4 }),
+      reference_script: None,
+    }
+  let mint = assets.from_asset(tp, member_tn(), 1)
+
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [full_group_input, member_input],
       outputs: [treasury_output, group_out],
       mint,
       validity_range: interval.after(0),

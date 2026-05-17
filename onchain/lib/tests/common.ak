@@ -98,10 +98,12 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     penalty_fee: 100,
     interval_length: 1000,
     num_intervals: 10,
+    max_members: 30,
     member_count: 0,
     is_active: True,
     // start_time = 0: group rotation began at the epoch origin (convenient for tests)
     start_time: 0,
+    admin_payment_credential: test_pkh(),
   }
 }
 

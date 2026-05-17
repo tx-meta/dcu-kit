@@ -37,7 +37,8 @@
   },
   "pnpm": {
     "overrides": {
-      "libsodium-wrappers-sumo": "0.8.2"
+      "libsodium-wrappers-sumo": "0.8.2",
+      "libsodium-sumo": "0.8.2"
     }
   },
   "dependencies": {

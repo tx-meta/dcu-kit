@@ -1,6 +1,13 @@
-import { TxSignBuilder, LucidEvolution } from "@lucid-evolution/lucid";
+import { TxSignBuilder, LucidEvolution, UTxO } from "@lucid-evolution/lucid";
 import { Effect, Either, Schedule } from "effect";
 import { LucidError, TransactionBuildError } from "../errors.js";
+
+// Workaround for Lucid Evolution bug: Blockfrost sets `datumHash` on inline-datum UTxOs
+// (the hash of the inline datum), which causes the UPLC evaluator to null out `datum`.
+// Clearing `datumHash` when `datum` is already present fixes evaluation for both the
+// local WASM evaluator and the provider (Blockfrost/Ogmios) path.
+export const patchInlineDatum = (utxo: UTxO): UTxO =>
+  utxo.datum ? { ...utxo, datumHash: undefined } : utxo;
 
 /**
  * Utility for handling transaction lifecycle (building, signing, submission, and confirmation).
@@ -19,11 +26,17 @@ export const signAndSubmit = (
     const signed = yield* Effect.tryPromise({
       try: () => tx.sign.withWallet().complete(),
       catch: (error) => new LucidError({ message: "Failed to sign transaction", cause: error })
-    });
+    }).pipe(
+      Effect.timeout("60 seconds"),
+      Effect.catchTag("TimeoutException", () => Effect.fail(new LucidError({ message: "sign.withWallet().complete() timed out (60s)" })))
+    );
     return yield* Effect.tryPromise({
       try: () => signed.submit(),
       catch: (error) => new LucidError({ message: "Failed to submit transaction", cause: error })
-    });
+    }).pipe(
+      Effect.timeout("30 seconds"),
+      Effect.catchTag("TimeoutException", () => Effect.fail(new LucidError({ message: "submit() timed out (30s)" })))
+    );
   });
 
 /**

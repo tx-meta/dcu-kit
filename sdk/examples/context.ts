@@ -71,3 +71,45 @@ export function cexplorerTxUrl(txHash: string): string {
     const subdomain = network === "Mainnet" ? "" : `${network.toLowerCase()}.`;
     return `https://${subdomain}cexplorer.io/tx/${txHash}`;
 }
+
+/**
+ * Extracts and prints the real error from an Effect FiberFailure.
+ *
+ * Effect.runPromise (used by unsafeRun) wraps failures in a FiberFailure.
+ * Effect 3.x stores the typed failure at cause.failure (not cause.error).
+ */
+export function logError(e: unknown): void {
+    const fiberFailureSymbol = Symbol.for("effect/Runtime/FiberFailure");
+    const causeSymbol        = Symbol.for("effect/Runtime/FiberFailure/Cause");
+    const isFiberFailure = e != null && typeof e === "object" && fiberFailureSymbol in e;
+
+    let inner: unknown = e;
+
+    if (isFiberFailure) {
+        // Effect 3.x stores the Cause under a Symbol key, not a string property.
+        const cause = (e as any)[causeSymbol];
+        // Cause<E> variants: "Fail" has .failure, "Die" has .defect.
+        if (cause?._tag === "Fail")     inner = cause.failure ?? cause.error;
+        else if (cause?._tag === "Die") inner = cause.defect;
+    }
+
+    if (inner != null && typeof inner === "object" && "_tag" in inner) {
+        const parts: string[] = [`[${(inner as any)._tag}]`];
+        for (const [k, v] of Object.entries(inner as object)) {
+            if (k === "_tag") continue;
+            parts.push(`  ${k}: ${typeof v === "object" ? JSON.stringify(v, null, 2) : v}`);
+        }
+        // Also surface non-enumerable .message and .cause (common on Error subclasses)
+        const msg = (inner as any).message;
+        const cause = (inner as any).cause;
+        if (msg && !Object.prototype.hasOwnProperty.call(inner, "message")) parts.push(`  message: ${msg}`);
+        if (cause !== undefined) parts.push(`  cause: ${typeof cause === "object" ? JSON.stringify(cause, null, 2) : cause}`);
+        console.error(parts.join("\n"));
+    } else if (inner instanceof Error) {
+        console.error("Error:", inner.message);
+        if (inner.stack) console.error(inner.stack);
+    } else {
+        try { console.error("Error:", JSON.stringify(inner ?? e, null, 2)); }
+        catch { console.error("Error:", String(inner ?? e)); }
+    }
+}

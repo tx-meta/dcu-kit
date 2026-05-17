@@ -761,7 +761,9 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
 
   // Define what makes a datum "Invalid"
   let is_invalid =
-    datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.interval_length <= 0 || datum.num_intervals <= 0 || datum.num_intervals > 100 || datum.member_count != 0 || !datum.is_active
+    datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.interval_length <= 0 || datum.num_intervals <= 0 || datum.num_intervals > 100 || datum.max_members <= 0 || datum.member_count != 0 || !datum.is_active || bytearray.length(
+      datum.admin_payment_credential,
+    ) != 28
 
   // The Property:
   // If the datum is invalid, validation MUST return False.
@@ -796,6 +798,67 @@ test create_group__rejects_excessive_num_intervals() {
     common.test_script_utxo(
       policy_id,
       assets.from_asset(policy_id, ref_tn, 1),
+      datum,
+    )
+  let input = common.test_input(output_ref, output)
+  let user_output =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+test create_group__rejects_zero_max_members() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint =
+    assets.from_asset(policy_id, ref_tn, 1)
+      |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  // max_members = 0 is invalid — a group with zero capacity cannot accept any member
+  let datum =
+    GroupDatum { ..common.test_group_datum(policy_id), max_members: 0 }
+  let output =
+    common.test_script_utxo(
+      policy_id,
+      assets.merge(assets.from_lovelace(2_000_000), assets.from_asset(policy_id, ref_tn, 1)),
+      datum,
+    )
+  let input = common.test_input(output_ref, output)
+  let user_output =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      datum,
+    )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// admin_payment_credential shorter than 28 bytes — bytearray.length check fails
+test create_group__rejects_invalid_admin_payment_credential() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint =
+    assets.from_asset(policy_id, ref_tn, 1)
+      |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  // 27 bytes — one byte short of the required 28
+  let datum =
+    GroupDatum {
+      ..common.test_group_datum(policy_id),
+      admin_payment_credential: #"aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbcc",
+    }
+  let output =
+    common.test_script_utxo(
+      policy_id,
+      assets.merge(
+        assets.from_lovelace(2_000_000),
+        assets.from_asset(policy_id, ref_tn, 1),
+      ),
       datum,
     )
   let input = common.test_input(output_ref, output)

@@ -1,19 +1,37 @@
-import { fromText } from "@lucid-evolution/lucid";
-import { createAccount, CreateAccountConfig } from "@dcu/sdk";
-import { makeLucid, cexplorerTxUrl } from "./context.js";
+import { createAccount, CreateAccountConfig, accountPolicyId, assetNameLabels } from "@dcu/sdk";
+import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
+import { loadState, saveState, accountSuffixKey } from "./state.js";
 
 async function main() {
     const { lucid, isEmulator } = await makeLucid();
 
+    // Support ACTIVE_WALLET=WALLET3 to create an account for a second member.
+    const activeWallet = (process.env.ACTIVE_WALLET ?? "USER1").toUpperCase();
+    const walletSeed   = process.env[`${activeWallet}_SEED`] ?? process.env.USER1_SEED;
+    if (!walletSeed) throw new Error(`${activeWallet}_SEED not found in .env`);
+    lucid.selectWallet.fromSeed(walletSeed);
+    if (activeWallet !== "USER1") console.log(`Using wallet: ${activeWallet}`);
+
+    // Check if this wallet already has an account suffix saved — skip if so.
+    const state      = loadState();
+    const suffixKey  = accountSuffixKey(activeWallet);
+    const existingSuffix = state[suffixKey];
+    if (existingSuffix) {
+        console.log(`${activeWallet} already has an account in state.json (suffix: ${existingSuffix})`);
+        console.log("Delete it from state.json manually if you want to create a new one.");
+        process.exit(0);
+    }
+
     const utxos = await lucid.wallet().getUtxos();
-    if (utxos.length === 0) throw new Error("No UTxOs in wallet. Please fund it first.");
+    if (utxos.length === 0) throw new Error(`No UTxOs in ${activeWallet} wallet. Please fund it first.`);
+
+    const emails: Record<string, string> = { ADMIN: "admin@web3.ada", USER1: "user1@web3.ada", WALLET3: "wallet3@web3.ada" };
+    const phones: Record<string, string> = { ADMIN: "555-0000",       USER1: "555-0100",        WALLET3: "555-0300" };
 
     const config: CreateAccountConfig = {
         selected_out_ref: utxos[0],
-        account_datum: {
-            email_hash: fromText("business@web3.ada"),
-            phone_hash: fromText("555-0199"),
-        },
+        email: emails[activeWallet] ?? "member@web3.ada",
+        phone: phones[activeWallet] ?? "555-0000",
     };
 
     console.log("Building transaction...");
@@ -27,10 +45,21 @@ async function main() {
 
     console.log("Waiting for confirmation...");
     await lucid.awaitTx(txHash);
-    console.log("Account created successfully!");
+
+    const [scriptUtxo] = await lucid.utxosByOutRef([{ txHash, outputIndex: 0 }]);
+    if (!scriptUtxo) throw new Error("Could not fetch minted account UTxO");
+    const refKey = Object.keys(scriptUtxo.assets).find(k =>
+        k.startsWith(accountPolicyId) &&
+        k.slice(accountPolicyId.length).startsWith(assetNameLabels.prefix100)
+    );
+    if (!refKey) throw new Error("No account reference token found in output 0");
+    const accountTokenSuffix = refKey.slice(accountPolicyId.length + assetNameLabels.prefix100.length);
+
+    saveState({ [suffixKey]: accountTokenSuffix });
+    console.log(`Account created for ${activeWallet} successfully!`);
 }
 
 main().catch((e) => {
-    console.error("Error:", e);
+    logError(e);
     process.exit(1);
 });

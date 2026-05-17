@@ -2,22 +2,22 @@
 import {
     Data,
     LucidEvolution,
-    UTxO,
     TxSignBuilder,
     RedeemerBuilder,
     Assets,
+    UTxO,
     toUnit,
     credentialToAddress
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { 
-    GroupDatum, 
-    TreasuryDatum, 
-    TreasuryDatumSchema, 
-    TreasuryRedeemer 
+import {
+    GroupDatum,
+    TreasuryDatum,
+    TreasuryDatumSchema,
+    TreasuryRedeemer
 } from "../core/types.js";
-import { treasuryValidator, treasuryPolicyId } from "../core/validators/constants.js";
-import { getScriptAddress, parseSafeDatum, calculateCurrentSlot } from "../core/utils/index.js";
+import { treasuryValidator, treasuryPolicyId, groupPolicyId } from "../core/validators/constants.js";
+import { getScriptAddress, parseSafeDatum, calculateCurrentSlot, patchInlineDatum, assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
 
 /**
@@ -41,8 +41,7 @@ import { DcuError, TransactionBuildError } from "../core/errors.js";
  * ```
  */
 export type DistributePayoutConfig = {
-    groupUtxo: UTxO;
-    treasuryUtxos: UTxO[];
+    groupTokenSuffix: string;
 };
 
 export const unsignedDistributePayoutTxProgram = (
@@ -50,11 +49,29 @@ export const unsignedDistributePayoutTxProgram = (
   config: DistributePayoutConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupUtxo, treasuryUtxos } = config;
+    const { groupTokenSuffix } = config;
+
+    const groupRefUnit = groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+    const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
+    const groupUtxo    = patchInlineDatum(groupUtxoRaw);
+
+    const treasuryAddress  = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
+    const rawTreasuryUtxos = yield* Effect.tryPromise({
+        try: () => lucid.utxosAt(treasuryAddress),
+        catch: (e) => new TransactionBuildError({ operation: "queryTreasury", error: String(e) }),
+    });
+    const treasuryUtxos = rawTreasuryUtxos.map(patchInlineDatum);
+
     const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
     const currentSlot = calculateCurrentSlot(Date.now(), groupDatum);
 
-    // Parse all treasury UTxO datums, silently skipping ones with invalid datums
+    // Derive the group reference token name so we can filter treasury UTxOs
+    // to only those belonging to this group (the address is shared across groups).
+    const groupRefAsset = Object.keys(groupUtxo.assets).find(k => k.startsWith(groupPolicyId!));
+    if (!groupRefAsset) return yield* Effect.fail(new TransactionBuildError({ operation: "distributePayout", error: "Group reference token not found in group UTxO" }));
+    const groupRefName = groupRefAsset.slice(groupPolicyId!.length);
+
+    // Parse treasury UTxO datums, skipping invalid datums or UTxOs from other groups.
     const parsedStates = yield* Effect.all(
         treasuryUtxos.map(u =>
             parseSafeDatum(u.datum, TreasuryDatumSchema).pipe(
@@ -71,6 +88,7 @@ export const unsignedDistributePayoutTxProgram = (
 
     for (const state of parsedStates) {
         if (!state || !('TreasuryState' in state.datum)) continue;
+        if (state.datum.TreasuryState.group_reference_tokenname !== groupRefName) continue;
         memberStates.push(state);
         if (Number(state.datum.TreasuryState.assigned_slot) === currentSlot) {
             borrowerUtxo = state.utxo;
@@ -135,10 +153,8 @@ export const unsignedDistributePayoutTxProgram = (
                 }
             }, TreasuryRedeemer);
         },
-        inputs: treasuryUtxos
+        inputs: memberStates.map(s => s.utxo)
     };
-
-    const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
 
     const tx = yield* outputStates
         .reduce((builder, state) => {
@@ -152,13 +168,10 @@ export const unsignedDistributePayoutTxProgram = (
             );
         }, lucid.newTx()
             .readFrom([groupUtxo])
-            .collectFrom(treasuryUtxos, redeemer)
+            .collectFrom(memberStates.map(s => s.utxo), redeemer)
             .pay.ToAddress(borrowerAddress, { lovelace: payoutAmount }))
         .validFrom(Number(currentTime))
         .attach.SpendingValidator(treasuryValidator.spendTreasury)
-        // localUPLCEval: false — the Lucid Evolution UPLC wasm does not pass reference_inputs
-        // to PlutusV3 scripts correctly. The emulator accepts zero ex_units; live networks
-        // use the provider's evaluateTx (real Cardano node) which handles reference inputs.
         .completeProgram({ localUPLCEval: false })
         .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "distributePayout", error: String(e) })));
     return tx;

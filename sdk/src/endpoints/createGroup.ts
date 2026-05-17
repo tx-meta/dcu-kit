@@ -1,7 +1,7 @@
-import { Data, TxSignBuilder, LucidEvolution, UTxO, RedeemerBuilder, Constr, Assets, toUnit } from "@lucid-evolution/lucid";
+import { Data, TxSignBuilder, LucidEvolution, OutRef, RedeemerBuilder, Constr, Assets, toUnit } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum } from "../core/types.js";
-import { getScriptAddress, getWalletAddress, createCip68TokenNames } from "../core/utils/index.js";
+import { getScriptAddress, getWalletAddress, createCip68TokenNames, resolveUtxoByOutRef } from "../core/utils/index.js";
 import { DcuError, TransactionBuildError, ValidatorNotFoundError } from "../core/errors.js";
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 
@@ -20,7 +20,7 @@ import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
  */
 export type CreateGroupConfig = {
     groupDatum: GroupDatum;
-    utxoToSpend: UTxO;
+    utxoToSpend: OutRef;
 };
 
 export const unsignedCreateGroupTxProgram = (
@@ -37,10 +37,14 @@ export const unsignedCreateGroupTxProgram = (
 
     const datum = Data.to(groupDatum, GroupDatum);
 
+    // Resolve the full UTxO from the OutRef so we can compute CIP-68 names
+    // (which require the txHash + outputIndex) and collect from it.
+    const utxo = yield* resolveUtxoByOutRef(lucid, utxoToSpend);
+
     // Derive CIP-68 token names the same way the Aiken validator does:
     //   ref_token_name  = blake2b_256(cbor(utxoToSpend.outputRef)) with prefix_100
     //   user_token_name = blake2b_256(cbor(utxoToSpend.outputRef)) with prefix_222
-    const { refTokenName, userTokenName } = yield* createCip68TokenNames(utxoToSpend);
+    const { refTokenName, userTokenName } = yield* createCip68TokenNames(utxo);
 
     const refToken = toUnit(groupPolicyId!, refTokenName);
     const userToken = toUnit(groupPolicyId!, userTokenName);
@@ -56,12 +60,12 @@ export const unsignedCreateGroupTxProgram = (
         makeRedeemer: (inputIndices: bigint[]) => Data.to(
             new Constr(0, [inputIndices[0], 0n])
         ),
-        inputs: [utxoToSpend],
+        inputs: [utxo],
     };
 
     const tx = yield* lucid
         .newTx()
-        .collectFrom([utxoToSpend])
+        .collectFrom([utxo])
         .mintAssets(mintingAssets, redeemer)
         .pay.ToContract(groupAddress, { kind: "inline", value: datum }, scriptAssets)
         .pay.ToAddress(address, walletAssets)

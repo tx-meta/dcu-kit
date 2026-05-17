@@ -1,8 +1,8 @@
-import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder, Assets } from "@lucid-evolution/lucid";
+import { LucidEvolution, Data, TxSignBuilder, RedeemerBuilder, Assets, Constr } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
+import { GroupDatum } from "../core/types.js";
 import { DcuError, TransactionBuildError, UtxoNotFoundError } from "../core/errors.js";
-import { getScriptAddress } from "../core/utils/index.js";
+import { getScriptAddress, patchInlineDatum, parseSafeDatum, assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 
 /**
@@ -30,9 +30,7 @@ import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
  */
 
 export type DeleteGroupConfig = {
-    groupUtxo: UTxO;
-    currentDatum: GroupDatum;
-    adminUtxo: UTxO;
+    groupTokenSuffix: string;
 };
 
 export const unsignedDeleteGroupTxProgram = (
@@ -40,9 +38,17 @@ export const unsignedDeleteGroupTxProgram = (
   config: DeleteGroupConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-      const { groupUtxo, currentDatum, adminUtxo } = config;
-      const address = yield* getScriptAddress(lucid, groupValidator.spendGroup);
+      const { groupTokenSuffix } = config;
 
+      const groupRefUnit = groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      const adminUnit    = groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+
+      const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
+      const adminUtxo    = yield* resolveUtxoByUnit(lucid, adminUnit);
+      const groupUtxo    = patchInlineDatum(groupUtxoRaw);
+      const address      = yield* getScriptAddress(lucid, groupValidator.spendGroup);
+
+      const currentDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
       const deactivatedDatum: GroupDatum = {
           ...currentDatum,
           is_active: false
@@ -54,25 +60,23 @@ export const unsignedDeleteGroupTxProgram = (
 
       const groupAssets: Assets = { ...groupUtxo.assets };
 
+      // Mirror payment-subscription's service pattern: wallet UTxO first in inputs array,
+      // script UTxO second. Use Constr directly (positionally explicit) to match the
+      // proven reference implementation and avoid any schema field-order ambiguity.
+      // RemoveGroup is variant index 1 in GroupSpendRedeemer.
+      // Field order in Constr matches Aiken definition: [group_ref_token_name, admin_input_index, group_input_index, group_output_index]
       const redeemer: RedeemerBuilder = {
           kind: "selected",
           makeRedeemer: (inputIndices: bigint[]) => {
-              return Data.to({
-                  RemoveGroup: {
-                      group_ref_token_name: groupRefName,
-                      group_input_index: inputIndices[0],
-                      admin_input_index: inputIndices[1],
-                      group_output_index: 0n
-                  }
-              }, GroupSpendRedeemer);
+              return Data.to(new Constr(1, [groupRefName, inputIndices[0], inputIndices[1], 0n]));
           },
-          inputs: [groupUtxo, adminUtxo]
+          inputs: [adminUtxo, groupUtxo]
       };
 
       const tx = yield* lucid
         .newTx()
-        .collectFrom([groupUtxo], redeemer)
         .collectFrom([adminUtxo])
+        .collectFrom([groupUtxo], redeemer)
         .pay.ToContract(address, { kind: "inline", value: Data.to(deactivatedDatum, GroupDatum) }, groupAssets)
         .attach.SpendingValidator(groupValidator.spendGroup)
         .completeProgram()

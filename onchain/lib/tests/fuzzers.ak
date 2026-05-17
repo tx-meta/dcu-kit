@@ -16,9 +16,11 @@ pub fn gen_group_datum() {
   let penalty_fee_assetname <- fuzz.and_then(fuzz.bytearray_fixed(28))
   let interval_length <- fuzz.and_then(fuzz.int())
   let num_intervals <- fuzz.and_then(fuzz.int())
+  let max_members <- fuzz.and_then(fuzz.int())
   let member_count <- fuzz.and_then(fuzz.int())
   let is_active <- fuzz.and_then(fuzz.bool())
   let start_time <- fuzz.and_then(fuzz.int())
+  let admin_payment_credential <- fuzz.and_then(fuzz.bytearray_fixed(28))
 
   fuzz.constant(
     GroupDatum {
@@ -33,9 +35,11 @@ pub fn gen_group_datum() {
       penalty_fee,
       interval_length,
       num_intervals,
+      max_members,
       member_count,
       is_active,
       start_time,
+      admin_payment_credential,
     },
   )
 }
