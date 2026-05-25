@@ -396,7 +396,7 @@ pub fn validate_distribute_round(
   let Transaction { inputs, outputs, .. } = tx
 
   // [spec DistributeRound 1]: datum must be TreasuryState
-  expect TreasuryState { member_reference_tokenname, rounds_paid, .. } = datum
+  expect TreasuryState { member_reference_tokenname, group_reference_tokenname, rounds_paid, .. } = datum
 
   // [spec DistributeRound 2]: member hasn't been processed for this round yet
   let member_at_correct_round = rounds_paid == round_number
@@ -524,15 +524,6 @@ pub fn validate_distribute_round(
   expect Some(own_output) = list.at(outputs, own_output_index)
   expect InlineDatum(output_datum_data) = own_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
-  expect TreasuryState {
-    rounds_paid: output_rounds_paid,
-    is_deferred: output_is_deferred,
-    ..
-  } = output_datum
-
-  // [spec DistributeRound 7a]: output datum: rounds_paid incremented, is_deferred reset
-  let output_datum_correct =
-    output_rounds_paid == round_number + 1 && !output_is_deferred
 
   // [spec DistributeRound 7b]: balance reduced by contribution_fee in contribution asset
   expect Some(own_input) =
@@ -550,6 +541,32 @@ pub fn validate_distribute_round(
       group.contribution_fee_assetname,
     )
   let balance_deducted = output_bal == input_bal - group.contribution_fee
+
+  // [spec DistributeRound 7a]: output datum transitions to InsufficientCollateralState
+  // only when post-round balance is below threshold AND there are future rounds remaining.
+  // On the final round (round_number + 1 == num_intervals) a zero-balance member stays
+  // in TreasuryState so they can exit via the standard mature-exit burn path.
+  let is_last_round = round_number + 1 == group.num_intervals
+  let transition_to_ics = output_bal < group.contribution_fee && !is_last_round
+  let current_time = get_lower_bound(tx)
+
+  let output_datum_correct =
+    if transition_to_ics {
+      output_datum == InsufficientCollateralState {
+        group_reference_tokenname,
+        member_reference_tokenname,
+        grace_expires_at: current_time + group.grace_period_length,
+        grace_extensions_used: 0,
+        rounds_paid: round_number + 1,
+      }
+    } else {
+      expect TreasuryState {
+        rounds_paid: output_rounds_paid,
+        is_deferred: output_is_deferred,
+        ..
+      } = output_datum
+      output_rounds_paid == round_number + 1 && !output_is_deferred
+    }
 
   // [spec DistributeRound 8]: own output at script address with membership token
   let output_at_script =

@@ -1,33 +1,34 @@
 /**
  * Deploy Reference Scripts
  *
- * Deploys the treasury and group validators as reference-script UTxOs at the
- * admin's address. Once deployed, all subsequent transactions (joinGroup,
- * exitGroup, etc.) can reference these UTxOs instead of including the full
- * script bytes inline, keeping every transaction under Cardano's 16KB limit.
+ * Deploys the treasury and group validators as permanent reference-script UTxOs
+ * at the alwaysFails address. Once deployed, all subsequent transactions
+ * (joinGroup, exitGroup, etc.) can reference these UTxOs instead of including
+ * the full script bytes inline, keeping every transaction under Cardano's 16KB
+ * limit.
+ *
+ * Why alwaysFails?
+ *   The alwaysFails validator can never succeed, so UTxOs at that address are
+ *   permanently locked. Reference scripts deposited here stay on-chain forever
+ *   and cannot be accidentally spent or stolen.
+ *
+ * Why two transactions?
+ *   Each validator is ~8 KB. Combining both in one transaction (~16 KB of scripts
+ *   plus the tx envelope) exceeds Cardano's 16,384-byte limit. One per tx is safe.
  *
  * Run this ONCE per validator set. The outRefs are saved to state.json and
  * loaded automatically by join-group.ts and exit-group.ts.
  *
- * Cost: ~30 ADA per script UTxO (min-UTxO for a ~6KB PlutusV3 script).
- * The ADA is locked at the admin's own address — it can be reclaimed if the
- * reference UTxOs are ever spent (though that would break future transactions
- * that rely on them).
+ * Cost: ~56 ADA total (30 ADA treasury + 26 ADA group) — permanently locked.
  *
  * Usage:
  *   pnpm run deploy-scripts
  */
 
-import { Data } from "@lucid-evolution/lucid";
-import { treasuryValidator, groupValidator } from "@dcu/sdk";
+import { Effect } from "effect";
+import { deployScripts, verifyDeployment } from "@dcu/sdk";
 import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
 import { loadState, saveState } from "./state.js";
-
-// Generous ADA amounts to cover min-UTxO for large PlutusV3 reference scripts.
-// treasury validator: ~6.4 KB → min ≈ 28 ADA
-// group validator:    ~5.6 KB → min ≈ 24 ADA
-const TREASURY_REF_ADA = 30_000_000n; // 30 ADA
-const GROUP_REF_ADA    = 26_000_000n; // 26 ADA
 
 async function main() {
     const { lucid, isEmulator } = await makeLucid();
@@ -44,62 +45,45 @@ async function main() {
 
     const state = loadState();
 
-    // If already deployed and still on-chain, skip.
+    // If already deployed, verify both UTxOs are still on-chain.
     if (state.scriptRefTreasury && state.scriptRefGroup) {
-        const [tUtxo] = await lucid.utxosByOutRef([
-            { txHash: state.scriptRefTreasury.txHash, outputIndex: state.scriptRefTreasury.outputIndex }
-        ]);
-        const [gUtxo] = await lucid.utxosByOutRef([
-            { txHash: state.scriptRefGroup.txHash, outputIndex: state.scriptRefGroup.outputIndex }
-        ]);
+        const result = await Effect.runPromise(
+            verifyDeployment(lucid, {
+                treasuryRef: state.scriptRefTreasury,
+                groupRef:    state.scriptRefGroup,
+            }),
+        );
 
-        if (tUtxo?.scriptRef && gUtxo?.scriptRef) {
-            console.log("Reference scripts already deployed and on-chain.");
+        if (result.ok) {
+            console.log("Reference scripts already deployed and verified on-chain.");
             console.log("  treasury:", state.scriptRefTreasury.txHash.slice(0, 16) + "..." + `#${state.scriptRefTreasury.outputIndex}`);
             console.log("  group:   ", state.scriptRefGroup.txHash.slice(0, 16) + "..." + `#${state.scriptRefGroup.outputIndex}`);
+            console.log("  address: ", result.treasuryUtxo?.address);
             return;
         }
-        console.log("Stored refs no longer on-chain — redeploying...");
+
+        console.warn("Stored refs have issues — redeploying...");
+        for (const issue of result.issues) console.warn(" ", issue);
     }
 
-    const adminAddress = await lucid.wallet().address();
+    console.log("Deploying treasury validator (tx 1/2)...");
+    console.log("Deploying group validator (tx 2/2, submitted after tx 1 confirms)...");
+    console.log("Destination: alwaysFails address (scripts are permanently locked).");
+    console.log("This will take ~2 minutes (one on-chain confirmation between txs).\n");
 
-    // treasury.mint and treasury.spend share identical compiled CBOR, as do
-    // group.mint and group.spend. One UTxO per validator covers both handlers.
-    console.log("Deploying treasury validator reference script...");
-    console.log("Deploying group validator reference script...");
-    console.log(`Locking ${TREASURY_REF_ADA / 1_000_000n} ADA + ${GROUP_REF_ADA / 1_000_000n} ADA at admin address.`);
+    const deployResult = await Effect.runPromise(deployScripts(lucid));
 
-    const tx = await lucid.newTx()
-        .pay.ToAddressWithData(
-            adminAddress,
-            { kind: "inline", value: Data.void() },
-            { lovelace: TREASURY_REF_ADA },
-            { type: "PlutusV3", script: treasuryValidator.mintTreasury.script }
-        )
-        .pay.ToAddressWithData(
-            adminAddress,
-            { kind: "inline", value: Data.void() },
-            { lovelace: GROUP_REF_ADA },
-            { type: "PlutusV3", script: groupValidator.spendGroup.script }
-        )
-        .complete();
+    console.log("\nBoth transactions confirmed.");
+    console.log("  treasury tx:", cexplorerTxUrl(deployResult.treasuryRef.txHash));
+    console.log("  group tx:   ", cexplorerTxUrl(deployResult.groupRef.txHash));
+    console.log("  address:    ", deployResult.deployAddress);
 
-    const signed = await tx.sign.withWallet().complete();
-    const txHash = await signed.submit();
-    console.log("Transaction submitted. Hash:", txHash);
-    console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
-
-    console.log("Waiting for confirmation...");
-    await lucid.awaitTx(txHash);
-
-    // Output 0 = treasury ref, output 1 = group ref (matches pay order above).
     saveState({
-        scriptRefTreasury: { txHash, outputIndex: 0 },
-        scriptRefGroup:    { txHash, outputIndex: 1 },
+        scriptRefTreasury: deployResult.treasuryRef,
+        scriptRefGroup:    deployResult.groupRef,
     });
 
-    console.log("Reference scripts deployed and saved to state.json.");
+    console.log("\nReference scripts saved to state.json.");
     console.log("join-group and exit-group will now use these automatically.");
 }
 

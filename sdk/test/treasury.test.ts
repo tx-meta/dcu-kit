@@ -15,6 +15,10 @@ import { unsignedTerminateGroupTxProgram } from "../src/endpoints/terminateGroup
 import { unsignedDistributePayoutTxProgram } from "../src/endpoints/distributePayout.js";
 import { unsignedJoinGroupTxProgram } from "../src/endpoints/joinGroup.js";
 import { unsignedExitGroupTxProgram } from "../src/endpoints/exitGroup.js";
+import { unsignedContributeTxProgram } from "../src/endpoints/contribute.js";
+import { unsignedDeferRoundTxProgram } from "../src/endpoints/deferRound.js";
+import { unsignedUpdatePayoutCredentialTxProgram } from "../src/endpoints/updatePayoutCredential.js";
+import { unsignedExtendGraceWindowTxProgram } from "../src/endpoints/extendGraceWindow.js";
 import {
   signAndSubmit,
   selectWalletFromSeed,
@@ -27,6 +31,7 @@ import { SetupError } from "../src/core/errors.js";
 import { groupPolicyId, accountPolicyId } from "../src/core/validators/constants.js";
 import { GroupDatum, GroupDatumSchema, TreasuryDatum, TreasuryDatumSchema } from "../src/core/types.js";
 import { extractTokenSuffix } from "./utils.js";
+import { advanceBlock } from "./effects.js";
 
 describe("Treasury Endpoints", () => {
   // --- Join Group ---
@@ -388,6 +393,119 @@ describe("Treasury Endpoints", () => {
         userSeed: users.user1.seedPhrase,
       });
       expect(result.txHash).toHaveLength(64);
+    }),
+  );
+
+  // --- Contribute ---
+  // Member tops up their treasury UTxO. Datum must be unchanged; ADA must increase.
+  it.effect("should allow a member to top up their treasury balance (Contribute)", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const { context, userUtxo } = yield* setupMembership(base);
+      const { lucid, users } = context;
+
+      const accountTokenSuffix = extractTokenSuffix(userUtxo, accountPolicyId, assetNameLabels.prefix222);
+
+      selectWalletFromSeed(lucid, users.user1.seedPhrase);
+      const txBuilder = yield* unsignedContributeTxProgram(lucid, {
+        accountTokenSuffix,
+        topUpAmount: 2_000_000n,
+      });
+      const txHash = yield* signAndSubmit(txBuilder);
+      expect(txHash).toHaveLength(64);
+    }),
+  );
+
+  // --- DeferRound ---
+  // Member defers their scheduled payout round (is_deferred flips to true).
+  it.effect("should allow a member to defer their scheduled round (DeferRound)", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const { context, userUtxo } = yield* setupMembership(base);
+      const { lucid, users } = context;
+
+      const accountTokenSuffix = extractTokenSuffix(userUtxo, accountPolicyId, assetNameLabels.prefix222);
+
+      selectWalletFromSeed(lucid, users.user1.seedPhrase);
+      const txBuilder = yield* unsignedDeferRoundTxProgram(lucid, { accountTokenSuffix });
+      const txHash = yield* signAndSubmit(txBuilder);
+      expect(txHash).toHaveLength(64);
+    }),
+  );
+
+  // --- UpdatePayoutCredential ---
+  // Member updates their payout destination to their current wallet address.
+  it.effect("should allow a member to update their payout credential (UpdatePayoutCredential)", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const { context, userUtxo } = yield* setupMembership(base);
+      const { lucid, users } = context;
+
+      const accountTokenSuffix = extractTokenSuffix(userUtxo, accountPolicyId, assetNameLabels.prefix222);
+
+      selectWalletFromSeed(lucid, users.user1.seedPhrase);
+      const txBuilder = yield* unsignedUpdatePayoutCredentialTxProgram(lucid, { accountTokenSuffix });
+      const txHash = yield* signAndSubmit(txBuilder);
+      expect(txHash).toHaveLength(64);
+    }),
+  );
+
+  // --- ExtendGraceWindow ---
+  // User1 joins with an intentionally low deposit (3 ADA = 1.5 × contribution_fee).
+  // After distribute round 0, user1's balance = 3M - 2M = 1M < 2M → InsufficientCollateralState.
+  // Admin then extends the grace window (grace_extensions_used 0 → 1).
+  //
+  // Why overrideDepositLovelace = 3_000_000?
+  //   Standard deposit is max_members × contribution_fee = 2 × 2M = 4M.
+  //   After one round: 4M - 2M = 2M which is NOT < 2M (no ICS trigger).
+  //   With 3M: 3M - 2M = 1M < 2M → ICS triggered on round 0.
+  it.effect("should allow admin to extend a member's grace window (ExtendGraceWindow)", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const { context, groupUtxo } = yield* setupGroup(base, { interval_length: 20_000n });
+      const { lucid, users } = context;
+
+      // Both users need accounts — startGroup requires member_count >= 2.
+      const { outputs: { userUtxo: user1AccountUtxo } } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const { outputs: { userUtxo: user2AccountUtxo } } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
+
+      // User1 joins with a reduced deposit so round 0 triggers ICS for them.
+      const groupTokenSuffix    = extractTokenSuffix(groupUtxo,        groupPolicyId!,  assetNameLabels.prefix100);
+      const user1TokenSuffix    = extractTokenSuffix(user1AccountUtxo, accountPolicyId, assetNameLabels.prefix222);
+      const user2TokenSuffix    = extractTokenSuffix(user2AccountUtxo, accountPolicyId, assetNameLabels.prefix222);
+
+      selectWalletFromSeed(lucid, users.user1.seedPhrase);
+      const joinUser1Tx = yield* unsignedJoinGroupTxProgram(lucid, {
+        groupTokenSuffix,
+        accountTokenSuffix: user1TokenSuffix,
+        currentTime: BigInt(context.emulator!.now()),
+        overrideDepositLovelace: 3_000_000n,   // 1.5× fee — triggers ICS after round 0
+      });
+      yield* signAndSubmit(joinUser1Tx);
+      yield* advanceBlock(context.emulator);
+
+      yield* joinGroupTestCase(context, {
+        groupUtxo, accountUtxo: user2AccountUtxo, userSeed: users.user2.seedPhrase,
+      });
+
+      yield* startGroupTestCase(context, { groupUtxo });
+
+      // Distribute round 0: user1 has 3M - 2M = 1M < 2M → InsufficientCollateralState.
+      yield* distributePayoutTestCase(context, { groupUtxo, callerSeed: users.user1.seedPhrase });
+
+      // Admin extends the grace window for user1.
+      const memberAccountTokenSuffix = extractTokenSuffix(user1AccountUtxo, accountPolicyId, assetNameLabels.prefix222);
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const txBuilder = yield* unsignedExtendGraceWindowTxProgram(lucid, {
+        groupTokenSuffix,
+        memberAccountTokenSuffix,
+      });
+      const txHash = yield* signAndSubmit(txBuilder);
+      expect(txHash).toHaveLength(64);
     }),
   );
 });

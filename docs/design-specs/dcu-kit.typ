@@ -2118,13 +2118,357 @@ This transaction distributes the group pot for one sequential round. All active 
 #pagebreak()
 
 
-=== Spend :: Penalty Withdraw
+=== Spend :: Contribute
 \
-This transaction allows a group administrator with a Group NFT to unlock penalty funds from the Penalty UTxO, burning the Treasury NFT attached to the UTxO.
+This transaction allows a member to top up their Treasury balance when it has fallen below the `contribution_fee` threshold, preventing transition to `InsufficientCollateralState`. The datum is preserved exactly — only the UTxO value increases.
 
 \
 #transaction(
-  "PenaltyWithdraw",
+  "Contribute",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 10000000,
+        Account_NFT: 1,
+        Member_User: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 3000000, // balance has fallen below contribution_fee
+        Member_Ref: 1,
+      ),
+      datum: (
+        rounds_paid: 2,
+        is_deferred: false,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 4500000,
+        Account_NFT: 1,
+        Member_User: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 8000000, // topped up (> input ADA)
+        Member_Ref: 1,
+      ),
+      datum: (
+        rounds_paid: 2,   // datum structurally unchanged
+        is_deferred: false,
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Top-up treasury balance — datum frozen, ADA must strictly increase],
+)
+\
+
+==== Inputs
+\
++ *Member Wallet UTxO*
+
+  - Address: Member's wallet address
+
+  - Value:
+
+    - Top-up ADA (sufficient to bring treasury above `contribution_fee`)
+
+    - 1 Account User NFT Asset (proves ownership)
+
++ *Treasury Validator UTxO*
+
+  - Address: Treasury validator script address
+
+  - Datum: `TreasuryState` as listed in @treasury-datum
+
+  - Value:
+
+    - Current (low) contribution balance
+
+    - 1 Membership Reference Token
+\
+==== Outputs
+\
++ *Member Wallet UTxO*
+
+  - Address: Member's wallet address
+
+  - Value:
+
+    - Change ADA
+
+    - 1 Account User NFT (returned)
+
+    - 1 Membership User Token (returned)
+
++ *Treasury Validator UTxO*
+
+  - Address: Treasury validator script address
+
+  - Datum: identical to input (no field changes)
+
+  - Value:
+
+    - Increased ADA balance (> input ADA)
+
+    - 1 Membership Reference Token
+
+#pagebreak()
+
+=== Spend :: UpdatePayoutCredential
+\
+This transaction allows a member to redirect future payouts to a new wallet address. The new `member_payment_credential` is automatically derived from the address of the spending member input — the member proves control by signing the transaction with the corresponding key. No manual 28-byte credential entry is required.
+
+\
+#transaction(
+  "UpdatePayoutCredential",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 2000000,
+        Account_NFT: 1,
+        Member_User: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 40000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        member_payment_credential: "old_pkh_28bytes",
+        rounds_paid: 1,
+        is_deferred: false,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 1500000,
+        Account_NFT: 1,
+        Member_User: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 40000000, // ADA unchanged
+        Member_Ref: 1,
+      ),
+      datum: (
+        member_payment_credential: "new_pkh_28bytes", // updated to current wallet
+        rounds_paid: 1,    // all other fields frozen
+        is_deferred: false,
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Redirect future payouts — only member_payment_credential changes, ADA and membership token unchanged],
+)
+\
+
+==== Inputs
+\
++ *Member Wallet UTxO*
+
+  - Address: Member's *new* wallet address (the new payment key hash is read from this input)
+
+  - Value:
+
+    - Minimum ADA
+
+    - 1 Account User NFT Asset (proves ownership)
+
++ *Treasury Validator UTxO*
+
+  - Address: Treasury validator script address
+
+  - Datum: `TreasuryState` as listed in @treasury-datum
+
+  - Value:
+
+    - Locked contribution funds
+
+    - 1 Membership Reference Token
+\
+==== Outputs
+\
++ *Member Wallet UTxO*
+
+  - Address: Member's wallet address
+
+  - Value:
+
+    - Change ADA
+
+    - 1 Account User NFT (returned)
+
+    - 1 Membership User Token (returned)
+
++ *Treasury Validator UTxO*
+
+  - Address: Treasury validator script address
+
+  - Datum: identical to input with `member_payment_credential` updated to the new 28-byte key hash
+
+  - Value: identical to input (ADA and membership token unchanged)
+
+#pagebreak()
+
+=== Spend :: ExtendGraceWindow
+\
+This transaction allows the group administrator to grant an additional grace window to a member whose Treasury UTxO is in `InsufficientCollateralState`. The Group UTxO is provided as a *reference input* — its `grace_period_length` field is read but the group state is not modified. At most two extensions may be granted (`max_grace_extensions = 2`). After both extensions are exhausted, only `TerminateGroup` is available.
+
+\
+#transaction(
+  "ExtendGraceWindow",
+  inputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 2000000,
+        Group_NFT: 1, // (222) admin authority token
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 1500000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        type: "InsufficientCollateralState",
+        grace_expires_at: 1716000000000,
+        grace_extensions_used: 0,
+      ),
+    ),
+    (
+      reference: true,
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 1500000,
+        Group_NFT: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 1500000, // ADA unchanged
+        Member_Ref: 1,
+      ),
+      datum: (
+        grace_expires_at: 1716300000000, // + grace_period_length
+        grace_extensions_used: 1,        // incremented
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Grant grace extension — grace_expires_at extended, grace_extensions_used incremented; max 2 extensions],
+)
+\
+
+==== Inputs
+\
++ *Administrator Wallet UTxO*
+
+  - Address: Administrator's wallet address
+
+  - Value:
+
+    - Minimum ADA
+
+    - 1 Group NFT (222) asset (proves admin authority)
+
++ *Treasury Validator UTxO*
+
+  - Address: Treasury validator script address
+
+  - Datum: `InsufficientCollateralState` as listed in @insufficient-collateral-datum
+
+  - Value:
+
+    - Locked ADA (member's remaining balance)
+
+    - 1 Membership Reference Token
+
++ *Group Validator UTxO* (reference input)
+
+  - Address: Group validator script address
+
+  - Datum: group datum listed in @group-datum (provides `grace_period_length`)
+
+  - Value:
+
+    - 1 Group Reference NFT Asset
+    - Minimum ADA
+\
+==== Outputs
+\
++ *Administrator Wallet UTxO*
+
+  - Address: Administrator's wallet address
+
+  - Value:
+
+    - Change ADA
+
+    - 1 Group NFT (222) asset (returned)
+
++ *Treasury Validator UTxO*
+
+  - Address: Treasury validator script address
+
+  - Datum: `InsufficientCollateralState` with:
+    - `grace_expires_at` extended by `grace_period_length`
+    - `grace_extensions_used` incremented by 1
+    - all other fields frozen
+
+  - Value: identical to input (ADA and membership token unchanged)
+
+#pagebreak()
+
+=== Spend :: TerminateGroup (+ Mint :: TerminateGroup)
+\
+This transaction allows a group administrator to claim the penalty funds from a `PenaltyState` UTxO. It burns the membership reference token locked in the UTxO and returns all locked ADA (including `penalty_fee`) to the administrator. The Group UTxO is provided as a *reference input* — `member_count` was already decremented atomically at `ExitGroup` time, so no group state update is required here.
+
+\
+#transaction(
+  "TerminateGroup",
   inputs: (
     (
       name: "Admin Wallet UTxO",
@@ -2139,15 +2483,15 @@ This transaction allows a group administrator with a Group NFT to unlock penalty
       address: "treasury_validator",
       value: (
         ada: 50000000,
-        Treasury_NFT: 1,
+        Member_Ref: 1, // Membership Reference Token locked at ExitGroup
       ),
       datum: (
-        type: "Penalty",
+        type: "PenaltyState",
       ),
     ),
     (
       reference: true,
-      name: "Group Reference UTxO",
+      name: "Group Validator UTxO",
       address: "group_validator",
       value: (
         ada: 3000000,
@@ -2160,13 +2504,13 @@ This transaction allows a group administrator with a Group NFT to unlock penalty
       name: "Admin Wallet UTxO",
       address: "admin_wallet",
       value: (
-        ada: 52000000, // Withdrawn Penalty
+        ada: 52000000, // penalty ADA returned to admin
         Group_NFT: 1,
       ),
     ),
   ),
   show_mints: true,
-  notes: [Withdraw Penalty Funds],
+  notes: [Claim penalty — Membership Reference Token burned, all ADA returned to admin, no script output],
 )
 \
 
@@ -2180,41 +2524,38 @@ This transaction allows a group administrator with a Group NFT to unlock penalty
 
     - Minimum ADA
 
-    - Group NFT Asset
+    - 1 Group NFT (222) asset (proves admin ownership)
 
 + *Treasury Validator UTxO*
 
   - Address: Treasury validator script address
 
-  - Penalty Datum: as listed in @penalty-datum
+  - Datum: `PenaltyState` as listed in @penalty-datum
 
   - Value:
 
-    - Penalty funds
+    - Penalty funds (≥ `penalty_fee`)
 
-    - Treasury NFT Asset
+    - 1 Membership Reference Token (locked since `ExitGroup`)
 
-+ *Group Reference UTxO*
++ *Group Validator UTxO* (reference input)
 
-    - Address: Group Contract Address
+    - Address: Group validator script address
 
-    - Datum:
+    - Datum: group datum listed in @group-datum
 
-      - group_datum: listed in @group-datum
-
-    - Value: 
+    - Value:
 
       - 1 Group Reference NFT Asset
-      - Minimum Ada
+      - Minimum ADA
 \
 ==== Mints
 \
-  + *Treasury Validator*
-    - Redeemer: TerminateGroup
+  + *Treasury Validator (Mint — TerminateGroup)*
 
-    - Value: 
+    - Value:
 
-      - -1 Treasury NFT Asset
+      - -1 Membership Reference Token (burned)
 
 \
 ==== Outputs:
@@ -2225,19 +2566,11 @@ This transaction allows a group administrator with a Group NFT to unlock penalty
 
   - Value:
 
-    - Minimum ADA
+    - Reclaimed penalty ADA
 
-    - Withdrawn penalty funds
-    
-    - Group NFT Asset
+    - 1 Group NFT (222) asset (returned)
 
-+ *Treasury Validator UTxO*
-
-  - Address: Treasury validator script address
-
-  - Value:
-
-    - Remaining ADA after withdrawal (if any)
+*Note:* No Treasury Validator UTxO is produced. The membership token is permanently burned. The `PenaltyState` UTxO is fully consumed — the penalty ADA flows to the admin as transaction change.
 
 
 #pagebreak()

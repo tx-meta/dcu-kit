@@ -17,7 +17,6 @@
     "distribute-payout": "pnpm run build && node dist/distribute-payout.js",
     "exit-group": "pnpm run build && node dist/exit-group.js",
     "terminate-group": "pnpm run build && node dist/terminate-group.js",
-    "rosca-lifecycle": "pnpm run build && node dist/rosca-lifecycle.js",
     "show-wallets": "pnpm run build && node dist/show-wallets.js",
     "send-ada": "pnpm run build && node dist/send-ada.js",
     "deploy-scripts": "pnpm run build && node dist/deploy-scripts.js",

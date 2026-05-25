@@ -18,7 +18,8 @@
  * Reads groupTokenSuffix from state.json. Run create-group.ts and join-group.ts first.
  */
 
-import { distributePayout, DistributePayoutConfig, accountPolicyId, groupPolicyId } from "@dcu/sdk";
+import { distributePayout, DistributePayoutConfig, accountPolicyId, groupPolicyId, GroupDatum, assetNameLabels } from "@dcu/sdk";
+import { Data, UTxO } from "@lucid-evolution/lucid";
 import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
 import { loadState, printSlotSchedule, computeSlotInfo, checkValidatorStaleness } from "./state.js";
 
@@ -27,7 +28,7 @@ async function main() {
 
     if (isEmulator) {
         console.log("This example requires an active group with treasury UTxOs.");
-        console.log("See rosca-lifecycle.ts for a full emulator demonstration.");
+        console.log("These example scripts require existing on-chain state. Run on Preprod.");
         process.exit(0);
     }
 
@@ -46,17 +47,57 @@ async function main() {
     const { groupTokenSuffix } = state;
     if (!groupTokenSuffix) throw new Error("groupTokenSuffix not found in state.json. Run create-group.ts first.");
 
-    // Show current slot before attempting the tx — tells you immediately
-    // whether the slot window is open or how long to wait.
+    // Read on-chain group datum to show what round will be distributed next.
+    // This is the authoritative source — the time-based slot display below is
+    // just a human-readable clock; the actual round is driven by last_distributed_round.
+    const groupUnit  = groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+    const groupUtxo  = await lucid.utxoByUnit(groupUnit);
+    if (!groupUtxo) throw new Error("Group UTxO not found on-chain. Is groupTokenSuffix correct?");
+    const groupDatum = Data.from(groupUtxo.datum!, GroupDatum);
+
+    const nextRound  = groupDatum.last_distributed_round + 1n;
+    const totalRounds = groupDatum.num_intervals;
+
+    if (nextRound >= totalRounds) {
+        console.log(`\nAll ${totalRounds} rounds have been distributed (rounds 0–${totalRounds - 1n} complete).`);
+        console.log("Group is mature — members can now call: pnpm run exit-group");
+        process.exit(0);
+    }
+
+    const payingSlot = Number(nextRound % totalRounds);
+    console.log(`→ Next:  Round ${nextRound + 1n} of ${totalRounds}  |  Paying: slot ${payingSlot}  |  Payout: ${(BigInt(groupDatum.member_count) * groupDatum.contribution_fee) / 1_000_000n} ADA`);
+
+    // Time-based slot display (for reference — shows wall-clock progress through intervals).
     const slotInfo = computeSlotInfo(state);
     if (slotInfo) {
         const secsLeft = Math.ceil(slotInfo.msUntilNextSlot / 1000);
-        console.log(`Current slot: ${slotInfo.currentSlot}  (next slot in ${secsLeft}s)`);
+        console.log(`Time-based slot: ${slotInfo.currentSlot}  (next slot in ${secsLeft}s)`);
     }
     printSlotSchedule(state, [0, 1]); // adjust member slots as needed
 
+    // Load reference script UTxOs — reduces tx size from ~19KB to ~4KB.
+    // Deploy once with: pnpm run deploy-scripts
+    let scriptRefs: DistributePayoutConfig["scriptRefs"];
+    if (state.scriptRefTreasury && state.scriptRefGroup) {
+        const [tUtxo, gUtxo] = await lucid.utxosByOutRef([
+            { txHash: state.scriptRefTreasury.txHash, outputIndex: state.scriptRefTreasury.outputIndex },
+            { txHash: state.scriptRefGroup.txHash,    outputIndex: state.scriptRefGroup.outputIndex },
+        ]);
+        if (tUtxo?.scriptRef && gUtxo?.scriptRef) {
+            scriptRefs = { treasury: tUtxo as UTxO, group: gUtxo as UTxO };
+            console.log("Using reference scripts — tx will be under 16KB.");
+        } else {
+            console.warn("Reference script UTxOs not found on-chain — falling back to inline scripts.");
+            console.warn("Run 'pnpm run deploy-scripts' to deploy them.");
+        }
+    } else {
+        console.warn("No script refs in state.json — falling back to inline scripts (may exceed 16KB).");
+        console.warn("Run 'pnpm run deploy-scripts' first.");
+    }
+
     const config: DistributePayoutConfig = {
         groupTokenSuffix,
+        scriptRefs,
     };
 
     console.log("Building payout transaction...");
@@ -64,13 +105,27 @@ async function main() {
 
     console.log("Signing and submitting...");
     const signed = await tx.sign.withWallet().complete();
-    const txHash = await signed.submit();
+
+    let txHash: string;
+    try {
+        txHash = await signed.submit();
+    } catch (e: unknown) {
+        // OutsideValidityIntervalUTxO: network slot lags local clock by > 120 s.
+        // The tx must be rebuilt with a fresh validFrom — just rerun this script.
+        if (String(e).includes("OutsideValidityInterval")) {
+            console.error("\n[Clock drift] Network slot is behind local clock.");
+            console.error("Wait 30 seconds and run distribute-payout again.");
+            process.exit(1);
+        }
+        throw e;
+    }
+
     console.log("Transaction submitted. Hash:", txHash);
     console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
 
     console.log("Waiting for confirmation...");
     await lucid.awaitTx(txHash);
-    console.log("Payout distributed successfully!");
+    console.log(`Payout confirmed!  Round ${nextRound + 1n} of ${totalRounds} complete  |  Slot ${payingSlot} borrower paid.`);
 }
 
 main().catch((e) => {

@@ -50,6 +50,9 @@ export type JoinGroupConfig = {
     accountTokenSuffix: string;
     currentTime?: bigint;      // POSIX ms — emulator.now() for emulator, Date.now() for live
     fundingUtxos?: UTxO[];     // plain ADA UTxOs to pre-supply for coin selection (live network)
+    // Override the lovelace locked in the treasury UTxO. Defaults to max_members ×
+    // contribution_fee for ADA groups. Only for testing ICS transitions — use with care.
+    overrideDepositLovelace?: bigint;
     // Reference script UTxOs (from deploy-scripts). When provided, the validator
     // script bytes are resolved from the on-chain UTxO rather than included inline,
     // keeping the transaction well under the 16KB Cardano size limit.
@@ -64,7 +67,7 @@ export const unsignedJoinGroupTxProgram = (
   config: JoinGroupConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupTokenSuffix, accountTokenSuffix, currentTime, fundingUtxos } = config;
+    const { groupTokenSuffix, accountTokenSuffix, currentTime, fundingUtxos, overrideDepositLovelace } = config;
 
     const groupRefUnit   = groupPolicyId!   + assetNameLabels.prefix100 + groupTokenSuffix;
     const accountUserUnit = accountPolicyId + assetNameLabels.prefix222 + accountTokenSuffix;
@@ -96,9 +99,11 @@ export const unsignedJoinGroupTxProgram = (
     // Lock max_members × contribution_fee for ADA contributions so the treasury UTxO
     // remains solvent for the full rotation cycle (max_members rounds). For non-ADA
     // contributions, just lock the minimum UTxO ADA (2 ADA).
-    const treasuryLovelace = groupDatum.contribution_fee_policyid === ""
-        ? groupDatum.max_members * groupDatum.contribution_fee
-        : 2_000_000n;
+    const treasuryLovelace = overrideDepositLovelace !== undefined
+        ? overrideDepositLovelace
+        : groupDatum.contribution_fee_policyid === ""
+            ? groupDatum.max_members * groupDatum.contribution_fee
+            : 2_000_000n;
     const treasuryAssets: Assets = { lovelace: treasuryLovelace, [treasuryMemberToken]: 1n };
 
     const address = yield* getWalletAddress(lucid);

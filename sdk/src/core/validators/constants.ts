@@ -51,3 +51,10 @@ export const groupScript = {
   spending: groupValidator.spendGroup.script,
   minting:  groupValidator.mintGroup.script,
 };
+
+// --- AlwaysFails (no parameters) ---
+// Used as the deployment address for reference scripts. UTxOs sent here can
+// never be spent, so reference scripts remain permanently available on-chain.
+export const alwaysFailsValidator = {
+  elseAlwaysFails: raw("always_fails.always_fails.else"),
+};

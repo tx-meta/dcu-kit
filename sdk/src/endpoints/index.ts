@@ -9,4 +9,8 @@ export * from "./distributePayout.js";
 export * from "./startGroup.js";
 export * from "./exitGroup.js";
 export * from "./terminateGroup.js";
+export * from "./contribute.js";
+export * from "./deferRound.js";
+export * from "./updatePayoutCredential.js";
+export * from "./extendGraceWindow.js";
 export * from "./programWrapper.js";

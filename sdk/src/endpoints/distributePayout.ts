@@ -37,6 +37,13 @@ import { DcuError, TransactionBuildError } from "../core/errors.js";
 export type DistributePayoutConfig = {
     groupTokenSuffix: string;
     currentTime?: bigint;  // POSIX ms — emulator.now() for emulator, omit for live
+    // Reference script UTxOs (from deploy-scripts). When provided, the validator
+    // script bytes are resolved from the on-chain UTxO rather than included inline,
+    // keeping the transaction well under the 16KB Cardano size limit.
+    scriptRefs?: {
+        treasury?: UTxO;
+        group?: UTxO;
+    };
 };
 
 export const unsignedDistributePayoutTxProgram = (
@@ -65,7 +72,10 @@ export const unsignedDistributePayoutTxProgram = (
 
     const roundNumber = groupDatum.last_distributed_round + 1n;
     if (roundNumber >= groupDatum.num_intervals) {
-        return yield* Effect.fail(new TransactionBuildError({ operation: "distributeRound", error: `Round ${roundNumber} exceeds num_intervals ${groupDatum.num_intervals}` }));
+        return yield* Effect.fail(new TransactionBuildError({
+            operation: "distributeRound",
+            error: `All ${groupDatum.num_intervals} rounds have been distributed (rounds 0–${groupDatum.num_intervals - 1n} complete). Group is mature — members can now call exit-group.`,
+        }));
     }
 
     const currentSlot = Number(roundNumber % groupDatum.num_intervals);
@@ -118,13 +128,30 @@ export const unsignedDistributePayoutTxProgram = (
 
     const payoutAmount = BigInt(memberStates.length) * groupDatum.contribution_fee;
 
-    const VALIDITY_BUFFER_MS = lucid.config().network === "Custom" ? 0n : 60_000n;
+    // 120 s buffer covers Blockfrost slot lag (observed up to ~30 s on Preprod).
+    const VALIDITY_BUFFER_MS = lucid.config().network === "Custom" ? 0n : 120_000n;
     const currentTime = config.currentTime !== undefined
         ? config.currentTime
         : BigInt(Date.now()) - VALIDITY_BUFFER_MS;
 
-    // validFrom must satisfy: current_time >= start_time + round_number * interval_length
+    // The validator requires the tx lower-bound >= start_time + round * interval.
     const minValidFrom = groupDatum.start_time + roundNumber * groupDatum.interval_length;
+
+    // Pre-check on live networks only: if the raw wall-clock time is before the gate,
+    // give a clear message rather than letting the validator fail cryptically.
+    // Skipped on the emulator (Custom) where timing is driven by advanceBlock(), not Date.now().
+    if (lucid.config().network !== "Custom") {
+        const rawNow = BigInt(Date.now());
+        if (rawNow < minValidFrom) {
+            const waitSecs = Math.ceil(Number(minValidFrom - rawNow) / 1000);
+            const opensAt  = new Date(Number(minValidFrom)).toUTCString();
+            return yield* Effect.fail(new TransactionBuildError({
+                operation: "distributeRound",
+                error: `Round ${roundNumber} is not yet open — opens in ~${waitSecs}s (at ${opensAt})`,
+            }));
+        }
+    }
+
     const validFrom = currentTime > minValidFrom ? currentTime : minValidFrom;
 
     const network = lucid.config().network!;
@@ -174,16 +201,27 @@ export const unsignedDistributePayoutTxProgram = (
     };
 
     // Build the transaction: group output first, then treasury outputs, then borrower
-    const baseTx = lucid.newTx()
+    const baseTxNoValidators = lucid.newTx()
         .collectFrom([groupUtxo], groupRedeemer)
-        .collectFrom(memberStates.map(s => s.utxo), treasuryRedeemer)
-        .attach.SpendingValidator(groupValidator.spendGroup)
-        .attach.SpendingValidator(treasuryValidator.spendTreasury)
-        .pay.ToContract(
+        .collectFrom(memberStates.map(s => s.utxo), treasuryRedeemer);
+
+    // Use reference scripts when provided — avoids including ~15KB of script bytes
+    // inline, keeping the tx under Cardano's 16,384-byte size limit.
+    const baseTx = (config.scriptRefs?.treasury || config.scriptRefs?.group)
+        ? baseTxNoValidators.readFrom(
+              [config.scriptRefs?.treasury, config.scriptRefs?.group].filter(Boolean) as UTxO[]
+          )
+        : baseTxNoValidators
+              .attach.SpendingValidator(groupValidator.spendGroup)
+              .attach.SpendingValidator(treasuryValidator.spendTreasury);
+
+    const baseTxWithGroup = baseTx.pay.ToContract(
             groupAddress,
             { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
             groupUtxo.assets,
         );
+
+    const isLastRound = roundNumber + 1n === groupDatum.num_intervals;
 
     const withTreasuryOutputs = memberStates.reduce((tx, state) => {
         if (!('TreasuryState' in state.datum)) return tx;
@@ -191,19 +229,31 @@ export const unsignedDistributePayoutTxProgram = (
         const memberToken = toUnit(treasuryPolicyId!, ts.member_reference_tokenname);
         const inputLovelace = state.utxo.assets.lovelace;
         const outputLovelace = inputLovelace - groupDatum.contribution_fee;
-        const updatedDatum: TreasuryDatum = {
-            TreasuryState: {
-                ...ts,
-                rounds_paid: roundNumber + 1n,
-                is_deferred: false,
+        const transitionToIcs = outputLovelace < groupDatum.contribution_fee && !isLastRound;
+
+        const updatedDatum: TreasuryDatum = transitionToIcs
+            ? {
+                InsufficientCollateralState: {
+                    group_reference_tokenname: ts.group_reference_tokenname,
+                    member_reference_tokenname: ts.member_reference_tokenname,
+                    grace_expires_at: validFrom + groupDatum.grace_period_length,
+                    grace_extensions_used: 0n,
+                    rounds_paid: roundNumber + 1n,
+                },
             }
-        };
+            : {
+                TreasuryState: {
+                    ...ts,
+                    rounds_paid: roundNumber + 1n,
+                    is_deferred: false,
+                },
+            };
         return tx.pay.ToContract(
             treasuryAddress,
             { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
             { lovelace: outputLovelace, [memberToken]: 1n },
         );
-    }, baseTx);
+    }, baseTxWithGroup);
 
     const tx = yield* withTreasuryOutputs
         .pay.ToAddress(borrowerAddress, { lovelace: payoutAmount })

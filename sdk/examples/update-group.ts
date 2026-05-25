@@ -19,7 +19,7 @@ async function main() {
 
     if (isEmulator) {
         console.log("This example requires an existing on-chain group.");
-        console.log("Run create-group.ts first, or use rosca-lifecycle.ts for a full emulator demo.");
+        console.log("These scripts require existing on-chain state. Run on Preprod.");
         process.exit(0);
     }
 

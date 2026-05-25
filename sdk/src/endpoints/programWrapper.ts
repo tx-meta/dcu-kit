@@ -14,6 +14,10 @@ import { unsignedDistributePayoutTxProgram, DistributePayoutConfig } from "./dis
 import { unsignedStartGroupTxProgram, StartGroupConfig } from "./startGroup.js";
 import { unsignedExitGroupTxProgram, ExitGroupConfig } from "./exitGroup.js";
 import { unsignedTerminateGroupTxProgram, TerminateGroupConfig } from "./terminateGroup.js";
+import { unsignedContributeTxProgram, ContributeConfig } from "./contribute.js";
+import { unsignedDeferRoundTxProgram, DeferRoundConfig } from "./deferRound.js";
+import { unsignedUpdatePayoutCredentialTxProgram, UpdatePayoutCredentialConfig } from "./updatePayoutCredential.js";
+import { unsignedExtendGraceWindowTxProgram, ExtendGraceWindowConfig } from "./extendGraceWindow.js";
 
 /**
  * Creates a DCU Account.
@@ -84,3 +88,27 @@ export const startGroup = (lucid: LucidEvolution, config: StartGroupConfig) =>
  */
 export const terminateGroup = (lucid: LucidEvolution, config: TerminateGroupConfig) =>
     makeReturn(unsignedTerminateGroupTxProgram(lucid, config));
+
+/**
+ * Tops up a member's treasury UTxO balance (Contribute redeemer).
+ */
+export const contribute = (lucid: LucidEvolution, config: ContributeConfig) =>
+    makeReturn(unsignedContributeTxProgram(lucid, config));
+
+/**
+ * Defers the member's scheduled payout round (sets is_deferred = true).
+ */
+export const deferRound = (lucid: LucidEvolution, config: DeferRoundConfig) =>
+    makeReturn(unsignedDeferRoundTxProgram(lucid, config));
+
+/**
+ * Updates the member's payout destination credential.
+ */
+export const updatePayoutCredential = (lucid: LucidEvolution, config: UpdatePayoutCredentialConfig) =>
+    makeReturn(unsignedUpdatePayoutCredentialTxProgram(lucid, config));
+
+/**
+ * Admin grants a grace window extension to a member in InsufficientCollateralState.
+ */
+export const extendGraceWindow = (lucid: LucidEvolution, config: ExtendGraceWindowConfig) =>
+    makeReturn(unsignedExtendGraceWindowTxProgram(lucid, config));
