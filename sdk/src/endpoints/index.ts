@@ -13,4 +13,5 @@ export * from "./contribute.js";
 export * from "./deferRound.js";
 export * from "./updatePayoutCredential.js";
 export * from "./extendGraceWindow.js";
+export * from "./nextCycle.js";
 export * from "./programWrapper.js";

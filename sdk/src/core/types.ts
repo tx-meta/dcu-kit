@@ -132,6 +132,14 @@ export const GroupSpendRedeemerSchema = Data.Enum([
       round_number: Data.Integer(),
     }),
   }),
+  Data.Object({
+    NextCycle: Data.Object({
+      group_ref_token_name: Data.Bytes(),
+      admin_input_index: Data.Integer(),
+      group_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+    }),
+  }),
 ]);
 
 export type GroupSpendRedeemer = Data.Static<typeof GroupSpendRedeemerSchema>;
@@ -233,6 +241,14 @@ export const TreasuryRedeemerSchema = Data.Enum([
       admin_input_index: Data.Integer(),
       treasury_input_index: Data.Integer(),
       treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    NextCycle: Data.Object({
+      group_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      treasury_input_indices: Data.Array(Data.Integer()),
+      treasury_output_indices: Data.Array(Data.Integer()),
     }),
   }),
 ]);

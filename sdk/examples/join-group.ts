@@ -179,11 +179,23 @@ async function main() {
         console.warn("Run 'pnpm run deploy-scripts' first.");
     }
 
+    // TREASURY_DEPOSIT_OVERRIDE lets you join with a non-standard deposit (lovelace).
+    // Use this to engineer InsufficientCollateralState for testing contribute and
+    // extend-grace-window. Example: TREASURY_DEPOSIT_OVERRIDE=5000000 joins with 5 ADA
+    // instead of max_members × contribution_fee, so ICS triggers after round 0.
+    // Never use this in production — members with low deposits become insolvent early.
+    const overrideDepositLovelace = process.env.TREASURY_DEPOSIT_OVERRIDE
+        ? BigInt(process.env.TREASURY_DEPOSIT_OVERRIDE)
+        : undefined;
+    if (overrideDepositLovelace !== undefined)
+        console.warn(`[TEST ONLY] Overriding treasury deposit to ${overrideDepositLovelace / 1_000_000n} ADA.`);
+
     const config: JoinGroupConfig = {
         groupTokenSuffix,
         accountTokenSuffix,
         fundingUtxos: fundingUtxo ? [fundingUtxo] : [],
         scriptRefs,
+        overrideDepositLovelace,
     };
 
     console.log("Building join transaction...");

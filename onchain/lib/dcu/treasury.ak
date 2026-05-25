@@ -109,6 +109,15 @@ pub type TreasuryRedeemer {
     treasury_input_index: Int,
     treasury_output_index: Int,
   }
+  // Resets a treasury UTxO after all rounds have been distributed, preparing
+  // it for the next rotation cycle. Must be called atomically with the group
+  // NextCycle handler (group is spent in the same tx and output shows reset).
+  NextCycle {
+    group_input_index: Int,
+    group_output_index: Int,
+    treasury_input_indices: List<Int>,
+    treasury_output_indices: List<Int>,
+  }
 }
 
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
@@ -1149,6 +1158,129 @@ pub fn validate_extend_grace_window(
     admin_authorized?,
     datum_correct?,
     ada_unchanged?,
+    output_at_script?,
+    token_retained?,
+    clean_output_value?,
+  }
+}
+
+// ─── Spend: NextCycle ─────────────────────────────────────────────────────────
+
+// validate_next_cycle
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE: self-reference check (own UTxO is at one of treasury_input_indices) is
+//       enforced at the entry point before this function.
+//
+// Resets a treasury UTxO for another rotation cycle. Called atomically with the
+// group NextCycle handler: the group is spent in the same tx and the output
+// confirms the reset (is_started=False, last_distributed_round=-1).
+//
+// [spec NextCycle 1]: datum must be TreasuryState
+// [spec NextCycle 2]: rounds_paid == group.num_intervals (cycle complete)
+// [spec NextCycle 3]: group spending input at group_input_index has GroupDatum
+// [spec NextCycle 4]: group output is_started=False and last_distributed_round=-1
+// [spec NextCycle 5]: own output datum: rounds_paid=0, is_deferred=False, all else frozen
+// [spec NextCycle 6]: output ADA unchanged; output at script address with membership token
+// [security]: treasury_input_indices and treasury_output_indices strictly ascending
+pub fn validate_next_cycle(
+  own_policy_id: PolicyId,
+  group_input_index: Int,
+  group_output_index: Int,
+  treasury_input_indices: List<Int>,
+  treasury_output_indices: List<Int>,
+  datum: TreasuryDatum,
+  utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, outputs, .. } = tx
+
+  // [spec NextCycle 1]: datum must be TreasuryState
+  expect TreasuryState {
+    group_reference_tokenname,
+    member_reference_tokenname,
+    assigned_slot,
+    rounds_paid,
+    member_payment_credential,
+    ..
+  } = datum
+
+  // [spec NextCycle 3]: group spending input with GroupDatum
+  expect Some(group_input) = list.at(inputs, group_input_index)
+  expect InlineDatum(group_datum_data) = group_input.output.datum
+  expect group: GroupDatum = group_datum_data
+
+  // [spec NextCycle 2]: this member's cycle is complete
+  let member_cycle_complete = rounds_paid == group.num_intervals
+
+  // [spec NextCycle 4]: group output confirms reset
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect InlineDatum(go_data) = group_output.datum
+  expect updated_group: GroupDatum = go_data
+  let group_reset =
+    !updated_group.is_started && updated_group.last_distributed_round == -1
+
+  // [security]: strictly ascending indices
+  let indices_valid = indices_in_ascending_order(treasury_input_indices)
+  let output_indices_valid = indices_in_ascending_order(treasury_output_indices)
+
+  // [spec NextCycle 5]: find own output via UTxO reference
+  expect Some(own_output_index) =
+    list.find_map(
+      list.zip(treasury_input_indices, treasury_output_indices),
+      fn(pair) {
+        let (in_idx, out_idx) = pair
+        when list.at(inputs, in_idx) is {
+          Some(ti) ->
+            if ti.output_reference == utxo {
+              Some(out_idx)
+            } else {
+              None
+            }
+          None -> None
+        }
+      },
+    )
+
+  expect Some(own_output) = list.at(outputs, own_output_index)
+  expect InlineDatum(output_datum_data) = own_output.datum
+  expect output_datum: TreasuryDatum = output_datum_data
+
+  // [spec NextCycle 5]: reset rounds_paid and is_deferred; all other fields frozen
+  let expected_datum =
+    TreasuryState {
+      group_reference_tokenname,
+      member_reference_tokenname,
+      assigned_slot,
+      rounds_paid: 0,
+      is_deferred: False,
+      member_payment_credential,
+    }
+  let datum_correct = output_datum == expected_datum
+
+  // [spec NextCycle 6]: ADA exactly preserved (no distribution in this handler)
+  expect Some(own_input) =
+    list.find(inputs, fn(i) { i.output_reference == utxo })
+  let input_ada = assets.lovelace_of(own_input.output.value)
+  let output_ada = assets.lovelace_of(own_output.value)
+  let ada_preserved = output_ada == input_ada
+
+  // Output at script address with membership token
+  let output_at_script =
+    own_output.address.payment_credential == Script(own_policy_id)
+  let token_retained =
+    dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
+      Pair(member_reference_tokenname, 1),
+    ]
+  let clean_output_value =
+    assets.policies(own_output.value) == [ada_policy_id, own_policy_id]
+
+  and {
+    member_cycle_complete?,
+    group_reset?,
+    indices_valid?,
+    output_indices_valid?,
+    datum_correct?,
+    ada_preserved?,
     output_at_script?,
     token_retained?,
     clean_output_value?,

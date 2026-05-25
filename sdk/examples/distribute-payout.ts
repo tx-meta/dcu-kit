@@ -18,8 +18,8 @@
  * Reads groupTokenSuffix from state.json. Run create-group.ts and join-group.ts first.
  */
 
-import { distributePayout, DistributePayoutConfig, accountPolicyId, groupPolicyId, GroupDatum, assetNameLabels } from "@dcu/sdk";
-import { Data, UTxO } from "@lucid-evolution/lucid";
+import { distributePayout, DistributePayoutConfig, accountPolicyId, groupPolicyId, GroupDatum, TreasuryDatum, TreasuryDatumSchema, treasuryValidator, assetNameLabels } from "@dcu/sdk";
+import { Data, UTxO, validatorToAddress } from "@lucid-evolution/lucid";
 import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
 import { loadState, printSlotSchedule, computeSlotInfo, checkValidatorStaleness } from "./state.js";
 
@@ -65,9 +65,37 @@ async function main() {
     }
 
     const primarySlot  = Number(nextRound % totalRounds);
+    const numIntervals = Number(totalRounds);
     const payoutAda    = (BigInt(groupDatum.member_count) * groupDatum.contribution_fee) / 1_000_000n;
-    console.log(`→ Next:  Round ${nextRound + 1n} of ${totalRounds}  |  Primary slot: ${primarySlot}  |  Payout: ${payoutAda} ADA`);
-    console.log("   (If slot holder has called defer-round, payout routes to the next slot.)");
+
+    // Resolve effective recipient: query treasury UTxOs to check is_deferred on primary slot.
+    // Mirrors the SDK routing logic so the log matches what the validator actually does.
+    const groupRefName = (groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix).slice(groupPolicyId!.length);
+    let effectiveSlot  = primarySlot;
+    let deferredNote   = "";
+    try {
+        const network      = lucid.config().network!;
+        const tAddr        = validatorToAddress(network, treasuryValidator.spendTreasury);
+        const tUtxos       = await lucid.utxosAt(tAddr);
+        const credBySlot   = new Map<number, boolean>(); // slot → is_deferred
+        for (const tu of tUtxos) {
+            try {
+                const raw = Data.from(tu.datum!, TreasuryDatumSchema) as unknown as TreasuryDatum;
+                if (!("TreasuryState" in raw)) continue;
+                const ts = raw.TreasuryState;
+                if (ts.group_reference_tokenname !== groupRefName) continue;
+                if (ts.rounds_paid !== nextRound) continue;
+                credBySlot.set(Number(ts.assigned_slot), ts.is_deferred);
+            } catch { /* skip malformed */ }
+        }
+        if (credBySlot.get(primarySlot) === true) {
+            effectiveSlot = (primarySlot + 1) % numIntervals;
+            deferredNote  = `Slot ${primarySlot} deferred — routing to slot ${effectiveSlot}`;
+        }
+    } catch { /* best-effort display, non-fatal */ }
+
+    console.log(`→ Next:  Round ${nextRound + 1n} of ${totalRounds}  |  Primary slot: ${primarySlot}  |  Paying to: slot ${effectiveSlot}  |  Payout: ${payoutAda} ADA`);
+    if (deferredNote) console.log(`   (${deferredNote})`);
 
     // Time-based slot display (for reference — shows wall-clock progress through intervals).
     const slotInfo = computeSlotInfo(state);

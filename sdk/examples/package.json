@@ -21,11 +21,13 @@
     "defer-round": "pnpm run build && node dist/defer-round.js",
     "update-payout-credential": "pnpm run build && node dist/update-payout-credential.js",
     "extend-grace-window": "pnpm run build && node dist/extend-grace-window.js",
+    "next-cycle": "pnpm run build && node dist/next-cycle.js",
     "show-wallets": "pnpm run build && node dist/show-wallets.js",
     "send-ada": "pnpm run build && node dist/send-ada.js",
     "deploy-scripts": "pnpm run build && node dist/deploy-scripts.js",
     "purge-nfts": "pnpm run build && node dist/purge-nfts.js",
     "generate-wallets": "tsup generate-wallets.ts --format esm --clean && node dist/generate-wallets.js",
+    "cron-daemon": "pnpm run build && node dist/cron-daemon.js",
     "reset-state": "tsx reset-state.ts"
   },
   "dependencies": {

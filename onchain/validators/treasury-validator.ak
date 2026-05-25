@@ -5,10 +5,10 @@ use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 use dcu/group.{GroupDatum}
 use dcu/treasury.{
   Contribute, DeferRound, DistributeRound, ExitGroup, ExtendGraceWindow,
-  JoinGroup, TerminateGroup, TreasuryDatum, TreasuryRedeemer,
+  JoinGroup, NextCycle, TerminateGroup, TreasuryDatum, TreasuryRedeemer,
   UpdatePayoutCredential, validate_contribute, validate_defer_round,
   validate_distribute_round, validate_exit_group, validate_extend_grace_window,
-  validate_join_group, validate_spend_terminate_group,
+  validate_join_group, validate_next_cycle, validate_spend_terminate_group,
   validate_terminate_group, validate_update_payout_credential,
 } as treasury_types
 
@@ -235,6 +235,36 @@ validator treasury(account_policy_id: PolicyId) {
           gd_typed.grace_period_length,
           admin_input_index,
           treasury_output_index,
+          treasury_datum,
+          utxo,
+          self,
+        )
+      }
+
+      NextCycle {
+        group_input_index,
+        group_output_index,
+        treasury_input_indices,
+        treasury_output_indices,
+      } -> {
+        // [security]: self-reference — own UTxO must appear in treasury_input_indices
+        expect
+          list.any(
+            treasury_input_indices,
+            fn(idx) {
+              when list.at(inputs, idx) is {
+                Some(i) -> i.output_reference == utxo
+                None -> False
+              }
+            },
+          )
+
+        validate_next_cycle(
+          policy_id_from_utxo(inputs, utxo),
+          group_input_index,
+          group_output_index,
+          treasury_input_indices,
+          treasury_output_indices,
           treasury_datum,
           utxo,
           self,

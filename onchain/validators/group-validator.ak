@@ -5,10 +5,10 @@ use cardano/assets.{PolicyId}
 use cardano/transaction.{OutputReference, Transaction}
 use dcu/group.{
   BurnGroup, CreateGroup, DistributeRound, GroupDatum, GroupMintRedeemer,
-  GroupSpendRedeemer, MemberExit, MemberJoin, RemoveGroup, StartGroup,
+  GroupSpendRedeemer, MemberExit, MemberJoin, NextCycle, RemoveGroup, StartGroup,
   UpdateGroup, validate_create_group, validate_distribute_round_group,
-  validate_member_exit, validate_member_join, validate_remove_group,
-  validate_start_group, validate_update_group,
+  validate_member_exit, validate_member_join, validate_next_cycle_group,
+  validate_remove_group, validate_start_group, validate_update_group,
 }
 
 validator group_validator(treasury_policy_id: PolicyId) {
@@ -184,6 +184,27 @@ validator group_validator(treasury_policy_id: PolicyId) {
           inputs,
           outputs,
           self,
+        )
+      }
+
+      NextCycle {
+        group_ref_token_name,
+        admin_input_index,
+        group_input_index,
+        group_output_index,
+      } -> {
+        // [security]: self-reference — group_input_index must resolve to this UTxO
+        expect Some(group_input) = list.at(inputs, group_input_index)
+        expect group_input.output_reference == utxo
+
+        validate_next_cycle_group(
+          policy_id,
+          group_ref_token_name,
+          admin_input_index,
+          group_input_index,
+          group_output_index,
+          inputs,
+          outputs,
         )
       }
     }

@@ -10,6 +10,7 @@ import { unsignedJoinGroupTxProgram, JoinGroupConfig } from "../src/endpoints/jo
 import { unsignedDistributePayoutTxProgram, DistributePayoutConfig } from "../src/endpoints/distributePayout.js";
 import { unsignedStartGroupTxProgram, StartGroupConfig } from "../src/endpoints/startGroup.js";
 import { unsignedExitGroupTxProgram, ExitGroupConfig } from "../src/endpoints/exitGroup.js";
+import { unsignedNextCycleTxProgram, NextCycleConfig } from "../src/endpoints/nextCycle.js";
 import { GroupDatum } from "../src/core/types.js";
 import { LucidContext } from "./context.js";
 import { accountPolicyId, accountValidator, groupPolicyId, treasuryValidator } from "../src/core/validators/constants.js";
@@ -357,6 +358,28 @@ export const exitGroupTestCase = (
 
     const exitTx = yield* unsignedExitGroupTxProgram(lucid, exitConfig);
     const txHash = yield* signAndSubmit(exitTx);
+    yield* advanceBlock(context.emulator);
+
+    return { txHash };
+  });
+
+export type NextCycleResult = { txHash: string };
+
+export const nextCycleTestCase = (
+  context: LucidContext,
+  params: { groupUtxo: UTxO; adminSeed: string },
+): Effect.Effect<NextCycleResult, Error, never> =>
+  Effect.gen(function* () {
+    const { lucid } = context;
+    const { groupUtxo, adminSeed } = params;
+
+    selectWalletFromSeed(lucid, adminSeed);
+
+    const groupTokenSuffix = extractTokenSuffix(groupUtxo, groupPolicyId!, assetNameLabels.prefix100);
+    const nextCycleConfig: NextCycleConfig = { groupTokenSuffix };
+
+    const tx     = yield* unsignedNextCycleTxProgram(lucid, nextCycleConfig);
+    const txHash = yield* signAndSubmit(tx);
     yield* advanceBlock(context.emulator);
 
     return { txHash };

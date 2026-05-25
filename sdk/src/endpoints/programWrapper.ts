@@ -18,6 +18,7 @@ import { unsignedContributeTxProgram, ContributeConfig } from "./contribute.js";
 import { unsignedDeferRoundTxProgram, DeferRoundConfig } from "./deferRound.js";
 import { unsignedUpdatePayoutCredentialTxProgram, UpdatePayoutCredentialConfig } from "./updatePayoutCredential.js";
 import { unsignedExtendGraceWindowTxProgram, ExtendGraceWindowConfig } from "./extendGraceWindow.js";
+import { unsignedNextCycleTxProgram, NextCycleConfig } from "./nextCycle.js";
 
 /**
  * Creates a DCU Account.
@@ -112,3 +113,11 @@ export const updatePayoutCredential = (lucid: LucidEvolution, config: UpdatePayo
  */
 export const extendGraceWindow = (lucid: LucidEvolution, config: ExtendGraceWindowConfig) =>
     makeReturn(unsignedExtendGraceWindowTxProgram(lucid, config));
+
+/**
+ * Resets a mature ROSCA group for another rotation cycle.
+ * Requires all rounds to be distributed. Members re-deposit via contribute,
+ * then admin calls startGroup again.
+ */
+export const nextCycle = (lucid: LucidEvolution, config: NextCycleConfig) =>
+    makeReturn(unsignedNextCycleTxProgram(lucid, config));

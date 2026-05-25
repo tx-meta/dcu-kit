@@ -158,6 +158,7 @@ pnpm run delete-group
 | `deploy-scripts` | Deploy treasury + group reference scripts (~56 ADA, permanent). Run once. |
 | `reset-state` | Wipe `state.json` to start a fresh test session |
 | `purge-nfts` | Burn all account/group NFTs held by a wallet (emergency cleanup) |
+| `cron-daemon` | Long-running process that auto-submits `distribute-payout` when each round opens. |
 
 ---
 
@@ -188,6 +189,50 @@ pnpm run delete-group
 | `distribute-payout` | ADMIN | Collects contributions and pays the current round's borrower. Permissionless. |
 | `exit-group` | USER1 | Exits the group (mature = full refund; early = PenaltyState created). |
 | `terminate-group` | ADMIN | Claims the PenaltyState UTxO after an early exit. |
+| `defer-round` | USER1 | Sets `is_deferred=true` — borrower skips their slot; payout routes to next slot. |
+| `contribute` | USER1 | Tops up a treasury UTxO balance. `TOP_UP_AMOUNT=<lovelace>` (default 5 ADA). |
+| `update-payout-credential` | USER1 | Redirects future payouts to the current signing wallet's address. |
+| `extend-grace-window` | ADMIN | Extends grace period for `MEMBER_WALLET` (default USER1) in ICS. |
+| `next-cycle` | ADMIN | Resets a mature group for another rotation cycle. Members re-deposit, then admin calls start-group again. |
+
+---
+
+## Cron daemon (`distribute-payout` automation)
+
+The daemon polls an active group on a configurable interval and submits
+`distribute-payout` automatically as soon as each round's time gate opens.
+
+```bash
+pnpm run cron-daemon
+```
+
+Because `distribute-payout` is permissionless the daemon wallet only needs
+~5 ADA for collateral and tx fees — it never touches the group's funds.
+
+**Configuration via `.env`:**
+
+```ini
+ADMIN_SEED="..."           # Wallet that signs and pays fees (collateral)
+BLOCKFROST_KEY="..."       # Or MAESTRO_API_KEY
+NETWORK=Preprod
+
+POLL_INTERVAL_SECS=30      # How often to check whether a round is open (default 30)
+SUBMIT_COOLDOWN_SECS=120   # Pause after a successful submit before re-checking (default 120)
+```
+
+**What happens on each tick:**
+1. Reads `groupTokenSuffix` from `state.json`.
+2. Fetches the group UTxO and decodes the datum.
+3. Checks if `now >= start_time + (last_distributed_round + 1) × interval_length`.
+4. If ready: builds, signs, and submits `distribute-payout`, then waits for confirmation.
+5. If not ready: logs the wait time and sleeps until the next poll.
+
+**Handled automatically:**
+- `OutsideValidityInterval` (clock drift) — retries after `POLL_INTERVAL_SECS`
+- All rounds complete (group mature) — logs a message and keeps polling (safe to leave running)
+- Network / provider errors — logs the error and retries
+
+Stop with `Ctrl+C` — the daemon finishes the current poll then exits cleanly.
 
 ---
 
@@ -379,6 +424,72 @@ ACTIVE_WALLET=USER1 pnpm run exit-group
 
 MEMBER_WALLET=USER1 pnpm run terminate-group
 # → PenaltyState burned, penalty_fee sent to ADMIN
+```
+
+---
+
+## Tier 2 flows
+
+### Defer-round test
+
+A borrower skips their slot — payout routes to the next member.
+
+```bash
+# After start-group, before distribute-payout for round 0:
+ACTIVE_WALLET=ADMIN pnpm run defer-round
+# → ADMIN's treasury UTxO: is_deferred=true
+
+pnpm run distribute-payout
+# → round 0: ADMIN is deferred → payout goes to USER1 (slot 1) instead
+# → ADMIN's is_deferred resets to false automatically
+```
+
+### Update payout credential test
+
+Redirect a member's future payouts to a different wallet.
+
+```bash
+# Whichever wallet signs becomes the new payout destination.
+ACTIVE_WALLET=USER1 pnpm run update-payout-credential
+# → USER1's member_payment_credential updated to current wallet's payment key
+
+pnpm run distribute-payout
+# → USER1's payout now lands at the updated address
+```
+
+### ICS flow (contribute + extend-grace-window)
+
+Engineer InsufficientCollateralState by joining with a reduced deposit.
+One member joins with only 1× contribution_fee instead of max_members×, so
+their balance hits zero after round 0 and they transition to ICS.
+
+```bash
+# ── fresh group setup ──────────────────────────────────────────────────────────
+pnpm run reset-state
+ACTIVE_WALLET=ADMIN pnpm run create-account   # if not already done
+ACTIVE_WALLET=USER1 pnpm run create-account
+ACTIVE_WALLET=USER2 pnpm run create-account
+pnpm run create-group                          # TEST_MODE: 5 ADA fee, 5-min intervals
+
+ACTIVE_WALLET=ADMIN pnpm run join-group        # slot 0 — normal deposit (25 ADA)
+ACTIVE_WALLET=USER1 pnpm run join-group        # slot 1 — normal deposit (25 ADA)
+# USER2 joins with minimum deposit: 5 ADA (1× contribution_fee) → will hit ICS after round 0
+ACTIVE_WALLET=USER2 TREASURY_DEPOSIT_OVERRIDE=5000000 pnpm run join-group
+
+pnpm run start-group
+
+# ── round 0: ADMIN receives payout, USER2 drops to 0 ADA → ICS ────────────────
+pnpm run distribute-payout
+# → USER2's treasury: TreasuryState → InsufficientCollateralState (balance < contribution_fee)
+# → USER2 now has grace_period_length to contribute before being penalised
+
+# ── admin extends USER2's grace window (optional, up to 2 extensions) ──────────
+MEMBER_WALLET=USER2 pnpm run extend-grace-window
+# → USER2's grace_expires_at extended by one more grace_period_length
+
+# ── USER2 tops up their treasury UTxO ──────────────────────────────────────────
+ACTIVE_WALLET=USER2 TOP_UP_AMOUNT=20000000 pnpm run contribute
+# → USER2 back in TreasuryState with sufficient balance for future rounds
 ```
 
 ---

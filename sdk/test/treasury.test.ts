@@ -9,6 +9,7 @@ import {
   distributePayoutTestCase,
   startGroupTestCase,
   updateGroupTestCase,
+  nextCycleTestCase,
 } from "./actions.js";
 import { setupBase, setupGroup, setupAccount, setupMembership } from "./setup.js";
 import { unsignedTerminateGroupTxProgram } from "../src/endpoints/terminateGroup.js";
@@ -506,6 +507,55 @@ describe("Treasury Endpoints", () => {
       });
       const txHash = yield* signAndSubmit(txBuilder);
       expect(txHash).toHaveLength(64);
+    }),
+  );
+
+  // --- NextCycle ---
+  // After all rounds are distributed, admin resets the group for a new rotation.
+  // Members keep their slots; rounds_paid and is_deferred reset to 0/false.
+  it.effect("should reset a mature group for a new cycle (NextCycle)", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      // interval_length=20_000ms so each awaitBlock(1) = one interval.
+      const { context, groupUtxo } = yield* setupGroup(base, { interval_length: 20_000n });
+      const { lucid, users } = context;
+
+      // Create accounts for both members (startGroup requires member_count >= 2).
+      const { outputs: { userUtxo: user1AccountUtxo } } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const { outputs: { userUtxo: user2AccountUtxo } } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
+
+      // user1 → slot 0, user2 → slot 1.
+      yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: user1AccountUtxo, userSeed: users.user1.seedPhrase });
+      yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: user2AccountUtxo, userSeed: users.user2.seedPhrase });
+
+      // Seal membership: num_intervals=2, start_time=now.
+      yield* startGroupTestCase(context, { groupUtxo });
+
+      // Distribute all 2 rounds (one awaitBlock = one interval).
+      yield* distributePayoutTestCase(context, { groupUtxo, callerSeed: users.user1.seedPhrase });
+      yield* distributePayoutTestCase(context, { groupUtxo, callerSeed: users.user2.seedPhrase });
+
+      // Reset the group for the next cycle. Admin must sign.
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const { txHash } = yield* nextCycleTestCase(context, { groupUtxo, adminSeed: users.admin.seedPhrase });
+      expect(txHash).toHaveLength(64);
+
+      // Verify group datum is reset.
+      const groupTokenSuffix = extractTokenSuffix(groupUtxo, groupPolicyId!, assetNameLabels.prefix100);
+      const groupUnit = groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      const updatedGroupUtxo = yield* Effect.tryPromise(() => lucid.utxoByUnit(groupUnit));
+      if (!updatedGroupUtxo) throw new Error("Group UTxO not found after nextCycle");
+      const groupDatum = yield* parseSafeDatum(patchInlineDatum(updatedGroupUtxo).datum, GroupDatumSchema);
+      expect(groupDatum.is_started).toBe(false);
+      expect(groupDatum.last_distributed_round).toBe(-1n);
+      expect(groupDatum.num_intervals).toBe(0n);
+      expect(groupDatum.start_time).toBe(0n);
+      // member_count and member_token_names preserved
+      expect(groupDatum.member_count).toBe(2n);
     }),
   );
 });
