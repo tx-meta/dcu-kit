@@ -98,26 +98,48 @@ export const unsignedDistributePayoutTxProgram = (
         { concurrency: "unbounded" }
     );
 
-    // Filter to TreasuryState UTxOs belonging to this group that are ready for this round
+    // Filter to TreasuryState UTxOs belonging to this group that are ready for this round.
+    // Also capture is_deferred for the primary slot holder — mirrors the Aiken routing:
+    //   if primary is deferred → effectiveSlot = (currentSlot + 1) % num_intervals
     const memberStates: { utxo: UTxO; datum: TreasuryDatum }[] = [];
-    let borrowerPaymentCred: string | undefined;
+    let primaryPaymentCred: string | undefined;
+    let primaryIsDeferred = false;
+    const credBySlot = new Map<number, string>();
 
     for (const state of parsedStates) {
         if (!state || !('TreasuryState' in state.datum)) continue;
         const ts = state.datum.TreasuryState;
         if (ts.group_reference_tokenname !== groupRefName) continue;
-        if (ts.rounds_paid !== roundNumber) continue;  // must equal round_number (not round_number - 1)
+        if (ts.rounds_paid !== roundNumber) continue;
         memberStates.push(state);
+        credBySlot.set(Number(ts.assigned_slot), ts.member_payment_credential);
         if (Number(ts.assigned_slot) === currentSlot) {
-            borrowerPaymentCred = ts.member_payment_credential;
+            primaryPaymentCred  = ts.member_payment_credential;
+            primaryIsDeferred   = ts.is_deferred;
         }
     }
 
     if (memberStates.length === 0) {
         return yield* Effect.fail(new TransactionBuildError({ operation: "distributeRound", error: `No treasury UTxOs ready for round ${roundNumber}` }));
     }
-    if (!borrowerPaymentCred) {
+    if (!primaryPaymentCred) {
         return yield* Effect.fail(new TransactionBuildError({ operation: "distributeRound", error: `No member found for current slot ${currentSlot}` }));
+    }
+
+    // Mirror Aiken spec DistributeRound 6b: deferred primary → next slot receives the payout.
+    const numIntervals = Number(groupDatum.num_intervals);
+    const effectiveSlot = primaryIsDeferred
+        ? (currentSlot + 1) % numIntervals
+        : currentSlot;
+    const borrowerPaymentCred = primaryIsDeferred
+        ? credBySlot.get(effectiveSlot)
+        : primaryPaymentCred;
+
+    if (!borrowerPaymentCred) {
+        return yield* Effect.fail(new TransactionBuildError({
+            operation: "distributeRound",
+            error: `Primary slot ${currentSlot} is deferred but no member found at effective slot ${effectiveSlot}`,
+        }));
     }
 
     // Sort inputs lexicographically (same order Cardano uses for tx.inputs)

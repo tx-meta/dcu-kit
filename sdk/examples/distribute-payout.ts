@@ -64,8 +64,10 @@ async function main() {
         process.exit(0);
     }
 
-    const payingSlot = Number(nextRound % totalRounds);
-    console.log(`→ Next:  Round ${nextRound + 1n} of ${totalRounds}  |  Paying: slot ${payingSlot}  |  Payout: ${(BigInt(groupDatum.member_count) * groupDatum.contribution_fee) / 1_000_000n} ADA`);
+    const primarySlot  = Number(nextRound % totalRounds);
+    const payoutAda    = (BigInt(groupDatum.member_count) * groupDatum.contribution_fee) / 1_000_000n;
+    console.log(`→ Next:  Round ${nextRound + 1n} of ${totalRounds}  |  Primary slot: ${primarySlot}  |  Payout: ${payoutAda} ADA`);
+    console.log("   (If slot holder has called defer-round, payout routes to the next slot.)");
 
     // Time-based slot display (for reference — shows wall-clock progress through intervals).
     const slotInfo = computeSlotInfo(state);
@@ -125,7 +127,7 @@ async function main() {
 
     console.log("Waiting for confirmation...");
     await lucid.awaitTx(txHash);
-    console.log(`Payout confirmed!  Round ${nextRound + 1n} of ${totalRounds} complete  |  Slot ${payingSlot} borrower paid.`);
+    console.log(`Payout confirmed!  Round ${nextRound + 1n} of ${totalRounds} complete.`);
 }
 
 main().catch((e) => {
