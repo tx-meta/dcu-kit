@@ -1,19 +1,22 @@
 use aiken/collection/list
 use cardano/address.{Script}
 use cardano/assets.{PolicyId}
-use cardano/transaction.{Input, OutputReference, Transaction}
+use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
+use dcu/group.{GroupDatum}
 use dcu/treasury.{
-  DistributePayout, ExitGroup, JoinGroup, MemberWithdraw, TerminateGroup,
-  TreasuryDatum, TreasuryRedeemer, validate_distribute_payout,
-  validate_exit_group, validate_join_group, validate_member_withdraw,
-  validate_spend_terminate_group, validate_terminate_group,
+  Contribute, DeferRound, DistributeRound, ExitGroup, ExtendGraceWindow,
+  JoinGroup, TerminateGroup, TreasuryDatum, TreasuryRedeemer,
+  UpdatePayoutCredential, validate_contribute, validate_defer_round,
+  validate_distribute_round, validate_exit_group, validate_extend_grace_window,
+  validate_join_group, validate_spend_terminate_group,
+  validate_terminate_group, validate_update_payout_credential,
 } as treasury_types
 
 // treasury(account_policy_id)
 // ─────────────────────────────────────────────────────────────────────────────
 // Manages ROSCA membership UTxOs for DCU groups. Each member holds one treasury
 // UTxO containing a CIP-68 membership token (derived from their account user
-// token) and a TreasuryState datum tracking their contribution schedule.
+// token) and a TreasuryState datum tracking their contribution rounds.
 //
 // Parameter:
 //   account_policy_id — the DCU account validator's policy ID. Used to verify
@@ -22,10 +25,13 @@ use dcu/treasury.{
 // mint  — JoinGroup:     issue 1 membership token, lock fees in treasury UTxO
 //       — TerminateGroup / ExitGroup (mature): burn exactly 1 membership token
 //
-// spend — DistributePayout: release claimable contributions to the borrower
-//       — ExitGroup:         early exit → penalty UTxO; mature exit → burn token
-//       — MemberWithdraw:    member claims their own locked contributions
-//       — TerminateGroup:    admin withdraws a penalty UTxO (PenaltyState)
+// spend — DistributeRound:         release round contribution to the borrower
+//       — ExitGroup:               pre/post-cycle free exit; in-cycle → penalty UTxO
+//       — TerminateGroup:          admin withdraws a penalty UTxO (PenaltyState)
+//       — Contribute:              member tops up treasury balance
+//       — DeferRound:              member defers their payout round
+//       — UpdatePayoutCredential:  member updates payout destination
+//       — ExtendGraceWindow:       admin extends a defaulting member's grace window
 validator treasury(account_policy_id: PolicyId) {
   mint(redeemer: TreasuryRedeemer, policy_id: PolicyId, tx: Transaction) {
     let Transaction { mint, .. } = tx
@@ -53,7 +59,7 @@ validator treasury(account_policy_id: PolicyId) {
       TerminateGroup { .. } -> validate_terminate_group(policy_id, mint)
       ExitGroup { .. } -> validate_terminate_group(policy_id, mint)
 
-      // DistributePayout and MemberWithdraw are spend redeemers — reject at mint
+      // All other redeemers are spend-only — reject at mint
       _ -> fail
     }
   }
@@ -64,14 +70,16 @@ validator treasury(account_policy_id: PolicyId) {
     utxo: OutputReference,
     self: Transaction,
   ) {
-    let Transaction { inputs, mint, .. } = self
+    let Transaction { inputs, reference_inputs, mint, .. } = self
 
     // [security]: datum must be present — guards against datum-less UTxO injection
     expect Some(treasury_datum) = datum
 
     when redeemer is {
-      DistributePayout {
+      DistributeRound {
+        round_number,
         group_ref_input_index,
+        group_output_index,
         treasury_input_indices,
         treasury_output_indices,
         borrower_output_index,
@@ -89,11 +97,12 @@ validator treasury(account_policy_id: PolicyId) {
             },
           )
 
-        validate_distribute_payout(
+        validate_distribute_round(
           // [security]: own policy_id derived from UTxO's script credential
-          // — cannot be spoofed via redeemer
           policy_id_from_utxo(inputs, utxo),
+          round_number,
           group_ref_input_index,
+          group_output_index,
           treasury_input_indices,
           treasury_output_indices,
           borrower_output_index,
@@ -126,30 +135,6 @@ validator treasury(account_policy_id: PolicyId) {
         )
       }
 
-      MemberWithdraw {
-        group_ref_input_index,
-        member_input_index,
-        treasury_input_index,
-        treasury_output_index,
-        withdrawal_amount,
-      } -> {
-        // [security]: self-reference — treasury_input_index must resolve to own UTxO
-        expect Some(treasury_input) = list.at(inputs, treasury_input_index)
-        expect treasury_input.output_reference == utxo
-
-        validate_member_withdraw(
-          policy_id_from_utxo(inputs, utxo),
-          account_policy_id,
-          group_ref_input_index,
-          member_input_index,
-          treasury_output_index,
-          withdrawal_amount,
-          treasury_datum,
-          utxo,
-          self,
-        )
-      }
-
       TerminateGroup { group_input_index, admin_input_index } -> {
         // Derive group_policy_id from the group input's script credential.
         // TerminateGroup does NOT update group state — only reads it for admin auth.
@@ -164,6 +149,95 @@ validator treasury(account_policy_id: PolicyId) {
           admin_input_index,
           inputs,
           mint,
+        )
+      }
+
+      Contribute { member_input_index, treasury_input_index, treasury_output_index } -> {
+        // [security]: self-reference check
+        expect Some(treasury_input) = list.at(inputs, treasury_input_index)
+        expect treasury_input.output_reference == utxo
+
+        validate_contribute(
+          policy_id_from_utxo(inputs, utxo),
+          account_policy_id,
+          member_input_index,
+          treasury_output_index,
+          treasury_datum,
+          utxo,
+          self,
+        )
+      }
+
+      DeferRound {
+        round_number,
+        member_input_index,
+        treasury_input_index,
+        treasury_output_index,
+      } -> {
+        // [security]: self-reference check
+        expect Some(treasury_input) = list.at(inputs, treasury_input_index)
+        expect treasury_input.output_reference == utxo
+
+        validate_defer_round(
+          policy_id_from_utxo(inputs, utxo),
+          account_policy_id,
+          round_number,
+          member_input_index,
+          treasury_output_index,
+          treasury_datum,
+          utxo,
+          self,
+        )
+      }
+
+      UpdatePayoutCredential {
+        member_input_index,
+        treasury_input_index,
+        treasury_output_index,
+      } -> {
+        // [security]: self-reference check
+        expect Some(treasury_input) = list.at(inputs, treasury_input_index)
+        expect treasury_input.output_reference == utxo
+
+        validate_update_payout_credential(
+          policy_id_from_utxo(inputs, utxo),
+          account_policy_id,
+          member_input_index,
+          treasury_output_index,
+          treasury_datum,
+          utxo,
+          self,
+        )
+      }
+
+      ExtendGraceWindow {
+        group_ref_input_index,
+        admin_input_index,
+        treasury_input_index,
+        treasury_output_index,
+      } -> {
+        // [security]: self-reference check
+        expect Some(treasury_input) = list.at(inputs, treasury_input_index)
+        expect treasury_input.output_reference == utxo
+
+        // Derive group_policy_id and grace_period_length from the group reference input.
+        // The group is NOT spent here — only read for admin token auth and grace window length.
+        expect Some(group_ref_input) =
+          list.at(reference_inputs, group_ref_input_index)
+        expect Script(group_policy_id) =
+          group_ref_input.output.address.payment_credential
+        expect InlineDatum(gd) = group_ref_input.output.datum
+        expect gd_typed: GroupDatum = gd
+
+        validate_extend_grace_window(
+          policy_id_from_utxo(inputs, utxo),
+          group_policy_id,
+          gd_typed.grace_period_length,
+          admin_input_index,
+          treasury_output_index,
+          treasury_datum,
+          utxo,
+          self,
         )
       }
 

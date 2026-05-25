@@ -1,21 +1,31 @@
 import { describe, expect } from "vitest";
 import { it } from "@effect/vitest";
-import { Effect, Schedule } from "effect";
+import { Effect } from "effect";
+import { paymentCredentialOf } from "@lucid-evolution/lucid";
 import {
+  createAccountTestCase,
   joinGroupTestCase,
   exitGroupTestCase,
-  memberWithdrawTestCase,
   distributePayoutTestCase,
+  startGroupTestCase,
+  updateGroupTestCase,
 } from "./actions.js";
 import { setupBase, setupGroup, setupAccount, setupMembership } from "./setup.js";
 import { unsignedTerminateGroupTxProgram } from "../src/endpoints/terminateGroup.js";
 import { unsignedDistributePayoutTxProgram } from "../src/endpoints/distributePayout.js";
-import { unsignedMemberWithdrawTxProgram } from "../src/endpoints/memberWithdraw.js";
 import { unsignedJoinGroupTxProgram } from "../src/endpoints/joinGroup.js";
 import { unsignedExitGroupTxProgram } from "../src/endpoints/exitGroup.js";
-import { signAndSubmit, selectWalletFromSeed, getScriptAddress, assetNameLabels } from "../src/core/utils/index.js";
+import {
+  signAndSubmit,
+  selectWalletFromSeed,
+  getWalletAddress,
+  assetNameLabels,
+  parseSafeDatum,
+  patchInlineDatum,
+} from "../src/core/utils/index.js";
 import { SetupError } from "../src/core/errors.js";
-import { treasuryValidator, groupValidator, groupPolicyId, accountPolicyId } from "../src/core/validators/constants.js";
+import { groupPolicyId, accountPolicyId } from "../src/core/validators/constants.js";
+import { GroupDatum, GroupDatumSchema, TreasuryDatum, TreasuryDatumSchema } from "../src/core/types.js";
 import { extractTokenSuffix } from "./utils.js";
 
 describe("Treasury Endpoints", () => {
@@ -30,20 +40,18 @@ describe("Treasury Endpoints", () => {
 
       if (!userUtxo) return yield* Effect.die(new SetupError({ message: "User Account UTxO not found" }));
 
-      const result = yield* joinGroupTestCase(
-        context,
-        {
-            groupUtxo,
-            accountUtxo: userUtxo,
-            contributionAmount: 50_000_000n,
-            userSeed: users.user1.seedPhrase
-        }
-      );
+      const result = yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: userUtxo,
+        userSeed: users.user1.seedPhrase,
+      });
       expect(result.txHash).toHaveLength(64);
     }),
   );
 
   // --- Exit Group (Standard) ---
+  // With num_intervals=0 (no startGroup called), maturityTime = start_time.
+  // Any exit at or after start_time is a mature exit (token burn, full refund).
   it.effect("should allow a member to exit", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
@@ -51,169 +59,118 @@ describe("Treasury Endpoints", () => {
       const { context, groupUtxo, userUtxo } = yield* setupMembership(base);
       const { users } = context;
 
-      const result = yield* exitGroupTestCase(
-        context,
-        {
-            groupUtxo,
-            accountUtxo: userUtxo,
-            userSeed: users.user1.seedPhrase
-        }
-      );
-
-      expect(result.txHash).toHaveLength(64);
-    }),
-  );
-
-  // --- Exit Group (Mature) ---
-  it.effect("should allow a member to exit gracefully (mature)", () =>
-    Effect.gen(function* () {
-      const base = yield* setupBase();
-
-      // Old start time
-      const oneHour = 3600000n;
-      const now = BigInt(Date.now());
-      const oldStartTime = now - 11n * oneHour;
-
-      const { context, groupUtxo, userUtxo } = yield* setupMembership(base, 50_000_000n, { start_time: oldStartTime });
-      const { users } = context;
-
-      const result = yield* exitGroupTestCase(
-        context,
-        {
-            groupUtxo,
-            accountUtxo: userUtxo,
-            userSeed: users.user1.seedPhrase
-        }
-      );
+      const result = yield* exitGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: userUtxo,
+        userSeed: users.user1.seedPhrase,
+      });
 
       expect(result.txHash).toHaveLength(64);
     }),
   );
 
   // --- Terminate Group ---
+  // startGroup (with >= 2 members) sets num_intervals=2 and anchors start_time.
+  // An exit shortly after startGroup is an early exit → PenaltyState created.
+  // terminateGroup then burns that PenaltyState UTxO.
   it.effect("should allow terminating a membership (burn)", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
-
-      // Default start_time = now → member is in active (non-mature) window → early exit
-      const { context, groupUtxo, userUtxo } = yield* setupMembership(base);
+      const { context, groupUtxo } = yield* setupGroup(base);
       const { lucid, users } = context;
 
-      // Step 1: Member does an early exit → creates a PenaltyState treasury UTxO
-      const exitResult = yield* exitGroupTestCase(
-        context,
-        {
-          groupUtxo,
-          accountUtxo: userUtxo,
-          userSeed: users.user1.seedPhrase,
-        }
-      );
+      // Create accounts for both users — startGroup requires member_count >= 2.
+      const { outputs: { userUtxo: user1AccountUtxo } } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const { outputs: { userUtxo: user2AccountUtxo } } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
 
-      // Step 2: Find the PenaltyState UTxO and refreshed group UTxO from the exit tx.
-      const treasuryScriptAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
-      const groupScriptAddress    = yield* getScriptAddress(lucid, groupValidator.spendGroup);
-      const [, refreshedGroupUtxo] = yield* Effect.tryPromise({
-        try: async () => {
-          const treasuryUtxos = await lucid.utxosAt(treasuryScriptAddress);
-          const groupUtxos    = await lucid.utxosAt(groupScriptAddress);
-          const penalty = treasuryUtxos.find(u => u.txHash === exitResult.txHash);
-          const group   = groupUtxos.find(u => u.txHash === exitResult.txHash);
-          if (!penalty) throw new Error("Penalty UTxO not indexed yet");
-          if (!group)   throw new Error("Group UTxO not indexed yet");
-          return [penalty, group] as const;
-        },
-        catch: (e) => e,
-      }).pipe(
-        Effect.retry({ schedule: Schedule.spaced(5000).pipe(Schedule.upTo(60000)) }),
-        Effect.catchAll(() => Effect.die(new Error("Penalty or Group UTxO not found after early exit"))),
-      );
+      // Both users join. The token suffix from the initial groupUtxo is permanent
+      // across UTxO spends, so each joinGroupTestCase resolves the current UTxO internally.
+      yield* joinGroupTestCase(context, {
+        groupUtxo, accountUtxo: user1AccountUtxo, userSeed: users.user1.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo, accountUtxo: user2AccountUtxo, userSeed: users.user2.seedPhrase,
+      });
 
-      // Step 3: Admin terminates the penalty UTxO using token suffixes.
-      // groupTokenSuffix from the refreshed group UTxO; memberAccountTokenSuffix from the account token.
-      const groupTokenSuffix          = extractTokenSuffix(refreshedGroupUtxo, groupPolicyId!,  assetNameLabels.prefix100);
-      const memberAccountTokenSuffix  = extractTokenSuffix(userUtxo,           accountPolicyId, assetNameLabels.prefix222);
+      // startGroup: seals membership, sets num_intervals=2, start_time=now.
+      yield* startGroupTestCase(context, { groupUtxo });
 
-      selectWalletFromSeed(lucid, users.user1.seedPhrase);
-      const unsignedTx = yield* unsignedTerminateGroupTxProgram(
-        lucid,
-        { groupTokenSuffix, memberAccountTokenSuffix }
-      );
+      // user1 early exit: now < start_time + 2*interval_length → PenaltyState created.
+      const exitResult = yield* exitGroupTestCase(context, {
+        groupUtxo, accountUtxo: user1AccountUtxo, userSeed: users.user1.seedPhrase,
+      });
+      expect(exitResult.txHash).toHaveLength(64);
 
+      // Admin terminates the PenaltyState UTxO via permanent token suffixes.
+      const groupTokenSuffix         = extractTokenSuffix(groupUtxo,         groupPolicyId!,   assetNameLabels.prefix100);
+      const memberAccountTokenSuffix = extractTokenSuffix(user1AccountUtxo,  accountPolicyId,  assetNameLabels.prefix222);
+
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const unsignedTx = yield* unsignedTerminateGroupTxProgram(lucid, { groupTokenSuffix, memberAccountTokenSuffix });
       const txHash = yield* signAndSubmit(unsignedTx);
       expect(txHash).toHaveLength(64);
     }),
   );
 
-  // --- Member Withdraw ---
-  it.effect("should allow member to withdraw funds", () =>
-    Effect.gen(function* () {
-      const base = yield* setupBase();
-
-      // Start 3 intervals in the past so first 3 contribution_list entries are claimable:
-      // total_claimable = 3 × 2 ADA = 6 ADA ≥ withdrawAmount 5 ADA.
-      const oneHour = 3_600_000n;
-      const pastStart = BigInt(Date.now()) - 3n * oneHour;
-
-      const { context, groupUtxo, userUtxo } = yield* setupMembership(
-        base,
-        50_000_000n,
-        { start_time: pastStart }
-      );
-      const { users } = context;
-
-      const result = yield* memberWithdrawTestCase(
-        context,
-        {
-            groupUtxo,
-            accountUtxo: userUtxo,
-            withdrawAmount: 5_000_000n, // Withdraw 5 ADA (≤ 6 ADA claimable)
-            userSeed: users.user1.seedPhrase
-        }
-      );
-
-      expect(result.txHash).toBeDefined();
-      expect(result.txHash).toHaveLength(64);
-    }),
-  );
-
   // --- Distribute Payout ---
-  it.effect("should distribute payout to the assigned slot holder", () =>
+  // Round 0: fresh treasury UTxOs have rounds_paid=0, which equals roundNumber=0.
+  // After distribute, all treasury outputs have rounds_paid=1.
+  it.effect("should distribute payout for round 0 and set rounds_paid to 1 in all treasury outputs", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
-
-      // Use a start_time 20 intervals in the past so:
-      // - currentSlot = 20 % 10 = 0 (matches the member's assigned_slot = 0)
-      // - All 10 contribution_list entries are past their claimable_at timestamp
-      const oneHour = 3600000n;
-      const now = BigInt(Date.now());
-      const oldStartTime = now - 20n * oneHour;
-
-      const { context, groupUtxo } = yield* setupMembership(
-        base,
-        50_000_000n,
-        { start_time: oldStartTime, contribution_fee: 2_000_000n }
-      );
+      const { context, groupUtxo } = yield* setupGroup(base);
       const { users } = context;
 
-      const result = yield* distributePayoutTestCase(
-        context,
-        {
-            groupUtxo,
-            callerSeed: users.user1.seedPhrase
-        }
-      );
+      // Create accounts for both users — startGroup requires member_count >= 2.
+      const { outputs: { userUtxo: user1AccountUtxo } } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const { outputs: { userUtxo: user2AccountUtxo } } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
 
-      expect(result.txHash).toBeDefined();
+      // user1 joins first → assigned_slot=0 (borrower for round 0).
+      // user2 joins second → assigned_slot=1.
+      yield* joinGroupTestCase(context, {
+        groupUtxo, accountUtxo: user1AccountUtxo, userSeed: users.user1.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo, accountUtxo: user2AccountUtxo, userSeed: users.user2.seedPhrase,
+      });
+
+      // startGroup: sets num_intervals=2, is_started=true, start_time=now.
+      yield* startGroupTestCase(context, { groupUtxo });
+
+      // Distribute round 0: currentSlot=0%2=0 → user1 receives the pot.
+      const result = yield* distributePayoutTestCase(context, {
+        groupUtxo,
+        callerSeed: users.user1.seedPhrase,
+      });
+
       expect(result.txHash).toHaveLength(64);
+      expect(result.treasuryOutputs.length).toBeGreaterThan(0);
+
+      // All output treasury UTxOs must have rounds_paid=1 (round 0 consumed).
+      for (const utxo of result.treasuryOutputs) {
+        const patched = patchInlineDatum(utxo);
+        const datum = (yield* parseSafeDatum(patched.datum, TreasuryDatumSchema)) as unknown as TreasuryDatum;
+        if ("TreasuryState" in datum) {
+          expect(datum.TreasuryState.rounds_paid).toBe(1n);
+        }
+      }
     }),
   );
 
-  // --- Negative: distributePayout with no claimable entries ---
-  it.effect("should reject payout when no contributions are claimable yet", () =>
+  // --- Negative: distributePayout when group has not been started ---
+  it.effect("should reject payout when the group has not been started", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
 
-      // Default start_time = now → all claimable_at are in the future → payoutAmount = 0
+      // One member joined but startGroup never called → is_started=false.
       const { context, groupUtxo } = yield* setupMembership(base);
       const { lucid, users } = context;
 
@@ -225,34 +182,9 @@ describe("Treasury Endpoints", () => {
       );
 
       expect(err._tag).toBe("TransactionBuildError");
-      expect((err as any).error).toContain("No claimable");
-    }),
-  );
-
-  // --- Negative: memberWithdraw exceeding treasury balance ---
-  it.effect("should reject withdrawal that exceeds treasury balance", () =>
-    Effect.gen(function* () {
-      const base = yield* setupBase();
-
-      // contribution = 50 ADA → treasury holds ~50 ADA; withdraw 60 ADA must fail
-      const { context, groupUtxo, userUtxo } = yield* setupMembership(base, 50_000_000n);
-      const { lucid, users } = context;
-
-      selectWalletFromSeed(lucid, users.user1.seedPhrase);
-
-      const groupTokenSuffix   = extractTokenSuffix(groupUtxo, groupPolicyId!,  assetNameLabels.prefix100);
-      const accountTokenSuffix = extractTokenSuffix(userUtxo,  accountPolicyId, assetNameLabels.prefix222);
-
-      const err = yield* Effect.flip(
-        unsignedMemberWithdrawTxProgram(lucid, {
-          groupTokenSuffix,
-          accountTokenSuffix,
-          withdrawAmount: 60_000_000n,
-        })
-      );
-
-      expect(err._tag).toBe("TransactionBuildError");
-      expect((err as any).error).toContain("Insufficient funds");
+      if (err._tag === "TransactionBuildError") {
+        expect(err.error).toContain("not been started");
+      }
     }),
   );
 
@@ -265,15 +197,13 @@ describe("Treasury Endpoints", () => {
 
       selectWalletFromSeed(lucid, users.user1.seedPhrase);
 
-      const groupTokenSuffix = extractTokenSuffix(groupUtxo, groupPolicyId!, assetNameLabels.prefix100);
-      // Use a fake account suffix that does not exist on-chain → UtxoNotFoundError
+      const groupTokenSuffix  = extractTokenSuffix(groupUtxo, groupPolicyId!, assetNameLabels.prefix100);
       const fakeAccountSuffix = "00".repeat(28);
 
       const err = yield* Effect.flip(
         unsignedJoinGroupTxProgram(lucid, {
           groupTokenSuffix,
           accountTokenSuffix: fakeAccountSuffix,
-          contributionAmount: 50_000_000n,
         })
       );
 
@@ -281,27 +211,26 @@ describe("Treasury Endpoints", () => {
     }),
   );
 
-  // --- Negative: exitGroup when treasury UTxO is already in PenaltyState ---
-  // After an early exit, the treasury moves to PenaltyState. A second exit attempt
-  // should fail because no TreasuryState exists for that account anymore.
-  it.effect("should fail exiting when the treasury UTxO is in PenaltyState", () =>
+  // --- Negative: exitGroup after treasury UTxO has been burned ---
+  // With num_intervals=0 (no startGroup), every exit is a mature exit (burn).
+  // After the burn, no TreasuryState exists for that account → second exit fails.
+  it.effect("should fail exiting when the treasury UTxO no longer exists", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
 
-      // Default start_time = now → early exit (is_active && now < maturity)
       const { context, groupUtxo, userUtxo } = yield* setupMembership(base);
       const { lucid, users } = context;
 
-      // Step 1: early exit → treasury transitions to PenaltyState
+      // Step 1: mature exit → membership token burned, treasury UTxO destroyed.
       yield* exitGroupTestCase(context, {
         groupUtxo,
         accountUtxo: userUtxo,
         userSeed: users.user1.seedPhrase,
       });
 
-      // Step 2: try to exit again — scan for TreasuryState finds nothing → UtxoNotFoundError
-      const groupTokenSuffix   = extractTokenSuffix(groupUtxo, groupPolicyId!,  assetNameLabels.prefix100);
-      const accountTokenSuffix = extractTokenSuffix(userUtxo,  accountPolicyId, assetNameLabels.prefix222);
+      // Step 2: second exit attempt — no TreasuryState found → UtxoNotFoundError.
+      const groupTokenSuffix   = extractTokenSuffix(groupUtxo,  groupPolicyId!,  assetNameLabels.prefix100);
+      const accountTokenSuffix = extractTokenSuffix(userUtxo,   accountPolicyId, assetNameLabels.prefix222);
 
       selectWalletFromSeed(lucid, users.user1.seedPhrase);
       const err = yield* Effect.flip(
@@ -312,52 +241,51 @@ describe("Treasury Endpoints", () => {
     }),
   );
 
-  // --- Negative: memberWithdraw when treasury UTxO is in PenaltyState ---
-  // After an early exit, any withdrawal attempt should also fail for the same reason.
-  it.effect("should fail a member withdrawal when the treasury UTxO is in PenaltyState", () =>
+  // --- Positive: joinGroup routes joining_fee to admin wallet ---
+  // When joining_fee > 0, the SDK adds an output to admin_payment_credential.
+  // The Aiken validator enforces this: joining_fee_routed? fails if the output is absent.
+  it.effect("should route joining_fee to the admin wallet when joining_fee > 0", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
+      const { lucid, users } = base.context;
 
-      const { context, groupUtxo, userUtxo } = yield* setupMembership(base);
-      const { lucid, users } = context;
+      // Derive the group creator's PKH so admin_payment_credential points to a real wallet.
+      selectWalletFromSeed(lucid, users.user1.seedPhrase);
+      const adminAddress = yield* getWalletAddress(lucid);
+      const adminPkh = paymentCredentialOf(adminAddress).hash;
 
-      // Step 1: early exit → treasury transitions to PenaltyState
-      yield* exitGroupTestCase(context, {
-        groupUtxo,
-        accountUtxo: userUtxo,
-        userSeed: users.user1.seedPhrase,
+      const { context, groupUtxo } = yield* setupGroup(base, {
+        joining_fee: 1_000_000n,
+        admin_payment_credential: adminPkh,
       });
+      const { userUtxo } = yield* setupAccount(base);
+      if (!userUtxo) return yield* Effect.fail(new SetupError({ message: "User UTxO not found" }));
 
-      // Step 2: try to withdraw — scan for TreasuryState finds nothing → UtxoNotFoundError
+      selectWalletFromSeed(lucid, users.user1.seedPhrase);
       const groupTokenSuffix   = extractTokenSuffix(groupUtxo, groupPolicyId!,  assetNameLabels.prefix100);
       const accountTokenSuffix = extractTokenSuffix(userUtxo,  accountPolicyId, assetNameLabels.prefix222);
 
-      selectWalletFromSeed(lucid, users.user1.seedPhrase);
-      const err = yield* Effect.flip(
-        unsignedMemberWithdrawTxProgram(lucid, {
-          groupTokenSuffix,
-          accountTokenSuffix,
-          withdrawAmount: 1_000_000n,
-        })
-      );
-
-      expect(err._tag).toBe("UtxoNotFoundError");
+      const currentTime = base.context.emulator
+          ? BigInt(base.context.emulator.now())
+          : BigInt(Date.now()) - 120_000n;
+      const txBuilder = yield* unsignedJoinGroupTxProgram(lucid, {
+        groupTokenSuffix,
+        accountTokenSuffix,
+        currentTime,
+      });
+      const txHash = yield* signAndSubmit(txBuilder);
+      expect(txHash).toHaveLength(64);
     }),
   );
 
   // --- Negative: joinGroup when group is at max capacity ---
-  // Creates a group capped at 1 member, fills it with user1, then attempts a second
-  // join. The on-chain validator rejects: member_count < max_members → 1 < 1 → False.
+  // Group capped at 1 member; first join fills it (member_count becomes 1).
+  // A second join attempt is rejected by the on-chain validator: member_count < max_members → 1 < 1 → False.
   it.effect("should reject joining a group when at max capacity", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
 
-      // Group with max_members = 1; first join fills it (member_count becomes 1)
-      const { context, groupUtxo, userUtxo } = yield* setupMembership(
-        base,
-        50_000_000n,
-        { max_members: 1n }
-      );
+      const { context, groupUtxo, userUtxo } = yield* setupMembership(base, { max_members: 1n });
       const { lucid, users } = context;
 
       selectWalletFromSeed(lucid, users.user1.seedPhrase);
@@ -365,16 +293,101 @@ describe("Treasury Endpoints", () => {
       const groupTokenSuffix   = extractTokenSuffix(groupUtxo, groupPolicyId!,  assetNameLabels.prefix100);
       const accountTokenSuffix = extractTokenSuffix(userUtxo,  accountPolicyId, assetNameLabels.prefix222);
 
-      // Second join attempt — validator rejects because group is full
       const err = yield* Effect.flip(
-        unsignedJoinGroupTxProgram(lucid, {
-          groupTokenSuffix,
-          accountTokenSuffix,
-          contributionAmount: 50_000_000n,
-        })
+        unsignedJoinGroupTxProgram(lucid, { groupTokenSuffix, accountTokenSuffix })
       );
 
       expect(err._tag).toBe("TransactionBuildError");
+    }),
+  );
+
+  // --- Positive: exit when group is deactivated (is_active=false) ---
+  // Admin deactivates the group via UpdateGroup. The !is_active branch in
+  // validate_exit_group takes the burn path regardless of timing — no penalty.
+  it.effect("should allow exit when group is deactivated (is_active=false)", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const { context, groupUtxo, userUtxo } = yield* setupMembership(base);
+      const { lucid, users } = context;
+
+      // Parse the current on-chain group datum (post-join: member_count=1, member_token_names=[...]).
+      // UpdateGroup enforces member_count and member_token_names are unchanged, so we
+      // must pass the post-join datum — not the creation datum from setupMembership.
+      const patchedGroupUtxo = patchInlineDatum(groupUtxo);
+      const currentGroupDatum = (yield* parseSafeDatum(patchedGroupUtxo.datum, GroupDatumSchema)) as unknown as GroupDatum;
+
+      // Deactivate the group: only is_active changes (True → False). All other fields preserved.
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      yield* updateGroupTestCase(context, {
+        groupUtxo,
+        updatedDatum: { ...currentGroupDatum, is_active: false },
+      });
+
+      // User exits — the !is_active path in validate_exit_group burns the membership
+      // token and returns ADA regardless of time. No PenaltyState is created.
+      const result = yield* exitGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: userUtxo,
+        userSeed: users.user1.seedPhrase,
+      });
+      expect(result.txHash).toHaveLength(64);
+    }),
+  );
+
+  // --- Positive: mature exit after all rounds distributed (post-cycle) ---
+  // Full ROSCA cycle with 2 members and short intervals (20 s = 20 slots).
+  // After round 1 distributes, the emulator has advanced to exactly maturity_time
+  // (start_time + 2 × 20_000ms). The exit reads emulator.now() which equals
+  // maturity_time, so is_early_exit = false → burn path, no PenaltyState.
+  //
+  // Why interval_length = 20_000n?
+  // The emulator advances 20 slots per awaitBlock(1) call. With 1-hour intervals
+  // (3_600_000ms = 3600 slots) the second distribute would need slot 3800 but the
+  // emulator is only at slot 240 — the emulator rejects txs with validFrom > tip.
+  // Using 20_000ms intervals aligns exactly with the 20-slot-per-block emulator cadence.
+  it.effect("should allow mature exit after all rounds are distributed", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      // interval_length = 20_000ms (20 slots). Each awaitBlock(1) advances 20 slots,
+      // so one block = one full interval. Round 1 distribute fires at slot 220,
+      // maturity is slot 240, and exit with emulator.now() is exactly at maturity.
+      const { context, groupUtxo } = yield* setupGroup(base, { interval_length: 20_000n });
+      const { users } = context;
+
+      // Create accounts for both members — startGroup requires member_count >= 2.
+      const { outputs: { userUtxo: user1AccountUtxo } } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const { outputs: { userUtxo: user2AccountUtxo } } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
+
+      // user1 → slot 0 (borrower for round 0), user2 → slot 1 (borrower for round 1).
+      yield* joinGroupTestCase(context, {
+        groupUtxo, accountUtxo: user1AccountUtxo, userSeed: users.user1.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo, accountUtxo: user2AccountUtxo, userSeed: users.user2.seedPhrase,
+      });
+
+      // startGroup: seals membership, num_intervals=2, start_time = emulator.now().
+      yield* startGroupTestCase(context, { groupUtxo });
+
+      // Distribute round 0 then round 1. The endpoint reads last_distributed_round
+      // from the on-chain group UTxO, so sequential calls advance round 0 → 1 automatically.
+      // Each awaitBlock(1) advances the emulator by 20 slots = one interval.
+      yield* distributePayoutTestCase(context, { groupUtxo, callerSeed: users.user1.seedPhrase });
+      yield* distributePayoutTestCase(context, { groupUtxo, callerSeed: users.user2.seedPhrase });
+
+      // user1 exits. emulator.now() = start_time + 2 × 20_000ms = maturity_time.
+      // is_early_exit = is_active && start_time <= now && now < maturity_time
+      //               = true && true && false  →  false → burn path (no PenaltyState).
+      const result = yield* exitGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: user1AccountUtxo,
+        userSeed: users.user1.seedPhrase,
+      });
+      expect(result.txHash).toHaveLength(64);
     }),
   );
 });

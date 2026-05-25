@@ -10,7 +10,7 @@
 
 import { updateAccount, UpdateAccountConfig, accountPolicyId, assetNameLabels } from "@dcu/sdk";
 import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
-import { loadState, saveState } from "./state.js";
+import { loadState, saveState, checkValidatorStaleness } from "./state.js";
 
 async function main() {
     const { lucid, isEmulator } = await makeLucid();
@@ -20,6 +20,8 @@ async function main() {
         console.log("Run create-account.ts first, or use rosca-lifecycle.ts for a full emulator demo.");
         process.exit(0);
     }
+
+    checkValidatorStaleness({ accountPolicyId });
 
     let { accountTokenSuffix } = loadState();
 

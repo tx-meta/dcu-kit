@@ -3,14 +3,24 @@
  *
  * Aggregates claimable contributions from all treasury UTxOs and pays them
  * out to the member assigned to the current rotation slot (the borrower).
- * Any wallet can trigger this — the payout goes to the slot holder regardless.
+ * This transaction is PERMISSIONLESS — any wallet can trigger it. The payout
+ * always goes to the borrower's address stored in the datum, not the caller's.
+ *
+ * Wallet selection:
+ *   Default (ADMIN): uses ADMIN_SEED — most likely to have a pure ADA UTxO for collateral.
+ *   ACTIVE_WALLET=USER1: uses USER1_SEED
+ *   ACTIVE_WALLET=USER2: uses USER2_SEED
+ *
+ * If you see a collateral error, the selected wallet has no pure ADA UTxO.
+ * Fix: send 5 ADA to that wallet first:
+ *   AMOUNT=5000000 FROM_WALLET=ADMIN TO_WALLET=USER1 pnpm run send-ada
  *
  * Reads groupTokenSuffix from state.json. Run create-group.ts and join-group.ts first.
  */
 
-import { distributePayout, DistributePayoutConfig } from "@dcu/sdk";
-import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
-import { loadState, printSlotSchedule, computeSlotInfo } from "./state.js";
+import { distributePayout, DistributePayoutConfig, accountPolicyId, groupPolicyId } from "@dcu/sdk";
+import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
+import { loadState, printSlotSchedule, computeSlotInfo, checkValidatorStaleness } from "./state.js";
 
 async function main() {
     const { lucid, isEmulator } = await makeLucid();
@@ -20,6 +30,17 @@ async function main() {
         console.log("See rosca-lifecycle.ts for a full emulator demonstration.");
         process.exit(0);
     }
+
+    // distribute-payout is permissionless — any wallet can submit it.
+    // Default to ADMIN since it's most likely to have a pure ADA UTxO for collateral.
+    const activeWallet = (process.env.ACTIVE_WALLET ?? "ADMIN").toUpperCase();
+    const walletSeed   = process.env[`${activeWallet}_SEED`] ?? process.env.ADMIN_SEED;
+    if (!walletSeed) throw new Error(`${activeWallet}_SEED not found in .env`);
+    lucid.selectWallet.fromSeed(walletSeed);
+    await logWalletInfo(lucid, activeWallet);
+    console.log(`Submitting as: ${activeWallet} (payout goes to the current slot holder regardless)`);
+
+    checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
 
     const state = loadState();
     const { groupTokenSuffix } = state;

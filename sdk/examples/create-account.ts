@@ -1,16 +1,18 @@
 import { createAccount, CreateAccountConfig, accountPolicyId, assetNameLabels } from "@dcu/sdk";
-import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
-import { loadState, saveState, accountSuffixKey } from "./state.js";
+import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
+import { loadState, saveState, accountSuffixKey, checkValidatorStaleness } from "./state.js";
 
 async function main() {
     const { lucid, isEmulator } = await makeLucid();
 
-    // Support ACTIVE_WALLET=WALLET3 to create an account for a second member.
+    // Support ACTIVE_WALLET=USER2 to create an account for a second member.
     const activeWallet = (process.env.ACTIVE_WALLET ?? "USER1").toUpperCase();
     const walletSeed   = process.env[`${activeWallet}_SEED`] ?? process.env.USER1_SEED;
     if (!walletSeed) throw new Error(`${activeWallet}_SEED not found in .env`);
     lucid.selectWallet.fromSeed(walletSeed);
-    if (activeWallet !== "USER1") console.log(`Using wallet: ${activeWallet}`);
+    await logWalletInfo(lucid, activeWallet);
+
+    checkValidatorStaleness({ accountPolicyId });
 
     // Check if this wallet already has an account suffix saved — skip if so.
     const state      = loadState();
@@ -25,8 +27,8 @@ async function main() {
     const utxos = await lucid.wallet().getUtxos();
     if (utxos.length === 0) throw new Error(`No UTxOs in ${activeWallet} wallet. Please fund it first.`);
 
-    const emails: Record<string, string> = { ADMIN: "admin@web3.ada", USER1: "user1@web3.ada", WALLET3: "wallet3@web3.ada" };
-    const phones: Record<string, string> = { ADMIN: "555-0000",       USER1: "555-0100",        WALLET3: "555-0300" };
+    const emails: Record<string, string> = { ADMIN: "admin@web3.ada", USER1: "user1@web3.ada", USER2: "user2@web3.ada" };
+    const phones: Record<string, string> = { ADMIN: "555-0000",       USER1: "555-0100",        USER2: "555-0200" };
 
     const config: CreateAccountConfig = {
         selected_out_ref: utxos[0],
@@ -55,7 +57,7 @@ async function main() {
     if (!refKey) throw new Error("No account reference token found in output 0");
     const accountTokenSuffix = refKey.slice(accountPolicyId.length + assetNameLabels.prefix100.length);
 
-    saveState({ [suffixKey]: accountTokenSuffix });
+    saveState({ [suffixKey]: accountTokenSuffix, accountPolicyId });
     console.log(`Account created for ${activeWallet} successfully!`);
 }
 

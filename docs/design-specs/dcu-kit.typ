@@ -182,16 +182,32 @@ The Treasury Validator is the core contract responsible for managing member cont
 \
 ==== Slot Assignment & Rotation Mechanism
 \
-The DCU-Toolkit implements a deterministic slot assignment system for ROSCA-style rotating fund distribution via on-chain calculation:
+The DCU-Toolkit implements a deterministic, round-based slot assignment system for ROSCA-style rotating fund distribution:
 
-1. *Assignment*: When a member joins a group, they are assigned a fixed slot position (0 to num_intervals-1) sequentially. This value is stored in their Treasury datum's `assigned_slot` field.
+1. *Membership seal*: After at least two members have joined, the admin calls `StartGroup`, which fixes `num_intervals = member_count` and records `start_time = tx.validity_range.lower_bound`. No new members may join after this point.
 
-2. *Calculation*: The current rotation slot is calculated as:
+2. *Slot assignment*: When a member joins, they are assigned a fixed slot position (0 to `num_intervals − 1`) equal to `group.member_count` at join time (join order). Stored in their Treasury datum's `assigned_slot` field.
+
+3. *Round tracking*: The group datum's `last_distributed_round` starts at `−1` (no rounds run) and increments atomically with each `DistributeRound`. Rounds are strictly sequential — the next round number must equal `last_distributed_round + 1`.
+
+4. *Slot calculation*: The scheduled borrower for round N is:
    ```
-   current_slot = (current_time - group.start_time) / group.interval_length % num_intervals
+   current_slot = round_number % num_intervals
+   borrower     = member with assigned_slot == current_slot
    ```
 
-3. *Validation*: During `DistributePayout`, the validator verifies that the borrower's `assigned_slot` matches the calculated `current_slot`. This ensures only the designated member for the current interval can receive the payout.
+5. *Time gate*: Round N may not execute before:
+   ```
+   current_time >= start_time + round_number × interval_length
+   ```
+
+6. *Deferred payout*: A member may voluntarily defer their scheduled borrower turn by calling `DeferRound`, which sets `is_deferred = True` on their Treasury UTxO. During `DistributeRound`, if the scheduled borrower has `is_deferred = True`, the payout routes to the *next* slot instead:
+   ```
+   effective_borrower_slot = (current_slot + 1) % num_intervals
+   ```
+   The deferred member still contributes their `contribution_fee` for the round and their `is_deferred` flag is reset to `False`. This ensures the interval ends with exactly one member receiving the pot — no round is ever left empty.
+
+7. *Round completion*: After each `DistributeRound`, every participating Treasury UTxO has `rounds_paid` incremented by 1 and `is_deferred` reset to `False`.
 
 \
 ==== Parameters
@@ -231,7 +247,7 @@ The DCU-Toolkit implements a deterministic slot assignment system for ROSCA-styl
 
   - A Group Input must be provided from the Group Validator (as a spending input) to update the member count; the group output must have `member_count + 1`.
 
-  - The treasury output must be sent to the Treasury Script's address and contain a TreasuryState datum consistent with the Group datum: `assigned_slot == group.member_count`, correct `contribution_list`, `group_reference_tokenname` linking to the group, `member_payment_credential` recording the member's wallet PKH, and `membership_start` equal to the transaction's validity range lower bound.
+  - The treasury output must be sent to the Treasury Script's address and contain a `TreasuryState` datum consistent with the Group datum: `assigned_slot == group.member_count`, `rounds_paid == 0`, `is_deferred == False`, `group_reference_tokenname` linking to the group, and `member_payment_credential` recording the member's wallet PKH.
 
   - Exactly one Membership Token is minted under the Treasury policy; the token name matches `member_reference_tokenname` in the datum.
 
@@ -254,41 +270,58 @@ The DCU-Toolkit implements a deterministic slot assignment system for ROSCA-styl
 \
 ==== Datum
 \
-This is a Sum type datum where one represents the treasury datum and the other represents a penalty datum.
+The Treasury datum is a sum type with three variants representing the different states a Treasury UTxO may be in during its lifecycle.
 
 \
-===== Treasury datum <treasury-datum>
+===== TreasuryState <treasury-datum>
 \
+The active-member state. Created at JoinGroup; updated by DistributeRound, DeferRound, Contribute, and UpdatePayoutCredential; consumed by ExitGroup.
+
+- *`group_reference_tokenname`: ```rs AssetName```* – Links to the Group Validator. Matches the (100) ref token name on the Group UTxO.
+
+- *`member_reference_tokenname`: ```rs AssetName```* – The membership token name (CIP-68 prefix_222 form of the member's account suffix) locked in this UTxO.
+
+- *`assigned_slot`: ```rs Int```* – The member's fixed slot position (0 to `num_intervals − 1`), assigned in join order. Determines when this member is the scheduled borrower.
+
+- *`rounds_paid`: ```rs Int```* – Number of distribution rounds this member has contributed to. Starts at 0 at join time; incremented by DistributeRound. A treasury instance is eligible for round N only when `rounds_paid == N`.
+
+- *`is_deferred`: ```rs Bool```* – Set to `True` by DeferRound when the member wishes to skip their scheduled borrower turn. Reset to `False` by every DistributeRound regardless of which member received the payout. When `True` at payout time, the pot routes to `(assigned_slot + 1) % num_intervals` instead.
+
+- *`member_payment_credential`: ```rs ByteArray```* – 28-byte payment key hash of the member's wallet. Used by DistributeRound to route the payout to the correct address. Updatable via `UpdatePayoutCredential`.
+
+\
+===== PenaltyState <penalty-datum>
+\
+Created when a member exits early (before maturity). The membership token is locked in this UTxO until the admin claims it via `TerminateGroup`, which burns the token and returns the penalty ADA to the admin.
+
 - *`group_reference_tokenname`: ```rs AssetName```* – Links to the Group Validator.
 
-- *`member_reference_tokenname`: ```rs AssetName```* – Identifies the member's Account NFT.
-
-- *`membership_start`: ```rs Int```*  – The timestamp when the member joined the group. Must equal the transaction's validity range lower bound at join time (enforced by JoinGroup). Frozen from that point on by MemberWithdraw's structural equality check.
-
-- *`assigned_slot`: ```rs Int```* – The member's fixed slot position (0 to num_intervals-1) assigned at join time. Used for deterministic rotation schedule validation.
-
-- *`contribution_list`:* List of contributions – Each contribution specifies when and how much can be withdrawn based on the rotation schedule.
-
-  - *`Contribution`*:
-    - *`claimable_at` : ```rs Int```*  – Time after which the loan can be claimed.
-    - *`claimable_amount` : ```rs Int```*  – The loan amount available for withdrawal at that time.
-
-// - *`group_shares`: ```rs Int```* – The number of shares allocated to this member within the group.
-\
-===== Penalty datum <penalty-datum>
+- *`member_reference_tokenname`: ```rs AssetName```* – Identifies the membership token locked in this UTxO.
 
 \
+===== InsufficientCollateralState <insufficient-collateral-datum>
+\
+Transition state for members whose contribution balance falls below `contribution_fee`. The admin may grant up to `max_grace_extensions` (= 2) grace window extensions via `ExtendGraceWindow`. After the grace limit is reached, the UTxO is claimed via `TerminateGroup`.
+
 - *`group_reference_tokenname`: ```rs AssetName```* – Links to the Group Validator.
 
-- *`member_reference_tokenname`: ```rs AssetName```* – Identifies the member's Account NFT.
+- *`member_reference_tokenname`: ```rs AssetName```* – Identifies the membership token.
+
+- *`grace_expires_at`: ```rs Int```* – POSIX ms timestamp when the current grace window expires.
+
+- *`grace_extensions_used`: ```rs Int```* – Number of grace extensions already granted (max = 2).
+
+- *`rounds_paid`: ```rs Int```* – The `rounds_paid` value at the time of transition — carried for record keeping.
 
 \
 ==== Redeemer
 
 \
-- *```rust 
-  DistributePayout {
+- *```rust
+  DistributeRound {
+    round_number: Int,
     group_ref_input_index: Int,
+    group_output_index: Int,
     treasury_input_indices: List<Int>,
     treasury_output_indices: List<Int>,
     borrower_output_index: Int,
@@ -306,12 +339,36 @@ This is a Sum type datum where one represents the treasury datum and the other r
   ```*
 
 - *```rust
-  MemberWithdraw {
-    group_ref_input_index: Int,
+  Contribute {
     member_input_index: Int,
     treasury_input_index: Int,
     treasury_output_index: Int,
-    withdrawal_amount: Int,
+  }
+  ```*
+
+- *```rust
+  DeferRound {
+    round_number: Int,
+    member_input_index: Int,
+    treasury_input_index: Int,
+    treasury_output_index: Int,
+  }
+  ```*
+
+- *```rust
+  UpdatePayoutCredential {
+    member_input_index: Int,
+    treasury_input_index: Int,
+    treasury_output_index: Int,
+  }
+  ```*
+
+- *```rust
+  ExtendGraceWindow {
+    group_ref_input_index: Int,
+    admin_input_index: Int,
+    treasury_input_index: Int,
+    treasury_output_index: Int,
   }
   ```*
 
@@ -319,54 +376,90 @@ This is a Sum type datum where one represents the treasury datum and the other r
 ==== Validation
 
 \
-+ *DistributePayout* 
-  
-  This redeemer allows the group (or an administrator/bot) to trigger the distribution of funds to the eligible member for the current interval. It utilizes a "trustless collection" pattern where multiple member inputs are aggregated and sent directly to the borrower.
++ *DistributeRound*
 
-  - *Eligibility Check*: Validate that the "Borrower's" Treasury datum contains an `assigned_slot` that matches the calculated current rotation slot. This strictly enforces the rotation schedule.
+  Triggers distribution of the group pot for one sequential round. All active members' Treasury UTxOs are consumed and updated atomically with the group UTxO.
 
-  - The `Treasury` UTxOs being spent (at *`treasury_input_indices`*) must be identified and contain valid Treasury datums.
+  - *Sequential enforcement*: `round_number` must equal `group.last_distributed_round + 1`. Rounds cannot be skipped or replayed.
 
-  - A Group datum must be supplied as a reference input (at *`group_ref_input_index`*) to determine the Rotation Schedule and current Borrower.
+  - *Time gate*: `current_time >= start_time + round_number × interval_length`. A round cannot execute before its scheduled window.
 
-  - The "Borrower" output (at *`borrower_output_index`*) must go to the address of the scheduled member.
+  - *Round eligibility*: Every Treasury UTxO spent must be in `TreasuryState` with `rounds_paid == round_number`. Members that have already paid this round (stale UTxO) are excluded automatically.
 
-  - The value sent to the borrower must equal the sum of the collected `claimable_amount`s from the inputs (minus any transaction fees if applicable).
+  - *Borrower resolution*: `current_slot = round_number % num_intervals`. The borrower is the member with `assigned_slot == current_slot`. If that member's `is_deferred == True`, the payout routes to `(current_slot + 1) % num_intervals` instead. This ensures every interval ends with one recipient.
 
-  - The outputs at *`treasury_output_indices`* must return the Treasury UTxOs to the script address with updated datums (marking the current interval as "paid").
+  - *Payout amount*: Total payout = `contribution_fee × number_of_treasury_inputs` (the contribution asset moves out of each input and is aggregated to the borrower).
 
-  \
-+ *ExitGroup* 
+  - *Ascending index requirement*: `treasury_input_indices` and `treasury_output_indices` must both be in strictly ascending order. This prevents duplicate-index attacks.
 
-  The redeemer allows a member to exit a cooperative group, unlocking remaining contributions to their wallet address provided they have no loans.
+  - *Group output*: `last_distributed_round` incremented to `round_number`; all other group datum fields unchanged. The group UTxO must be a spending input (not a reference input) so its state is updated atomically.
 
-  - The member must provide an input (at *`member_input_index`*) containing the appropriate Account NFT.
-
-  - The Treasury UTxO (from treasury_input_index) must have a valid Treasury datum.
-  
-  - The Group UTxO is provided as a spending input to decrement the member count.
-
-
-  - The decision branch is based on the membership timing:
-
-    // - *Without Penalty:* If the current time is past the membership period or if the Group is inactive, the Membership Token is burned.
-
-    - *Penalty:* If exiting early (active group), the transaction must produce an output (at penalty_output_index) carrying a Penalty datum. This output must include at least the minimum penalty fee as defined by the Group datum.
+  - *Treasury outputs*: Each spent Treasury UTxO is returned to the script address with `rounds_paid` incremented by 1 and `is_deferred` reset to `False`. Output ADA equals input ADA minus `contribution_fee` (contribution asset balance decreases). Only ADA + the membership token may remain in the output (no value accumulation).
 
   \
-+ *MemberWithdraw* 
-  
-  The redeemer allows a member to withdraw their allocated funds when it's their turn in the rotation schedule.
++ *ExitGroup*
 
-  - The member's input (at member_input_index) must contain the correct Account NFT.
-    
-  - The Treasury UTxO (from treasury_input_index) must have a valid Treasury datum.
+  Allows a member to exit a cooperative group. The group UTxO is a spending input so `member_count` decrements atomically.
 
-  - The Group datum (from the reference input at group_ref_input_index) must be validated for withdrawal eligibility.
+  - The member input (at `member_input_index`) must contain the Account User NFT.
 
-  - Implement linear vesting by verifying withdrawal amount against vesting schedule and member's share allocation, contribution and reputation score.
-  
-  - If group is inactive, allow full withdrawal and burn the Membership Token.
+  - The Treasury UTxO must be in `TreasuryState`. The `group_reference_tokenname` in the datum must match the ref token name on the actual Group UTxO input (prevents cross-group substitution attacks).
+
+  - The group output must have `member_count − 1`; all other group fields are unchanged.
+
+  - *Maturity check*: `maturity_time = start_time + num_intervals × interval_length`. If `num_intervals == 0` (group not yet started), maturity is immediate.
+
+    - *Mature / inactive exit* (now >= maturity_time OR group is inactive): The membership token is burned. All locked ADA returns to the member.
+
+    - *Early exit* (group active AND now < maturity_time): A `PenaltyState` UTxO is produced at `penalty_output_index` retaining the membership token and at least `penalty_fee`. The remaining ADA (minus penalty) returns to the member.
+
+  \
++ *DeferRound*
+
+  Allows a member to voluntarily defer their scheduled borrower turn for the next round. The deferred member still contributes their `contribution_fee` that round; the payout routes to the next slot instead.
+
+  - `round_number` must equal `datum.rounds_paid` — the member is deferring the round they are next due for, not a future one.
+
+  - The member input (at `member_input_index`) must hold the Account User NFT.
+
+  - Output datum: identical to input with `is_deferred = True`. All other fields frozen.
+
+  - Output ADA and membership token preserved unchanged at the script address.
+
+  \
++ *Contribute*
+
+  Allows a member to top up their Treasury balance when it falls below `contribution_fee`, preventing transition to `InsufficientCollateralState`.
+
+  - The member input (at `member_input_index`) must hold the Account User NFT.
+
+  - Output datum: identical to input — no field changes (only the UTxO value increases).
+
+  - Output ADA ≥ input ADA; membership token preserved.
+
+  \
++ *UpdatePayoutCredential*
+
+  Allows a member to redirect future payouts to a new wallet address by updating `member_payment_credential`.
+
+  - The member input must hold the Account User NFT.
+
+  - Output datum: identical to input with only `member_payment_credential` updated to the new 28-byte key hash.
+
+  - Output ADA and membership token preserved unchanged.
+
+  \
++ *ExtendGraceWindow*
+
+  Allows the group administrator to grant an additional grace window to a member in `InsufficientCollateralState`.
+
+  - Only the administrator (holding the Group (222) user token at `admin_input_index`) may call this.
+
+  - The Treasury UTxO must be in `InsufficientCollateralState`. The group UTxO is provided as a reference input.
+
+  - `grace_extensions_used` must be < `max_grace_extensions` (= 2). After two extensions, only `TerminateGroup` is available.
+
+  - Output: `grace_expires_at` extended by `group.grace_period_length`; `grace_extensions_used` incremented by 1; all other datum fields frozen. ADA and membership token unchanged.
 
 #pagebreak()
 
@@ -384,10 +477,12 @@ Nothing
 ===== Redeemer
 \
 - CreateGroup
+
+- BurnGroup
 \
 ===== Validation
 \
-+ *CreateGroup* 
++ *CreateGroup*
 
   The redeemer allows creating a new cooperative group by minting one unique CIP-68 compliant Group Token.
 
@@ -401,13 +496,33 @@ Nothing
   
   - The output must contain a Group datum with the following requirements:
 
-    - *contribution_fee*: Must be greater than 0.
-    - *joining_fee*: Must be ≥ 0.
-    - *penalty_fee*: Must be ≥ 0.
-    - *interval_length*: Must be greater than 0.
-    - *num_intervals*: Must be > 0 and within a reasonable bound (e.g. ≤ 100).
-    - *member_count*: Must be initialized to 0.
-    - *is_active*: Must be set to true. 
+    - *`contribution_fee`*: Must be > 0.
+    - *`joining_fee`*: Must be ≥ 0.
+    - *`penalty_fee`*: Must be ≥ 0.
+    - *`grace_period_length`*: Must be ≥ 0.
+    - *`creator_bond`*: Must be ≥ 0 (0 is valid for trusted groups; ≥ `contribution_fee` recommended for open groups).
+    - *`interval_length`*: Must be > 0.
+    - *`num_intervals`*: Must be exactly 0 at creation. `StartGroup` sets this to `member_count` when sealing membership.
+    - *`max_members`*: Must be > 0.
+    - *`member_count`*: Must be 0 at creation.
+    - *`is_active`*: Must be `True` at creation.
+    - *`is_started`*: Must be `False` at creation — only `StartGroup` may set this to `True`.
+    - *`last_distributed_round`*: Must be `−1` at creation — no rounds have run yet.
+    - *`start_time`*: Must be 0 at creation — `StartGroup` sets this to the transaction's validity range lower bound.
+    - *`member_token_names`*: Must be an empty list `[]` at creation.
+    - *`admin_payment_credential`*: Must be exactly 28 bytes (a valid payment key hash).
+    - The Group Reference NFT must be the only token under this policy in the script output (exact token check).
+    - The Group User NFT must go to a VerificationKey address — if sent to a script, admin authority is permanently lost.
+
++ *BurnGroup*
+
+  The redeemer authorises the destruction of a Group's CIP-68 token pair as part of the hard-delete lifecycle. All real validation (admin auth, `member_count == 0`, deactivation prerequisite) is enforced by the paired `RemoveGroup` spend handler running in the same transaction. The mint handler only verifies:
+
+  - Exactly two tokens are burned under this policy (the Reference NFT and the User NFT — no partial burns).
+
+  - All quantities under this policy are negative (burning only, no new minting).
+
+  *Note:* Both `BurnGroup` (mint) and `RemoveGroup` (spend) must execute in the same transaction. A `BurnGroup` call without a paired `RemoveGroup` spend is rejected because burning fewer than two tokens fails the exact-count check.
 
 \
 
@@ -416,60 +531,75 @@ Nothing
 ===== Datum <group-datum>
 \
 
-- *`contribution_fee_policyid: PolicyId`* The PolicyId governing the asset used for the contribution fee.
+- *`contribution_fee_policyid: PolicyId`* The PolicyId governing the asset used for the contribution fee. Empty string (`""`) for ADA.
 
-- *`contribution_fee_assetname: AssetName`* The AssetName of the contribution fee.
+- *`contribution_fee_assetname: AssetName`* The AssetName of the contribution fee. Empty string for ADA.
 
-- *`contribution_fee: Int`* An Int representing the contribution fee amount per interval.
+- *`contribution_fee: Int`* The contribution fee amount per round. Must be > 0. Each member locks `max_members × contribution_fee` (ADA) or `2 ADA` minimum (non-ADA) at join time to pre-pay all future rounds.
 
-- *`joining_fee_policyid: PolicyId`* The PolicyId governing the asset used for the joining fee.
+- *`joining_fee_policyid: PolicyId`* The PolicyId governing the asset used for the joining fee. Empty string for ADA.
 
 - *`joining_fee_assetname: AssetName`* The AssetName of the joining fee.
 
-- *`joining_fee: Int`* An Int representing the one-time joining fee.
+- *`joining_fee: Int`* A one-time fee paid to `admin_payment_credential` at join time. May be 0.
 
 - *`penalty_fee_policyid: PolicyId`* The PolicyId governing the asset used for the penalty fee.
 
 - *`penalty_fee_assetname: AssetName`* The AssetName of the penalty fee.
 
-- *`penalty_fee: Int`* An Int representing the fee deducted when a member exits early.
+- *`penalty_fee: Int`* The fee retained in the `PenaltyState` UTxO when a member exits early. Must be ≥ 0.
 
-- *`interval_length: Int`* An Int defining the duration of one contribution interval.
+- *`grace_period_length: Int`* Duration in POSIX milliseconds of one grace window extension granted by `ExtendGraceWindow`. Used to compute `grace_expires_at`. May be 0.
 
-- *`num_intervals: Int`* An Int representing the total number of intervals in the rotation cycle.
+- *`creator_bond: Int`* ADA bond locked in the Group UTxO at creation that the admin forfeits if the group is deleted while members are still active. 0 is valid for trusted groups; ≥ `contribution_fee` is recommended for open groups. Must be ≥ 0.
 
-- *`member_count: Int`* An Int tracking the number of active members in the group.
+- *`interval_length: Int`* Duration in POSIX milliseconds of one distribution round. Must be > 0.
 
-- *`is_active: Bool`* A Bool indicating whether the group is currently active.
-  
-*Note:* Contribution fees can be based on length of period the member commits to, e.g. If they pay for one cycle, the fees may differ from paying for multiple cycles. Group administrators can configure flexible pricing models.
+- *`num_intervals: Int`* Total number of distribution rounds in one ROSCA cycle. *Must be 0 at creation* — `StartGroup` sets it to `member_count` when sealing membership. After `StartGroup` this field is frozen.
+
+- *`max_members: Int`* Maximum number of members who may join. Must be > 0. Frozen once any member is active (`member_count > 0`).
+
+- *`member_count: Int`* Number of active members. Initialized to 0 at creation; incremented by `MemberJoin`, decremented by `MemberExit`. Managed exclusively by the treasury validator via those two redeemers.
+
+- *`is_active: Bool`* Whether the group is currently active. Set to `True` at creation; may only transition `True → False` via `UpdateGroup`. Deactivation is permanent — reactivation is forbidden.
+
+- *`is_started: Bool`* Whether `StartGroup` has been called. `False` at creation; `True` after `StartGroup`. Once `True`, no new members may join and `num_intervals`, `start_time` are fixed. This is a one-way latch.
+
+- *`start_time: Int`* POSIX millisecond timestamp when the ROSCA rotation schedule begins. *Must be 0 at creation* — `StartGroup` sets it to the transaction's validity range lower bound. Used by `DistributeRound` for the time gate: `current_time >= start_time + round_number × interval_length`.
+
+- *`last_distributed_round: Int`* Index of the last completed distribution round. Initialized to `−1` at creation (no rounds run); incremented atomically by `DistributeRound`. Frozen by `UpdateGroup`.
+
+- *`admin_payment_credential: ByteArray`* The 28-byte payment key hash of the group administrator's wallet. Joining fees are routed here at join time. Must be exactly 28 bytes.
+
+- *`member_token_names: List<AssetName>`* On-chain membership registry: one entry per active member, containing their treasury membership token name (CIP-68 prefix_222 form). Appended at `MemberJoin`, removed at `MemberExit`. Invariant: `list.length(member_token_names) == member_count`.
+
+*Note:* All fee amounts, policy IDs, and asset names are *critical fields* — they cannot be changed via `UpdateGroup` while `member_count > 0`. Changing a fee's currency is as disruptive as changing its amount.
 
 \
 
 ===== Redeemer
 \
--  *```rust
+- *```rust
   UpdateGroup {
     group_ref_token_name: AssetName,
     admin_input_index: Int,
     group_input_index: Int,
     group_output_index: Int,
   }
-````````*
-  
+  ```*
 
 - *```rust
   RemoveGroup {
     group_ref_token_name: AssetName,
     admin_input_index: Int,
     group_input_index: Int,
-    group_output_index: Int,
   }
-```````*
+  ```*
 
 - *```rust
   MemberJoin {
     group_ref_token_name: AssetName,
+    member_token_name: AssetName,
     group_input_index: Int,
     group_output_index: Int,
   }
@@ -478,8 +608,27 @@ Nothing
 - *```rust
   MemberExit {
     group_ref_token_name: AssetName,
+    member_token_name: AssetName,
     group_input_index: Int,
     group_output_index: Int,
+  }
+  ```*
+
+- *```rust
+  StartGroup {
+    group_ref_token_name: AssetName,
+    admin_input_index: Int,
+    group_input_index: Int,
+    group_output_index: Int,
+  }
+  ```*
+
+- *```rust
+  DistributeRound {
+    group_ref_token_name: AssetName,
+    group_input_index: Int,
+    group_output_index: Int,
+    round_number: Int,
   }
   ```*
 
@@ -493,33 +642,31 @@ Nothing
   - A Group UTxO containing the Group NFT must be provided (at group_input_index) with its output reference matching the provided reference.
 
   - An administrator input (at admin_input_index) must be present to prove ownership of the Group NFT (derived from group_ref_token_name).
-  
-  - The output at group_output_index must be sent to the Group Script's address and must include an updated Group datum.
-  
-  - Validate that the metadata of the Reference NFT token is updated within acceptable bounds.
-  
-  - Critical metadata changes (fees, intervals) are *ONLY* allowed if `member_count == 0`.
-  
-  - The Group NFT must still be present in the output.
+
+  - The output at group_output_index must be sent to the same Group Script address and must contain exactly the Reference NFT — no other tokens under this policy (prevents the admin from accidentally locking their User NFT inside the script, which would permanently revoke admin authority).
+
+  - The output ADA must be ≥ the input ADA (no draining the group UTxO during metadata updates).
+
+  - `member_count` is frozen — it cannot be changed via UpdateGroup (managed exclusively by MemberJoin/MemberExit).
+
+  - `is_active` is a one-way latch: only `true → false` is permitted. Reactivation (`false → true`) is permanently forbidden; deactivation is the admin's irrevocable signal to members to exit.
+
+  - The following fields are *critical* and may only be changed when `member_count == 0`: all fee amounts, all fee policy IDs, all fee asset names, `creator_bond`, `grace_period_length`, `interval_length`, `num_intervals`, `start_time`, `max_members`, and `admin_payment_credential`. Changing `start_time` while members are active would shift every member's payout window; changing fee currency is an economic rug-pull equivalent to raising the amount.
 
   \
 + *RemoveGroup*
 
-  This redeemer endpoint allows an administrator to deactivate a group from the cooperative finance system.
+  This redeemer endpoint permanently dissolves a group by burning both CIP-68 tokens. It must be paired with the `BurnGroup` mint redeemer in the same transaction. No group UTxO is produced — the group is gone from the chain entirely and all creation-deposit ADA is returned to the admin as transaction change.
 
-  - The transaction must include two script inputs:
+  - The group must already be deactivated (`is_active == false`) before deletion — the admin must call UpdateGroup to deactivate first, giving members time to exit.
 
-    - One input containing the Group UTxO with the Group NFT (at *`group_input_index`*).
+  - `member_count` must be 0 — all members must have exited before the group can be dissolved.
 
-    - An administrator input (at *`admin_input_index`*) proving ownership of the Group NFT.
+  - The transaction must spend the Group UTxO (at *`group_input_index`*) and include an administrator input (at *`admin_input_index`*) holding the Group User NFT.
 
-  - Two script outputs must be produced, with one of them (at *`group_output_index`*) sent to the Group Script's address.
-  
-  - The output Group datum must indicate that the group is inactivated by setting is_active to false.
-  
-  - The Group NFT must still be present in the output to maintain correct state tracking.
-  
-  - `member_count` must be 0 to remove/deactivate a group.
+  - The `BurnGroup` mint redeemer must burn exactly the Reference NFT (qty −1) and the User NFT (qty −1) under this policy — no other tokens, no partial burns.
+
+  - No group script output is produced. The ADA previously locked in the Group UTxO (including `creator_bond`) returns to the admin.
 
   \
 + *MemberJoin*
@@ -535,15 +682,56 @@ Nothing
   \
 + *MemberExit*
 
-  This redeemer is invoked when a member exits a group. It handles three scenarios based on whether the treasury membership token is burned in the same transaction:
+  This redeemer is invoked when a member exits a group. `member_count` always decrements by exactly 1 regardless of exit path — the slot is freed immediately so the group's rotation continues without stalling.
 
-  - *Mature/inactive exit (burn path)*: If the Treasury validator burns exactly one membership token, `member_count` decrements by 1.
+  - *Mature/inactive exit*: The Treasury validator burns the membership token in the same transaction. `member_count` decrements by 1. The member's token name is removed from `member_token_names`.
 
-  - *PenaltyWithdraw (burn path)*: Same as mature exit — token is burned, `member_count` decrements by 1.
+  - *Early exit (penalty path)*: The membership token is not burned — it moves to a PenaltyState UTxO. `member_count` still decrements by 1 immediately, freeing the slot for a new member. The penalty token is claimed separately by the admin via TerminateGroup. The member's token name is removed from `member_token_names`.
 
-  - *Early exit (no-burn path)*: If no treasury token is burned (token moves to a PenaltyState UTxO), `member_count` stays unchanged — the member remains committed until the penalty is resolved.
+  - `member_count` must be ≥ 1 before exit (enforced as a hard crash — passing `member_count == 0` is an invalid state).
 
-  - `member_count` must be ≥ 1 before exit. The group output must be at the same script address with the Group NFT retained.
+  - Only `member_count` and `member_token_names` change; all other datum fields are structurally frozen.
+
+  - The group output must be at the same script address with exactly the Reference NFT retained and ADA ≥ input ADA.
+
+  - The treasury validator must co-participate in the transaction — either by burning a treasury token (mature/inactive exit) or by having a Treasury UTxO spent (early/penalty exit). This is an explicit on-chain requirement: without it, any wallet could invoke MemberExit and decrement `member_count` without the treasury validator ever executing.
+
+  \
++ *StartGroup*
+
+  Seals membership and begins the ROSCA rotation schedule. After this point, no new members may join and `DistributeRound` becomes available.
+
+  - The admin input (at `admin_input_index`) must hold the Group (222) user token.
+
+  - `is_started` must be `False` (cannot call StartGroup twice).
+
+  - `member_count` must be ≥ 2 — a minimum two-member ROSCA is required for meaningful rotation.
+
+  - Group output fields set by StartGroup:
+    - `is_started = True`
+    - `num_intervals = member_count` (fixes the rotation cycle length)
+    - `start_time = tx.validity_range.lower_bound` (anchors the schedule)
+
+  - All other datum fields are frozen — only the three fields above may change.
+
+  - Group output ADA ≥ input ADA; only ADA + Group Reference NFT in the output.
+
+  \
++ *DistributeRound*
+
+  Increments `last_distributed_round` atomically with the Treasury validator's distribution. This redeemer runs only as part of a `DistributeRound` treasury spend — both must execute in the same transaction.
+
+  - `round_number` must equal `last_distributed_round + 1` (sequential enforcement).
+
+  - `is_started` must be `True` — group must be sealed before any round can run.
+
+  - `is_active` must be `True`.
+
+  - `round_number` must be < `num_intervals` (round must be within the current cycle).
+
+  - Group output: `last_distributed_round = round_number`; all other fields frozen.
+
+  - Group output ADA ≥ input ADA; only ADA + Group Reference NFT in the output.
 
 #pagebreak()
 
@@ -1190,20 +1378,20 @@ This transaction updates the group metadata attached to the Group UTxO at the sc
 
 #pagebreak()
 
-=== Spend :: RemoveGroup
+=== Spend :: StartGroup
 \
-This transaction allows an administrator to deactivate a cooperative group by updating the Group UTxO datum so that `is_active` is set to `false`. The Group Reference NFT is preserved in the output to maintain correct on-chain state. The group must have zero active members (`member_count == 0`) before it can be deactivated.
+This transaction seals membership and begins the ROSCA rotation schedule. It may only be called by the group administrator after at least two members have joined. After this point, no new members may join and `DistributeRound` becomes available. The admin's wallet UTxO is NOT required to be a spending input — the admin token (Group (222) NFT) is enough proof of authority.
 
 \
 #transaction(
-  "RemoveGroup",
+  "StartGroup",
   inputs: (
     (
       name: "Admin Wallet UTxO",
       address: "admin_wallet",
       value: (
         ada: 2000000,
-        Group_NFT: 1,
+        Group_NFT: 1, // (222) admin token proves authority
       ),
     ),
     (
@@ -1214,8 +1402,10 @@ This transaction allows an administrator to deactivate a cooperative group by up
         Group_Ref: 1,
       ),
       datum: (
-        member_count: 0, // Required
-        active: true,
+        member_count: 3,
+        is_started: false,
+        num_intervals: 0,
+        start_time: 0,
       ),
     ),
   ),
@@ -1236,13 +1426,99 @@ This transaction allows an administrator to deactivate a cooperative group by up
         Group_Ref: 1,
       ),
       datum: (
-        member_count: 0,
-        active: false, // Deactivated
+        member_count: 3,
+        is_started: true,        // Set to True — one-way latch
+        num_intervals: 3,        // Set to member_count
+        start_time: 1716000000000, // tx.validity_range.lower_bound
       ),
     ),
   ),
   show_mints: false,
-  notes: [Deactivate Group],
+  notes: [Seal membership — is_started True, num_intervals = member_count, start_time anchored],
+)
+\
+
+==== Inputs
+\
+  + *Admin Wallet UTxO*
+
+    - Address: Administrator's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Group (222) NFT (admin authority token)
+
+  + *Group Validator UTxO* (spending input)
+
+    - Address: Group validator script address
+
+    - Datum: group datum with `is_started = False` and `member_count ≥ 2`
+
+    - Value: 1 Group Reference NFT + minimum ADA
+\
+==== Outputs
+\
+  + *Admin Wallet UTxO*
+
+    - Address: Administrator's wallet address
+
+    - Value: change ADA + Group (222) NFT returned
+
+  + *Group Validator UTxO*
+
+    - Address: Group validator script address
+
+    - Datum: same as input with three fields updated:
+      - `is_started = True`
+      - `num_intervals = member_count`
+      - `start_time = tx.validity_range.lower_bound`
+
+    - Value: identical to input (no ADA change)
+
+#pagebreak()
+
+=== Spend :: RemoveGroup (+ Mint :: BurnGroup)
+\
+This transaction permanently deletes a cooperative group. It is a hard-delete: both the Group Reference NFT (100) and the Group NFT (222) are burned, the Group Validator UTxO is consumed and produces no output, and the locked ADA is returned to the administrator. The group must already be deactivated (`is_active == false`) and have zero active members (`member_count == 0`) before it can be deleted. Deactivation is performed first via `UpdateGroup` (setting `is_active` to `false`), then deletion via this two-redeemer transaction.
+
+\
+#transaction(
+  "RemoveGroup + BurnGroup",
+  inputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 2000000,
+        Group_NFT: 1, // (222) user token — burned
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1, // (100) ref token — burned
+      ),
+      datum: (
+        member_count: 0, // Required
+        active: false,   // Must be deactivated first
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Admin Wallet UTxO",
+      address: "admin_wallet",
+      value: (
+        ada: 4500000, // Reclaimed: admin deposit + group UTxO ADA (minus fees)
+      ),
+    ),
+  ),
+  show_mints: true,
+  notes: [Hard-delete Group: both tokens burned (−1 Group_Ref, −1 Group_NFT), no group output],
 )
 
 \
@@ -1256,7 +1532,7 @@ This transaction allows an administrator to deactivate a cooperative group by up
 
       - Minimum ADA
 
-      - 1 Group NFT Asset (proves ownership)
+      - 1 Group NFT (222) asset (proves admin ownership; burned in this tx)
 
   + *Group Validator UTxO*
 
@@ -1264,13 +1540,19 @@ This transaction allows an administrator to deactivate a cooperative group by up
 
     - Datum:
 
-      - existing_datum: listed in @group-datum, with `member_count == 0` and `is_active == true`
+      - existing_datum: listed in @group-datum, with `member_count == 0` and `is_active == false`
 
     - Value:
 
       - Minimum ADA
 
-      - 1 Group Reference NFT Asset
+      - 1 Group Reference NFT (100) asset (burned in this tx)
+\
+==== Mints
+\
+  - Group policy: `-1` Group Reference NFT (100) + `-1` Group NFT (222)
+
+  - Exactly two tokens burned under this policy; all quantities must be negative.
 \
 ==== Outputs
 \
@@ -1280,25 +1562,9 @@ This transaction allows an administrator to deactivate a cooperative group by up
 
     - Value:
 
-      - Minimum ADA
+      - Reclaimed ADA (creation deposit + group UTxO balance, minus tx fees)
 
-      - 1 Group NFT Asset
-
-  + *Group Validator UTxO*
-
-    - Address: Group validator script address
-
-    - Datum:
-
-      - updated_datum: Same fields as @group-datum with `is_active` set to `false`
-
-    - Value:
-
-      - Minimum ADA
-
-      - 1 Group Reference NFT Asset
-
-*Note:* The Group Reference NFT is preserved in the output to maintain correct on-chain state. The group can no longer accept new members once `is_active` is `false`.
+*Note:* No Group Validator UTxO is produced. Both CIP-68 tokens are permanently burned. This is a two-step lifecycle: first call `UpdateGroup` to set `is_active = false` (while `member_count == 0`), then call this transaction to burn both tokens and reclaim ADA. A `BurnGroup` mint without a paired `RemoveGroup` spend is rejected because the spend handler enforces admin auth and deactivation; a `RemoveGroup` spend without `BurnGroup` is rejected because the mint handler enforces exact-2-burns.
 
 #pagebreak()
 
@@ -1306,7 +1572,7 @@ This transaction allows an administrator to deactivate a cooperative group by up
 \
 === Mint :: JoinGroup
 \
-This transaction occurs when a member joins a cooperative group by locking contribution funds in the Treasury Validator script address.
+This transaction occurs when a member joins a cooperative group. It atomically mints one Membership Token, creates the member's Treasury UTxO with pre-paid contributions, and updates the Group UTxO to increment `member_count`. The Group UTxO is a *spending input* — not a reference — so the group state is updated in the same transaction.
 
 \
 #transaction(
@@ -1328,9 +1594,10 @@ This transaction occurs when a member joins a cooperative group by locking contr
         Group_Ref: 1,
       ),
       datum: (
-        joining_fee: 50,
-        contribution_fee: 100,
+        joining_fee: 0,
+        contribution_fee: 2000000,
         member_count: 5,
+        is_started: false,
       ),
     ),
   ),
@@ -1339,22 +1606,22 @@ This transaction occurs when a member joins a cooperative group by locking contr
       name: "Member Wallet UTxO",
       address: "member_wallet",
       value: (
-        ada: 9850000, 
+        ada: 1000000,
         Account_NFT: 1,
-        Member_User: 1, // Account Identity
+        Member_User: 1, // Account user token stays in wallet
       ),
     ),
     (
       name: "Treasury Validator UTxO",
       address: "treasury_validator",
       value: (
-        ada: 100000000, 
-        Member_Ref: 1, // Locked State
+        ada: 60000000, // max_members × contribution_fee pre-paid
+        Member_Ref: 1, // Membership token locked here
       ),
       datum: (
-        start: 123456789,
-        contribution: 100,
-        assigned_slot: 6, // Slot #6
+        assigned_slot: 5,   // == member_count at join time
+        rounds_paid: 0,
+        is_deferred: false,
       ),
     ),
     (
@@ -1365,12 +1632,12 @@ This transaction occurs when a member joins a cooperative group by locking contr
         Group_Ref: 1,
       ),
       datum: (
-        member_count: 6, 
+        member_count: 6, // Incremented by 1
       ),
     ),
   ),
   show_mints: true,
-  notes: [Join & Lock Funds],
+  notes: [Join Group — Group UTxO is a spending input; member_count atomically incremented],
 )
 \
 
@@ -1380,34 +1647,160 @@ This transaction occurs when a member joins a cooperative group by locking contr
 
     - Address: Member's wallet address
 
-    - Value: 
+    - Value:
 
-      - 100 ADA: Contribution amount to lock in the Treasury Contract.
+      - `max_members × contribution_fee` ADA (pre-pays all future rounds) or minimum 2 ADA for non-ADA fees
 
-      - 1 Account NFT Asset
+      - 1 Account User NFT (proves account ownership; stays in wallet)
 
-  + *Group Reference UTxO*
+  + *Group Validator UTxO* (spending input)
 
-    - Address: Group Contract Address
+    - Address: Group validator script address
 
-    - Datum:
+    - Datum: existing group datum as listed in @group-datum
 
-      - group_datum: listed in @group-datum
-
-    - Value: 
+    - Value:
 
       - 1 Group Reference NFT Asset
-      - Minimum Ada
+      - Minimum ADA
 \
 ==== Mints
 \
-  + *Treasury Validator*
-    - Redeemer: JoinGroup
+  + *Treasury Validator (Mint — JoinGroup)*
 
-    - Value: 
+    - Value:
 
-      - +1 Treasury NFT Asset
-      
+      - +1 Membership Token (the member's CIP-68 treasury token)
+
+  + *Group Validator (Spend — MemberJoin)*
+
+    - Atomically updates the Group UTxO: `member_count + 1`, appends token name to `member_token_names`
+
+\
+==== Outputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value:
+
+      - Change ADA (after contribution lock and optional joining fee)
+
+      - 1 Account User NFT (returned)
+
+      - 1 Membership User Token (the (222) prefix copy, returned to wallet)
+
+  + *Treasury Validator UTxO*
+
+    - Address: Treasury validator script address
+
+    - Datum (`TreasuryState`):
+
+      - `assigned_slot`: index equal to `group.member_count` at join time
+      - `rounds_paid`: 0
+      - `is_deferred`: False
+      - `member_payment_credential`: member's wallet PKH
+      - `group_reference_tokenname` / `member_reference_tokenname`: linking tokens
+
+    - Value:
+
+      - `max_members × contribution_fee` ADA (pre-paid contributions)
+
+      - 1 Membership Reference Token (the (100) prefix, locked at script)
+
+  + *Group Validator UTxO*
+
+    - Address: Group validator script address
+
+    - Datum: same as input with `member_count` incremented by 1 and member token name appended to `member_token_names`
+
+    - Value: same as input
+#pagebreak()
+
+=== Spend :: DeferRound
+\
+This transaction allows a member to voluntarily defer their scheduled borrower turn for the next distribution round. The deferred member still contributes their `contribution_fee` when the round runs; the pot routes to the next slot instead. The `is_deferred` flag resets automatically when `DistributeRound` processes this member.
+
+\
+#transaction(
+  "DeferRound",
+  inputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 2000000,
+        Account_NFT: 1,
+        Member_User: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 60000000,
+        Member_Ref: 1,
+      ),
+      datum: (
+        assigned_slot: 2,
+        rounds_paid: 2,
+        is_deferred: false,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 1500000,
+        Account_NFT: 1,
+        Member_User: 1,
+      ),
+    ),
+    (
+      name: "Treasury Validator UTxO",
+      address: "treasury_validator",
+      value: (
+        ada: 60000000, // ADA unchanged
+        Member_Ref: 1,
+      ),
+      datum: (
+        assigned_slot: 2,
+        rounds_paid: 2,
+        is_deferred: true, // Only this field changes
+      ),
+    ),
+  ),
+  show_mints: false,
+  notes: [Defer scheduled payout turn — is_deferred set to True, resets at DistributeRound],
+)
+\
+
+==== Inputs
+\
+  + *Member Wallet UTxO*
+
+    - Address: Member's wallet address
+
+    - Value:
+
+      - Minimum ADA
+
+      - 1 Account User NFT Asset (proves ownership)
+
+  + *Treasury Validator UTxO*
+
+    - Address: Treasury validator script address
+
+    - Datum: `TreasuryState` as listed in @treasury-datum
+
+    - Value:
+
+      - Locked contribution funds
+
+      - 1 Membership Reference Token
 \
 ==== Outputs
 \
@@ -1419,156 +1812,15 @@ This transaction occurs when a member joins a cooperative group by locking contr
 
       - Change ADA
 
-      - 1 Account NFT Asset
+      - 1 Account User NFT (returned)
 
   + *Treasury Validator UTxO*
 
     - Address: Treasury validator script address
 
-    - Datum: 
-      - treasury datum as listed in @treasury-datum
+    - Datum: identical to input with `is_deferred = True`
 
-    - Value:
-    
-      - 100 ADA: Contribution funds to be managed by the group
-
-      - 1 Treasury NFT Asset
-#pagebreak()
-
-=== Spend :: MemberWithdraw
-\
-This transaction allows a member to withdraw their allocated funds when it's their turn in the rotation schedule.
-
-\
-#transaction(
-  "MemberWithdraw",
-  inputs: (
-    (
-      name: "Member Wallet UTxO",
-      address: "member_wallet",
-      value: (
-        ada: 2000000,
-        Account_NFT: 1,
-        Member_User: 1, // Account Identity
-      ),
-    ),
-    (
-      name: "Treasury Validator UTxO",
-      address: "treasury_validator",
-      value: (
-        ada: 500000000,
-        Member_Ref: 1,
-      ),
-      datum: (
-        start: 123456789,
-        contribution: 100,
-        assigned_slot: 6,
-      ),
-    ),
-    (
-      reference: true,
-      name: "Group Reference UTxO",
-      address: "group_validator",
-      value: (
-        ada: 3000000,
-        Group_Ref: 1,
-      ),
-    ),
-  ),
-  outputs: (
-    (
-      name: "Member Wallet UTxO",
-      address: "member_wallet",
-      value: (
-        ada: 102000000, // +100 ADA withdrawn
-        Account_NFT: 1,
-        Member_User: 1,
-      ),
-    ),
-    (
-      name: "Treasury Validator UTxO",
-      address: "treasury_validator",
-      value: (
-        ada: 400000000, // Remaining
-        Member_Ref: 1,
-      ),
-      datum: (
-        start: 123456789,
-        contribution: 0, 
-        member_index: 6,
-      ),
-    ),
-  ),
-  show_mints: false,
-  notes: [Member Withdraws Funds],
-)
-\
-
-==== Inputs
-\
-  + *Member Wallet UTxO*
-
-    - Address: Member's wallet address
-
-    - Value: 
-
-      - Minimum ADA
-
-      - 1 Account NFT Asset
-
-  + *Treasury Validator UTxO*
-
-    - Address: Treasury validator script address
-
-    - Datum:
-      - datum listed in @treasury-datum
-
-    - Value:
-
-      - Locked contribution funds
-
-      - 1 Treasury NFT Asset
-
-  + *Group Reference UTxO*
-
-    - Address: Group Contract Address
-
-    - Datum:
-
-      - group_datum: listed in @group-datum
-
-    - Value: 
-
-      - 1 Group Reference NFT Asset
-      - Minimum Ada
-\
-==== Outputs
-\
-  + *Member Wallet UTxO*
-
-    - Address: Member's wallet address
-
-    - Value:
-    
-      - Minimum ADA
-      
-      - Withdrawn funds according to vesting schedule
-      
-      - 1 Account NFT Asset
-
-  + *Treasury Validator UTxO*
-
-    - Address: Treasury validator script address
-
-    - Datum:
-
-      - datum listed in @treasury-datum with updated installments
-
-    - Value:
-    
-      - Remaining funds after withdrawal
-
-      - 1 Treasury NFT Asset
+    - Value: identical to input (ADA and membership token unchanged)
 
 #pagebreak()
 
@@ -1631,7 +1883,8 @@ This transaction allows a member to exit a cooperative group by spending a Treas
         Member_Ref: 1,
       ),
       datum: (
-        penalty: 50,
+        // PenaltyState — group_reference_tokenname + member_reference_tokenname
+        type: "PenaltyState",
       ),
     ),
     (
@@ -1647,7 +1900,7 @@ This transaction allows a member to exit a cooperative group by spending a Treas
     ),
   ),
   show_mints: false,
-  notes: [Exit Group & Update Count],
+  notes: [Early exit: PenaltyState UTxO created; Group UTxO is a spending input for member_count decrement],
 )
 \
 
@@ -1657,38 +1910,34 @@ This transaction allows a member to exit a cooperative group by spending a Treas
 
     - Address: Member's wallet address
 
-    - Value: 
+    - Value:
 
-      - Minimum ADA 
+      - Minimum ADA
 
-      - 1 Account NFT Asset
+      - 1 Account User NFT Asset
 
   + *Treasury Validator UTxO*
 
     - Address: Treasury validator script address
 
-    - Datum:
-
-      - current_datum: Current treasury metadata listed in @treasury-datum
+    - Datum: `TreasuryState` as listed in @treasury-datum
 
     - Value:
 
-      - Remaining contribution funds
+      - Locked contribution funds
 
-      - Treasury NFT Asset
+      - 1 Membership Reference Token
 
-  + *Group Reference UTxO*
+  + *Group Validator UTxO* (spending input)
 
-    - Address: Group Contract Address
+    - Address: Group validator script address
 
-    - Datum:
+    - Datum: group datum as listed in @group-datum
 
-      - group_datum: listed in @group-datum
-
-    - Value: 
+    - Value:
 
       - 1 Group Reference NFT Asset
-      - Minimum Ada
+      - Minimum ADA
 \
 ==== Outputs
 \
@@ -1700,73 +1949,79 @@ This transaction allows a member to exit a cooperative group by spending a Treas
 
       - Minimum ADA
 
-      - Remaining contribution funds (minus any penalties)
+      - Remaining contribution funds (minus penalty if early exit)
 
-      - 1 Account NFT Asset
+      - 1 Account User NFT Asset
 
-  + *Treasury Validator UTxO* (if exiting early with penalty)
+  + *Treasury Validator UTxO* (early exit path only — PenaltyState)
 
     - Address: Treasury validator script address
 
-    - Datum:
-
-      - penalty_datum: Metadata indicating the penalty for early exit as listed in @penalty-datum
+    - Datum: `PenaltyState` as listed in @penalty-datum
 
     - Value:
-    
-      - Penalty ADA
 
-      - Treasury NFT Asset
+      - Penalty ADA (≥ `penalty_fee`)
 
-*Note:* If the group is inactive or membership period has ended, the Treasury NFT is burned.
+      - 1 Membership Reference Token (held until admin claims via TerminateGroup)
+
+  + *Group Validator UTxO*
+
+    - Address: Group validator script address
+
+    - Datum: same as input with `member_count − 1` and member token name removed from `member_token_names`
+
+    - Value: same as input
+
+*Note:* Mature / inactive exit path burns the Membership token and returns all ADA to the member. No PenaltyState UTxO is created.
 
 #pagebreak()
 
-=== Spend :: DistributePayout
+=== Spend :: DistributeRound
 \
-This transaction aggregates contributions from multiple members and distributes the lump sum "pot" to the eligible winner of the current rotation interval. It ensures trustless delivery of funds.
+This transaction distributes the group pot for one sequential round. All active members' Treasury UTxOs are consumed and updated atomically with the Group UTxO. The Group UTxO is a *spending input* so `last_distributed_round` is updated on-chain. The borrower (scheduled slot member) receives the full pot. If the borrower has `is_deferred = True`, the payout routes to the next slot.
 
 \
 #transaction(
-  "DistributePayout",
+  "DistributeRound",
   inputs: (
     (
-      name: "Borrower Wallet",
-      address: "member_wallet", // Borrower
-      value: (
-        ada: 2000000,
-        Member_User: 1, // Account Identity
-      ),
-    ),
-    (
-      name: "Treasury UTxO (A)",
+      name: "Treasury UTxO (A) — Borrower",
       address: "treasury_validator",
       value: (
-        ada: 100000000,
+        ada: 60000000,
         Member_Ref: 1,
       ),
       datum: (
-        assigned_slot: 0,
+        assigned_slot: 0,    // current_slot = round_number % num_intervals
+        rounds_paid: 0,
+        is_deferred: false,
       ),
     ),
     (
       name: "Treasury UTxO (B)",
       address: "treasury_validator",
       value: (
-        ada: 100000000,
+        ada: 60000000,
         Member_Ref: 1,
       ),
       datum: (
         assigned_slot: 1,
+        rounds_paid: 0,
+        is_deferred: false,
       ),
     ),
     (
-      reference: true,
-      name: "Group Reference UTxO",
+      name: "Group Validator UTxO",
       address: "group_validator",
       value: (
         ada: 3000000,
         Group_Ref: 1,
+      ),
+      datum: (
+        last_distributed_round: -1, // round_number - 1
+        num_intervals: 2,
+        is_started: true,
       ),
     ),
   ),
@@ -1775,90 +2030,91 @@ This transaction aggregates contributions from multiple members and distributes 
       name: "Borrower Wallet UTxO",
       address: "member_wallet",
       value: (
-        ada: 200000000, // Pot
+        ada: 4000000, // contribution_fee × num_members (2 × 2 ADA)
       ),
     ),
     (
       name: "Treasury UTxO (A)",
       address: "treasury_validator",
       value: (
-        ada: 2000000,
+        ada: 58000000, // −contribution_fee
         Member_Ref: 1,
       ),
       datum: (
-        status: "paid",
+        rounds_paid: 1,   // Incremented
+        is_deferred: false, // Always reset
       ),
     ),
     (
       name: "Treasury UTxO (B)",
       address: "treasury_validator",
       value: (
-        ada: 2000000,
+        ada: 58000000,
         Member_Ref: 1,
       ),
       datum: (
-        status: "paid",
+        rounds_paid: 1,
+        is_deferred: false,
+      ),
+    ),
+    (
+      name: "Group Validator UTxO",
+      address: "group_validator",
+      value: (
+        ada: 3000000,
+        Group_Ref: 1,
+      ),
+      datum: (
+        last_distributed_round: 0, // Incremented to round_number
       ),
     ),
   ),
   show_mints: false,
-  notes: [Distribute Payout to Borrower],
+  notes: [DistributeRound 0: Group UTxO is a spending input; all treasury UTxOs updated atomically],
 )
 \
 
 ==== Inputs:
 \
-+ *Treasury Validator UTxOs (Multiple)*
++ *Treasury Validator UTxOs (all active members)*
 
   - Address: Treasury validator script address
 
-  - Datum:
-    - treasury_datum: listed in @treasury-datum (for Member A)
-    - treasury_datum: listed in @treasury-datum (for Member B)
-    - ...
+  - Datum: `TreasuryState` with `rounds_paid == round_number` (not yet processed this round)
 
-  - Value:
-    - Locked contribution funds per member
-    - Treasury NFT Assets
+  - Value: locked contribution funds + membership reference token
 
-+ *Group Reference UTxO*
++ *Group Validator UTxO* (spending input)
 
-    - Address: Group Contract Address
+  - Address: Group validator script address
 
-    - Datum:
+  - Datum: group datum with `last_distributed_round == round_number − 1`
 
-      - group_datum: listed in @group-datum
-
-    - Value: 
-
-      - 1 Group Reference NFT Asset
-      - Minimum Ada
+  - Value: Group Reference NFT + minimum ADA
 \
 ==== Outputs:
 \
 + *Borrower Wallet UTxO*
 
-  - Address: Scheduled Borrower's wallet address
+  - Address: Member's wallet with `assigned_slot == current_slot` (or next slot if deferred)
 
-  - Value:
+  - Value: `contribution_fee × number_of_treasury_inputs` (the full pot for this round)
 
-    - Minimum ADA
-
-    - Total collected "Pot" amount (Sum of inputs)
-
-+ *Treasury Validator UTxOs (Multiple)*
++ *Treasury Validator UTxOs (all active members)*
 
   - Address: Treasury validator script address
 
-  - Datum:
+  - Datum: same `TreasuryState` with `rounds_paid` incremented by 1 and `is_deferred` reset to `False`
 
-    - updated_datum: Metadata reflecting the payout ("Paid" status) for each member
-    
-  - Value:
+  - Value: input ADA minus `contribution_fee` per member; membership token preserved
 
-    - Minimum ADA (or remaining balance)
++ *Group Validator UTxO*
 
-    - Treasury NFT Assets
+  - Address: Group validator script address
+
+  - Datum: same as input with `last_distributed_round = round_number`
+
+  - Value: same as input
 #pagebreak()
 
 

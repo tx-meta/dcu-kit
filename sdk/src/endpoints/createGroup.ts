@@ -50,7 +50,11 @@ export const unsignedCreateGroupTxProgram = (
     const userToken = toUnit(groupPolicyId!, userTokenName);
 
     const mintingAssets: Assets = { [refToken]: 1n, [userToken]: 1n };
-    const scriptAssets: Assets = { [refToken]: 1n };
+    // Lock creator_bond lovelace alongside the ref token so it is held for
+    // the group's lifetime and returned to the admin on deleteGroup.
+    const scriptAssets: Assets = groupDatum.creator_bond > 0n
+        ? { [refToken]: 1n, lovelace: groupDatum.creator_bond }
+        : { [refToken]: 1n };
     const walletAssets: Assets = { [userToken]: 1n };
 
     // Constr(0, [input_index, output_index]) = GroupMintRedeemer.CreateGroup.

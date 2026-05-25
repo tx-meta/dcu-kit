@@ -11,8 +11,8 @@
  */
 
 import { deleteGroup, DeleteGroupConfig, groupPolicyId, assetNameLabels } from "@dcu/sdk";
-import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
-import { loadState, saveState, clearState } from "./state.js";
+import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
+import { loadState, saveState, clearState, checkValidatorStaleness } from "./state.js";
 
 async function main() {
     const { lucid, isEmulator } = await makeLucid();
@@ -26,6 +26,9 @@ async function main() {
     const adminSeed = process.env.ADMIN_SEED ?? process.env.USER1_SEED;
     if (!adminSeed) throw new Error("ADMIN_SEED or USER1_SEED is required.");
     lucid.selectWallet.fromSeed(adminSeed);
+    await logWalletInfo(lucid, "ADMIN");
+
+    checkValidatorStaleness({ groupPolicyId: groupPolicyId! });
 
     let { groupTokenSuffix } = loadState();
 

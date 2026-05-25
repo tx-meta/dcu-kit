@@ -88,7 +88,10 @@ describe("Account Endpoints", () => {
       );
 
       expect(err._tag).toBe("TransactionBuildError");
-      expect((err as any).error).toContain("active membership");
+      // err.error is a typed field on TransactionBuildError — no cast needed
+      if (err._tag === "TransactionBuildError") {
+        expect(err.error).toContain("active membership");
+      }
     }),
   );
 });

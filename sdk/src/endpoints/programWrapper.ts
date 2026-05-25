@@ -11,7 +11,7 @@ import { unsignedUpdateGroupTxProgram, UpdateGroupConfig } from "./updateGroup.j
 import { unsignedDeleteGroupTxProgram, DeleteGroupConfig } from "./deleteGroup.js";
 import { unsignedJoinGroupTxProgram, JoinGroupConfig } from "./joinGroup.js";
 import { unsignedDistributePayoutTxProgram, DistributePayoutConfig } from "./distributePayout.js";
-import { unsignedMemberWithdrawTxProgram, MemberWithdrawConfig } from "./memberWithdraw.js";
+import { unsignedStartGroupTxProgram, StartGroupConfig } from "./startGroup.js";
 import { unsignedExitGroupTxProgram, ExitGroupConfig } from "./exitGroup.js";
 import { unsignedTerminateGroupTxProgram, TerminateGroupConfig } from "./terminateGroup.js";
 
@@ -64,16 +64,20 @@ export const distributePayout = (lucid: LucidEvolution, config: DistributePayout
     makeReturn(unsignedDistributePayoutTxProgram(lucid, config));
 
 /**
- * Withdraws a member's accumulated balance from the Treasury.
- */
-export const memberWithdraw = (lucid: LucidEvolution, config: MemberWithdrawConfig) =>
-    makeReturn(unsignedMemberWithdrawTxProgram(lucid, config));
-
-/**
  * Exits a member from a DCU Group, claiming refunds or paying penalties.
  */
 export const exitGroup = (lucid: LucidEvolution, config: ExitGroupConfig) =>
     makeReturn(unsignedExitGroupTxProgram(lucid, config));
+
+/**
+ * Exits a member from a DCU Group, claiming refunds or paying penalties.
+ */
+
+/**
+ * Starts a DCU Group, sealing membership and fixing the rotation schedule.
+ */
+export const startGroup = (lucid: LucidEvolution, config: StartGroupConfig) =>
+    makeReturn(unsignedStartGroupTxProgram(lucid, config));
 
 /**
  * Terminates a group, burning the treasury membership token.

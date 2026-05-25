@@ -11,8 +11,8 @@
 
 import { updateGroup, UpdateGroupConfig, GroupDatum, groupPolicyId, assetNameLabels } from "@dcu/sdk";
 import { Data } from "@lucid-evolution/lucid";
-import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
-import { loadState, saveState } from "./state.js";
+import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
+import { loadState, saveState, checkValidatorStaleness } from "./state.js";
 
 async function main() {
     const { lucid, isEmulator } = await makeLucid();
@@ -26,6 +26,9 @@ async function main() {
     const adminSeed = process.env.ADMIN_SEED ?? process.env.USER1_SEED;
     if (!adminSeed) throw new Error("ADMIN_SEED or USER1_SEED is required.");
     lucid.selectWallet.fromSeed(adminSeed);
+    await logWalletInfo(lucid, "ADMIN");
+
+    checkValidatorStaleness({ groupPolicyId: groupPolicyId! });
 
     let { groupTokenSuffix } = loadState();
 
@@ -57,10 +60,24 @@ async function main() {
     if (!groupUtxo) throw new Error("Group UTxO not found on-chain.");
     const currentDatum = Data.from(groupUtxo.datum!, GroupDatum);
 
-    const updatedDatum: GroupDatum = {
-        ...currentDatum,
-        joining_fee: currentDatum.joining_fee + 1_000_000n,
-    };
+    // Critical fields (fees, intervals, admin_payment_credential, start_time, max_members)
+    // are frozen while any member is active. The only non-critical update allowed with
+    // active members is deactivation (is_active: true → false).
+    let updatedDatum: GroupDatum;
+    if (!currentDatum.is_active) {
+        console.log("Group is already deactivated. Run delete-group next.");
+        process.exit(0);
+    }
+    if (currentDatum.member_count === 0n) {
+        // No members and still active — deactivate so deleteGroup can proceed.
+        updatedDatum = { ...currentDatum, is_active: false };
+        console.log("member_count=0, is_active=true → deactivating group for deletion.");
+    } else {
+        // Members still in the group — deactivate to signal exit window (all exits become penalty-free).
+        console.log(`member_count=${currentDatum.member_count} — deactivating group (is_active: true → false).`);
+        console.log("NOTE: deactivation is irreversible — all future exits will be penalty-free (mature path).");
+        updatedDatum = { ...currentDatum, is_active: false };
+    }
 
     const config: UpdateGroupConfig = {
         groupTokenSuffix,

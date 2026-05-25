@@ -6,7 +6,7 @@ export * from "./updateGroup.js";
 export * from "./deleteGroup.js";
 export * from "./joinGroup.js";
 export * from "./distributePayout.js";
-export * from "./memberWithdraw.js";
+export * from "./startGroup.js";
 export * from "./exitGroup.js";
 export * from "./terminateGroup.js";
 export * from "./programWrapper.js";

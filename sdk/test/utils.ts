@@ -54,16 +54,25 @@ export const createDefaultGroupDatum = (
   penalty_fee_policyid: "",
   penalty_fee_assetname: "",
   penalty_fee: 2_000_000n,      // 2 ADA — must be >= 0
+  grace_period_length: 0n,
+  creator_bond: 0n,             // 0 for test groups (no bond required)
   interval_length: 3_600_000n,  // 1 hour in milliseconds
-  num_intervals: 10n,
+  // num_intervals is 0 at creation — assigned to member_count at startGroup.
+  // Required by validate_create_group (num_intervals == 0 check).
+  num_intervals: 0n,
   max_members: 30n,
   member_count: 0n,
   is_active: true,
-  start_time: BigInt(Date.now()),
+  is_started: false,
+  last_distributed_round: -1n,
+  // start_time MUST be 0 at creation — validate_create_group enforces (start_time == 0).
+  // startGroup sets it to get_lower_bound(tx) when sealing membership.
+  start_time: 0n,
   // Fixed 28-byte test placeholder for admin_payment_credential.
   // With joining_fee: 0n this field is unused by the treasury validator,
   // but validate_create_group requires exactly 28 bytes (56 hex chars).
   admin_payment_credential: "a0a1a2a3a4a5a6a7a8a9b0b1b2b3b4b5b6b7b8b9c0c1c2c3c4c5c6c7",
+  member_token_names: [],
   ...overrides,
 });
 

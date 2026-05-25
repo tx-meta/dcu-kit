@@ -5,7 +5,7 @@
  *
  * Wallet selection:
  *   Default (USER1):  uses USER1_SEED from .env
- *   ACTIVE_WALLET=WALLET3: uses WALLET3_SEED — joins as a second member
+ *   ACTIVE_WALLET=USER2: uses USER2_SEED — joins as a second member
  *
  * Token suffix resolution:
  *   groupTokenSuffix:      state.json → auto-discover from wallet (222 prefix)
@@ -14,10 +14,10 @@
  * Live network: requires BLOCKFROST_KEY or MAESTRO_API_KEY in .env
  */
 
-import { joinGroup, JoinGroupConfig, groupPolicyId, accountPolicyId, assetNameLabels, GroupDatum } from "@dcu/sdk";
-import { Data } from "@lucid-evolution/lucid";
-import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
-import { loadState, saveState, printSlotSchedule, accountSuffixKey } from "./state.js";
+import { joinGroup, JoinGroupConfig, groupPolicyId, accountPolicyId, treasuryPolicyId, assetNameLabels, GroupDatum } from "@dcu/sdk";
+import { Data, UTxO } from "@lucid-evolution/lucid";
+import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
+import { loadState, saveState, printSlotSchedule, accountSuffixKey, checkValidatorStaleness } from "./state.js";
 
 async function main() {
     const { lucid, isEmulator } = await makeLucid();
@@ -28,12 +28,12 @@ async function main() {
         process.exit(0);
     }
 
-    // Support ACTIVE_WALLET=WALLET3 to join as a second member.
+    // Support ACTIVE_WALLET=USER2 to join as a second member.
     const activeWallet = (process.env.ACTIVE_WALLET ?? "USER1").toUpperCase();
     const walletSeed   = process.env[`${activeWallet}_SEED`] ?? process.env.USER1_SEED;
     if (!walletSeed) throw new Error(`${activeWallet}_SEED not found in .env`);
     lucid.selectWallet.fromSeed(walletSeed);
-    if (activeWallet !== "USER1") console.log(`Using wallet: ${activeWallet}`);
+    await logWalletInfo(lucid, activeWallet);
 
     const suffixKey = accountSuffixKey(activeWallet);
     const state     = loadState();
@@ -43,6 +43,8 @@ async function main() {
 
     let { groupTokenSuffix } = state;
     let accountTokenSuffix   = state[suffixKey];
+
+    checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
 
     // Auto-discover groupTokenSuffix from the group admin (222) token in wallet
     if (!groupTokenSuffix) {
@@ -67,42 +69,121 @@ async function main() {
         saveState({ groupTokenSuffix });
     }
 
-    // Auto-discover accountTokenSuffix from the active wallet's UTxOs
-    if (!accountTokenSuffix) {
-        console.log(`accountTokenSuffix not in state.json — scanning ${activeWallet} wallet for account token...`);
-        const walletUtxos = await lucid.wallet().getUtxos();
-        const accountUtxo = walletUtxos.find(u =>
-            Object.keys(u.assets).some(k =>
-                k.startsWith(accountPolicyId!) &&
-                k.slice(accountPolicyId!.length).startsWith(assetNameLabels.prefix222)
-            )
-        );
-        if (!accountUtxo) throw new Error(
-            `No account token (222) found in ${activeWallet} wallet.\n` +
-            `Run create-account.ts${activeWallet !== "USER1" ? ` with ACTIVE_WALLET=${activeWallet}` : ""} first.`
-        );
-        const key = Object.keys(accountUtxo.assets).find(k =>
+    // Always scan the current wallet for the account (222) token — never trust state.json
+    // blindly. A stale suffix points to a token that may be at a different address (e.g.,
+    // another participant's wallet), causing Lucid to attempt spending a UTxO it can't sign
+    // for, which manifests as a cryptic "insufficient funds" error at tx build time.
+    const walletUtxos    = await lucid.wallet().getUtxos();
+    const accountUtxoInWallet = walletUtxos.find(u =>
+        Object.keys(u.assets).some(k =>
             k.startsWith(accountPolicyId!) &&
             k.slice(accountPolicyId!.length).startsWith(assetNameLabels.prefix222)
-        )!;
-        accountTokenSuffix = key.slice(accountPolicyId!.length + assetNameLabels.prefix222.length);
-        console.log("Found accountTokenSuffix:", accountTokenSuffix);
-        saveState({ [suffixKey]: accountTokenSuffix });
+        )
+    );
+
+    if (!accountUtxoInWallet) {
+        if (accountTokenSuffix) {
+            console.error(`\nERROR: state.json has ${suffixKey}="${accountTokenSuffix}"`);
+            console.error(`       but the account (222) token is NOT in the ${activeWallet} wallet.`);
+            console.error(`       The suffix may be from a different wallet or session.\n`);
+        }
+        throw new Error(
+            `No account (222) token found in ${activeWallet} wallet.\n` +
+            `Run: ACTIVE_WALLET=${activeWallet} pnpm run create-account`
+        );
     }
+
+    // Derive suffix from the wallet UTxO — this is the authoritative source.
+    const accountKey = Object.keys(accountUtxoInWallet.assets).find(k =>
+        k.startsWith(accountPolicyId!) &&
+        k.slice(accountPolicyId!.length).startsWith(assetNameLabels.prefix222)
+    )!;
+    const discoveredSuffix = accountKey.slice(accountPolicyId!.length + assetNameLabels.prefix222.length);
+    if (accountTokenSuffix && accountTokenSuffix !== discoveredSuffix) {
+        console.warn(`state.json ${suffixKey} differs from wallet — updating to wallet value.`);
+    }
+    accountTokenSuffix = discoveredSuffix;
+    saveState({ [suffixKey]: accountTokenSuffix });
+    console.log(`Account (222) confirmed in ${activeWallet} wallet  suffix: ${accountTokenSuffix.slice(0, 8)}...`);
 
     // Fetch the group datum to compute the required contribution amount and current slot
     const groupUnit  = groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
     const groupUtxo  = await lucid.utxoByUnit(groupUnit);
     if (!groupUtxo) throw new Error("Group UTxO not found on-chain. Is groupTokenSuffix correct?");
     const groupDatum = Data.from(groupUtxo.datum!, GroupDatum);
-    const contributionAmount = groupDatum.num_intervals * groupDatum.contribution_fee;
-    const assignedSlot = Number(groupDatum.member_count); // slot this member will get
+    // Contribution covers all future rounds: max_members * contribution_fee.
+    // num_intervals is 0 at creation and only set by StartGroup — cannot use it here.
+    const contributionAmount = groupDatum.max_members * groupDatum.contribution_fee;
+    const assignedSlot = Number(groupDatum.member_count);
     console.log(`Contribution: ${contributionAmount / 1_000_000n} ADA  |  Will be assigned slot: ${assignedSlot}`);
+
+    // Guard: prevent double-joining. The treasury membership token name is derived
+    // from the account token name — if a treasury UTxO already holds it, this wallet
+    // already has an active membership. The on-chain validator does NOT enforce this;
+    // without the guard the same account silently takes two consecutive slots.
+    const memberRefTokenName = assetNameLabels.prefix222 + accountTokenSuffix;
+    const treasuryMemberUnit = treasuryPolicyId + memberRefTokenName;
+    const existingTreasuryUtxo = await lucid.utxoByUnit(treasuryMemberUnit).catch(() => null);
+    if (existingTreasuryUtxo) {
+        console.error(`\nERROR: ${activeWallet} already has an active treasury membership.`);
+        console.error(`  Treasury UTxO: ${existingTreasuryUtxo.txHash}#${existingTreasuryUtxo.outputIndex}`);
+        console.error(`  Run exit-group first if you want to rejoin.\n`);
+        process.exit(1);
+    }
+
+    // Pre-supply coin selection by passing the richest spendable wallet UTxO.
+    // completeProgram() queries wallet UTxOs internally via Blockfrost; on live
+    // network that query can return empty (rate limit / stale) leaving a ~22 ADA
+    // deficit. Passing a UTxO explicitly ensures the tx is always funded.
+    //
+    // Prefer pure-ADA UTxOs (simpler change output) but fall back to token-bearing
+    // UTxOs — after create-group + create-account, all wallet ADA may live in UTxOs
+    // that also carry native assets (group admin token, account token).
+    //
+    // Exclude the account UTxO: joinGroup.ts already calls collectFrom([accountUtxo])
+    // internally; passing it again here would be a double-spend and crash Lucid.
+    const fundingCandidates = walletUtxos
+        .filter(u => !u.scriptRef)
+        .filter(u => !(u.txHash === accountUtxoInWallet.txHash && u.outputIndex === accountUtxoInWallet.outputIndex))
+        .sort((a, b) => {
+            const aIsPure = Object.keys(a.assets).every(k => k === "lovelace");
+            const bIsPure = Object.keys(b.assets).every(k => k === "lovelace");
+            if (aIsPure !== bIsPure) return aIsPure ? -1 : 1;
+            return Number(b.assets.lovelace - a.assets.lovelace);
+        });
+    const fundingUtxo = fundingCandidates[0];
+    if (fundingUtxo) {
+        const isPure = Object.keys(fundingUtxo.assets).every(k => k === "lovelace");
+        console.log(`Funding UTxO: ${fundingUtxo.txHash.slice(0, 8)}...  ${fundingUtxo.assets.lovelace / 1_000_000n} ADA${isPure ? "" : " (+ native assets)"}`);
+    } else {
+        console.warn("No spendable UTxOs found in wallet — coin selection may fail on live network.");
+    }
+
+    // Load reference script UTxOs — reduce tx size from ~16.4KB to ~4.5KB.
+    // Deploy once with: pnpm run deploy-scripts
+    let scriptRefs: JoinGroupConfig["scriptRefs"];
+    if (state.scriptRefTreasury && state.scriptRefGroup) {
+        const [tUtxo, gUtxo] = await lucid.utxosByOutRef([
+            { txHash: state.scriptRefTreasury.txHash, outputIndex: state.scriptRefTreasury.outputIndex },
+            { txHash: state.scriptRefGroup.txHash,    outputIndex: state.scriptRefGroup.outputIndex },
+        ]);
+        if (tUtxo?.scriptRef && gUtxo?.scriptRef) {
+            scriptRefs = { treasury: tUtxo as UTxO, group: gUtxo as UTxO };
+            console.log("Using reference scripts — tx will be under 16KB.");
+        } else {
+            console.warn("Reference script UTxOs not found on-chain — falling back to inline scripts.");
+            console.warn("Run 'pnpm run deploy-scripts' to deploy them.");
+        }
+    } else {
+        console.warn("No script refs in state.json — falling back to inline scripts (may exceed 16KB).");
+        console.warn("Run 'pnpm run deploy-scripts' first.");
+    }
 
     const config: JoinGroupConfig = {
         groupTokenSuffix,
         accountTokenSuffix,
-        contributionAmount,
+        fundingUtxos: fundingUtxo ? [fundingUtxo] : [],
+        scriptRefs,
     };
 
     console.log("Building join transaction...");

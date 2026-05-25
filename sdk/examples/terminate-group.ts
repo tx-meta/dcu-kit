@@ -8,9 +8,9 @@
  * Requires a PenaltyState treasury UTxO to exist — run exit-group.ts (early exit) first.
  */
 
-import { terminateGroup, TerminateGroupConfig } from "@dcu/sdk";
-import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
-import { loadState } from "./state.js";
+import { terminateGroup, TerminateGroupConfig, accountPolicyId, groupPolicyId } from "@dcu/sdk";
+import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
+import { loadState, checkValidatorStaleness, accountSuffixKey } from "./state.js";
 
 async function main() {
     const { lucid, isEmulator } = await makeLucid();
@@ -24,16 +24,23 @@ async function main() {
     const adminSeed = process.env.ADMIN_SEED ?? process.env.USER1_SEED;
     if (!adminSeed) throw new Error("ADMIN_SEED or USER1_SEED is required.");
     lucid.selectWallet.fromSeed(adminSeed);
+    await logWalletInfo(lucid, "ADMIN");
 
-    const { groupTokenSuffix, accountTokenSuffix } = loadState();
-    if (!groupTokenSuffix)   throw new Error("groupTokenSuffix not found in state.json. Run create-group.ts first.");
-    if (!accountTokenSuffix) throw new Error("accountTokenSuffix not found in state.json. Run join-group.ts first.");
+    checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
 
-    // memberAccountTokenSuffix is the exited member's account token suffix.
-    // In a single-member lifecycle this is the same as accountTokenSuffix.
+    // MEMBER_WALLET identifies whose PenaltyState UTxO to claim (default: USER1).
+    // Set MEMBER_WALLET=USER2 if USER2 exited early and you want to claim their penalty.
+    const memberWallet = (process.env.MEMBER_WALLET ?? "USER1").toUpperCase();
+    const state = loadState();
+    const { groupTokenSuffix } = state;
+    const memberAccountTokenSuffix = state[accountSuffixKey(memberWallet)];
+    if (!groupTokenSuffix)          throw new Error("groupTokenSuffix not found in state.json. Run create-group.ts first.");
+    if (!memberAccountTokenSuffix)  throw new Error(`${accountSuffixKey(memberWallet)} not found in state.json. Run join-group.ts as ${memberWallet} first.`);
+
+    console.log(`Claiming PenaltyState from ${memberWallet}'s early exit...`);
     const config: TerminateGroupConfig = {
         groupTokenSuffix,
-        memberAccountTokenSuffix: accountTokenSuffix,
+        memberAccountTokenSuffix,
     };
 
     console.log("Building terminate transaction...");

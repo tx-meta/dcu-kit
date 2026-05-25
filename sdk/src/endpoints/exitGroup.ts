@@ -5,6 +5,7 @@ import {
     TxSignBuilder,
     RedeemerBuilder,
     Assets,
+    UTxO,
     toUnit,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
@@ -41,7 +42,18 @@ import { getScriptAddress, getWalletAddress, parseSafeDatum, patchInlineDatum, a
  */
 export type ExitGroupConfig = {
     groupTokenSuffix: string;
-    accountTokenSuffix: string;
+    // Optional: the (222) account token suffix used when joining this group.
+    // If omitted, the endpoint auto-detects by scanning all (222) account tokens
+    // in the wallet against treasury UTxOs — handles the case where a wallet holds
+    // multiple account tokens from different sessions.
+    accountTokenSuffix?: string;
+    currentTime?: bigint; // POSIX ms — emulator.now() for emulator, omit for live network
+    // Reference script UTxOs (from deploy-scripts). When provided, the validator
+    // script bytes are resolved from the on-chain UTxO, keeping the tx under 16KB.
+    scriptRefs?: {
+        treasury?: UTxO;
+        group?: UTxO;
+    };
 };
 
 export const unsignedExitGroupTxProgram = (
@@ -49,36 +61,58 @@ export const unsignedExitGroupTxProgram = (
   config: ExitGroupConfig
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupTokenSuffix, accountTokenSuffix } = config;
+    const { groupTokenSuffix, currentTime } = config;
 
-    const groupRefUnit    = groupPolicyId!   + assetNameLabels.prefix100 + groupTokenSuffix;
-    const accountUserUnit = accountPolicyId  + assetNameLabels.prefix222 + accountTokenSuffix;
+    const groupRefUnit = groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+    const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
+    const groupUtxo = patchInlineDatum(groupUtxoRaw);
 
-    const groupUtxoRaw   = yield* resolveUtxoByUnit(lucid, groupRefUnit);
-    const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUserUnit);
-    const groupUtxo   = patchInlineDatum(groupUtxoRaw);
-    const accountUtxo = patchInlineDatum(accountUtxoRaw);
-
-    // Find treasury UTxO by scanning for a TreasuryState with matching member token
-    const memberRefName   = assetNameLabels.prefix222 + accountTokenSuffix;
     const treasuryAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
     const allTreasury     = yield* Effect.tryPromise({
         try: () => lucid.utxosAt(treasuryAddress),
         catch: (e) => new TransactionBuildError({ operation: "queryTreasury", error: String(e) }),
     });
 
-    const treasuryUtxoRaw = yield* Effect.gen(function* () {
+    // Build the set of candidate member_reference_tokennames to match against.
+    // If the caller provides an explicit suffix, use that single candidate.
+    // Otherwise scan ALL (222) account tokens in the wallet — this handles the common
+    // case where a wallet holds multiple account tokens from different sessions and the
+    // "first" token found is not the one used to join this group.
+    const candidateRefNames: Set<string> = yield* (config.accountTokenSuffix
+        ? Effect.succeed(new Set([assetNameLabels.prefix222 + config.accountTokenSuffix]))
+        : Effect.tryPromise({
+              try: () => lucid.wallet().getUtxos(),
+              catch: (e) => new TransactionBuildError({ operation: "getWalletUtxos", error: String(e) }),
+          }).pipe(Effect.map(walletUtxos => new Set(
+              walletUtxos
+                  .flatMap(u => Object.keys(u.assets))
+                  .filter(k => k.startsWith(accountPolicyId + assetNameLabels.prefix222))
+                  .map(k => k.slice(accountPolicyId.length))  // keep prefix222 + suffix
+          )))
+    );
+
+    // Find the treasury UTxO whose member_reference_tokenname is in our candidate set.
+    // Use an inner Effect.gen so `return yield* Effect.fail(...)` reliably aborts the scan
+    // (mutable let + for..of + yield* in the outer generator has subtle propagation issues).
+    const { treasuryUtxoRaw, memberRefName } = yield* Effect.gen(function* () {
         for (const u of allTreasury) {
             const parsed = yield* parseSafeDatum(u.datum, TreasuryDatumSchema).pipe(
                 Effect.map(d => d as unknown as TreasuryDatum),
                 Effect.orElse(() => Effect.succeed(null)),
             );
-            if (parsed && 'TreasuryState' in parsed && parsed.TreasuryState.member_reference_tokenname === memberRefName) {
-                return u;
+            if (parsed && 'TreasuryState' in parsed && candidateRefNames.has(parsed.TreasuryState.member_reference_tokenname)) {
+                return { treasuryUtxoRaw: u, memberRefName: parsed.TreasuryState.member_reference_tokenname as string };
             }
         }
-        return yield* Effect.fail(new UtxoNotFoundError({ tokenName: memberRefName, address: treasuryAddress }));
+        return yield* Effect.fail(new UtxoNotFoundError({
+            tokenName: [...candidateRefNames].join(' | '),
+            address: treasuryAddress,
+        }));
     });
+
+    const accountUserUnit = accountPolicyId + memberRefName;
+    const accountUtxoRaw  = yield* resolveUtxoByUnit(lucid, accountUserUnit);
+    const accountUtxo = patchInlineDatum(accountUtxoRaw);
     const treasuryUtxo  = patchInlineDatum(treasuryUtxoRaw);
     const treasuryDatum = (yield* parseSafeDatum(treasuryUtxo.datum, TreasuryDatumSchema)) as unknown as TreasuryDatum;
     if (!('TreasuryState' in treasuryDatum)) return yield* Effect.fail(new InvalidDatumError({ field: "treasuryDatum", reason: "Expected TreasuryState" }));
@@ -95,14 +129,27 @@ export const unsignedExitGroupTxProgram = (
 
     // Use a single `now` for isEarlyExit AND validFrom — Aiken computes is_early_exit
     // using get_lower_bound(tx), so the two must agree at the maturity boundary.
-    const now = BigInt(Date.now());
+    // Three-path exit model (must mirror treasury.ak validate_exit_group):
+    //   pre_cycle  (now < start_time)                  → free exit, token burned
+    //   in_cycle   (active && past start && pre-mature) → penalty exit, PenaltyState
+    //   post_cycle (past maturity || inactive)          → free exit, token burned
+    //
+    // Emulator: use currentTime directly (already slot-aligned to emulator.now()).
+    // Live network: subtract 120s for clock drift, truncate to 1000ms slot boundary.
+    const rawNow = currentTime !== undefined
+        ? currentTime
+        : BigInt(Date.now()) - 120_000n;
+    const now = currentTime !== undefined
+        ? rawNow
+        : rawNow - rawNow % 1000n;
     const maturityTime = groupDatum.start_time + (groupDatum.num_intervals * groupDatum.interval_length);
-    const isEarlyExit = groupDatum.is_active && (now < maturityTime);
+    const isEarlyExit = groupDatum.is_active && groupDatum.start_time <= now && (now < maturityTime);
 
-    // Updated Group datum: decrement member count on exit
+    // Updated Group datum: decrement member count and remove member from registry
     const updatedGroupDatum: GroupDatum = {
         ...groupDatum,
-        member_count: groupDatum.member_count - 1n
+        member_count: groupDatum.member_count - 1n,
+        member_token_names: groupDatum.member_token_names.filter(n => n !== memberRefName),
     };
 
     // Group validator redeemer: MemberExit (no admin required)
@@ -111,6 +158,7 @@ export const unsignedExitGroupTxProgram = (
         makeRedeemer: (inputIndices: bigint[]) => Data.to({
             MemberExit: {
                 group_ref_token_name: groupRefName,
+                member_token_name: memberRefName,
                 group_input_index: inputIndices[0],
                 group_output_index: 0n
             }
@@ -165,13 +213,22 @@ export const unsignedExitGroupTxProgram = (
         .addSigner(address)
         .pay.ToContract(groupAddress, { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) }, groupUtxo.assets);
 
-    const tx = yield* (isEarlyExit
+    const afterPath = (isEarlyExit
         ? baseTx.pay.ToContract(treasuryAddress, { kind: "inline", value: Data.to(penaltyDatum, TreasuryDatum) }, penaltyAssets)
         : baseTx.mintAssets(burnAssets, mintBurnRedeemer))
-        .validFrom(Number(now))
-        .attach.MintingPolicy(treasuryValidator.mintTreasury)
-        .attach.SpendingValidator(treasuryValidator.spendTreasury)
-        .attach.SpendingValidator(groupValidator.spendGroup)
+        .validFrom(Number(now));
+
+    // Use reference scripts when provided — avoids ~12KB of inline script bytes.
+    const withValidators = (config.scriptRefs?.treasury || config.scriptRefs?.group)
+        ? afterPath.readFrom(
+              [config.scriptRefs?.treasury, config.scriptRefs?.group].filter(Boolean) as UTxO[]
+          )
+        : afterPath
+              .attach.MintingPolicy(treasuryValidator.mintTreasury)
+              .attach.SpendingValidator(treasuryValidator.spendTreasury)
+              .attach.SpendingValidator(groupValidator.spendGroup);
+
+    const tx = yield* withValidators
         .completeProgram()
         .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "exitGroup", error: String(e) })));
     return tx;

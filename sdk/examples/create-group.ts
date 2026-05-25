@@ -1,7 +1,7 @@
-import { createGroup, CreateGroupConfig, GroupDatum, joinGroup, JoinGroupConfig, groupPolicyId, assetNameLabels } from "@dcu/sdk";
+import { createGroup, CreateGroupConfig, GroupDatum, groupPolicyId, assetNameLabels } from "@dcu/sdk";
 import { getAddressDetails } from "@lucid-evolution/lucid";
-import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
-import { saveState, loadState, printSlotSchedule, accountSuffixKey } from "./state.js";
+import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
+import { saveState, checkValidatorStaleness } from "./state.js";
 
 async function main() {
     const { lucid, isEmulator } = await makeLucid();
@@ -11,6 +11,9 @@ async function main() {
     const adminSeed = process.env[`${activeWallet}_SEED`] ?? process.env.USER1_SEED;
     if (!adminSeed) throw new Error(`${activeWallet}_SEED or USER1_SEED is required.`);
     lucid.selectWallet.fromSeed(adminSeed);
+    await logWalletInfo(lucid, activeWallet);
+
+    checkValidatorStaleness({ groupPolicyId: groupPolicyId! });
 
     const utxos = await lucid.wallet().getUtxos();
     if (utxos.length === 0) throw new Error("No UTxOs found. Please fund the wallet first.");
@@ -30,15 +33,7 @@ async function main() {
     // Flip to false for realistic mainnet/preprod configuration.
     const TEST_MODE = true;
 
-    // JOIN_IMMEDIATELY: set to true to have the admin join as slot 0 immediately
-    // after the group is created. This closes the slot-0 race condition window
-    // (another wallet joining before the admin). Requires the admin's account
-    // to be created first (pnpm run create-account as ADMIN).
-    // Set to false if you want to test join-group.ts separately.
-    const JOIN_IMMEDIATELY = true;
-
     const INTERVAL_LENGTH = TEST_MODE ? 5n * 60_000n : 60n * 60_000n; // 5 min | 1 hour
-    const NUM_INTERVALS   = TEST_MODE ? 3n           : 12n; // 3 = ADMIN + USER1 + WALLET3
 
     // --- Contribution asset ---
     // ADA: leave policyid and assetname as "" (empty bytes = lovelace).
@@ -78,14 +73,26 @@ async function main() {
         penalty_fee_assetname: "",
         penalty_fee: PENALTY_FEE,
 
+        // Locked in the group UTxO at creation. Returned to admin on deleteGroup
+        // once all members have exited. Signals commitment and deters spam groups.
+        // Recommend >= contribution_fee; set to 0n only for trusted/family groups.
+        creator_bond: CONTRIBUTION_FEE,
+
         interval_length: INTERVAL_LENGTH,
-        num_intervals: NUM_INTERVALS,
+        // num_intervals MUST be 0 at creation — the on-chain validator enforces this.
+        // StartGroup sets it to member_count when sealing membership.
+        num_intervals: 0n,
         max_members: MAX_MEMBERS,
 
         member_count: 0n,
         is_active: true,
-        start_time: BigInt(Date.now()),
+        is_started: false,
+        // start_time MUST be 0 at creation — set to tx lower bound by StartGroup.
+        start_time: 0n,
+        last_distributed_round: -1n,
+        grace_period_length: 0n,
         admin_payment_credential: adminPkh,
+        member_token_names: [],
     };
 
     const config: CreateGroupConfig = {
@@ -115,56 +122,30 @@ async function main() {
     if (!refKey) throw new Error("No group reference token found in output 0");
     const groupTokenSuffix = refKey.slice(groupPolicyId!.length + assetNameLabels.prefix100.length);
 
-    const timing = {
-        groupStartTime:      Number(groupDatum.start_time),
+    // Save interval_length now — it's fixed at creation.
+    // groupStartTime and groupNumIntervals are saved by start-group.ts after StartGroup is called.
+    saveState({
+        groupTokenSuffix,
+        groupPolicyId: groupPolicyId!,
         groupIntervalLength: Number(INTERVAL_LENGTH),
-        groupNumIntervals:   Number(NUM_INTERVALS),
-    };
-    saveState({ groupTokenSuffix, ...timing });
-    printSlotSchedule(timing, []);
+    });
 
     console.log("Group created successfully!");
-
-    // --- Immediately join as slot 0 to close the race condition window ---
-    if (JOIN_IMMEDIATELY) {
-        const state = loadState();
-        const suffixKey = accountSuffixKey(activeWallet);
-        const accountTokenSuffix = state[suffixKey];
-
-        if (!accountTokenSuffix) {
-            console.warn(
-                `\nWARNING: JOIN_IMMEDIATELY=true but no ${suffixKey} found in state.json.\n` +
-                `Run 'pnpm run create-account' as ${activeWallet} first, then create-group again.\n` +
-                `Slot 0 is currently unprotected — join manually before another wallet does.\n`
-            );
-        } else {
-            // Compute contribution: total ADA locked for all intervals upfront
-            const contributionAmount = groupDatum.num_intervals * groupDatum.contribution_fee;
-
-            console.log(`\nJoining as slot 0 (contribution: ${contributionAmount / 1_000_000n} ADA)...`);
-            const joinConfig: JoinGroupConfig = {
-                groupTokenSuffix,
-                accountTokenSuffix,
-                contributionAmount,
-            };
-
-            const joinTx = await joinGroup(lucid, joinConfig).unsafeRun();
-            const joinSigned = await joinTx.sign.withWallet().complete();
-            const joinHash = await joinSigned.submit();
-            console.log("Join transaction submitted. Hash:", joinHash);
-            if (!isEmulator) console.log("View on Cexplorer:", cexplorerTxUrl(joinHash));
-
-            console.log("Waiting for join confirmation...");
-            await lucid.awaitTx(joinHash);
-            console.log("Admin joined as slot 0. Race condition window closed.");
-
-            if (TEST_MODE) {
-                const payoutReady = new Date(Number(groupDatum.start_time) + Number(INTERVAL_LENGTH));
-                console.log(`\ndistribute-payout ready: ${payoutReady.toLocaleTimeString()}`);
-                console.log("Other members can join-group now.\n");
-            }
-        }
-    }
+    console.log("\nNext steps:");
+    console.log("  pnpm run update-group                      — (optional) change fees while member_count=0");
+    console.log("");
+    console.log("  Create an account for each participant (establishes verifiable identity):");
+    console.log("  ACTIVE_WALLET=ADMIN pnpm run create-account");
+    console.log("  ACTIVE_WALLET=USER1 pnpm run create-account");
+    console.log("  ACTIVE_WALLET=USER2 pnpm run create-account");
+    console.log("");
+    console.log("  Then join the group (order determines slot assignment):");
+    console.log("  ACTIVE_WALLET=ADMIN pnpm run join-group    — ADMIN joins as slot 0");
+    console.log("  ACTIVE_WALLET=USER1 pnpm run join-group    — USER1 joins as slot 1");
+    console.log("  ACTIVE_WALLET=USER2 pnpm run join-group    — USER2 joins as slot 2");
+    console.log("");
+    console.log("  Once all members have joined, seal membership and anchor the schedule:");
+    console.log("  pnpm run start-group                       — ADMIN seals group, sets start_time");
 }
 
 main().catch((e) => {

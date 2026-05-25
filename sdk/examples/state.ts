@@ -25,22 +25,37 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // State lives in examples/ not dist/ — dist/ is wiped on every build.
 const STATE_FILE = path.join(__dirname, "..", "state.json");
 
+export type ScriptRefOutRef = { txHash: string; outputIndex: number };
+
 export type ExampleState = {
+    // Validator fingerprints — written at first mint, compared on every subsequent run.
+    // If these change it means the on-chain contracts were upgraded and stored token
+    // suffixes now point to UTxOs locked under the old (unreachable) validator.
+    accountPolicyId?:             string;
+    groupPolicyId?:               string;
+
     accountTokenSuffix?:          string; // USER1
     adminAccountTokenSuffix?:     string; // ADMIN
-    wallet3AccountTokenSuffix?:   string; // WALLET3
+    user2AccountTokenSuffix?:     string; // USER2
     groupTokenSuffix?:            string;
     groupStartTime?:              number; // POSIX ms — from group datum at creation
     groupIntervalLength?:         number; // ms
     groupNumIntervals?:           number;
+
+    // Reference script UTxOs — deployed once by deploy-scripts.ts, used by all
+    // transactions that would otherwise exceed the 16KB Cardano tx size limit.
+    // treasury.mint === treasury.spend CBOR, so one UTxO covers both handlers.
+    // Same for group.mint === group.spend.
+    scriptRefTreasury?:           ScriptRefOutRef;
+    scriptRefGroup?:              ScriptRefOutRef;
 };
 
-export type AccountSuffixKey = "accountTokenSuffix" | "adminAccountTokenSuffix" | "wallet3AccountTokenSuffix";
+export type AccountSuffixKey = "accountTokenSuffix" | "adminAccountTokenSuffix" | "user2AccountTokenSuffix";
 
 /** Maps ACTIVE_WALLET value to its state.json key for the account token suffix. */
 export function accountSuffixKey(activeWallet: string): AccountSuffixKey {
     if (activeWallet === "ADMIN")   return "adminAccountTokenSuffix";
-    if (activeWallet === "WALLET3") return "wallet3AccountTokenSuffix";
+    if (activeWallet === "USER2") return "user2AccountTokenSuffix";
     return "accountTokenSuffix";
 }
 
@@ -74,6 +89,37 @@ export function printSlotSchedule(state: ExampleState, memberSlots: number[] = [
         console.log(`Slot ${slot} window:    ${label}`);
     }
     console.log(`---------------------\n`);
+}
+
+/**
+ * Compares the current SDK's policy IDs against what was recorded in state.json
+ * the last time tokens were minted. A mismatch means the on-chain contracts were
+ * upgraded — stored token suffixes now point to UTxOs under the old validator and
+ * any transaction that tries to spend them will be rejected on-chain.
+ *
+ * Call this at the top of every live-network script, right after isEmulator guard.
+ */
+export function checkValidatorStaleness(current: {
+    accountPolicyId?: string;
+    groupPolicyId?:   string;
+}): void {
+    const state = loadState();
+    const stale: string[] = [];
+
+    if (current.accountPolicyId && state.accountPolicyId && state.accountPolicyId !== current.accountPolicyId) {
+        stale.push(`  accountPolicyId:\n    stored:  ${state.accountPolicyId}\n    current: ${current.accountPolicyId}`);
+    }
+    if (current.groupPolicyId && state.groupPolicyId && state.groupPolicyId !== current.groupPolicyId) {
+        stale.push(`  groupPolicyId:\n    stored:  ${state.groupPolicyId}\n    current: ${current.groupPolicyId}`);
+    }
+
+    if (stale.length > 0) {
+        console.error("\nERROR: Validator hashes have changed since state.json was last written.");
+        console.error("Stored token suffixes point to UTxOs locked under the old (unreachable) validator.");
+        for (const line of stale) console.error(line);
+        console.error("Run 'pnpm run reset-state' to clear stale state, then recreate the group.\n");
+        process.exit(1);
+    }
 }
 
 export function loadState(): ExampleState {

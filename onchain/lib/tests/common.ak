@@ -96,14 +96,23 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     penalty_fee_policyid: #"",
     penalty_fee_assetname: "",
     penalty_fee: 100,
+    grace_period_length: 0,
+    creator_bond: 0,
     interval_length: 1000,
-    num_intervals: 10,
+    // num_intervals = 0 before startGroup; tests that need active rotation
+    // should set num_intervals explicitly via record update syntax
+    num_intervals: 0,
     max_members: 30,
     member_count: 0,
     is_active: True,
-    // start_time = 0: group rotation began at the epoch origin (convenient for tests)
+    // is_started = False at creation; tests simulating post-startGroup state
+    // should set is_started = True and num_intervals = member_count explicitly
+    is_started: False,
+    // start_time = 0; tests simulating active cycle should set this explicitly
     start_time: 0,
+    last_distributed_round: -1,
     admin_payment_credential: test_pkh(),
+    member_token_names: [],
   }
 }
 

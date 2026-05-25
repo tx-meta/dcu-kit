@@ -30,13 +30,20 @@ export type ExampleContext = {
     isEmulator: boolean;
 };
 
+const LIVE_NETWORKS = ["Preprod", "Mainnet", "Preview"] as const;
+type LiveNetwork = (typeof LIVE_NETWORKS)[number];
+
+function liveNetwork(raw: string | undefined): LiveNetwork | null {
+    return (LIVE_NETWORKS as readonly string[]).includes(raw ?? "") ? (raw as LiveNetwork) : null;
+}
+
 export async function makeLucid(): Promise<ExampleContext> {
     const blockfrostKey = process.env.BLOCKFROST_KEY;
     const maestroKey = process.env.MAESTRO_API_KEY;
-    const network = (process.env.NETWORK as "Preprod" | "Mainnet" | "Preview") ?? "Preprod";
+    const network = liveNetwork(process.env.NETWORK);
 
     // --- Blockfrost ---
-    if (blockfrostKey) {
+    if (blockfrostKey && network) {
         const url = process.env.BLOCKFROST_URL ?? "https://cardano-preprod.blockfrost.io/api/v0";
         const lucid = await Lucid(new Blockfrost(url, blockfrostKey), network);
         const seed = process.env.USER1_SEED;
@@ -47,7 +54,7 @@ export async function makeLucid(): Promise<ExampleContext> {
     }
 
     // --- Maestro ---
-    if (maestroKey) {
+    if (maestroKey && network) {
         const lucid = await Lucid(new Maestro({ network, apiKey: maestroKey, turboSubmit: false }), network);
         const seed = process.env.USER1_SEED;
         if (!seed) throw new Error("USER1_SEED is required when MAESTRO_API_KEY is set");
@@ -56,7 +63,7 @@ export async function makeLucid(): Promise<ExampleContext> {
         return { lucid, isEmulator: false };
     }
 
-    // --- Emulator (default) ---
+    // --- Emulator (default, or when NETWORK=Emulator / not a live network) ---
     const user = generateEmulatorAccount({ lovelace: 100_000_000n });
     const emulator = new Emulator([user], { ...PROTOCOL_PARAMETERS_DEFAULT });
     const lucid = await Lucid(emulator, "Custom");
@@ -64,6 +71,22 @@ export async function makeLucid(): Promise<ExampleContext> {
     console.log("Provider: Emulator");
     console.log("Wallet address:", user.address);
     return { lucid, isEmulator: true };
+}
+
+export async function logWalletInfo(lucid: LucidEvolution, label: string): Promise<void> {
+    const address   = await lucid.wallet().address();
+    const utxos     = await lucid.wallet().getUtxos();
+    const spendable = utxos.filter(u => !u.scriptRef);
+    const withRefs  = utxos.filter(u =>  u.scriptRef);
+    const total     = utxos.reduce((s, u) => s + (u.assets.lovelace ?? 0n), 0n);
+    const liquid    = spendable.reduce((s, u) => s + (u.assets.lovelace ?? 0n), 0n);
+    const network   = process.env.NETWORK ?? "Preprod";
+    const subdomain = network === "Mainnet" ? "" : `${network.toLowerCase()}.`;
+    console.log(`Wallet [${label}]  ${(Number(total) / 1e6).toFixed(2)} ADA total  |  ${(Number(liquid) / 1e6).toFixed(2)} ADA spendable`);
+    if (withRefs.length > 0)
+        console.log(`  ⚠  ${withRefs.length} UTxO(s) hold reference scripts — excluded from coin selection`);
+    console.log(`Address: ${address}`);
+    console.log(`Explorer: https://${subdomain}cexplorer.io/address/${address}`);
 }
 
 export function cexplorerTxUrl(txHash: string): string {

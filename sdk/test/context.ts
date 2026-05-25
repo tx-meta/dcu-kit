@@ -162,20 +162,26 @@ const makeKupmiosContext = (network: OnChainNetwork) =>
 const loadUsersFromEnv = () => {
   const adminSeed = process.env.ADMIN_SEED;
   const user1Seed = process.env.USER1_SEED;
-  // user2 might be optional or generated
-  const user2Seed = process.env.USER2_SEED || user1Seed;
+  const user2Seed = process.env.USER2_SEED;
 
-  if (!adminSeed || !user1Seed) {
-    throw new ConfigurationError({
-        configKey: "ADMIN_SEED/USER1_SEED",
-        message: "Missing ADMIN_SEED or USER1_SEED for live network testing."
-    });
+  if (!adminSeed || !user1Seed || !user2Seed) {
+    // Throw a native Error — this runs outside an Effect generator so Effect.fail
+    // is not available. The missing env var is a CI configuration bug, not a
+    // recoverable runtime condition.
+    const missing = [
+      !adminSeed && "ADMIN_SEED",
+      !user1Seed && "USER1_SEED",
+      !user2Seed && "USER2_SEED",
+    ].filter(Boolean).join(", ");
+    throw new Error(
+      `Live network testing requires seed phrases for all three wallets. Missing: ${missing}.`
+    );
   }
 
   return {
     admin: { seedPhrase: adminSeed },
     user1: { seedPhrase: user1Seed },
-    user2: { seedPhrase: user2Seed! },
+    user2: { seedPhrase: user2Seed },
   };
 };
 
@@ -192,7 +198,7 @@ const ensureOnChain = (network: Network, provider: string) =>
 // --- Entry Point ---
 
 export const makeLucidContext = (overrideConfig?: Partial<ContextConfig>) =>
-  Effect.gen(function* ($) {
+  Effect.gen(function* () {
     const envConfig = loadConfigFromEnv();
     const config = { ...envConfig, ...overrideConfig };
 
@@ -204,20 +210,14 @@ export const makeLucidContext = (overrideConfig?: Partial<ContextConfig>) =>
 
     switch (config.provider) {
       case "Blockfrost":
-        return yield* $(
-          makeBlockfrostContext(yield* ensureOnChain(config.network, "Blockfrost")),
-        );
+        return yield* makeBlockfrostContext(yield* ensureOnChain(config.network, "Blockfrost"));
       case "Maestro":
-        return yield* $(
-          makeMaestroContext(yield* ensureOnChain(config.network, "Maestro")),
-        );
+        return yield* makeMaestroContext(yield* ensureOnChain(config.network, "Maestro"));
       case "Kupmios":
-        return yield* $(
-          makeKupmiosContext(yield* ensureOnChain(config.network, "Kupmios")),
-        );
+        return yield* makeKupmiosContext(yield* ensureOnChain(config.network, "Kupmios"));
       case "Emulator":
       default:
-        return yield* $(makeEmulatorContext());
+        return yield* makeEmulatorContext();
     }
   });
 

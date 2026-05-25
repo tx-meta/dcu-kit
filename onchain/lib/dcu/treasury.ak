@@ -1,6 +1,5 @@
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/interval.{Finite}
 use aiken/primitive/bytearray
 use cardano/address.{Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
@@ -9,28 +8,44 @@ use cardano/transaction.{
 }
 use dcu/cip68
 use dcu/group.{GroupDatum}
+use dcu/utils.{get_lower_bound}
 
-/// Contribution struct for Treasury Datum
-pub type Contribution {
-  claimable_at: Int,
-  claimable_amount: Int,
-}
+/// Maximum number of grace window extensions an admin can grant a defaulting member.
+pub const max_grace_extensions: Int = 2
 
 /// Treasury Validator Datum (Sum Type)
 pub type TreasuryDatum {
   TreasuryState {
     group_reference_tokenname: AssetName,
     member_reference_tokenname: AssetName,
-    membership_start: Int,
     assigned_slot: Int,
-    contribution_list: List<Contribution>,
-    // payment key hash of the member's wallet; used in DistributePayout
-    // to route the payout to the correct borrower address
+    // Number of distribution rounds this member has contributed to.
+    // Starts at 0; incremented by DistributeRound. Used to enforce sequential
+    // round processing: each treasury instance must be at rounds_paid == round_number.
+    rounds_paid: Int,
+    // True when the member has voluntarily signalled they wish to defer their
+    // scheduled payout round. Reset to False by DistributeRound regardless of path.
+    is_deferred: Bool,
+    // Payment key hash of the member's wallet; used in DistributeRound
+    // to route the payout to the correct borrower address.
     member_payment_credential: ByteArray,
   }
   PenaltyState {
     group_reference_tokenname: AssetName,
     member_reference_tokenname: AssetName,
+  }
+  // Transition state for members whose balance drops below contribution_fee.
+  // Admin may grant up to max_grace_extensions extensions; after that,
+  // the membership is considered forfeit and the admin withdraws via TerminateGroup.
+  InsufficientCollateralState {
+    group_reference_tokenname: AssetName,
+    member_reference_tokenname: AssetName,
+    // POSIX ms timestamp when the current grace window expires.
+    grace_expires_at: Int,
+    // Number of grace extensions already granted (max = max_grace_extensions).
+    grace_extensions_used: Int,
+    // rounds_paid at the time of transition — carried for record keeping.
+    rounds_paid: Int,
   }
 }
 
@@ -43,16 +58,18 @@ pub type TreasuryRedeemer {
     treasury_output_index: Int,
   }
   TerminateGroup {
-    // group input (reference or spending) to derive the group policy_id for admin token check.
-    // TerminateGroup does NOT spend or update the group UTxO — member_count was already
-    // decremented at ExitGroup time. This index is only needed to read the group's script
-    // credential so the admin (222) token name can be validated.
+    // Group input (spending) to derive the group policy_id for admin token check.
     group_input_index: Int,
-    // admin input holding the group (222) user token
+    // Admin input holding the group (222) user token.
     admin_input_index: Int,
   }
-  DistributePayout {
+  DistributeRound {
+    // Sequential round number; must equal group.last_distributed_round + 1.
+    round_number: Int,
+    // Group UTxO spending input — updated to increment last_distributed_round.
     group_ref_input_index: Int,
+    // Index of the group output (updated last_distributed_round).
+    group_output_index: Int,
     treasury_input_indices: List<Int>,
     treasury_output_indices: List<Int>,
     borrower_output_index: Int,
@@ -64,119 +81,41 @@ pub type TreasuryRedeemer {
     treasury_input_index: Int,
     penalty_output_index: Int,
   }
-  MemberWithdraw {
-    group_ref_input_index: Int,
+  // Member tops up their treasury balance to remain above contribution_fee.
+  Contribute {
     member_input_index: Int,
     treasury_input_index: Int,
     treasury_output_index: Int,
-    withdrawal_amount: Int,
+  }
+  // Member signals they wish to defer their scheduled payout round.
+  // The is_deferred flag is set True here and reset by DistributeRound.
+  DeferRound {
+    round_number: Int,
+    member_input_index: Int,
+    treasury_input_index: Int,
+    treasury_output_index: Int,
+  }
+  // Member updates their payout destination credential.
+  UpdatePayoutCredential {
+    member_input_index: Int,
+    treasury_input_index: Int,
+    treasury_output_index: Int,
+  }
+  // Admin grants a grace window extension to a member in InsufficientCollateralState.
+  // grace_period_length (from the group datum) is passed from the entry point.
+  ExtendGraceWindow {
+    group_ref_input_index: Int,
+    admin_input_index: Int,
+    treasury_input_index: Int,
+    treasury_output_index: Int,
   }
 }
 
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
 
-// claimable_sum
-// Returns the sum of all `claimable_amount`s where `claimable_at <= current_time`.
-pub fn claimable_sum(
-  contributions: List<Contribution>,
-  current_time: Int,
-) -> Int {
-  list.foldl(
-    contributions,
-    0,
-    fn(c, acc) {
-      if c.claimable_at <= current_time {
-        acc + c.claimable_amount
-      } else {
-        acc
-      }
-    },
-  )
-}
-
-// remove_claimable
-// Returns contributions where `claimable_at > current_time` (the "paid" entries removed).
-pub fn remove_claimable(
-  contributions: List<Contribution>,
-  current_time: Int,
-) -> List<Contribution> {
-  list.filter(contributions, fn(c) { c.claimable_at > current_time })
-}
-
-// validate_contribution_list_at_join
-// Verifies the pre-populated contribution list is consistent with the group schedule:
-//   length == num_intervals, each entry claimable_at = start_time + (i+1)*interval_length,
-//   each claimable_amount == contribution_fee.
-fn validate_contribution_list_at_join(
-  contributions: List<Contribution>,
-  start_time: Int,
-  interval_length: Int,
-  contribution_fee: Int,
-  num_intervals: Int,
-) -> Bool {
-  let length_valid = list.length(contributions) == num_intervals
-  let entries_valid =
-    check_entries(
-      contributions,
-      start_time,
-      interval_length,
-      contribution_fee,
-      0,
-    )
-  and {
-    length_valid?,
-    entries_valid?,
-  }
-}
-
-fn check_entries(
-  contributions: List<Contribution>,
-  start_time: Int,
-  interval_length: Int,
-  contribution_fee: Int,
-  index: Int,
-) -> Bool {
-  when contributions is {
-    [] -> True
-    [c, ..rest] ->
-      c.claimable_at == start_time + ( index + 1 ) * interval_length && c.claimable_amount == contribution_fee && check_entries(
-        rest,
-        start_time,
-        interval_length,
-        contribution_fee,
-        index + 1,
-      )
-  }
-}
-
-// compute_current_slot
-// current_slot = (current_time - start_time) / interval_length % num_intervals
-fn compute_current_slot(
-  current_time: Int,
-  start_time: Int,
-  interval_length: Int,
-  num_intervals: Int,
-) -> Int {
-  ( current_time - start_time ) / interval_length % num_intervals
-}
-
-// get_lower_bound
-// Extracts the Finite lower bound from a transaction's validity_range.
-// Fails if the lower bound is not a Finite value (required for time-based checks).
-fn get_lower_bound(tx: Transaction) -> Int {
-  expect Finite(t) = tx.validity_range.lower_bound.bound_type
-  t
-}
-
 // member_has_user_token
 // Verifies the input at member_input_index holds exactly 1 token of
 // member_reference_tokenname under the account_policy_id.
-// This proves the caller owns the Account NFT (user token) registered under
-// the DCU account validator — not just any token with a matching name.
-//
-// NOTE: member_reference_tokenname in TreasuryState IS the full user token name
-// (prefix_222 + unique hash), because the SDK derives it from the member's wallet
-// UTxO which holds the account user token.
 fn member_has_user_token(
   inputs: List<Input>,
   member_input_index: Int,
@@ -193,8 +132,6 @@ fn member_has_user_token(
 
 // find_group_token_name
 // Extracts the group reference token name from a group UTxO's value.
-// The group UTxO is at a Script address — the script hash is the group policy.
-// Uses destructure `[Pair(name, 1)]` to defensively reject multiple-token UTxOs.
 fn find_group_token_name(group_input: Input) -> AssetName {
   expect Script(group_policy_id) = group_input.output.address.payment_credential
   expect [Pair(group_token_name, 1)] =
@@ -217,27 +154,26 @@ fn indices_in_ascending_order(indices: List<Int>) -> Bool {
 
 // validate_join_group
 // ─────────────────────────────────────────────────────────────────────────────
+// [spec JoinGroup 0]: group must NOT be started — no late joins after startGroup
 // [spec JoinGroup 1]: member input at member_input_index must hold the Account NFT
-//                     (user token) under account_policy_id — proves identity ownership
+//                     (user token) under account_policy_id
 // [spec JoinGroup 2]: group UTxO at group_ref_input_index is a spending input
-//                     with a valid GroupDatum (group must be updated in same tx)
-// [spec JoinGroup 3]: exactly one membership token minted under own policy;
-//                     the token name = member_reference_tokenname from treasury datum
+//                     with a valid GroupDatum
+// [spec JoinGroup 3]: exactly one membership token minted under own policy
 // [spec JoinGroup 4]: treasury output at treasury_output_index is at the treasury
 //                     script address (Script(own_policy_id))
 // [spec JoinGroup 5]: treasury output holds EXACTLY 1 membership token, only ADA +
-//                     own policy — prevents unbounded value / token stuffing
-// [spec JoinGroup 6]: treasury output datum is TreasuryState consistent with
-//                     GroupDatum: group_reference_tokenname links to the group,
-//                     assigned_slot == group.member_count (slot assigned sequentially),
-//                     contribution_list has num_intervals entries with correct amounts,
-//                     member_payment_credential records the member's wallet pkh
-// [spec JoinGroup 7]: treasury output holds at least contribution_fee in the contribution asset
-// [spec JoinGroup 8]: if joining_fee > 0, admin's wallet (admin_payment_credential) receives
-//                     at least joining_fee in the joining fee asset — fee routed at join time,
-//                     not locked in treasury
-// [security        ]: member user token must NOT go to any script address —
-//                     if trapped in a script, membership control is permanently lost
+//                     own policy
+// [spec JoinGroup 6]: treasury output datum is TreasuryState with:
+//                     - group_reference_tokenname links to the group
+//                     - assigned_slot == group.member_count (sequential)
+//                     - rounds_paid == 0 (fresh member, no rounds yet)
+//                     - is_deferred == False
+//                     - member_payment_credential records the member's wallet pkh
+// [spec JoinGroup 7]: treasury output holds at least contribution_fee in the
+//                     contribution asset (minimum collateral for one round)
+// [spec JoinGroup 8]: if joining_fee > 0, admin wallet receives joining fee
+// [security        ]: member user token must NOT go to any script address
 pub fn validate_join_group(
   own_policy_id: PolicyId,
   account_policy_id: PolicyId,
@@ -254,8 +190,11 @@ pub fn validate_join_group(
   expect InlineDatum(group_datum_data) = group_input.output.datum
   expect group: GroupDatum = group_datum_data
 
-  // [spec JoinGroup]: group must be active — members cannot join deactivated groups
+  // [spec JoinGroup]: group must be active
   let group_active = group.is_active
+
+  // [spec JoinGroup 0]: group must not be started — startGroup seals membership
+  let not_started = !group.is_started
 
   // Extract group policy ID for output validation
   expect Script(group_policy_id) = group_input.output.address.payment_credential
@@ -266,17 +205,11 @@ pub fn validate_join_group(
   expect TreasuryState {
     member_reference_tokenname,
     group_reference_tokenname,
-    membership_start,
+    rounds_paid,
+    is_deferred,
     assigned_slot,
-    contribution_list,
     member_payment_credential,
   }: TreasuryDatum = treasury_datum_data
-
-  // [spec JoinGroup]: membership_start must equal the tx lower bound —
-  //   records the exact time the member joined; frozen from this point on
-  //   via validate_member_withdraw's structural equality check.
-  let current_time = get_lower_bound(tx)
-  let membership_start_valid = membership_start == current_time
 
   // [spec JoinGroup 3]: exactly 1 membership token minted under own policy
   let minted_tokens = assets.tokens(mint, own_policy_id)
@@ -292,18 +225,21 @@ pub fn validate_join_group(
   // [spec JoinGroup 6b]: assigned_slot == group.member_count (sequential slot assignment)
   let slot_valid = assigned_slot == group.member_count
 
-  // [spec JoinGroup 6d]: group output at group_output_index has member_count + 1 —
-  //   ensures the Group validator's MemberJoin redeemer atomically updates member_count.
-  //   Without this, member_count would stay at 0 forever and every member would
-  //   receive assigned_slot = 0, breaking ROSCA rotation.
+  // [spec JoinGroup 6c]: rounds_paid == 0 (fresh member, no rounds completed yet)
+  let rounds_paid_valid = rounds_paid == 0
+
+  // [spec JoinGroup 6d]: is_deferred == False (cannot join already deferred)
+  let not_deferred = !is_deferred
+
+  // [spec JoinGroup NEW]: group output at group_output_index has member_count + 1 —
+  //   ensures the Group validator's MemberJoin redeemer atomically updates member_count
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(go_data) = group_output.datum
   expect updated_group: GroupDatum = go_data
   let member_count_incremented =
     updated_group.member_count == group.member_count + 1
 
-  // [spec JoinGroup Minor 9]: group output must be at the group script address and
-  //   retain the ref token — prevents substituting a fake group output datum
+  // [spec JoinGroup Minor]: group output at correct address with ref token
   let group_output_at_correct_address =
     group_output.address == group_input.output.address
   let group_output_has_ref_token =
@@ -313,18 +249,8 @@ pub fn validate_join_group(
       expected_group_token_name,
     ) == 1
 
-  // [spec JoinGroup 6c]: contribution_list has num_intervals entries with correct schedule
-  let list_valid =
-    validate_contribution_list_at_join(
-      contribution_list,
-      group.start_time,
-      group.interval_length,
-      group.contribution_fee,
-      group.num_intervals,
-    )
-
   // [spec JoinGroup 7]: treasury output holds at least contribution_fee in the
-  //   contribution asset. The joining_fee is routed separately to the admin (spec 8).
+  //   contribution asset — minimum collateral to participate in one round
   let fees_locked =
     assets.quantity_of(
       treasury_output.value,
@@ -332,10 +258,7 @@ pub fn validate_join_group(
       group.contribution_fee_assetname,
     ) >= group.contribution_fee
 
-  // [spec JoinGroup 8]: if joining_fee > 0, an output at the admin's payment credential
-  //   (group.admin_payment_credential) must receive at least joining_fee in the joining
-  //   fee asset. The fee goes directly to the admin's wallet at join time, not into the
-  //   treasury. When joining_fee == 0 this check is trivially satisfied.
+  // [spec JoinGroup 8]: if joining_fee > 0, admin wallet receives joining fee
   let joining_fee_routed =
     if group.joining_fee == 0 {
       True
@@ -357,8 +280,6 @@ pub fn validate_join_group(
     }
 
   // [spec JoinGroup 1]: member input must hold the Account NFT under account_policy_id
-  //   Using quantity_of with the specific account policy prevents accepting arbitrary
-  //   tokens — only a real Account NFT minted by the DCU account validator passes.
   let member_authorized =
     member_has_user_token(
       inputs,
@@ -367,22 +288,21 @@ pub fn validate_join_group(
       account_policy_id,
     )
 
-  // [spec JoinGroup 6e]: member_payment_credential must record the member's wallet pkh —
-  //   stored at join time so DistributePayout can verify the borrower output destination.
-  //   Enforces that the credential is a VerificationKey (wallets only, no scripts).
+  // [spec JoinGroup 6e]: member_payment_credential records the member's wallet pkh
   expect Some(member_input_utxo) = list.at(inputs, member_input_index)
   expect VerificationKey(member_pkh) =
     member_input_utxo.output.address.payment_credential
   let member_cred_matches = member_payment_credential == member_pkh
 
-  // [security]: Account NFT (member user token) must NOT go to any script address —
-  //   if trapped in a script the member permanently loses control of their membership
+  // [security]: prevent double-join
+  let member_not_duplicate =
+    !list.any(group.member_token_names, fn(n) { n == member_reference_tokenname })
+
+  // [security]: Account NFT (member user token) must NOT go to any script address
   let user_token_at_wallet =
     list.all(
       outputs,
       fn(o) {
-        // If an output holds the member_reference_tokenname under the account policy,
-        // it must be at a wallet (VerificationKey), not a script
         let has_user_token =
           assets.quantity_of(
             o.value,
@@ -402,27 +322,29 @@ pub fn validate_join_group(
 
   and {
     group_active?,
+    not_started?,
     // [spec JoinGroup 1a]: group must not be at capacity
     (group.member_count < group.max_members)?,
+    member_not_duplicate?,
     exact_mint?,
     (treasury_output.address.payment_credential == Script(own_policy_id))?,
-    // [spec JoinGroup 5]: exact token check — exactly 1 membership token, prevents token stuffing
+    // [spec JoinGroup 5]: exact token check
     (dict.to_pairs(assets.tokens(treasury_output.value, own_policy_id)) == [
       Pair(member_reference_tokenname, 1),
     ])?,
-    // [security]: only ADA + own policy in treasury output — prevents unbounded value accumulation
+    // [security]: only ADA + own policy in treasury output
     (assets.policies(treasury_output.value) == [ada_policy_id, own_policy_id])?,
     group_link_valid?,
     slot_valid?,
+    rounds_paid_valid?,
+    not_deferred?,
     member_count_incremented?,
     group_output_at_correct_address?,
     group_output_has_ref_token?,
-    list_valid?,
     fees_locked?,
     joining_fee_routed?,
     member_authorized?,
     member_cred_matches?,
-    membership_start_valid?,
     user_token_at_wallet?,
   }
 }
@@ -432,11 +354,8 @@ pub fn validate_join_group(
 // validate_terminate_group
 // ─────────────────────────────────────────────────────────────────────────────
 // [spec TerminateGroup 1]: exactly one membership token is burned under this policy.
-//   This covers both the PenaltyWithdraw (TerminateGroup redeemer) and
-//   the mature ExitGroup (ExitGroup redeemer) burn paths, since both pass
-//   the same mint logic — "burn exactly 1 token under own policy."
-// [security]: no net minting allowed — prevents a burn-and-remint attack where
-//             an attacker burns one token and mints a new one in the same tx.
+//   Covers both PenaltyWithdraw (TerminateGroup redeemer) and mature ExitGroup burn.
+// [security]: no net minting — prevents burn-and-remint attack.
 pub fn validate_terminate_group(own_policy_id: PolicyId, mint: Value) -> Bool {
   let minted_tokens = assets.tokens(mint, own_policy_id)
   // Exactly one entry, with quantity -1
@@ -444,31 +363,29 @@ pub fn validate_terminate_group(own_policy_id: PolicyId, mint: Value) -> Bool {
   (qty == -1)?
 }
 
-// ─── Spend: DistributePayout ──────────────────────────────────────────────────
+// ─── Spend: DistributeRound ───────────────────────────────────────────────────
 
-// validate_distribute_payout
+// validate_distribute_round
 // ─────────────────────────────────────────────────────────────────────────────
 // NOTE: self-reference check (own UTxO is at one of treasury_input_indices) is
-//       enforced at the entry point in treasury-validator.ak before this function.
+//       enforced at the entry point before this function.
 //
-// [spec DistributePayout 1]: datum must be TreasuryState — PenaltyState cannot receive payout
-// [spec DistributePayout 2]: group reference input at group_ref_input_index
-//                            (in tx.reference_inputs) has a valid GroupDatum
-// [spec DistributePayout 3]: eligibility — at least one treasury input has
-//                            assigned_slot == current_slot (the borrower is present)
-// [spec DistributePayout 4]: own corresponding treasury output (matched by index
-//                            in the parallel treasury_input/output_indices lists)
-//                            returns to the treasury script address with:
-//                            • the membership token still locked
-//                            • updated datum (claimable_at <= current_time entries removed)
-// [spec DistributePayout 5]: borrower output at borrower_output_index is at the
-//                            scheduled member's wallet (member_payment_credential)
-//                            and receives at least the total claimable across all inputs
-// [security]: treasury_input_indices must be strictly ascending to prevent
-//             duplicate-index attacks where the same UTxO is listed twice
-pub fn validate_distribute_payout(
+// [spec DistributeRound 1]: datum must be TreasuryState
+// [spec DistributeRound 2]: member.rounds_paid == round_number (hasn't paid this round)
+// [spec DistributeRound 3]: group spending input at group_ref_input_index
+// [spec DistributeRound 4]: group output shows last_distributed_round = round_number
+// [spec DistributeRound 5]: group output at correct address with ref token
+// [spec DistributeRound 6]: borrower output at member with assigned_slot == current_slot
+//                           and receives total payout in contribution asset
+// [spec DistributeRound 7]: own output: rounds_paid + 1, is_deferred = False, balance
+//                           reduced by contribution_fee in the contribution asset
+// [spec DistributeRound 8]: own output at script address with membership token
+// [security]: treasury_input_indices and treasury_output_indices strictly ascending
+pub fn validate_distribute_round(
   own_policy_id: PolicyId,
+  round_number: Int,
   group_ref_input_index: Int,
+  group_output_index: Int,
   treasury_input_indices: List<Int>,
   treasury_output_indices: List<Int>,
   borrower_output_index: Int,
@@ -476,71 +393,63 @@ pub fn validate_distribute_payout(
   utxo: OutputReference,
   tx: Transaction,
 ) -> Bool {
-  let Transaction { inputs, reference_inputs, outputs, .. } = tx
+  let Transaction { inputs, outputs, .. } = tx
 
-  // [spec DistributePayout 1]: datum must be TreasuryState
-  expect TreasuryState {
-    member_reference_tokenname,
-    assigned_slot: _,
-    contribution_list,
-    ..
-  } = datum
+  // [spec DistributeRound 1]: datum must be TreasuryState
+  expect TreasuryState { member_reference_tokenname, rounds_paid, .. } = datum
 
-  // Get current time from validity range lower bound
-  let current_time = get_lower_bound(tx)
+  // [spec DistributeRound 2]: member hasn't been processed for this round yet
+  let member_at_correct_round = rounds_paid == round_number
 
-  // [spec DistributePayout 2]: group reference input with GroupDatum
-  expect Some(group_ref_input) =
-    list.at(reference_inputs, group_ref_input_index)
-  expect InlineDatum(group_datum_data) = group_ref_input.output.datum
+  // [spec DistributeRound 3]: group spending input with GroupDatum
+  expect Some(group_input) = list.at(inputs, group_ref_input_index)
+  expect InlineDatum(group_datum_data) = group_input.output.datum
   expect group: GroupDatum = group_datum_data
 
-  // [spec DistributePayout 2 — intentional]: group.is_active is NOT required.
-  // Contributions whose claimable_at <= current_time are due regardless of
-  // whether the group is still active. Members retain the right to claim
-  // already-accrued contributions after group deactivation.
-  // Compute current rotation slot
-  expect current_time >= group.start_time
-  let current_slot =
-    compute_current_slot(
-      current_time,
-      group.start_time,
-      group.interval_length,
-      group.num_intervals,
-    )
-
-  // [security]: both index lists must be strictly ascending —
-  //   prevents duplicate-index attacks where the same UTxO or output appears twice.
-  //   input dedup prevents the same treasury UTxO being processed twice.
-  //   output dedup prevents two treasury UTxOs pointing at the same output, which
-  //   would let each validator independently satisfy its ADA balance check against
-  //   one shared output and drain excess ADA to the borrower.
+  // [security]: strictly ascending indices — prevents duplicate-index attacks
   let indices_valid = indices_in_ascending_order(treasury_input_indices)
   let output_indices_valid = indices_in_ascending_order(treasury_output_indices)
 
-  // [spec DistributePayout 5a]: find the borrower's payment credential from the
-  //   treasury input whose assigned_slot == current_slot. Stored at join time,
-  //   this ensures the payout goes to the scheduled member's wallet.
-  expect Some(borrower_cred) =
+  // [spec DistributeRound 4]: group output has last_distributed_round = round_number
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect InlineDatum(go_data) = group_output.datum
+  expect updated_group: GroupDatum = go_data
+  let group_round_incremented = updated_group.last_distributed_round == round_number
+
+  // [spec DistributeRound 5]: group output at correct address with ref token
+  expect Script(group_policy_id) = group_input.output.address.payment_credential
+  let expected_group_token_name = find_group_token_name(group_input)
+  let group_output_valid =
+    group_output.address == group_input.output.address && assets.quantity_of(
+      group_output.value,
+      group_policy_id,
+      expected_group_token_name,
+    ) == 1
+
+  // [spec DistributeRound 6a]: find the primary member (assigned_slot == current_slot)
+  // and check whether they have deferred their payout.
+  let current_slot = round_number % group.num_intervals
+  expect Some((primary_cred, primary_is_deferred)) =
     list.find_map(
       treasury_input_indices,
       fn(idx) {
         when list.at(inputs, idx) is {
-          Some(treasury_input) -> {
-            expect InlineDatum(d) = treasury_input.output.datum
+          Some(ti) -> {
+            expect InlineDatum(d) = ti.output.datum
             expect td: TreasuryDatum = d
             when td is {
               TreasuryState {
                 assigned_slot: slot,
                 member_payment_credential: cred,
+                is_deferred: deferred,
                 ..
               } ->
                 if slot == current_slot {
-                  Some(cred)
+                  Some((cred, deferred))
                 } else {
                   None
                 }
-              PenaltyState { .. } -> None
+              _ -> None
             }
           }
           None -> None
@@ -548,40 +457,61 @@ pub fn validate_distribute_payout(
       },
     )
 
-  // [spec DistributePayout 5b]: total claimable across all treasury inputs —
-  //   the borrower output must receive at least this amount.
-  //   Each UTxO's output enforces its own share via ada_balance_correct below;
-  //   this check ensures the aggregate flows to the correct destination.
-  let total_claimable =
-    list.foldl(
-      treasury_input_indices,
-      0,
-      fn(idx, acc) {
-        when list.at(inputs, idx) is {
-          Some(treasury_input) -> {
-            expect InlineDatum(d) = treasury_input.output.datum
-            expect td: TreasuryDatum = d
-            when td is {
-              TreasuryState { contribution_list: cl, .. } ->
-                acc + claimable_sum(cl, current_time)
-              PenaltyState { .. } -> acc
-            }
-          }
-          None -> acc
-        }
-      },
-    )
+  // [spec DistributeRound 6b]: if the primary member is deferred, route payout to
+  // (current_slot + 1) % num_intervals instead; always reset is_deferred after distribute.
+  let effective_slot =
+    if primary_is_deferred {
+      ( current_slot + 1 ) % group.num_intervals
+    } else {
+      current_slot
+    }
 
-  // [spec DistributePayout 4]: find own corresponding output
-  //   Find own position in treasury_input_indices, get matching treasury_output_indices[i]
+  let borrower_cred =
+    if !primary_is_deferred {
+      primary_cred
+    } else {
+      expect Some(cred) =
+        list.find_map(
+          treasury_input_indices,
+          fn(idx) {
+            when list.at(inputs, idx) is {
+              Some(ti) -> {
+                expect InlineDatum(d) = ti.output.datum
+                expect td: TreasuryDatum = d
+                when td is {
+                  TreasuryState {
+                    assigned_slot: slot,
+                    member_payment_credential: c,
+                    ..
+                  } ->
+                    if slot == effective_slot {
+                      Some(c)
+                    } else {
+                      None
+                    }
+                  _ -> None
+                }
+              }
+              None -> None
+            }
+          },
+        )
+      cred
+    }
+
+  // [spec DistributeRound 6c]: total payout = contribution_fee × member count
+  let total_payout =
+    list.length(treasury_input_indices) * group.contribution_fee
+
+  // [spec DistributeRound 7]: find own corresponding output (matched by own UTxO reference)
   expect Some(own_output_index) =
     list.find_map(
       list.zip(treasury_input_indices, treasury_output_indices),
       fn(pair) {
         let (in_idx, out_idx) = pair
         when list.at(inputs, in_idx) is {
-          Some(treasury_input) ->
-            if treasury_input.output_reference == utxo {
+          Some(ti) ->
+            if ti.output_reference == utxo {
               Some(out_idx)
             } else {
               None
@@ -594,52 +524,68 @@ pub fn validate_distribute_payout(
   expect Some(own_output) = list.at(outputs, own_output_index)
   expect InlineDatum(output_datum_data) = own_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
-  expect TreasuryState { contribution_list: output_contribution_list, .. } =
-    output_datum
+  expect TreasuryState {
+    rounds_paid: output_rounds_paid,
+    is_deferred: output_is_deferred,
+    ..
+  } = output_datum
 
-  // [spec DistributePayout 4a]: updated datum has claimable entries removed
-  let expected_remaining = remove_claimable(contribution_list, current_time)
-  let datum_updated_correctly = output_contribution_list == expected_remaining
+  // [spec DistributeRound 7a]: output datum: rounds_paid incremented, is_deferred reset
+  let output_datum_correct =
+    output_rounds_paid == round_number + 1 && !output_is_deferred
 
-  // [spec DistributePayout 4b]: treasury output retains its membership token at script address
+  // [spec DistributeRound 7b]: balance reduced by contribution_fee in contribution asset
+  expect Some(own_input) =
+    list.find(inputs, fn(i) { i.output_reference == utxo })
+  let input_bal =
+    assets.quantity_of(
+      own_input.output.value,
+      group.contribution_fee_policyid,
+      group.contribution_fee_assetname,
+    )
+  let output_bal =
+    assets.quantity_of(
+      own_output.value,
+      group.contribution_fee_policyid,
+      group.contribution_fee_assetname,
+    )
+  let balance_deducted = output_bal == input_bal - group.contribution_fee
+
+  // [spec DistributeRound 8]: own output at script address with membership token
   let output_at_script =
     own_output.address.payment_credential == Script(own_policy_id)
-  // [spec DistributePayout 4b]: exact token check — prevents token stuffing / account-merge
+  // [security]: exact token check — prevents account-merge attacks
   let token_retained =
     dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
       Pair(member_reference_tokenname, 1),
     ]
-  // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
+  // [security]: only ADA + own policy — prevents unbounded value accumulation
   let clean_output_value =
     assets.policies(own_output.value) == [ada_policy_id, own_policy_id]
 
-  // [spec DistributePayout 4c]: treasury output ADA = input ADA - own claimable sum
-  //   Prevents the claimable entries from being marked paid without value being released.
-  //   Each UTxO's validator enforces its own share; the aggregate payout to the borrower
-  //   follows as a consequence across all treasury inputs.
-  expect Some(own_input) =
-    list.find(inputs, fn(i) { i.output_reference == utxo })
-  let own_claimable = claimable_sum(contribution_list, current_time)
-  let input_ada = assets.lovelace_of(own_input.output.value)
-  let output_ada = assets.lovelace_of(own_output.value)
-  let ada_balance_correct = output_ada == input_ada - own_claimable
-
-  // [spec DistributePayout 5]: borrower output is at the scheduled member's wallet
-  //   and receives at least the total claimable across all treasury inputs
+  // [spec DistributeRound 6c]: borrower output at scheduled member's wallet,
+  //   receiving at least total_payout in the contribution asset
   expect Some(borrower_output) = list.at(outputs, borrower_output_index)
   let borrower_at_correct_wallet =
     borrower_output.address.payment_credential == VerificationKey(borrower_cred)
   let borrower_receives_total =
-    assets.lovelace_of(borrower_output.value) >= total_claimable
+    assets.quantity_of(
+      borrower_output.value,
+      group.contribution_fee_policyid,
+      group.contribution_fee_assetname,
+    ) >= total_payout
 
   and {
+    member_at_correct_round?,
     indices_valid?,
     output_indices_valid?,
-    datum_updated_correctly?,
+    group_round_incremented?,
+    group_output_valid?,
+    output_datum_correct?,
     output_at_script?,
     token_retained?,
     clean_output_value?,
-    ada_balance_correct?,
+    balance_deducted?,
     borrower_at_correct_wallet?,
     borrower_receives_total?,
   }
@@ -654,16 +600,10 @@ pub fn validate_distribute_payout(
 //
 // [spec ExitGroup 1]: datum must be TreasuryState
 // [spec ExitGroup 2]: member input at member_input_index holds the user token
-//                     (proves the caller owns the membership)
 // [spec ExitGroup 3]: group spending input at group_ref_input_index has GroupDatum
-//                     (group is being updated to decrement member count in same tx)
-// [spec ExitGroup 4a]: Penalty path (group active AND within rotation period):
-//                      penalty output at penalty_output_index has PenaltyState datum,
-//                      retains the membership token, contains ≥ penalty_fee of the
-//                      penalty asset, AND preserves all treasury input ADA —
-//                      prevents the member from draining locked contributions during exit
-// [spec ExitGroup 4b]: Mature/inactive path (group inactive OR past rotation end):
-//                      membership token is burned in this transaction
+// [spec ExitGroup 4a]: Penalty path (active cycle): penalty output at penalty_output_index
+//                      has PenaltyState datum, retains membership token, >= penalty_fee locked
+// [spec ExitGroup 4b]: Mature/inactive path: membership token is burned
 pub fn validate_exit_group(
   own_policy_id: PolicyId,
   account_policy_id: PolicyId,
@@ -677,7 +617,8 @@ pub fn validate_exit_group(
   let Transaction { inputs, outputs, mint, .. } = tx
 
   // [spec ExitGroup 1]: datum must be TreasuryState
-  expect TreasuryState { member_reference_tokenname, .. } = datum
+  expect TreasuryState { member_reference_tokenname, group_reference_tokenname, .. } =
+    datum
 
   // Get current time
   let current_time = get_lower_bound(tx)
@@ -687,11 +628,14 @@ pub fn validate_exit_group(
   expect InlineDatum(group_datum_data) = group_input.output.datum
   expect group: GroupDatum = group_datum_data
 
-  // Extract group policy ID for output validation (Minor 9)
+  // Extract group policy ID
   expect Script(group_policy_id) = group_input.output.address.payment_credential
   let expected_group_token_name = find_group_token_name(group_input)
 
-  // [spec ExitGroup 2]: member input holds the Account NFT under account_policy_id
+  // [spec ExitGroup 3]: treasury datum's group_reference_tokenname must match the actual group
+  let group_link_valid = group_reference_tokenname == expected_group_token_name
+
+  // [spec ExitGroup 2]: member input holds the Account NFT
   let member_authorized =
     member_has_user_token(
       inputs,
@@ -700,21 +644,21 @@ pub fn validate_exit_group(
       account_policy_id,
     )
 
-  // Determine exit branch: early exit requires penalty; inactive/mature exit burns token
+  // Determine exit branch:
+  //   pre_cycle  (current_time < start_time)           → free exit, token burned
+  //   in_cycle   (active && past start && pre-maturity) → penalty exit, PenaltyState
+  //   post_cycle (past maturity || inactive)            → free exit, token burned
   let maturity_time =
     group.start_time + group.num_intervals * group.interval_length
-  let is_early_exit = group.is_active && current_time < maturity_time
+  let is_early_exit =
+    group.is_active && group.start_time <= current_time && current_time < maturity_time
 
-  // [spec ExitGroup 3]: group output — member_count decrements on BOTH paths.
-  //   penalty path: slot freed immediately so rotation continues unblocked
-  //   mature/inactive path: token burned, slot freed
-  //   TerminateGroup handles penalty ADA independently; it does not touch group state.
+  // [spec ExitGroup 3]: group output — member_count decrements on BOTH paths
   expect Some(group_output_utxo) = list.at(outputs, group_output_index)
   expect InlineDatum(go_data) = group_output_utxo.datum
   expect updated_group: GroupDatum = go_data
 
-  // [spec ExitGroup Minor 9]: group output must be at the group script address and
-  //   retain the ref token — prevents substituting a fake group output datum
+  // [spec ExitGroup Minor]: group output at correct address with ref token
   let group_output_at_correct_address =
     group_output_utxo.address == group_input.output.address
   let group_output_has_ref_token =
@@ -731,7 +675,7 @@ pub fn validate_exit_group(
     expect PenaltyState { member_reference_tokenname: penalty_member_tn, .. }: TreasuryDatum =
       penalty_datum_data
 
-    // [spec ExitGroup 4a]: penalty output retains the membership token (exact check)
+    // [spec ExitGroup 4a]: penalty output retains membership token (exact check)
     let token_in_penalty =
       dict.to_pairs(assets.tokens(penalty_output.value, own_policy_id)) == [
         Pair(member_reference_tokenname, 1),
@@ -741,7 +685,7 @@ pub fn validate_exit_group(
     let penalty_at_script =
       penalty_output.address.payment_credential == Script(own_policy_id)
 
-    // Penalty output contains ≥ penalty_fee of the penalty asset
+    // Penalty output contains >= penalty_fee of the penalty asset
     let penalty_fee_locked =
       assets.quantity_of(
         penalty_output.value,
@@ -752,11 +696,7 @@ pub fn validate_exit_group(
     // Penalty datum references the same member token name
     let penalty_datum_matches = penalty_member_tn == member_reference_tokenname
 
-    // [security]: penalty output holds only ADA, own policy (membership token), and the
-    // group's penalty fee policy — prevents unbounded value accumulation while supporting
-    // native token penalty fees set at group creation.
-    // ada_policy_id and own_policy_id are always present (every UTxO has ADA; membership
-    // token is enforced by token_in_penalty), so they must be in the whitelist.
+    // [security]: penalty output holds only ADA, own policy, and penalty fee policy
     let clean_penalty_value =
       list.all(
         assets.policies(penalty_output.value),
@@ -765,15 +705,13 @@ pub fn validate_exit_group(
         },
       )
 
-    // [spec ExitGroup 3]: penalty path — member exits immediately, freeing the slot.
-    //   member_count decrements now; TerminateGroup later only burns the penalty token
-    //   and releases ADA to the admin — it does not touch group state.
-    //   This prevents one member's early exit from stalling the group's rotation.
+    // Penalty path: member exits immediately, freeing the slot
     let group_count_decremented =
       updated_group.member_count == group.member_count - 1
 
     and {
       member_authorized?,
+      group_link_valid?,
       token_in_penalty?,
       penalty_at_script?,
       penalty_fee_locked?,
@@ -784,19 +722,19 @@ pub fn validate_exit_group(
       group_output_has_ref_token?,
     }
   } else {
-    // [spec ExitGroup 4b]: mature/inactive exit — exactly 1 membership token burned,
-    //   no other tokens minted under own policy (consistent with validate_terminate_group)
+    // [spec ExitGroup 4b]: mature/inactive exit — exactly 1 membership token burned
     let token_burned =
       dict.to_pairs(assets.tokens(mint, own_policy_id)) == [
         Pair(member_reference_tokenname, -1),
       ]
 
-    // [spec ExitGroup 3]: mature exit — member fully exits, member_count decrements
+    // Mature exit: member fully exits, member_count decrements
     let group_count_decremented =
       updated_group.member_count == group.member_count - 1
 
     and {
       member_authorized?,
+      group_link_valid?,
       token_burned?,
       group_count_decremented?,
       group_output_at_correct_address?,
@@ -805,162 +743,13 @@ pub fn validate_exit_group(
   }
 }
 
-// ─── Spend: MemberWithdraw ────────────────────────────────────────────────────
-
-// validate_member_withdraw
-// ─────────────────────────────────────────────────────────────────────────────
-// NOTE: self-reference check (own UTxO at treasury_input_index) is enforced at
-//       the entry point before this function is called.
-//
-// [spec MemberWithdraw 1]: datum must be TreasuryState
-// [spec MemberWithdraw 2]: member input at member_input_index holds the user token
-//                          (authorization — caller owns the membership)
-// [spec MemberWithdraw 3]: group reference input at group_ref_input_index
-//                          (in tx.reference_inputs) has a valid GroupDatum
-// [spec MemberWithdraw 4]: withdrawal_amount ≤ sum of claimable contributions
-//                          (claimable_at <= current_time) — linear vesting check
-// [spec MemberWithdraw 5]: treasury output at treasury_output_index returns to
-//                          script address with:
-//                          • membership token retained
-//                          • updated datum (claimable entries removed, all other fields frozen)
-//                          • only ADA + own policy (no unbounded value)
-// [spec MemberWithdraw 6]: ADA balance in output = input balance - withdrawal_amount
-// [security]: output datum uses structural equality — only contribution_list changes;
-//             assigned_slot, group_reference_tokenname, membership_start, and
-//             member_payment_credential are all frozen to prevent slot hijacking
-pub fn validate_member_withdraw(
-  own_policy_id: PolicyId,
-  account_policy_id: PolicyId,
-  group_ref_input_index: Int,
-  member_input_index: Int,
-  treasury_output_index: Int,
-  withdrawal_amount: Int,
-  datum: TreasuryDatum,
-  utxo: OutputReference,
-  tx: Transaction,
-) -> Bool {
-  let Transaction { inputs, reference_inputs, outputs, mint, .. } = tx
-
-  // [spec MemberWithdraw 1]: datum must be TreasuryState
-  // Extract all fields for structural equality check on the output datum
-  expect TreasuryState {
-    group_reference_tokenname,
-    member_reference_tokenname,
-    membership_start,
-    assigned_slot,
-    contribution_list,
-    member_payment_credential,
-  } = datum
-
-  // Get current time
-  let current_time = get_lower_bound(tx)
-
-  // [spec MemberWithdraw 3]: group reference input with valid GroupDatum
-  expect Some(group_ref_input) =
-    list.at(reference_inputs, group_ref_input_index)
-  expect InlineDatum(group_datum_data) = group_ref_input.output.datum
-  expect group: GroupDatum = group_datum_data
-
-  // [spec MemberWithdraw 2]: member input holds the Account NFT under account_policy_id
-  let member_authorized =
-    member_has_user_token(
-      inputs,
-      member_input_index,
-      member_reference_tokenname,
-      account_policy_id,
-    )
-
-  if !group.is_active {
-    // [spec MemberWithdraw inactive]: group is inactive — member exits with full withdrawal.
-    //   The membership token is burned; the UTxO is fully consumed.
-    //   No treasury output is required — ADA returns to wherever the tx directs it.
-    let token_burned =
-      dict.to_pairs(assets.tokens(mint, own_policy_id)) == [
-        Pair(member_reference_tokenname, -1),
-      ]
-
-    and {
-      member_authorized?,
-      token_burned?,
-    }
-  } else {
-    // Get own treasury input value for ADA balance check
-    expect Some(own_input) =
-      list.find(inputs, fn(i) { i.output_reference == utxo })
-    let input_ada = assets.lovelace_of(own_input.output.value)
-
-    // [spec MemberWithdraw 4]: withdrawal_amount ≤ total claimable amount — member may
-    // claim less than the full claimable sum (e.g. to satisfy min-ADA on the output UTxO).
-    // Any unclaimed ADA remains in the UTxO and is recovered on ExitGroup.
-    let total_claimable = claimable_sum(contribution_list, current_time)
-    let withdrawal_valid =
-      withdrawal_amount <= total_claimable && withdrawal_amount > 0
-
-    // [spec MemberWithdraw 5]: treasury output with updated datum
-    expect Some(treasury_output) = list.at(outputs, treasury_output_index)
-    expect InlineDatum(output_datum_data) = treasury_output.datum
-    expect output_datum: TreasuryDatum = output_datum_data
-
-    // [security]: structural equality — only contribution_list changes.
-    //   assigned_slot, group_reference_tokenname, membership_start, and
-    //   member_payment_credential are all frozen. Without this check, a member
-    //   could hijack another member's slot by mutating assigned_slot during withdrawal.
-    let expected_remaining = remove_claimable(contribution_list, current_time)
-    let expected_output_datum =
-      TreasuryState {
-        group_reference_tokenname,
-        member_reference_tokenname,
-        membership_start,
-        assigned_slot,
-        contribution_list: expected_remaining,
-        member_payment_credential,
-      }
-    let datum_frozen = output_datum == expected_output_datum
-
-    // [spec MemberWithdraw 5]: output at treasury script address
-    let output_at_script =
-      treasury_output.address.payment_credential == Script(own_policy_id)
-
-    // [spec MemberWithdraw 5]: membership token retained (exact token check)
-    let token_retained =
-      dict.to_pairs(assets.tokens(treasury_output.value, own_policy_id)) == [
-        Pair(member_reference_tokenname, 1),
-      ]
-
-    // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
-    let clean_output_value =
-      assets.policies(treasury_output.value) == [ada_policy_id, own_policy_id]
-
-    // [spec MemberWithdraw 6]: output ADA = input ADA - withdrawal_amount
-    let output_ada = assets.lovelace_of(treasury_output.value)
-    let ada_balance_correct = output_ada == input_ada - withdrawal_amount
-
-    and {
-      member_authorized?,
-      withdrawal_valid?,
-      datum_frozen?,
-      output_at_script?,
-      token_retained?,
-      clean_output_value?,
-      ada_balance_correct?,
-    }
-  }
-}
-
 // ─── Spend: TerminateGroup ────────────────────────────────────────────────────
 
 // validate_spend_terminate_group
 // ─────────────────────────────────────────────────────────────────────────────
-// [spec PenaltyWithdraw 1]: datum must be PenaltyState — only penalty UTxOs
-//                           can be withdrawn this way (TreasuryState uses ExitGroup)
+// [spec PenaltyWithdraw 1]: datum must be PenaltyState
 // [spec PenaltyWithdraw 2]: membership token is burned (verified in mint handler)
-// [spec PenaltyWithdraw 3]: admin must hold the group (222) user token derived
-//                           from group_reference_tokenname in the PenaltyState datum —
-//                           prevents any wallet from draining penalty UTxOs
-//
-// NOTE: group state is NOT touched here. member_count was already decremented at
-//       ExitGroup time, so the rotation continued unblocked. TerminateGroup only
-//       burns the penalty token and releases the locked ADA to the admin.
+// [spec PenaltyWithdraw 3]: admin must hold the group (222) user token
 pub fn validate_spend_terminate_group(
   own_policy_id: PolicyId,
   datum: TreasuryDatum,
@@ -989,12 +778,362 @@ pub fn validate_spend_terminate_group(
     ) == 1
 
   // [spec PenaltyWithdraw 2]: membership token burned in same tx
-  // (the mint handler also enforces exactly 1 token burned — belt-and-suspenders)
   let token_burned =
     assets.quantity_of(mint, own_policy_id, member_reference_tokenname) == -1
 
   and {
     admin_authorized?,
     token_burned?,
+  }
+}
+
+// ─── Spend: Contribute ────────────────────────────────────────────────────────
+
+// validate_contribute
+// ─────────────────────────────────────────────────────────────────────────────
+// Member tops up their treasury balance to remain above contribution_fee threshold.
+//
+// [spec Contribute 1]: datum must be TreasuryState (PenaltyState / InsufficientCollateral
+//                      cannot receive contributions via this path)
+// [spec Contribute 2]: member input holds the Account NFT (user token)
+// [spec Contribute 3]: treasury output datum is structurally identical to input datum
+// [spec Contribute 4]: treasury output ADA > input ADA (balance must actually increase)
+// [spec Contribute 5]: treasury output at script address with membership token
+pub fn validate_contribute(
+  own_policy_id: PolicyId,
+  account_policy_id: PolicyId,
+  member_input_index: Int,
+  treasury_output_index: Int,
+  datum: TreasuryDatum,
+  utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, outputs, .. } = tx
+
+  // [spec Contribute 1]: datum must be TreasuryState
+  expect TreasuryState { member_reference_tokenname, .. } = datum
+
+  // [spec Contribute 2]: member auth
+  let member_authorized =
+    member_has_user_token(
+      inputs,
+      member_input_index,
+      member_reference_tokenname,
+      account_policy_id,
+    )
+
+  expect Some(own_input) =
+    list.find(inputs, fn(i) { i.output_reference == utxo })
+
+  expect Some(own_output) = list.at(outputs, treasury_output_index)
+  expect InlineDatum(output_datum_data) = own_output.datum
+  expect output_datum: TreasuryDatum = output_datum_data
+
+  // [spec Contribute 3]: datum structurally unchanged
+  let datum_unchanged = output_datum == datum
+
+  // [spec Contribute 4]: ADA balance must increase (member is topping up)
+  let input_ada = assets.lovelace_of(own_input.output.value)
+  let output_ada = assets.lovelace_of(own_output.value)
+  let balance_increased = output_ada > input_ada
+
+  // [spec Contribute 5]: output at script address with membership token
+  let output_at_script =
+    own_output.address.payment_credential == Script(own_policy_id)
+  let token_retained =
+    dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
+      Pair(member_reference_tokenname, 1),
+    ]
+  let clean_output_value =
+    assets.policies(own_output.value) == [ada_policy_id, own_policy_id]
+
+  and {
+    member_authorized?,
+    datum_unchanged?,
+    output_at_script?,
+    token_retained?,
+    clean_output_value?,
+    balance_increased?,
+  }
+}
+
+// ─── Spend: DeferRound ────────────────────────────────────────────────────────
+
+// validate_defer_round
+// ─────────────────────────────────────────────────────────────────────────────
+// Member signals they wish to defer their scheduled payout round.
+// The is_deferred flag is set True here; DistributeRound resets it to False.
+//
+// [spec DeferRound 1]: datum must be TreasuryState
+// [spec DeferRound 2]: round_number == datum.rounds_paid (deferring the next round)
+// [spec DeferRound 3]: member input holds the Account NFT
+// [spec DeferRound 4]: output datum: same but is_deferred = True
+// [spec DeferRound 5]: output ADA unchanged; output at script with membership token
+pub fn validate_defer_round(
+  own_policy_id: PolicyId,
+  account_policy_id: PolicyId,
+  round_number: Int,
+  member_input_index: Int,
+  treasury_output_index: Int,
+  datum: TreasuryDatum,
+  utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, outputs, .. } = tx
+
+  // [spec DeferRound 1]: datum must be TreasuryState — destructure all fields for reconstruction
+  expect TreasuryState {
+    group_reference_tokenname: defer_group_tn,
+    member_reference_tokenname,
+    assigned_slot: defer_slot,
+    rounds_paid,
+    is_deferred: currently_deferred,
+    member_payment_credential: defer_pkh,
+  } = datum
+
+  // [spec DeferRound 2]: deferring the next un-processed round
+  let correct_round = round_number == rounds_paid
+
+  // Cannot defer if already deferred (idempotent guard)
+  let not_already_deferred = !currently_deferred
+
+  // [spec DeferRound 3]: member auth
+  let member_authorized =
+    member_has_user_token(
+      inputs,
+      member_input_index,
+      member_reference_tokenname,
+      account_policy_id,
+    )
+
+  expect Some(own_input) =
+    list.find(inputs, fn(i) { i.output_reference == utxo })
+
+  expect Some(own_output) = list.at(outputs, treasury_output_index)
+  expect InlineDatum(output_datum_data) = own_output.datum
+  expect output_datum: TreasuryDatum = output_datum_data
+
+  // [spec DeferRound 4]: output datum: same but is_deferred = True
+  let expected_datum =
+    TreasuryState {
+      group_reference_tokenname: defer_group_tn,
+      member_reference_tokenname,
+      assigned_slot: defer_slot,
+      rounds_paid,
+      is_deferred: True,
+      member_payment_credential: defer_pkh,
+    }
+  let datum_correct = output_datum == expected_datum
+
+  // [spec DeferRound 5]: ADA unchanged
+  let input_ada = assets.lovelace_of(own_input.output.value)
+  let output_ada = assets.lovelace_of(own_output.value)
+  let ada_unchanged = output_ada == input_ada
+
+  // Output at script address with membership token
+  let output_at_script =
+    own_output.address.payment_credential == Script(own_policy_id)
+  let token_retained =
+    dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
+      Pair(member_reference_tokenname, 1),
+    ]
+  let clean_output_value =
+    assets.policies(own_output.value) == [ada_policy_id, own_policy_id]
+
+  and {
+    correct_round?,
+    not_already_deferred?,
+    member_authorized?,
+    datum_correct?,
+    ada_unchanged?,
+    output_at_script?,
+    token_retained?,
+    clean_output_value?,
+  }
+}
+
+// ─── Spend: UpdatePayoutCredential ────────────────────────────────────────────
+
+// validate_update_payout_credential
+// ─────────────────────────────────────────────────────────────────────────────
+// Member updates their payout destination to their current wallet address.
+// The new credential is derived from the account token input — proving control.
+//
+// [spec UpdatePayoutCredential 1]: datum must be TreasuryState
+// [spec UpdatePayoutCredential 2]: member input holds the Account NFT
+// [spec UpdatePayoutCredential 3]: output datum: same but member_payment_credential
+//                                   = member's current wallet pkh
+// [spec UpdatePayoutCredential 4]: output ADA unchanged; output at script with token
+pub fn validate_update_payout_credential(
+  own_policy_id: PolicyId,
+  account_policy_id: PolicyId,
+  member_input_index: Int,
+  treasury_output_index: Int,
+  datum: TreasuryDatum,
+  utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, outputs, .. } = tx
+
+  // [spec UpdatePayoutCredential 1]: datum must be TreasuryState — destructure all fields for reconstruction
+  expect TreasuryState {
+    group_reference_tokenname: upd_group_tn,
+    member_reference_tokenname,
+    assigned_slot: upd_slot,
+    rounds_paid: upd_rounds,
+    is_deferred: upd_deferred,
+    member_payment_credential: _old_pkh,
+  } = datum
+
+  // [spec UpdatePayoutCredential 2]: member auth — account token proves identity
+  let member_authorized =
+    member_has_user_token(
+      inputs,
+      member_input_index,
+      member_reference_tokenname,
+      account_policy_id,
+    )
+
+  // Derive the new credential from the member input's wallet address
+  expect Some(member_input_utxo) = list.at(inputs, member_input_index)
+  expect VerificationKey(new_pkh) =
+    member_input_utxo.output.address.payment_credential
+
+  expect Some(own_input) =
+    list.find(inputs, fn(i) { i.output_reference == utxo })
+
+  expect Some(own_output) = list.at(outputs, treasury_output_index)
+  expect InlineDatum(output_datum_data) = own_output.datum
+  expect output_datum: TreasuryDatum = output_datum_data
+
+  // [spec UpdatePayoutCredential 3]: output datum: same but with new credential
+  let expected_datum =
+    TreasuryState {
+      group_reference_tokenname: upd_group_tn,
+      member_reference_tokenname,
+      assigned_slot: upd_slot,
+      rounds_paid: upd_rounds,
+      is_deferred: upd_deferred,
+      member_payment_credential: new_pkh,
+    }
+  let datum_correct = output_datum == expected_datum
+
+  // [spec UpdatePayoutCredential 4]: ADA unchanged
+  let input_ada = assets.lovelace_of(own_input.output.value)
+  let output_ada = assets.lovelace_of(own_output.value)
+  let ada_unchanged = output_ada == input_ada
+
+  // Output at script address with membership token
+  let output_at_script =
+    own_output.address.payment_credential == Script(own_policy_id)
+  let token_retained =
+    dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
+      Pair(member_reference_tokenname, 1),
+    ]
+  let clean_output_value =
+    assets.policies(own_output.value) == [ada_policy_id, own_policy_id]
+
+  and {
+    member_authorized?,
+    datum_correct?,
+    ada_unchanged?,
+    output_at_script?,
+    token_retained?,
+    clean_output_value?,
+  }
+}
+
+// ─── Spend: ExtendGraceWindow ─────────────────────────────────────────────────
+
+// validate_extend_grace_window
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin grants an additional grace window to a member in InsufficientCollateralState.
+// grace_period_length is read from the group datum and passed from the entry point.
+//
+// [spec ExtendGraceWindow 1]: datum must be InsufficientCollateralState
+// [spec ExtendGraceWindow 2]: grace_extensions_used < max_grace_extensions
+// [spec ExtendGraceWindow 3]: admin holds the group (222) user token
+// [spec ExtendGraceWindow 4]: output datum: grace_extensions_used + 1,
+//                              grace_expires_at + grace_period_length, all else frozen
+// [spec ExtendGraceWindow 5]: output ADA unchanged; output at script with token
+pub fn validate_extend_grace_window(
+  own_policy_id: PolicyId,
+  group_policy_id: PolicyId,
+  grace_period_length: Int,
+  admin_input_index: Int,
+  treasury_output_index: Int,
+  datum: TreasuryDatum,
+  utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, outputs, .. } = tx
+
+  // [spec ExtendGraceWindow 1]: datum must be InsufficientCollateralState
+  expect InsufficientCollateralState {
+    member_reference_tokenname,
+    group_reference_tokenname,
+    grace_expires_at,
+    grace_extensions_used,
+    rounds_paid,
+  } = datum
+
+  // [spec ExtendGraceWindow 2]: extension limit not yet reached
+  let extensions_available = grace_extensions_used < max_grace_extensions
+
+  // [spec ExtendGraceWindow 3]: admin auth via group (222) user token
+  let admin_token_name =
+    cip68.prefix_222
+      |> bytearray.concat(
+          bytearray.drop(group_reference_tokenname, cip68.prefix_length),
+        )
+  expect Some(admin_input) = list.at(inputs, admin_input_index)
+  let admin_authorized =
+    assets.quantity_of(
+      admin_input.output.value,
+      group_policy_id,
+      admin_token_name,
+    ) == 1
+
+  expect Some(own_input) =
+    list.find(inputs, fn(i) { i.output_reference == utxo })
+
+  expect Some(own_output) = list.at(outputs, treasury_output_index)
+  expect InlineDatum(output_datum_data) = own_output.datum
+  expect output_datum: TreasuryDatum = output_datum_data
+
+  // [spec ExtendGraceWindow 4]: output datum with extended grace window
+  let expected_datum =
+    InsufficientCollateralState {
+      group_reference_tokenname,
+      member_reference_tokenname,
+      grace_expires_at: grace_expires_at + grace_period_length,
+      grace_extensions_used: grace_extensions_used + 1,
+      rounds_paid,
+    }
+  let datum_correct = output_datum == expected_datum
+
+  // [spec ExtendGraceWindow 5]: ADA unchanged
+  let input_ada = assets.lovelace_of(own_input.output.value)
+  let output_ada = assets.lovelace_of(own_output.value)
+  let ada_unchanged = output_ada == input_ada
+
+  // Output at script address with membership token
+  let output_at_script =
+    own_output.address.payment_credential == Script(own_policy_id)
+  let token_retained =
+    dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
+      Pair(member_reference_tokenname, 1),
+    ]
+  let clean_output_value =
+    assets.policies(own_output.value) == [ada_policy_id, own_policy_id]
+
+  and {
+    extensions_available?,
+    admin_authorized?,
+    datum_correct?,
+    ada_unchanged?,
+    output_at_script?,
+    token_retained?,
+    clean_output_value?,
   }
 }

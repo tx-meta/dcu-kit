@@ -1,8 +1,11 @@
 {
-  "accountTokenSuffix": "16a11efad26b2196f777e5a1889062c0f79f3193f0e301437c63e7b6",
-  "groupTokenSuffix": "2ebb8f29a383e5c5dbb0a83dab06f4d549a69f8e53edecc41094f794",
-  "groupStartTime": 1778993390929,
+  "accountTokenSuffix": "e83a5f94898c0bdf096ab1a91d79e6e4ae38308bf115363a584b6b23",
+  "accountPolicyId": "f0d4bf83e11fced2287b706b1efb32764689a8d7912b81a79a8a16cd",
+  "adminAccountTokenSuffix": "59d6a49f2ad82d1a89043ec6b6952df5e6a58f6c51d7635172aa50e7",
+  "user2AccountTokenSuffix": "da8693197a2c763ecdf3e404a36ecb63c4a39264726659cf2dbeb484",
+  "groupTokenSuffix": "0b9bcc6154a52b14ab7fe2cc7016bc73f4d92b1b595c95d4abde15c9",
+  "groupPolicyId": "af2bc56bb6ee5e26d275981269c508b7d56521de8c430dd84a371767",
+  "groupStartTime": 1779629297665,
   "groupIntervalLength": 300000,
-  "groupNumIntervals": 4,
-  "wallet3AccountTokenSuffix": "657f51dd853039944537fa27eac808dc4540c6c9e93056eba58ab7b4"
+  "groupNumIntervals": 3
 }

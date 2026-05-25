@@ -4,7 +4,6 @@ import {
     LucidEvolution,
     TxSignBuilder,
     RedeemerBuilder,
-    Assets,
     UTxO,
     toUnit,
     credentialToAddress
@@ -12,36 +11,32 @@ import {
 import { Effect } from "effect";
 import {
     GroupDatum,
+    GroupSpendRedeemer,
     TreasuryDatum,
     TreasuryDatumSchema,
     TreasuryRedeemer
 } from "../core/types.js";
-import { treasuryValidator, treasuryPolicyId, groupPolicyId } from "../core/validators/constants.js";
-import { getScriptAddress, parseSafeDatum, calculateCurrentSlot, patchInlineDatum, assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
+import { treasuryValidator, treasuryPolicyId, groupPolicyId, groupValidator } from "../core/validators/constants.js";
+import { getScriptAddress, parseSafeDatum, patchInlineDatum, assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
 
 /**
- * Creates an unsigned transaction for distributing payouts in a Group.
- * 
+ * Creates an unsigned transaction for distributing a single ROSCA round.
+ *
  * **Functionality:**
- * - Aggregates contributions from active members in the Treasury.
- * - Identifies the Borrower assigned to the current rotation slot.
- * - Distributes the collected pot to the borrower.
- * - Updates Treasury states to reflect the payout.
- * 
+ * - Identifies the next round (group.last_distributed_round + 1).
+ * - Spends the group UTxO to atomically increment last_distributed_round.
+ * - Each member treasury contributes contribution_fee; the assigned borrower receives
+ *   the full pot (contribution_fee × member_count).
+ * - Updates all treasury datums (rounds_paid + 1, is_deferred reset to false).
+ *
  * @param lucid - Lucid instance with wallet selected.
- * @param config - Distribute Payout Configuration.
+ * @param config - Distribute Round Configuration.
  * @returns Effect yielding TxSignBuilder.
- * 
- * @example
- * ```typescript
- * const program = unsignedDistributePayoutTxProgram(lucid, 
- *   { groupUtxo, treasuryUtxos }
- * );
- * ```
  */
 export type DistributePayoutConfig = {
     groupTokenSuffix: string;
+    currentTime?: bigint;  // POSIX ms — emulator.now() for emulator, omit for live
 };
 
 export const unsignedDistributePayoutTxProgram = (
@@ -55,23 +50,34 @@ export const unsignedDistributePayoutTxProgram = (
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const groupUtxo    = patchInlineDatum(groupUtxoRaw);
 
+    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
+
+    const groupRefAsset = Object.keys(groupUtxo.assets).find(k => k.startsWith(groupPolicyId!));
+    if (!groupRefAsset) return yield* Effect.fail(new TransactionBuildError({ operation: "distributeRound", error: "Group reference token not found in group UTxO" }));
+    const groupRefName = groupRefAsset.slice(groupPolicyId!.length);
+
+    if (!groupDatum.is_started) {
+        return yield* Effect.fail(new TransactionBuildError({ operation: "distributeRound", error: "Group has not been started — call startGroup first" }));
+    }
+    if (groupDatum.num_intervals === 0n) {
+        return yield* Effect.fail(new TransactionBuildError({ operation: "distributeRound", error: "Group has zero intervals — call startGroup first" }));
+    }
+
+    const roundNumber = groupDatum.last_distributed_round + 1n;
+    if (roundNumber >= groupDatum.num_intervals) {
+        return yield* Effect.fail(new TransactionBuildError({ operation: "distributeRound", error: `Round ${roundNumber} exceeds num_intervals ${groupDatum.num_intervals}` }));
+    }
+
+    const currentSlot = Number(roundNumber % groupDatum.num_intervals);
+
     const treasuryAddress  = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
+    const groupAddress     = yield* getScriptAddress(lucid, groupValidator.spendGroup);
     const rawTreasuryUtxos = yield* Effect.tryPromise({
         try: () => lucid.utxosAt(treasuryAddress),
         catch: (e) => new TransactionBuildError({ operation: "queryTreasury", error: String(e) }),
     });
     const treasuryUtxos = rawTreasuryUtxos.map(patchInlineDatum);
 
-    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
-    const currentSlot = calculateCurrentSlot(Date.now(), groupDatum);
-
-    // Derive the group reference token name so we can filter treasury UTxOs
-    // to only those belonging to this group (the address is shared across groups).
-    const groupRefAsset = Object.keys(groupUtxo.assets).find(k => k.startsWith(groupPolicyId!));
-    if (!groupRefAsset) return yield* Effect.fail(new TransactionBuildError({ operation: "distributePayout", error: "Group reference token not found in group UTxO" }));
-    const groupRefName = groupRefAsset.slice(groupPolicyId!.length);
-
-    // Parse treasury UTxO datums, skipping invalid datums or UTxOs from other groups.
     const parsedStates = yield* Effect.all(
         treasuryUtxos.map(u =>
             parseSafeDatum(u.datum, TreasuryDatumSchema).pipe(
@@ -82,97 +88,128 @@ export const unsignedDistributePayoutTxProgram = (
         { concurrency: "unbounded" }
     );
 
-    let borrowerUtxo: UTxO | undefined;
+    // Filter to TreasuryState UTxOs belonging to this group that are ready for this round
+    const memberStates: { utxo: UTxO; datum: TreasuryDatum }[] = [];
     let borrowerPaymentCred: string | undefined;
-    const memberStates: { utxo: UTxO, datum: TreasuryDatum }[] = [];
 
     for (const state of parsedStates) {
         if (!state || !('TreasuryState' in state.datum)) continue;
-        if (state.datum.TreasuryState.group_reference_tokenname !== groupRefName) continue;
+        const ts = state.datum.TreasuryState;
+        if (ts.group_reference_tokenname !== groupRefName) continue;
+        if (ts.rounds_paid !== roundNumber) continue;  // must equal round_number (not round_number - 1)
         memberStates.push(state);
-        if (Number(state.datum.TreasuryState.assigned_slot) === currentSlot) {
-            borrowerUtxo = state.utxo;
-            borrowerPaymentCred = state.datum.TreasuryState.member_payment_credential;
+        if (Number(ts.assigned_slot) === currentSlot) {
+            borrowerPaymentCred = ts.member_payment_credential;
         }
     }
 
-    if (!borrowerUtxo || !borrowerPaymentCred) {
-        yield* Effect.fail(new TransactionBuildError({ operation: "distributePayout", error: `No member found for current slot ${currentSlot}` }));
+    if (memberStates.length === 0) {
+        return yield* Effect.fail(new TransactionBuildError({ operation: "distributeRound", error: `No treasury UTxOs ready for round ${roundNumber}` }));
+    }
+    if (!borrowerPaymentCred) {
+        return yield* Effect.fail(new TransactionBuildError({ operation: "distributeRound", error: `No member found for current slot ${currentSlot}` }));
     }
 
-    // Use a single `now` for both claimable calculations and validFrom —
-    // Aiken reads get_lower_bound(tx) for all time comparisons.
-    const currentTime = BigInt(Date.now());
-    let payoutAmount = 0n;
-    const outputStates: { utxo: UTxO, datum: TreasuryDatum, remainingLovelace: bigint }[] = [];
+    // Sort inputs lexicographically (same order Cardano uses for tx.inputs)
+    memberStates.sort((a, b) => {
+        const cmp = a.utxo.txHash.localeCompare(b.utxo.txHash);
+        return cmp !== 0 ? cmp : a.utxo.outputIndex - b.utxo.outputIndex;
+    });
 
-    for (const state of memberStates) {
-        if (!('TreasuryState' in state.datum)) continue;
-        const ts = state.datum.TreasuryState;
+    const payoutAmount = BigInt(memberStates.length) * groupDatum.contribution_fee;
 
-        const claimable = ts.contribution_list.filter(c => c.claimable_at <= currentTime);
-        const contributed = claimable.reduce((sum, c) => sum + c.claimable_amount, 0n);
-        payoutAmount += contributed;
+    const VALIDITY_BUFFER_MS = lucid.config().network === "Custom" ? 0n : 60_000n;
+    const currentTime = config.currentTime !== undefined
+        ? config.currentTime
+        : BigInt(Date.now()) - VALIDITY_BUFFER_MS;
 
-        // Updated datum: remove claimable entries (mark as paid)
-        const updatedDatum: TreasuryDatum = {
-            TreasuryState: {
-                group_reference_tokenname: ts.group_reference_tokenname,
-                member_reference_tokenname: ts.member_reference_tokenname,
-                membership_start: ts.membership_start,
-                assigned_slot: ts.assigned_slot,
-                contribution_list: ts.contribution_list.filter(c => c.claimable_at > currentTime),
-                member_payment_credential: ts.member_payment_credential,
-            }
-        };
-        outputStates.push({ utxo: state.utxo, datum: updatedDatum, remainingLovelace: state.utxo.assets.lovelace - contributed });
-    }
+    // validFrom must satisfy: current_time >= start_time + round_number * interval_length
+    const minValidFrom = groupDatum.start_time + roundNumber * groupDatum.interval_length;
+    const validFrom = currentTime > minValidFrom ? currentTime : minValidFrom;
 
-    if (payoutAmount === 0n) {
-        yield* Effect.fail(new TransactionBuildError({ operation: "distributePayout", error: "No claimable contributions found for the current interval" }));
-    }
-
-    // Aiken checks borrower_output.address.payment_credential == VerificationKey(member_payment_credential).
-    // Must use the credential stored at join time, not the caller's wallet.
     const network = lucid.config().network!;
-    const borrowerAddress = credentialToAddress(network, { type: "Key", hash: borrowerPaymentCred! });
+    const borrowerAddress = credentialToAddress(network, { type: "Key", hash: borrowerPaymentCred });
 
-    // Construct Redeemer using RedeemerBuilder
-    const redeemer: RedeemerBuilder = {
+    const updatedGroupDatum: GroupDatum = {
+        ...groupDatum,
+        last_distributed_round: roundNumber,
+    };
+
+    // Output layout: [0] group, [1..n] treasury outputs, [n+1] borrower
+    const borrowerOutputIndex = BigInt(1 + memberStates.length);
+
+    const allInputs = [groupUtxo, ...memberStates.map(s => s.utxo)];
+
+    const groupRedeemer: RedeemerBuilder = {
         kind: "selected",
-        makeRedeemer: (inputIndices: bigint[]) => {
-            // Map input indices to output indices (1-based for Treasury outputs)
-            const outputIndices = inputIndices.map((_, i) => BigInt(i + 1));
+        makeRedeemer: (indices: bigint[]) => Data.to({
+            DistributeRound: {
+                group_ref_token_name: groupRefName,
+                group_input_index: indices[0],
+                group_output_index: 0n,
+                round_number: roundNumber,
+            }
+        }, GroupSpendRedeemer),
+        inputs: [groupUtxo],
+    };
 
+    const treasuryRedeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (indices: bigint[]) => {
+            const groupIdx = indices[0];
+            const treasuryIndices = indices.slice(1);
+            const treasuryOutIndices = treasuryIndices.map((_, i) => BigInt(i + 1));
             return Data.to({
-                DistributePayout: {
-                    group_ref_input_index: 0n,
-                    treasury_input_indices: inputIndices,
-                    treasury_output_indices: outputIndices,
-                    borrower_output_index: 0n
+                DistributeRound: {
+                    round_number: roundNumber,
+                    group_ref_input_index: groupIdx,
+                    group_output_index: 0n,
+                    treasury_input_indices: treasuryIndices,
+                    treasury_output_indices: treasuryOutIndices,
+                    borrower_output_index: borrowerOutputIndex,
                 }
             }, TreasuryRedeemer);
         },
-        inputs: memberStates.map(s => s.utxo)
+        inputs: allInputs,
     };
 
-    const tx = yield* outputStates
-        .reduce((builder, state) => {
-            if (!('TreasuryState' in state.datum)) return builder;
-            const memberToken = toUnit(treasuryPolicyId!, state.datum.TreasuryState.member_reference_tokenname);
-            const memberTreasuryAssets: Assets = { lovelace: state.remainingLovelace, [memberToken]: 1n };
-            return builder.pay.ToContract(
-                treasuryAddress,
-                { kind: "inline", value: Data.to(state.datum, TreasuryDatum) },
-                memberTreasuryAssets
-            );
-        }, lucid.newTx()
-            .readFrom([groupUtxo])
-            .collectFrom(memberStates.map(s => s.utxo), redeemer)
-            .pay.ToAddress(borrowerAddress, { lovelace: payoutAmount }))
-        .validFrom(Number(currentTime))
+    // Build the transaction: group output first, then treasury outputs, then borrower
+    const baseTx = lucid.newTx()
+        .collectFrom([groupUtxo], groupRedeemer)
+        .collectFrom(memberStates.map(s => s.utxo), treasuryRedeemer)
+        .attach.SpendingValidator(groupValidator.spendGroup)
         .attach.SpendingValidator(treasuryValidator.spendTreasury)
-        .completeProgram({ localUPLCEval: false })
-        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "distributePayout", error: String(e) })));
+        .pay.ToContract(
+            groupAddress,
+            { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
+            groupUtxo.assets,
+        );
+
+    const withTreasuryOutputs = memberStates.reduce((tx, state) => {
+        if (!('TreasuryState' in state.datum)) return tx;
+        const ts = state.datum.TreasuryState;
+        const memberToken = toUnit(treasuryPolicyId!, ts.member_reference_tokenname);
+        const inputLovelace = state.utxo.assets.lovelace;
+        const outputLovelace = inputLovelace - groupDatum.contribution_fee;
+        const updatedDatum: TreasuryDatum = {
+            TreasuryState: {
+                ...ts,
+                rounds_paid: roundNumber + 1n,
+                is_deferred: false,
+            }
+        };
+        return tx.pay.ToContract(
+            treasuryAddress,
+            { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
+            { lovelace: outputLovelace, [memberToken]: 1n },
+        );
+    }, baseTx);
+
+    const tx = yield* withTreasuryOutputs
+        .pay.ToAddress(borrowerAddress, { lovelace: payoutAmount })
+        .validFrom(Number(validFrom))
+        .completeProgram(lucid.config().network === "Custom" ? { localUPLCEval: false } : {})
+        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "distributeRound", error: String(e) })));
+
     return tx;
   });
