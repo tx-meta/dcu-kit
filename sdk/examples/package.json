@@ -1,0 +1,59 @@
+{
+  "name": "dcu-examples",
+  "version": "1.0.0",
+  "description": "Usage examples for the DCU Toolkit SDK",
+  "type": "module",
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "tsup *.ts --format esm --clean",
+    "create-account": "pnpm run build && node dist/create-account.js",
+    "update-account": "pnpm run build && node dist/update-account.js",
+    "delete-account": "pnpm run build && node dist/delete-account.js",
+    "create-group": "pnpm run build && node dist/create-group.js",
+    "update-group": "pnpm run build && node dist/update-group.js",
+    "delete-group": "pnpm run build && node dist/delete-group.js",
+    "join-group": "pnpm run build && node dist/join-group.js",
+    "start-group": "pnpm run build && node dist/start-group.js",
+    "distribute-payout": "pnpm run build && node dist/distribute-payout.js",
+    "exit-group": "pnpm run build && node dist/exit-group.js",
+    "terminate-group": "pnpm run build && node dist/terminate-group.js",
+    "contribute": "pnpm run build && node dist/contribute.js",
+    "defer-round": "pnpm run build && node dist/defer-round.js",
+    "update-payout-credential": "pnpm run build && node dist/update-payout-credential.js",
+    "extend-grace-window": "pnpm run build && node dist/extend-grace-window.js",
+    "next-cycle": "pnpm run build && node dist/next-cycle.js",
+    "show-wallets": "pnpm run build && node dist/show-wallets.js",
+    "send-ada": "pnpm run build && node dist/send-ada.js",
+    "deploy-scripts": "pnpm run build && node dist/deploy-scripts.js",
+    "purge-nfts": "pnpm run build && node dist/purge-nfts.js",
+    "generate-wallets": "tsup generate-wallets.ts --format esm --clean && node dist/generate-wallets.js",
+    "cron-daemon": "pnpm run build && node dist/cron-daemon.js",
+    "reset-state": "tsx reset-state.ts"
+  },
+  "dependencies": {
+    "@tx-meta/dcu-sdk": "file:../dcu-sdk-0.1.1.tgz",
+    "@lucid-evolution/lucid": "0.4.31",
+    "dotenv": "^16.4.7",
+    "effect": "3.21.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "rimraf": "^6.0.1",
+    "tsup": "^8.4.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "cbor-extract",
+      "esbuild",
+      "libsodium-sumo",
+      "libsodium-wrappers",
+      "libsodium-wrappers-sumo"
+    ],
+    "overrides": {
+      "libsodium-wrappers-sumo": "0.8.2",
+      "libsodium-sumo": "0.8.2"
+    }
+  }
+}

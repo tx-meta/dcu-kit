@@ -1,0 +1,53 @@
+name: Publish SDK to npm
+
+# Triggers when you create a GitHub Release (which also creates the git tag).
+# The CI workflow already runs on every PR, so tests are guaranteed to have
+# passed before any release is created from main.
+# workflow_dispatch allows manual publish from the Actions tab if needed.
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: 📦 Publish @tx-meta/dcu-sdk
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./sdk
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v6
+
+      - name: 🔧 Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      # registry-url is required — it writes a .npmrc that wires NODE_AUTH_TOKEN
+      # into the npm auth for registry.npmjs.org automatically.
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: sdk/pnpm-lock.yaml
+          registry-url: "https://registry.npmjs.org"
+
+      - name: 📦 Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🏗️ Build
+        run: pnpm run build
+
+      - name: 🚀 Publish
+        run: pnpm publish --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true

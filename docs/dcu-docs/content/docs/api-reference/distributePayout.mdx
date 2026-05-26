@@ -1,0 +1,50 @@
+---
+title: distributePayout
+description: Calculate the current rotation slot and distribute pooled contributions to the eligible borrower.
+---
+
+The `distributePayout` endpoint is the operational engine of the DCU Toolkit. It enforces the core logic of a **Rotating Savings and Credit Association (ROSCA)**.
+
+### The ROSCA Financial Model
+In a standard DCU pod, funds remain locked inside the `Treasury Validator` until a mathematically proven cycle elapses. This transaction pulls those locked funds, verifies the participant queue encoded across the Treasury UTxOs, and distributes the payout to the member whose rotation slot matches the current interval. The on-chain Aiken validators enforce that turns cannot be skipped and funds cannot be pulled early.
+
+<Callout title="Current Limitation: Payout Address" type="warn">
+The SDK currently sends the payout to the **transaction submitter's wallet**. The borrower's address is not stored in the Treasury datum, so the SDK cannot automatically route funds to the correct member. The intended borrower must submit this transaction themselves to receive the payout.
+</Callout>
+
+## Configuration
+
+```ts
+import { UTxO } from "@lucid-evolution/lucid";
+
+export type DistributePayoutConfig = {
+    /** The Group's unique Reference UTxO */
+    groupUtxo: UTxO;
+    
+    /** 
+     * An array of all Treasury UTxOs representing the active members.
+     * The SDK parses the Contribution Lists and assigned slots inside these 
+     * UTxOs to mathematically determine who receives the payout.
+     */
+    treasuryUtxos: UTxO[];
+};
+```
+
+## Internal Execution Mechanics
+
+1. **Current Slot Calculation:** The SDK uses the `calculateCurrentSlot` utility to determine who is owed the payout based on the absolute blockchain time and the `interval_length` and `start_time` defined in the Group datum.
+2. **Redeemer Construction:** The SDK builds the exact `DistributePayout` Redeemer expected by the Treasury Validator, including precise input/output indices. If no claimable contributions are found or no member matches the current slot, the SDK fails early with a `TransactionBuildError` before the transaction is ever submitted.
+
+## Usage
+
+```ts
+import { distributePayout } from "@dcu/sdk";
+
+try {
+  const txBuilder = await distributePayout(lucid, config).unsafeRun();
+  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+  console.log("Payout distributed! TxHash:", txHash);
+} catch (error) {
+  console.error("Failed to distribute payout:", error);
+}
+```

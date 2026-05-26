@@ -1,0 +1,12 @@
+{
+    "title": "Welcome",
+    "pages": [
+        "index",
+        "getting-started",
+        "core-concepts",
+        "architecture",
+        "lifecycle",
+        "error-reference",
+        "api-reference"
+    ]
+}

@@ -1,0 +1,50 @@
+---
+title: DCU Toolkit SDK
+description: The official TypeScript middleware layer for interacting with the Decentralized Credit Union smart contracts.
+---
+
+Welcome to the **DCU Toolkit SDK** documentation.
+
+This SDK is built heavily on the [Effect](https://effect.website/) ecosystem to provide highly robust, functional, type-safe transaction builders. 
+
+## Features
+
+<Cards>
+  <Card title="Fully Typed" description="100% TypeScript with complete hover safety across all execution paths." />
+  <Card title="Effect Powered" description="Uses Effect for concurrency and error handling instead of simple Promises." />
+  <Card title="Lucid Evolution" description="Seamlessly integrates with Lucid Evolution for building advanced Cardano transactions." />
+</Cards>
+
+## Installation
+
+```bash
+pnpm install @dcu/sdk @lucid-evolution/lucid effect
+```
+
+## Quick Start
+
+Every endpoint in the SDK returns a `ProgramRunner`, giving you three ways to execute. Here's creating an account and submitting the transaction:
+
+```ts
+import { createAccount } from "@dcu/sdk";
+
+// Pick any UTxO you own. Consumed as entropy for CIP-68 token name derivation.
+const [selectedUtxo] = await lucid.wallet().getUtxos();
+
+try {
+  const txBuilder = await createAccount(lucid, {
+    selected_out_ref: selectedUtxo,
+    account_datum: {
+      email_hash: "abc123...",
+      phone_hash: "def456..."
+    }
+  }).unsafeRun();
+
+  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+  console.log("Account created:", txHash);
+} catch (error) {
+  console.error("Failed:", error);
+}
+```
+
+See [Getting Started](/docs/getting-started) for full setup and all three execution modes.
