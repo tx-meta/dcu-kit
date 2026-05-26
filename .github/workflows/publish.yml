@@ -6,7 +6,7 @@ name: Publish SDK to npm
 # workflow_dispatch allows manual publish from the Actions tab if needed.
 on:
   release:
-    types: [created]
+    types: [created, published]
   workflow_dispatch:
 
 jobs:
