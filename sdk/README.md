@@ -1,7 +1,7 @@
 # @tx-meta/dcu-sdk
 
 [![npm](https://img.shields.io/npm/v/@tx-meta/dcu-sdk)](https://www.npmjs.com/package/@tx-meta/dcu-sdk)
-[![CI](https://github.com/txmeta/dcu-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/txmeta/dcu-toolkit/actions/workflows/ci.yml)
+[![CI](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml)
 
 TypeScript offchain SDK for the **DCU Toolkit** — a ROSCA protocol on Cardano. Built on [Lucid Evolution](https://github.com/Anastasia-Labs/lucid-evolution) and [Effect](https://effect.website/).
 
