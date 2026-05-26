@@ -25,19 +25,17 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: 🔧 Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
       - name: 🔧 Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: pnpm
-          cache-dependency-path: sdk/pnpm-lock.yaml
 
       - name: 📦 Install Dependencies
         run: pnpm install --frozen-lockfile
@@ -55,7 +53,7 @@ jobs:
         run: pnpm run build
 
       - name: 📤 Upload Build Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sdk-dist
           path: sdk/dist
@@ -78,7 +76,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: 🔧 Setup Aiken
         uses: aiken-lang/setup-aiken@v1
@@ -110,7 +108,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: 🔧 Setup Typst
         uses: typst-community/setup-typst@v3
