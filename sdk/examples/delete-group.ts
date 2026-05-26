@@ -10,70 +10,94 @@
  *   2. Auto-discovery — scans admin wallet for a group admin token (222 prefix)
  */
 
-import { deleteGroup, DeleteGroupConfig, groupPolicyId, assetNameLabels } from "@dcu/sdk";
-import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
-import { loadState, saveState, clearState, checkValidatorStaleness } from "./state.js";
+import {
+  deleteGroup,
+  DeleteGroupConfig,
+  groupPolicyId,
+  assetNameLabels,
+} from "@tx-meta/dcu-sdk";
+import {
+  makeLucid,
+  cexplorerTxUrl,
+  logError,
+  logWalletInfo,
+} from "./context.js";
+import {
+  loadState,
+  saveState,
+  clearState,
+  checkValidatorStaleness,
+} from "./state.js";
 
 async function main() {
-    const { lucid, isEmulator } = await makeLucid();
+  const { lucid, isEmulator } = await makeLucid();
 
-    if (isEmulator) {
-        console.log("This example requires an existing on-chain group.");
-        console.log("These scripts require existing on-chain state. Run on Preprod.");
-        process.exit(0);
-    }
+  if (isEmulator) {
+    console.log("This example requires an existing on-chain group.");
+    console.log(
+      "These scripts require existing on-chain state. Run on Preprod.",
+    );
+    process.exit(0);
+  }
 
-    const adminSeed = process.env.ADMIN_SEED ?? process.env.USER1_SEED;
-    if (!adminSeed) throw new Error("ADMIN_SEED or USER1_SEED is required.");
-    lucid.selectWallet.fromSeed(adminSeed);
-    await logWalletInfo(lucid, "ADMIN");
+  const adminSeed = process.env.ADMIN_SEED ?? process.env.USER1_SEED;
+  if (!adminSeed) throw new Error("ADMIN_SEED or USER1_SEED is required.");
+  lucid.selectWallet.fromSeed(adminSeed);
+  await logWalletInfo(lucid, "ADMIN");
 
-    checkValidatorStaleness({ groupPolicyId: groupPolicyId! });
+  checkValidatorStaleness({ groupPolicyId: groupPolicyId! });
 
-    let { groupTokenSuffix } = loadState();
+  let { groupTokenSuffix } = loadState();
 
-    if (!groupTokenSuffix) {
-        console.log("groupTokenSuffix not in state.json — scanning admin wallet for group admin token...");
-        const walletUtxos = await lucid.wallet().getUtxos();
-        const adminUtxo = walletUtxos.find(u =>
-            Object.keys(u.assets).some(k =>
-                k.startsWith(groupPolicyId!) &&
-                k.slice(groupPolicyId!.length).startsWith(assetNameLabels.prefix222)
-            )
-        );
-        if (!adminUtxo) throw new Error(
-            "No group admin token (222) found in wallet and no groupTokenSuffix in state.json.\n" +
-            "Run create-group.ts first."
-        );
-        const key = Object.keys(adminUtxo.assets).find(k =>
-            k.startsWith(groupPolicyId!) &&
-            k.slice(groupPolicyId!.length).startsWith(assetNameLabels.prefix222)
-        )!;
-        groupTokenSuffix = key.slice(groupPolicyId!.length + assetNameLabels.prefix222.length);
-        console.log("Found groupTokenSuffix:", groupTokenSuffix);
-        saveState({ groupTokenSuffix });
-    }
+  if (!groupTokenSuffix) {
+    console.log(
+      "groupTokenSuffix not in state.json — scanning admin wallet for group admin token...",
+    );
+    const walletUtxos = await lucid.wallet().getUtxos();
+    const adminUtxo = walletUtxos.find((u) =>
+      Object.keys(u.assets).some(
+        (k) =>
+          k.startsWith(groupPolicyId!) &&
+          k.slice(groupPolicyId!.length).startsWith(assetNameLabels.prefix222),
+      ),
+    );
+    if (!adminUtxo)
+      throw new Error(
+        "No group admin token (222) found in wallet and no groupTokenSuffix in state.json.\n" +
+          "Run create-group.ts first.",
+      );
+    const key = Object.keys(adminUtxo.assets).find(
+      (k) =>
+        k.startsWith(groupPolicyId!) &&
+        k.slice(groupPolicyId!.length).startsWith(assetNameLabels.prefix222),
+    )!;
+    groupTokenSuffix = key.slice(
+      groupPolicyId!.length + assetNameLabels.prefix222.length,
+    );
+    console.log("Found groupTokenSuffix:", groupTokenSuffix);
+    saveState({ groupTokenSuffix });
+  }
 
-    const config: DeleteGroupConfig = {
-        groupTokenSuffix,
-    };
+  const config: DeleteGroupConfig = {
+    groupTokenSuffix,
+  };
 
-    console.log("Building transaction...");
-    const tx = await deleteGroup(lucid, config).unsafeRun();
+  console.log("Building transaction...");
+  const tx = await deleteGroup(lucid, config).unsafeRun();
 
-    console.log("Signing and submitting...");
-    const signed = await tx.sign.withWallet().complete();
-    const txHash = await signed.submit();
-    console.log("Transaction submitted. Hash:", txHash);
-    console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
+  console.log("Signing and submitting...");
+  const signed = await tx.sign.withWallet().complete();
+  const txHash = await signed.submit();
+  console.log("Transaction submitted. Hash:", txHash);
+  console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
 
-    console.log("Waiting for confirmation...");
-    await lucid.awaitTx(txHash);
-    clearState(["groupTokenSuffix"]);
-    console.log("Group deactivated successfully!");
+  console.log("Waiting for confirmation...");
+  await lucid.awaitTx(txHash);
+  clearState(["groupTokenSuffix"]);
+  console.log("Group deactivated successfully!");
 }
 
 main().catch((e) => {
-    logError(e);
-    process.exit(1);
+  logError(e);
+  process.exit(1);
 });

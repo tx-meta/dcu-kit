@@ -37,6 +37,7 @@ pnpm run show-wallets
 Fund at: https://docs.cardano.org/cardano-testnets/tools/faucet
 
 Rule of thumb:
+
 - **ADMIN**: 150 ADA (group bond + deploy-scripts + joining fee + collateral)
 - **USER1 / USER2**: 50 ADA each (max_members × contribution_fee + tx fees)
 
@@ -44,11 +45,11 @@ Rule of thumb:
 
 ## Current validator hashes (Preprod)
 
-| Validator | Policy ID / Hash |
-|-----------|-----------------|
-| Account   | `f0d4bf83e11fced2287b706b1efb32764689a8d7912b81a79a8a16cd` |
-| Treasury  | `19e8d64beb1cc1143e01bf8f1c1b4a5ed0c208f997f60227f2628625` |
-| Group     | `8a29191f7bc9e6a8c244213571bc6d203bf24fd3a24b76effd6af8bc` |
+| Validator   | Policy ID / Hash                                           |
+| ----------- | ---------------------------------------------------------- |
+| Account     | `f0d4bf83e11fced2287b706b1efb32764689a8d7912b81a79a8a16cd` |
+| Treasury    | `19e8d64beb1cc1143e01bf8f1c1b4a5ed0c208f997f60227f2628625` |
+| Group       | `8a29191f7bc9e6a8c244213571bc6d203bf24fd3a24b76effd6af8bc` |
 | AlwaysFails | `22c9a103ed3f2fa97c982d76d6e2af50c5d54ac306983b196c8fcdab` |
 
 Reference scripts permanently locked at:
@@ -150,15 +151,15 @@ pnpm run delete-group
 
 ## Helper scripts
 
-| Script | Purpose |
-|--------|---------|
-| `show-wallets` | Print ADMIN/USER1/USER2 addresses, balances, and DCU tokens |
-| `generate-wallets` | Generate fresh seed phrases (first-time setup only) |
-| `send-ada` | Send ADA between wallets: `FROM_WALLET=ADMIN TO_WALLET=USER1 AMOUNT=5000000` |
-| `deploy-scripts` | Deploy treasury + group reference scripts (~56 ADA, permanent). Run once. |
-| `reset-state` | Wipe `state.json` to start a fresh test session |
-| `purge-nfts` | Burn all account/group NFTs held by a wallet (emergency cleanup) |
-| `cron-daemon` | Long-running process that auto-submits `distribute-payout` when each round opens. |
+| Script             | Purpose                                                                           |
+| ------------------ | --------------------------------------------------------------------------------- |
+| `show-wallets`     | Print ADMIN/USER1/USER2 addresses, balances, and DCU tokens                       |
+| `generate-wallets` | Generate fresh seed phrases (first-time setup only)                               |
+| `send-ada`         | Send ADA between wallets: `FROM_WALLET=ADMIN TO_WALLET=USER1 AMOUNT=5000000`      |
+| `deploy-scripts`   | Deploy treasury + group reference scripts (~56 ADA, permanent). Run once.         |
+| `reset-state`      | Wipe `state.json` to start a fresh test session                                   |
+| `purge-nfts`       | Burn all account/group NFTs held by a wallet (emergency cleanup)                  |
+| `cron-daemon`      | Long-running process that auto-submits `distribute-payout` when each round opens. |
 
 ---
 
@@ -166,34 +167,34 @@ pnpm run delete-group
 
 ### Account
 
-| Script | Default wallet | What it does |
-|--------|---------------|-------------|
-| `create-account` | USER1 | Mints an Account NFT. Saves `accountTokenSuffix` to `state.json`. |
-| `update-account` | USER1 | Updates email/phone hash on the account UTxO. |
-| `delete-account` | USER1 | Burns the account NFT and reclaims the locked ADA. |
+| Script           | Default wallet | What it does                                                      |
+| ---------------- | -------------- | ----------------------------------------------------------------- |
+| `create-account` | USER1          | Mints an Account NFT. Saves `accountTokenSuffix` to `state.json`. |
+| `update-account` | USER1          | Updates email/phone hash on the account UTxO.                     |
+| `delete-account` | USER1          | Burns the account NFT and reclaims the locked ADA.                |
 
 ### Group
 
-| Script | Default wallet | What it does |
-|--------|---------------|-------------|
-| `create-group` | ADMIN | Creates a group with configured fee parameters. Saves `groupTokenSuffix`. |
-| `update-group` | ADMIN | Updates editable fields (fees, max_members). Locked once any member has joined. |
-| `delete-group` | ADMIN | Burns group tokens and reclaims ADA. Requires `member_count=0` and `is_active=false`. |
+| Script         | Default wallet | What it does                                                                          |
+| -------------- | -------------- | ------------------------------------------------------------------------------------- |
+| `create-group` | ADMIN          | Creates a group with configured fee parameters. Saves `groupTokenSuffix`.             |
+| `update-group` | ADMIN          | Updates editable fields (fees, max_members). Locked once any member has joined.       |
+| `delete-group` | ADMIN          | Burns group tokens and reclaims ADA. Requires `member_count=0` and `is_active=false`. |
 
 ### Treasury
 
-| Script | Default wallet | What it does |
-|--------|---------------|-------------|
-| `join-group` | USER1 | Joins the group. Locks `max_members × contribution_fee` into treasury. |
-| `start-group` | ADMIN | Seals membership, sets `num_intervals=member_count`, anchors `start_time`. **Required before distribute-payout.** |
-| `distribute-payout` | ADMIN | Collects contributions and pays the current round's borrower. Permissionless. |
-| `exit-group` | USER1 | Exits the group (mature = full refund; early = PenaltyState created). |
-| `terminate-group` | ADMIN | Claims the PenaltyState UTxO after an early exit. |
-| `defer-round` | USER1 | Sets `is_deferred=true` — borrower skips their slot; payout routes to next slot. |
-| `contribute` | USER1 | Tops up a treasury UTxO balance. `TOP_UP_AMOUNT=<lovelace>` (default 5 ADA). |
-| `update-payout-credential` | USER1 | Redirects future payouts to the current signing wallet's address. |
-| `extend-grace-window` | ADMIN | Extends grace period for `MEMBER_WALLET` (default USER1) in ICS. |
-| `next-cycle` | ADMIN | Resets a mature group for another rotation cycle. Members re-deposit, then admin calls start-group again. |
+| Script                     | Default wallet | What it does                                                                                                      |
+| -------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `join-group`               | USER1          | Joins the group. Locks `max_members × contribution_fee` into treasury.                                            |
+| `start-group`              | ADMIN          | Seals membership, sets `num_intervals=member_count`, anchors `start_time`. **Required before distribute-payout.** |
+| `distribute-payout`        | ADMIN          | Collects contributions and pays the current round's borrower. Permissionless.                                     |
+| `exit-group`               | USER1          | Exits the group (mature = full refund; early = PenaltyState created).                                             |
+| `terminate-group`          | ADMIN          | Claims the PenaltyState UTxO after an early exit.                                                                 |
+| `defer-round`              | USER1          | Sets `is_deferred=true` — borrower skips their slot; payout routes to next slot.                                  |
+| `contribute`               | USER1          | Tops up a treasury UTxO balance. `TOP_UP_AMOUNT=<lovelace>` (default 5 ADA).                                      |
+| `update-payout-credential` | USER1          | Redirects future payouts to the current signing wallet's address.                                                 |
+| `extend-grace-window`      | ADMIN          | Extends grace period for `MEMBER_WALLET` (default USER1) in ICS.                                                  |
+| `next-cycle`               | ADMIN          | Resets a mature group for another rotation cycle. Members re-deposit, then admin calls start-group again.         |
 
 ---
 
@@ -221,6 +222,7 @@ SUBMIT_COOLDOWN_SECS=120   # Pause after a successful submit before re-checking 
 ```
 
 **What happens on each tick:**
+
 1. Reads `groupTokenSuffix` from `state.json`.
 2. Fetches the group UTxO and decodes the datum.
 3. Checks if `now >= start_time + (last_distributed_round + 1) × interval_length`.
@@ -228,6 +230,7 @@ SUBMIT_COOLDOWN_SECS=120   # Pause after a successful submit before re-checking 
 5. If not ready: logs the wait time and sleeps until the next poll.
 
 **Handled automatically:**
+
 - `OutsideValidityInterval` (clock drift) — retries after `POLL_INTERVAL_SECS`
 - All rounds complete (group mature) — logs a message and keeps polling (safe to leave running)
 - Network / provider errors — logs the error and retries
@@ -238,18 +241,18 @@ Stop with `Ctrl+C` — the daemon finishes the current poll then exits cleanly.
 
 ## State (`state.json`)
 
-| Key | Written by | Used by |
-|-----|-----------|---------|
-| `groupTokenSuffix` | `create-group` | All treasury scripts |
-| `groupPolicyId` | `create-group` | Staleness check |
-| `groupIntervalLength` | `create-group` | Slot schedule display |
-| `groupStartTime` | `start-group` | Slot schedule display |
-| `groupNumIntervals` | `start-group` | Slot schedule display |
-| `accountTokenSuffix` | `create-account` (USER1) | `join-group`, `exit-group` |
-| `adminAccountTokenSuffix` | `create-account` (ADMIN) | `join-group` |
-| `user2AccountTokenSuffix` | `create-account` (USER2) | `join-group` |
-| `scriptRefTreasury` | `deploy-scripts` | `join-group`, `exit-group` |
-| `scriptRefGroup` | `deploy-scripts` | `join-group`, `exit-group` |
+| Key                       | Written by               | Used by                    |
+| ------------------------- | ------------------------ | -------------------------- |
+| `groupTokenSuffix`        | `create-group`           | All treasury scripts       |
+| `groupPolicyId`           | `create-group`           | Staleness check            |
+| `groupIntervalLength`     | `create-group`           | Slot schedule display      |
+| `groupStartTime`          | `start-group`            | Slot schedule display      |
+| `groupNumIntervals`       | `start-group`            | Slot schedule display      |
+| `accountTokenSuffix`      | `create-account` (USER1) | `join-group`, `exit-group` |
+| `adminAccountTokenSuffix` | `create-account` (ADMIN) | `join-group`               |
+| `user2AccountTokenSuffix` | `create-account` (USER2) | `join-group`               |
+| `scriptRefTreasury`       | `deploy-scripts`         | `join-group`, `exit-group` |
+| `scriptRefGroup`          | `deploy-scripts`         | `join-group`, `exit-group` |
 
 **Never commit `state.json`** — it contains live on-chain identifiers.
 
@@ -336,6 +339,7 @@ pnpm run create-group
 ```
 
 Review `create-group.ts` before running:
+
 - `TEST_MODE = true` → 5-minute intervals, 5-member cap
 - `CONTRIBUTION_FEE = 5_000_000n` → 5 ADA/slot
 - `JOINING_FEE = 2_000_000n` → 2 ADA one-time

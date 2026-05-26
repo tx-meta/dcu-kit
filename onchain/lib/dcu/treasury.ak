@@ -305,7 +305,10 @@ pub fn validate_join_group(
 
   // [security]: prevent double-join
   let member_not_duplicate =
-    !list.any(group.member_token_names, fn(n) { n == member_reference_tokenname })
+    !list.any(
+      group.member_token_names,
+      fn(n) { n == member_reference_tokenname },
+    )
 
   // [security]: Account NFT (member user token) must NOT go to any script address
   let user_token_at_wallet =
@@ -405,7 +408,12 @@ pub fn validate_distribute_round(
   let Transaction { inputs, outputs, .. } = tx
 
   // [spec DistributeRound 1]: datum must be TreasuryState
-  expect TreasuryState { member_reference_tokenname, group_reference_tokenname, rounds_paid, .. } = datum
+  expect TreasuryState {
+    member_reference_tokenname,
+    group_reference_tokenname,
+    rounds_paid,
+    ..
+  } = datum
 
   // [spec DistributeRound 2]: member hasn't been processed for this round yet
   let member_at_correct_round = rounds_paid == round_number
@@ -423,7 +431,8 @@ pub fn validate_distribute_round(
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(go_data) = group_output.datum
   expect updated_group: GroupDatum = go_data
-  let group_round_incremented = updated_group.last_distributed_round == round_number
+  let group_round_incremented =
+    updated_group.last_distributed_round == round_number
 
   // [spec DistributeRound 5]: group output at correct address with ref token
   expect Script(group_policy_id) = group_input.output.address.payment_credential
@@ -643,8 +652,11 @@ pub fn validate_exit_group(
   let Transaction { inputs, outputs, mint, .. } = tx
 
   // [spec ExitGroup 1]: datum must be TreasuryState
-  expect TreasuryState { member_reference_tokenname, group_reference_tokenname, .. } =
-    datum
+  expect TreasuryState {
+    member_reference_tokenname,
+    group_reference_tokenname,
+    ..
+  } = datum
 
   // Get current time
   let current_time = get_lower_bound(tx)

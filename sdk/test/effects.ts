@@ -21,7 +21,7 @@ export const advanceBlock = (
 export const awaitScriptUtxo = (
   lucid: LucidEvolution,
   address: string,
-  predicate: (u: UTxO) => boolean,
+  predicate: (_u: UTxO) => boolean,
   errorMessage: string,
   opts?: { retryIntervalMs?: number; maxWaitMs?: number },
 ): Effect.Effect<UTxO, SetupError, never> => {
@@ -37,8 +37,12 @@ export const awaitScriptUtxo = (
     },
     catch: (e) => e,
   }).pipe(
-    Effect.retry({ schedule: Schedule.spaced(retryIntervalMs).pipe(Schedule.upTo(maxWaitMs)) }),
-    Effect.catchAll(() => Effect.fail(new SetupError({ message: errorMessage }))),
+    Effect.retry({
+      schedule: Schedule.spaced(retryIntervalMs).pipe(Schedule.upTo(maxWaitMs)),
+    }),
+    Effect.catchAll(() =>
+      Effect.fail(new SetupError({ message: errorMessage })),
+    ),
   );
 };
 
@@ -48,7 +52,7 @@ export const awaitScriptUtxo = (
  */
 export const awaitWalletUtxo = (
   lucid: LucidEvolution,
-  predicate: (u: UTxO) => boolean,
+  predicate: (_u: UTxO) => boolean,
   errorMessage: string,
   opts?: { retryIntervalMs?: number; maxWaitMs?: number },
 ): Effect.Effect<UTxO, SetupError, never> => {
@@ -64,8 +68,12 @@ export const awaitWalletUtxo = (
     },
     catch: (e) => e,
   }).pipe(
-    Effect.retry({ schedule: Schedule.spaced(retryIntervalMs).pipe(Schedule.upTo(maxWaitMs)) }),
-    Effect.catchAll(() => Effect.fail(new SetupError({ message: errorMessage }))),
+    Effect.retry({
+      schedule: Schedule.spaced(retryIntervalMs).pipe(Schedule.upTo(maxWaitMs)),
+    }),
+    Effect.catchAll(() =>
+      Effect.fail(new SetupError({ message: errorMessage })),
+    ),
   );
 };
 
@@ -83,6 +91,4 @@ export const fetchScriptUtxosByTxHash = (
   Effect.tryPromise({
     try: () => lucid.utxosAt(address),
     catch: (e) => new SetupError({ message: `${errorMessage}: ${e}` }),
-  }).pipe(
-    Effect.map((utxos) => utxos.filter((u) => u.txHash === txHash)),
-  );
+  }).pipe(Effect.map((utxos) => utxos.filter((u) => u.txHash === txHash)));

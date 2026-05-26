@@ -1,10 +1,16 @@
-import { mintingPolicyToId, applyParamsToScript, Script } from "@lucid-evolution/lucid";
+import {
+  mintingPolicyToId,
+  applyParamsToScript,
+  Script,
+} from "@lucid-evolution/lucid";
 import blueprint from "../plutus.json" with { type: "json" };
 import { readValidators, getScript, Blueprint } from "./reader.js";
 import { Effect } from "effect";
 
 // Load all validators from blueprint synchronously (safe as it's static JSON)
-const validators = Effect.runSync(readValidators(blueprint as unknown as Blueprint));
+const validators = Effect.runSync(
+  readValidators(blueprint as unknown as Blueprint),
+);
 
 const raw = (title: string): Script =>
   Effect.runSync(getScript(validators, title));
@@ -21,35 +27,49 @@ const withPolicyParam = (script: Script, policyId: string): Script => ({
 // --- Account (no parameters) ---
 export const accountValidator = {
   spendAccount: raw("account_validator.account.spend"),
-  mintAccount:  raw("account_validator.account.mint"),
+  mintAccount: raw("account_validator.account.mint"),
 };
 export const accountPolicyId = mintingPolicyToId(accountValidator.mintAccount);
 export const accountScript = {
   spending: accountValidator.spendAccount.script,
-  minting:  accountValidator.mintAccount.script,
+  minting: accountValidator.mintAccount.script,
 };
 
 // --- Treasury (parameterized with accountPolicyId) ---
 // Must be computed before group so groupValidator can reference treasuryPolicyId.
 export const treasuryValidator = {
-  spendTreasury: withPolicyParam(raw("treasury_validator.treasury.spend"), accountPolicyId),
-  mintTreasury:  withPolicyParam(raw("treasury_validator.treasury.mint"),  accountPolicyId),
+  spendTreasury: withPolicyParam(
+    raw("treasury_validator.treasury.spend"),
+    accountPolicyId,
+  ),
+  mintTreasury: withPolicyParam(
+    raw("treasury_validator.treasury.mint"),
+    accountPolicyId,
+  ),
 };
-export const treasuryPolicyId = mintingPolicyToId(treasuryValidator.mintTreasury);
+export const treasuryPolicyId = mintingPolicyToId(
+  treasuryValidator.mintTreasury,
+);
 export const treasuryScript = {
   spending: treasuryValidator.spendTreasury.script,
-  minting:  treasuryValidator.mintTreasury.script,
+  minting: treasuryValidator.mintTreasury.script,
 };
 
 // --- Group (parameterized with treasuryPolicyId) ---
 export const groupValidator = {
-  spendGroup: withPolicyParam(raw("group_validator.group_validator.spend"), treasuryPolicyId),
-  mintGroup:  withPolicyParam(raw("group_validator.group_validator.mint"),  treasuryPolicyId),
+  spendGroup: withPolicyParam(
+    raw("group_validator.group_validator.spend"),
+    treasuryPolicyId,
+  ),
+  mintGroup: withPolicyParam(
+    raw("group_validator.group_validator.mint"),
+    treasuryPolicyId,
+  ),
 };
 export const groupPolicyId = mintingPolicyToId(groupValidator.mintGroup);
 export const groupScript = {
   spending: groupValidator.spendGroup.script,
-  minting:  groupValidator.mintGroup.script,
+  minting: groupValidator.mintGroup.script,
 };
 
 // --- AlwaysFails (no parameters) ---

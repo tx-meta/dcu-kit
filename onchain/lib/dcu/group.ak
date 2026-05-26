@@ -288,11 +288,9 @@ pub fn validate_update_group(
   and {
     (group_output.address == group_input.output.address)?,
     // [security]: exact token check — only the ref token under this policy
-    (
-      dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
-        Pair(group_ref_token_name, 1),
-      ]
-    )?,
+    (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
+      Pair(group_ref_token_name, 1),
+    ])?,
     output_clean_value?,
     is_safe_update?,
     (updated_datum.member_count == current_datum.member_count)?,
@@ -528,7 +526,11 @@ pub fn validate_member_exit(
     list.any(
       inputs,
       fn(i) {
-        assets.quantity_of(i.output.value, treasury_policy_id, member_token_name) == 1
+        assets.quantity_of(
+          i.output.value,
+          treasury_policy_id,
+          member_token_name,
+        ) == 1
       },
     )
 
@@ -626,11 +628,9 @@ pub fn validate_start_group(
     not_already_started?,
     enough_members?,
     (group_output.address == group_input.output.address)?,
-    (
-      dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
-        Pair(group_ref_token_name, 1),
-      ]
-    )?,
+    (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
+      Pair(group_ref_token_name, 1),
+    ])?,
     output_clean_value?,
     (updated == expected)?,
     (out_ada >= in_ada)?,
@@ -682,7 +682,8 @@ pub fn validate_distribute_round_group(
 
   // [spec DistributeRound 4]: time gate — round can't run before its scheduled start
   let current_time = get_lower_bound(tx)
-  let round_start_time = current.start_time + round_number * current.interval_length
+  let round_start_time =
+    current.start_time + round_number * current.interval_length
   let time_valid = current_time >= round_start_time
 
   // [spec DistributeRound 5]: round must be within the current cycle
@@ -693,8 +694,7 @@ pub fn validate_distribute_round_group(
   expect updated: GroupDatum = output_datum_data
 
   // [spec DistributeRound 6]: only last_distributed_round changes
-  let expected =
-    GroupDatum { ..current, last_distributed_round: round_number }
+  let expected = GroupDatum { ..current, last_distributed_round: round_number }
 
   // [security]: ADA must not decrease
   let in_ada = assets.lovelace_of(group_input.output.value)
@@ -711,11 +711,9 @@ pub fn validate_distribute_round_group(
     time_valid?,
     within_cycle?,
     (group_output.address == group_input.output.address)?,
-    (
-      dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
-        Pair(group_ref_token_name, 1),
-      ]
-    )?,
+    (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
+      Pair(group_ref_token_name, 1),
+    ])?,
     output_clean_value?,
     (updated == expected)?,
     (out_ada >= in_ada)?,
@@ -771,7 +769,8 @@ pub fn validate_next_cycle_group(
   let group_active = current.is_active
 
   // [spec NextCycle 4]: all rounds have been distributed
-  let all_rounds_done = current.last_distributed_round + 1 == current.num_intervals
+  let all_rounds_done =
+    current.last_distributed_round + 1 == current.num_intervals
 
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(output_datum_data) = group_output.datum
@@ -799,11 +798,9 @@ pub fn validate_next_cycle_group(
     group_active?,
     all_rounds_done?,
     (group_output.address == group_input.output.address)?,
-    (
-      dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
-        Pair(group_ref_token_name, 1),
-      ]
-    )?,
+    (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
+      Pair(group_ref_token_name, 1),
+    ])?,
     output_clean_value?,
     (updated == expected)?,
     (out_ada >= in_ada)?,

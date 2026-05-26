@@ -4,7 +4,6 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   Assets,
-  Constr,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
@@ -13,7 +12,12 @@ import {
   TransactionBuildError,
   UtxoNotFoundError,
 } from "../core/errors.js";
-import { getScriptAddress, patchInlineDatum, assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
+import {
+  getScriptAddress,
+  patchInlineDatum,
+  assetNameLabels,
+  resolveUtxoByUnit,
+} from "../core/utils/index.js";
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 
 /**
@@ -49,13 +53,15 @@ export const unsignedUpdateGroupTxProgram = (
   Effect.gen(function* () {
     const { groupTokenSuffix, updatedDatum } = config;
 
-    const groupRefUnit = groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
-    const adminUnit    = groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+    const groupRefUnit =
+      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+    const adminUnit =
+      groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
 
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
-    const adminUtxo    = yield* resolveUtxoByUnit(lucid, adminUnit);
-    const groupUtxo    = patchInlineDatum(groupUtxoRaw);
-    const address      = yield* getScriptAddress(lucid, groupValidator.spendGroup);
+    const adminUtxo = yield* resolveUtxoByUnit(lucid, adminUnit);
+    const groupUtxo = patchInlineDatum(groupUtxoRaw);
+    const address = yield* getScriptAddress(lucid, groupValidator.spendGroup);
 
     const groupRefAsset = Object.keys(groupUtxo.assets).find((k) =>
       k.startsWith(groupPolicyId!),

@@ -1,19 +1,35 @@
-
-import { LucidEvolution, Data, TxSignBuilder, RedeemerBuilder, Assets, toUnit } from "@lucid-evolution/lucid";
+import {
+  LucidEvolution,
+  Data,
+  TxSignBuilder,
+  RedeemerBuilder,
+  Assets,
+  toUnit,
+} from "@lucid-evolution/lucid";
 import { AccountRedeemer, AccountDatum } from "../core/types.js";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { getScriptAddress, findCip68TokenPair, getWalletAddress, patchInlineDatum, assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
-import { accountValidator, accountPolicyId } from "../core/validators/constants.js";
+import {
+  getScriptAddress,
+  findCip68TokenPair,
+  getWalletAddress,
+  patchInlineDatum,
+  assetNameLabels,
+  resolveUtxoByUnit,
+} from "../core/utils/index.js";
+import {
+  accountValidator,
+  accountPolicyId,
+} from "../core/validators/constants.js";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 
 // --- Configuration ---
 
 export type UpdateAccountConfig = {
-    accountTokenSuffix: string;
-    email: string;
-    phone: string;
+  accountTokenSuffix: string;
+  email: string;
+  phone: string;
 };
 
 // --- Endpoint ---
@@ -45,16 +61,24 @@ export const unsignedUpdateAccountTxProgram = (
   Effect.gen(function* () {
     const { accountTokenSuffix, email, phone } = config;
 
-    const refUnit  = accountPolicyId + assetNameLabels.prefix100 + accountTokenSuffix;
-    const userUnit = accountPolicyId + assetNameLabels.prefix222 + accountTokenSuffix;
+    const refUnit =
+      accountPolicyId + assetNameLabels.prefix100 + accountTokenSuffix;
+    const userUnit =
+      accountPolicyId + assetNameLabels.prefix222 + accountTokenSuffix;
 
     const account_utxo_raw = yield* resolveUtxoByUnit(lucid, refUnit);
-    const user_utxo        = yield* resolveUtxoByUnit(lucid, userUnit);
-    const account_utxo     = patchInlineDatum(account_utxo_raw);
+    const user_utxo = yield* resolveUtxoByUnit(lucid, userUnit);
+    const account_utxo = patchInlineDatum(account_utxo_raw);
 
     const address = yield* getWalletAddress(lucid);
-    const { userTokenName, refTokenName } = yield* findCip68TokenPair([user_utxo, account_utxo], accountPolicyId);
-    const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
+    const { userTokenName, refTokenName } = yield* findCip68TokenPair(
+      [user_utxo, account_utxo],
+      accountPolicyId,
+    );
+    const accountScriptAddress = yield* getScriptAddress(
+      lucid,
+      accountValidator.spendAccount,
+    );
 
     const accountDatum: AccountDatum = {
       email_hash: bytesToHex(sha256(utf8ToBytes(email))),
@@ -62,7 +86,7 @@ export const unsignedUpdateAccountTxProgram = (
     };
     const datum = Data.to(accountDatum, AccountDatum);
 
-    const refToken  = toUnit(accountPolicyId, refTokenName);
+    const refToken = toUnit(accountPolicyId, refTokenName);
     const userToken = toUnit(accountPolicyId, userTokenName);
 
     const scriptAssets: Assets = { [refToken]: 1n };
@@ -70,15 +94,18 @@ export const unsignedUpdateAccountTxProgram = (
 
     const redeemer: RedeemerBuilder = {
       kind: "selected",
-      makeRedeemer: (inputIndices: bigint[]) => Data.to(
-        { UpdateAccount: {
-            reference_token_name: refTokenName,
-            user_input_index: inputIndices[0],
-            account_input_index: inputIndices[1],
-            account_output_index: 0n,
-        }},
-        AccountRedeemer
-      ),
+      makeRedeemer: (inputIndices: bigint[]) =>
+        Data.to(
+          {
+            UpdateAccount: {
+              reference_token_name: refTokenName,
+              user_input_index: inputIndices[0],
+              account_input_index: inputIndices[1],
+              account_output_index: 0n,
+            },
+          },
+          AccountRedeemer,
+        ),
       inputs: [user_utxo, account_utxo],
     };
 
@@ -86,11 +113,23 @@ export const unsignedUpdateAccountTxProgram = (
       .newTx()
       .collectFrom([user_utxo])
       .collectFrom([account_utxo], redeemer)
-      .pay.ToAddressWithData(accountScriptAddress, { kind: "inline", value: datum }, scriptAssets)
+      .pay.ToAddressWithData(
+        accountScriptAddress,
+        { kind: "inline", value: datum },
+        scriptAssets,
+      )
       .pay.ToAddress(address, walletAssets)
       .addSigner(address)
       .attach.SpendingValidator(accountValidator.spendAccount)
       .completeProgram()
-      .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "updateAccount", error: String(e) })));
+      .pipe(
+        Effect.mapError(
+          (e) =>
+            new TransactionBuildError({
+              operation: "updateAccount",
+              error: String(e),
+            }),
+        ),
+      );
     return tx;
   });

@@ -1,8 +1,26 @@
-import { Data, TxSignBuilder, LucidEvolution, OutRef, RedeemerBuilder, Constr, Assets, toUnit } from "@lucid-evolution/lucid";
+import {
+  Data,
+  TxSignBuilder,
+  LucidEvolution,
+  OutRef,
+  RedeemerBuilder,
+  Constr,
+  Assets,
+  toUnit,
+} from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum } from "../core/types.js";
-import { getScriptAddress, getWalletAddress, createCip68TokenNames, resolveUtxoByOutRef } from "../core/utils/index.js";
-import { DcuError, TransactionBuildError, ValidatorNotFoundError } from "../core/errors.js";
+import {
+  getScriptAddress,
+  getWalletAddress,
+  createCip68TokenNames,
+  resolveUtxoByOutRef,
+} from "../core/utils/index.js";
+import {
+  DcuError,
+  TransactionBuildError,
+  ValidatorNotFoundError,
+} from "../core/errors.js";
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 
 /**
@@ -19,21 +37,27 @@ import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
  * @returns Effect yielding a TxSignBuilder ready for signing.
  */
 export type CreateGroupConfig = {
-    groupDatum: GroupDatum;
-    utxoToSpend: OutRef;
+  groupDatum: GroupDatum;
+  utxoToSpend: OutRef;
 };
 
 export const unsignedCreateGroupTxProgram = (
   lucid: LucidEvolution,
-  config: CreateGroupConfig
+  config: CreateGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     const { groupDatum, utxoToSpend } = config;
 
-    if (!groupPolicyId) yield* Effect.fail(new ValidatorNotFoundError({ validatorName: "group.mint" }));
+    if (!groupPolicyId)
+      yield* Effect.fail(
+        new ValidatorNotFoundError({ validatorName: "group.mint" }),
+      );
 
     const address = yield* getWalletAddress(lucid);
-    const groupAddress = yield* getScriptAddress(lucid, groupValidator.spendGroup);
+    const groupAddress = yield* getScriptAddress(
+      lucid,
+      groupValidator.spendGroup,
+    );
 
     const datum = Data.to(groupDatum, GroupDatum);
 
@@ -52,7 +76,8 @@ export const unsignedCreateGroupTxProgram = (
     const mintingAssets: Assets = { [refToken]: 1n, [userToken]: 1n };
     // Lock creator_bond lovelace alongside the ref token so it is held for
     // the group's lifetime and returned to the admin on deleteGroup.
-    const scriptAssets: Assets = groupDatum.creator_bond > 0n
+    const scriptAssets: Assets =
+      groupDatum.creator_bond > 0n
         ? { [refToken]: 1n, lovelace: groupDatum.creator_bond }
         : { [refToken]: 1n };
     const walletAssets: Assets = { [userToken]: 1n };
@@ -60,21 +85,32 @@ export const unsignedCreateGroupTxProgram = (
     // Constr(0, [input_index, output_index]) = GroupMintRedeemer.CreateGroup.
     // RedeemerBuilder resolves the actual sorted index of utxoToSpend at build time.
     const redeemer: RedeemerBuilder = {
-        kind: "selected",
-        makeRedeemer: (inputIndices: bigint[]) => Data.to(
-            new Constr(0, [inputIndices[0], 0n])
-        ),
-        inputs: [utxo],
+      kind: "selected",
+      makeRedeemer: (inputIndices: bigint[]) =>
+        Data.to(new Constr(0, [inputIndices[0], 0n])),
+      inputs: [utxo],
     };
 
     const tx = yield* lucid
-        .newTx()
-        .collectFrom([utxo])
-        .mintAssets(mintingAssets, redeemer)
-        .pay.ToContract(groupAddress, { kind: "inline", value: datum }, scriptAssets)
-        .pay.ToAddress(address, walletAssets)
-        .attach.MintingPolicy(groupValidator.mintGroup)
-        .completeProgram()
-        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "createGroup", error: String(e) })));
+      .newTx()
+      .collectFrom([utxo])
+      .mintAssets(mintingAssets, redeemer)
+      .pay.ToContract(
+        groupAddress,
+        { kind: "inline", value: datum },
+        scriptAssets,
+      )
+      .pay.ToAddress(address, walletAssets)
+      .attach.MintingPolicy(groupValidator.mintGroup)
+      .completeProgram()
+      .pipe(
+        Effect.mapError(
+          (e) =>
+            new TransactionBuildError({
+              operation: "createGroup",
+              error: String(e),
+            }),
+        ),
+      );
     return tx;
   });

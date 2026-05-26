@@ -152,7 +152,11 @@ validator treasury(account_policy_id: PolicyId) {
         )
       }
 
-      Contribute { member_input_index, treasury_input_index, treasury_output_index } -> {
+      Contribute {
+        member_input_index,
+        treasury_input_index,
+        treasury_output_index,
+      } -> {
         // [security]: self-reference check
         expect Some(treasury_input) = list.at(inputs, treasury_input_index)
         expect treasury_input.output_reference == utxo

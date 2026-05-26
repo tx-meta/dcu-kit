@@ -1,11 +1,14 @@
-
 import {
-    Data,
-    LucidEvolution,
-    validatorToAddress,
+  Data,
+  LucidEvolution,
+  validatorToAddress,
 } from "@lucid-evolution/lucid";
 import { Effect, Schedule } from "effect";
-import { treasuryValidator, groupValidator, alwaysFailsValidator } from "../core/validators/constants.js";
+import {
+  treasuryValidator,
+  groupValidator,
+  alwaysFailsValidator,
+} from "../core/validators/constants.js";
 import { DcuError, TransactionBuildError, SetupError } from "../core/errors.js";
 import { getWalletAddress } from "../core/utils/index.js";
 
@@ -18,17 +21,17 @@ import { getWalletAddress } from "../core/utils/index.js";
  * These values add a comfortable buffer above the minimum.
  */
 export const TREASURY_REF_LOVELACE = 30_000_000n; // 30 ADA
-export const GROUP_REF_LOVELACE    = 26_000_000n; // 26 ADA
+export const GROUP_REF_LOVELACE = 26_000_000n; // 26 ADA
 
 export type ScriptRefOutRef = { txHash: string; outputIndex: number };
 
 export type DeployScriptsResult = {
-    /** OutRef of the treasury validator reference UTxO. */
-    treasuryRef: ScriptRefOutRef;
-    /** OutRef of the group validator reference UTxO. */
-    groupRef: ScriptRefOutRef;
-    /** The alwaysFails script address both UTxOs were sent to. */
-    deployAddress: string;
+  /** OutRef of the treasury validator reference UTxO. */
+  treasuryRef: ScriptRefOutRef;
+  /** OutRef of the group validator reference UTxO. */
+  groupRef: ScriptRefOutRef;
+  /** The alwaysFails script address both UTxOs were sent to. */
+  deployAddress: string;
 };
 
 /**
@@ -41,23 +44,24 @@ export type DeployScriptsResult = {
  * Retries every 3 seconds for up to 30 seconds before failing.
  */
 const awaitWalletIndexed = (
-    lucid: LucidEvolution,
-    address: string,
-    txHash: string,
+  lucid: LucidEvolution,
+  address: string,
+  txHash: string,
 ): Effect.Effect<void, SetupError, never> =>
-    Effect.retry(
-        Effect.tryPromise({
-            try: async () => {
-                const utxos = await lucid.utxosAt(address);
-                if (!utxos.some(u => u.txHash === txHash))
-                    throw new Error("not indexed yet");
-            },
-            catch: () => new SetupError({
-                message: `Timed out waiting for tx ${txHash.slice(0, 8)}... to appear in wallet UTxOs`,
-            }),
+  Effect.retry(
+    Effect.tryPromise({
+      try: async () => {
+        const utxos = await lucid.utxosAt(address);
+        if (!utxos.some((u) => u.txHash === txHash))
+          throw new Error("not indexed yet");
+      },
+      catch: () =>
+        new SetupError({
+          message: `Timed out waiting for tx ${txHash.slice(0, 8)}... to appear in wallet UTxOs`,
         }),
-        Schedule.spaced(3_000).pipe(Schedule.upTo(30_000)),
-    );
+    }),
+    Schedule.spaced(3_000).pipe(Schedule.upTo(30_000)),
+  );
 
 /**
  * Deploys treasury and group validator reference scripts to a permanent
@@ -85,69 +89,108 @@ const awaitWalletIndexed = (
  * @returns Effect yielding `DeployScriptsResult` with the two on-chain OutRefs.
  */
 export const deployScripts = (
-    lucid: LucidEvolution,
+  lucid: LucidEvolution,
 ): Effect.Effect<DeployScriptsResult, DcuError, never> =>
-    Effect.gen(function* () {
-        const address = yield* getWalletAddress(lucid);
-        const network = lucid.config().network!;
-        const deployAddress = validatorToAddress(network, alwaysFailsValidator.elseAlwaysFails);
+  Effect.gen(function* () {
+    const address = yield* getWalletAddress(lucid);
+    const network = lucid.config().network!;
+    const deployAddress = validatorToAddress(
+      network,
+      alwaysFailsValidator.elseAlwaysFails,
+    );
 
-        // --- Tx 1: treasury validator ---
-        const treasuryTxBuilder = yield* lucid
-            .newTx()
-            .pay.ToAddressWithData(
-                deployAddress,
-                { kind: "inline", value: Data.void() },
-                { lovelace: TREASURY_REF_LOVELACE },
-                { type: "PlutusV3", script: treasuryValidator.mintTreasury.script },
-            )
-            .addSigner(address)
-            .completeProgram()
-            .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "deployScripts:treasury:build", error: String(e) })));
+    // --- Tx 1: treasury validator ---
+    const treasuryTxBuilder = yield* lucid
+      .newTx()
+      .pay.ToAddressWithData(
+        deployAddress,
+        { kind: "inline", value: Data.void() },
+        { lovelace: TREASURY_REF_LOVELACE },
+        { type: "PlutusV3", script: treasuryValidator.mintTreasury.script },
+      )
+      .addSigner(address)
+      .completeProgram()
+      .pipe(
+        Effect.mapError(
+          (e) =>
+            new TransactionBuildError({
+              operation: "deployScripts:treasury:build",
+              error: String(e),
+            }),
+        ),
+      );
 
-        const treasurySigned = yield* Effect.tryPromise({
-            try: () => treasuryTxBuilder.sign.withWallet().complete(),
-            catch: e => new TransactionBuildError({ operation: "deployScripts:treasury:sign", error: String(e) }),
-        });
-        const treasuryTxHash = yield* Effect.tryPromise({
-            try: () => treasurySigned.submit(),
-            catch: e => new TransactionBuildError({ operation: "deployScripts:treasury:submit", error: String(e) }),
-        });
-
-        yield* Effect.tryPromise({
-            try: () => lucid.awaitTx(treasuryTxHash),
-            catch: e => new TransactionBuildError({ operation: "deployScripts:treasury:confirm", error: String(e) }),
-        });
-
-        // Poll until Blockfrost indexes Tx 1's change at the wallet address.
-        // This guarantees completeProgram() for Tx 2 sees a fresh UTxO set.
-        yield* awaitWalletIndexed(lucid, address, treasuryTxHash);
-
-        // --- Tx 2: group validator ---
-        const groupTxBuilder = yield* lucid
-            .newTx()
-            .pay.ToAddressWithData(
-                deployAddress,
-                { kind: "inline", value: Data.void() },
-                { lovelace: GROUP_REF_LOVELACE },
-                { type: "PlutusV3", script: groupValidator.spendGroup.script },
-            )
-            .addSigner(address)
-            .completeProgram()
-            .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "deployScripts:group:build", error: String(e) })));
-
-        const groupSigned = yield* Effect.tryPromise({
-            try: () => groupTxBuilder.sign.withWallet().complete(),
-            catch: e => new TransactionBuildError({ operation: "deployScripts:group:sign", error: String(e) }),
-        });
-        const groupTxHash = yield* Effect.tryPromise({
-            try: () => groupSigned.submit(),
-            catch: e => new TransactionBuildError({ operation: "deployScripts:group:submit", error: String(e) }),
-        });
-
-        return {
-            treasuryRef: { txHash: treasuryTxHash, outputIndex: 0 },
-            groupRef:    { txHash: groupTxHash,    outputIndex: 0 },
-            deployAddress,
-        };
+    const treasurySigned = yield* Effect.tryPromise({
+      try: () => treasuryTxBuilder.sign.withWallet().complete(),
+      catch: (e) =>
+        new TransactionBuildError({
+          operation: "deployScripts:treasury:sign",
+          error: String(e),
+        }),
     });
+    const treasuryTxHash = yield* Effect.tryPromise({
+      try: () => treasurySigned.submit(),
+      catch: (e) =>
+        new TransactionBuildError({
+          operation: "deployScripts:treasury:submit",
+          error: String(e),
+        }),
+    });
+
+    yield* Effect.tryPromise({
+      try: () => lucid.awaitTx(treasuryTxHash),
+      catch: (e) =>
+        new TransactionBuildError({
+          operation: "deployScripts:treasury:confirm",
+          error: String(e),
+        }),
+    });
+
+    // Poll until Blockfrost indexes Tx 1's change at the wallet address.
+    // This guarantees completeProgram() for Tx 2 sees a fresh UTxO set.
+    yield* awaitWalletIndexed(lucid, address, treasuryTxHash);
+
+    // --- Tx 2: group validator ---
+    const groupTxBuilder = yield* lucid
+      .newTx()
+      .pay.ToAddressWithData(
+        deployAddress,
+        { kind: "inline", value: Data.void() },
+        { lovelace: GROUP_REF_LOVELACE },
+        { type: "PlutusV3", script: groupValidator.spendGroup.script },
+      )
+      .addSigner(address)
+      .completeProgram()
+      .pipe(
+        Effect.mapError(
+          (e) =>
+            new TransactionBuildError({
+              operation: "deployScripts:group:build",
+              error: String(e),
+            }),
+        ),
+      );
+
+    const groupSigned = yield* Effect.tryPromise({
+      try: () => groupTxBuilder.sign.withWallet().complete(),
+      catch: (e) =>
+        new TransactionBuildError({
+          operation: "deployScripts:group:sign",
+          error: String(e),
+        }),
+    });
+    const groupTxHash = yield* Effect.tryPromise({
+      try: () => groupSigned.submit(),
+      catch: (e) =>
+        new TransactionBuildError({
+          operation: "deployScripts:group:submit",
+          error: String(e),
+        }),
+    });
+
+    return {
+      treasuryRef: { txHash: treasuryTxHash, outputIndex: 0 },
+      groupRef: { txHash: groupTxHash, outputIndex: 0 },
+      deployAddress,
+    };
+  });

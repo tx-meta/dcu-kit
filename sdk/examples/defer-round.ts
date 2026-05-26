@@ -19,55 +19,79 @@
  * Reads accountTokenSuffix from state.json (keyed by active wallet).
  */
 
-import { deferRound, DeferRoundConfig, accountPolicyId, groupPolicyId } from "@dcu/sdk";
-import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
-import { loadState, checkValidatorStaleness, accountSuffixKey } from "./state.js";
+import {
+  deferRound,
+  DeferRoundConfig,
+  accountPolicyId,
+  groupPolicyId,
+} from "@tx-meta/dcu-sdk";
+import {
+  makeLucid,
+  cexplorerTxUrl,
+  logError,
+  logWalletInfo,
+} from "./context.js";
+import {
+  loadState,
+  checkValidatorStaleness,
+  accountSuffixKey,
+} from "./state.js";
 
 async function main() {
-    const { lucid, isEmulator } = await makeLucid();
+  const { lucid, isEmulator } = await makeLucid();
 
-    if (isEmulator) {
-        console.log("This example requires an active treasury membership.");
-        console.log("These example scripts require existing on-chain state. Run on Preprod.");
-        process.exit(0);
-    }
+  if (isEmulator) {
+    console.log("This example requires an active treasury membership.");
+    console.log(
+      "These example scripts require existing on-chain state. Run on Preprod.",
+    );
+    process.exit(0);
+  }
 
-    const activeWallet = (process.env.ACTIVE_WALLET ?? "USER1").toUpperCase();
-    const walletSeed   = process.env[`${activeWallet}_SEED`] ?? process.env.USER1_SEED;
-    if (!walletSeed) throw new Error(`${activeWallet}_SEED not found in .env`);
-    lucid.selectWallet.fromSeed(walletSeed);
-    await logWalletInfo(lucid, activeWallet);
+  const activeWallet = (process.env.ACTIVE_WALLET ?? "USER1").toUpperCase();
+  const walletSeed =
+    process.env[`${activeWallet}_SEED`] ?? process.env.USER1_SEED;
+  if (!walletSeed) throw new Error(`${activeWallet}_SEED not found in .env`);
+  lucid.selectWallet.fromSeed(walletSeed);
+  await logWalletInfo(lucid, activeWallet);
 
-    checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
+  checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
 
-    const state = loadState();
-    const accountTokenSuffix = state[accountSuffixKey(activeWallet)];
-    if (!accountTokenSuffix) throw new Error(
-        `${accountSuffixKey(activeWallet)} not found in state.json.\n` +
-        `Run: ACTIVE_WALLET=${activeWallet} pnpm run create-account`
+  const state = loadState();
+  const accountTokenSuffix = state[accountSuffixKey(activeWallet)];
+  if (!accountTokenSuffix)
+    throw new Error(
+      `${accountSuffixKey(activeWallet)} not found in state.json.\n` +
+        `Run: ACTIVE_WALLET=${activeWallet} pnpm run create-account`,
     );
 
-    console.log(`Deferring next payout round for ${activeWallet}...`);
-    console.log("After confirmation, distribute-payout will skip this member for the current round.");
+  console.log(`Deferring next payout round for ${activeWallet}...`);
+  console.log(
+    "After confirmation, distribute-payout will skip this member for the current round.",
+  );
 
-    const config: DeferRoundConfig = { accountTokenSuffix };
+  const config: DeferRoundConfig = { accountTokenSuffix };
 
-    console.log("Building defer-round transaction...");
-    const tx = await deferRound(lucid, config).unsafeRun();
+  console.log("Building defer-round transaction...");
+  const tx = await deferRound(lucid, config).unsafeRun();
 
-    console.log("Signing and submitting...");
-    const signed = await tx.sign.withWallet().complete();
-    const txHash = await signed.submit();
-    console.log("Transaction submitted. Hash:", txHash);
-    console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
+  console.log("Signing and submitting...");
+  const signed = await tx.sign.withWallet().complete();
+  const txHash = await signed.submit();
+  console.log("Transaction submitted. Hash:", txHash);
+  console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
 
-    console.log("Waiting for confirmation...");
-    await lucid.awaitTx(txHash);
-    console.log(`Round deferred! ${activeWallet} will be skipped in the next distribute-payout call.`);
-    console.log("The is_deferred flag resets automatically after the round is processed.");
+  console.log("Waiting for confirmation...");
+  await lucid.awaitTx(txHash);
+  console.log(
+    `Round deferred! ${activeWallet} will be skipped in the next distribute-payout call.`,
+  );
+  console.log(
+    "The is_deferred flag resets automatically after the round is processed.",
+  );
 }
 
 main().catch((e) => {
-    logError(e);
-    process.exit(1);
+  logError(e);
+  process.exit(1);
 });

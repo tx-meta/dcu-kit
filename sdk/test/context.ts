@@ -12,8 +12,10 @@ import {
 import { ConfigurationError } from "../src/core/errors.js";
 import { Effect } from "effect";
 
-
-export type OnChainNetwork = Extract<Network, "Mainnet" | "Preprod" | "Preview">;
+export type OnChainNetwork = Extract<
+  Network,
+  "Mainnet" | "Preprod" | "Preview"
+>;
 
 // --- Types ---
 
@@ -104,7 +106,13 @@ const makeEmulatorContext = () =>
 const makeMaestroContext = (network: OnChainNetwork) =>
   Effect.gen(function* () {
     const apiKey = process.env.MAESTRO_API_KEY;
-    if (!apiKey) return yield* Effect.die(new ConfigurationError({ configKey: "MAESTRO_API_KEY", message: "Missing MAESTRO_API_KEY" }));
+    if (!apiKey)
+      return yield* Effect.die(
+        new ConfigurationError({
+          configKey: "MAESTRO_API_KEY",
+          message: "Missing MAESTRO_API_KEY",
+        }),
+      );
 
     const maestro = new Maestro({
       network: network,
@@ -127,7 +135,12 @@ const makeBlockfrostContext = (network: OnChainNetwork) =>
     const url = process.env.BLOCKFROST_URL;
 
     if (!projectId || !url) {
-      return yield* Effect.die(new ConfigurationError({ configKey: "BLOCKFROST_KEY", message: "Missing BLOCKFROST_KEY or BLOCKFROST_URL" }));
+      return yield* Effect.die(
+        new ConfigurationError({
+          configKey: "BLOCKFROST_KEY",
+          message: "Missing BLOCKFROST_KEY or BLOCKFROST_URL",
+        }),
+      );
     }
 
     const blockfrost = new Blockfrost(url, projectId);
@@ -146,7 +159,12 @@ const makeKupmiosContext = (network: OnChainNetwork) =>
     const ogmiosUrl = process.env.OGMIOS_URL;
 
     if (!kupoUrl || !ogmiosUrl) {
-        return yield* Effect.die(new ConfigurationError({ configKey: "KUPO/OGMIOS_URL", message: "Missing KUPO_URL or OGMIOS_URL" }));
+      return yield* Effect.die(
+        new ConfigurationError({
+          configKey: "KUPO/OGMIOS_URL",
+          message: "Missing KUPO_URL or OGMIOS_URL",
+        }),
+      );
     }
 
     const kupmios = new Kupmios(kupoUrl, ogmiosUrl);
@@ -172,9 +190,11 @@ const loadUsersFromEnv = () => {
       !adminSeed && "ADMIN_SEED",
       !user1Seed && "USER1_SEED",
       !user2Seed && "USER2_SEED",
-    ].filter(Boolean).join(", ");
+    ]
+      .filter(Boolean)
+      .join(", ");
     throw new Error(
-      `Live network testing requires seed phrases for all three wallets. Missing: ${missing}.`
+      `Live network testing requires seed phrases for all three wallets. Missing: ${missing}.`,
     );
   }
 
@@ -210,11 +230,17 @@ export const makeLucidContext = (overrideConfig?: Partial<ContextConfig>) =>
 
     switch (config.provider) {
       case "Blockfrost":
-        return yield* makeBlockfrostContext(yield* ensureOnChain(config.network, "Blockfrost"));
+        return yield* makeBlockfrostContext(
+          yield* ensureOnChain(config.network, "Blockfrost"),
+        );
       case "Maestro":
-        return yield* makeMaestroContext(yield* ensureOnChain(config.network, "Maestro"));
+        return yield* makeMaestroContext(
+          yield* ensureOnChain(config.network, "Maestro"),
+        );
       case "Kupmios":
-        return yield* makeKupmiosContext(yield* ensureOnChain(config.network, "Kupmios"));
+        return yield* makeKupmiosContext(
+          yield* ensureOnChain(config.network, "Kupmios"),
+        );
       case "Emulator":
       default:
         return yield* makeEmulatorContext();

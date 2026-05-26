@@ -1,6 +1,6 @@
 /**
  * DCU SDK Error Types
- * 
+ *
  * Effect-style error handling using tagged union types.
  * Each error has a `_tag` field for discrimination and additional context fields.
  */
@@ -28,7 +28,9 @@ export class UtxoNotFoundError extends Data.TaggedError("UtxoNotFoundError")<{
   readonly cause?: unknown;
 }> {}
 
-export class InsufficientUtxosError extends Data.TaggedError("InsufficientUtxosError")<{
+export class InsufficientUtxosError extends Data.TaggedError(
+  "InsufficientUtxosError",
+)<{
   readonly required: number;
   readonly available: number;
   readonly message?: string;
@@ -53,20 +55,26 @@ export class DatumDecodingError extends Data.TaggedError("DatumDecodingError")<{
 
 // --- Transaction Errors ---
 
-export class TransactionBuildError extends Data.TaggedError("TransactionBuildError")<{
+export class TransactionBuildError extends Data.TaggedError(
+  "TransactionBuildError",
+)<{
   readonly operation: string;
   readonly error: string;
   readonly message?: string;
   readonly cause?: unknown;
 }> {}
 
-export class TransactionSignError extends Data.TaggedError("TransactionSignError")<{
+export class TransactionSignError extends Data.TaggedError(
+  "TransactionSignError",
+)<{
   readonly error: string;
   readonly message?: string;
   readonly cause?: unknown;
 }> {}
 
-export class TransactionSubmitError extends Data.TaggedError("TransactionSubmitError")<{
+export class TransactionSubmitError extends Data.TaggedError(
+  "TransactionSubmitError",
+)<{
   readonly txHash?: string;
   readonly error: string;
   readonly message?: string;
@@ -75,7 +83,9 @@ export class TransactionSubmitError extends Data.TaggedError("TransactionSubmitE
 
 // --- Validator Errors ---
 
-export class ValidatorNotFoundError extends Data.TaggedError("ValidatorNotFoundError")<{
+export class ValidatorNotFoundError extends Data.TaggedError(
+  "ValidatorNotFoundError",
+)<{
   readonly validatorName: string;
   readonly message?: string;
   readonly cause?: unknown;

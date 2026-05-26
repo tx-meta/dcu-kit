@@ -9,7 +9,10 @@ import {
 } from "./actions.js";
 import { unsignedUpdateGroupTxProgram } from "../src/endpoints/updateGroup.js";
 import { unsignedDeleteGroupTxProgram } from "../src/endpoints/deleteGroup.js";
-import { selectWalletFromSeed, assetNameLabels } from "../src/core/utils/index.js";
+import {
+  selectWalletFromSeed,
+  assetNameLabels,
+} from "../src/core/utils/index.js";
 import { createDefaultGroupDatum, extractTokenSuffix } from "./utils.js";
 import { groupPolicyId } from "../src/core/validators/constants.js";
 
@@ -49,7 +52,10 @@ describe("Group Endpoints", () => {
       const base = yield* setupBase();
       const { context, groupUtxo, groupDatum } = yield* setupGroup(base);
 
-      const updatedDatum = { ...groupDatum, penalty_fee: groupDatum.penalty_fee + 1_000_000n };
+      const updatedDatum = {
+        ...groupDatum,
+        penalty_fee: groupDatum.penalty_fee + 1_000_000n,
+      };
 
       const { txHash } = yield* updateGroupTestCase(context, {
         groupUtxo,
@@ -80,84 +86,105 @@ describe("Group Endpoints", () => {
   );
 
   // --- Delete Group (burn, after deactivation) ---
-  it.effect("should delete a group after deactivation, burning tokens and returning ADA", () =>
-    Effect.gen(function* () {
-      const base = yield* setupBase();
-      const { context, groupUtxo, groupDatum } = yield* setupGroup(base);
+  it.effect(
+    "should delete a group after deactivation, burning tokens and returning ADA",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context, groupUtxo, groupDatum } = yield* setupGroup(base);
 
-      // Step 1: deactivate
-      const deactivatedDatum = { ...groupDatum, is_active: false };
-      yield* updateGroupTestCase(context, { groupUtxo, updatedDatum: deactivatedDatum });
+        // Step 1: deactivate
+        const deactivatedDatum = { ...groupDatum, is_active: false };
+        yield* updateGroupTestCase(context, {
+          groupUtxo,
+          updatedDatum: deactivatedDatum,
+        });
 
-      // Step 2: delete (burn)
-      const { txHash } = yield* deleteGroupTestCase(context, { groupUtxo });
+        // Step 2: delete (burn)
+        const { txHash } = yield* deleteGroupTestCase(context, { groupUtxo });
 
-      expect(txHash).toBeDefined();
-      expect(txHash).toHaveLength(64);
-    }),
+        expect(txHash).toBeDefined();
+        expect(txHash).toHaveLength(64);
+      }),
   );
 
   // --- Negative: update group with a non-existent token suffix ---
-  it.effect("should fail updating a group when the token suffix does not exist on-chain", () =>
-    Effect.gen(function* () {
-      const { context } = yield* setupBase();
-      const { lucid, users } = context;
+  it.effect(
+    "should fail updating a group when the token suffix does not exist on-chain",
+    () =>
+      Effect.gen(function* () {
+        const { context } = yield* setupBase();
+        const { lucid, users } = context;
 
-      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
 
-      const fakeSuffix = "00".repeat(28);
+        const fakeSuffix = "00".repeat(28);
 
-      const err = yield* Effect.flip(
-        unsignedUpdateGroupTxProgram(lucid, {
-          groupTokenSuffix: fakeSuffix,
-          updatedDatum: createDefaultGroupDatum(),
-        })
-      );
+        const err = yield* Effect.flip(
+          unsignedUpdateGroupTxProgram(lucid, {
+            groupTokenSuffix: fakeSuffix,
+            updatedDatum: createDefaultGroupDatum(),
+          }),
+        );
 
-      expect(err._tag).toBe("UtxoNotFoundError");
-    }),
+        expect(err._tag).toBe("UtxoNotFoundError");
+      }),
   );
 
   // --- Negative: delete group with a non-existent token suffix ---
-  it.effect("should fail deleting a group when the token suffix does not exist on-chain", () =>
-    Effect.gen(function* () {
-      const { context } = yield* setupBase();
-      const { lucid, users } = context;
+  it.effect(
+    "should fail deleting a group when the token suffix does not exist on-chain",
+    () =>
+      Effect.gen(function* () {
+        const { context } = yield* setupBase();
+        const { lucid, users } = context;
 
-      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
 
-      const fakeSuffix = "00".repeat(28);
+        const fakeSuffix = "00".repeat(28);
 
-      const err = yield* Effect.flip(
-        unsignedDeleteGroupTxProgram(lucid, { groupTokenSuffix: fakeSuffix })
-      );
+        const err = yield* Effect.flip(
+          unsignedDeleteGroupTxProgram(lucid, { groupTokenSuffix: fakeSuffix }),
+        );
 
-      expect(err._tag).toBe("UtxoNotFoundError");
-    }),
+        expect(err._tag).toBe("UtxoNotFoundError");
+      }),
   );
 
   // --- Negative: update critical field while members are active ---
   // The is_critical_update guard freezes contribution_fee (and other economic fields)
   // when member_count > 0. Attempting an update after a member has joined must fail.
-  it.effect("should reject updating contribution_fee while members are active", () =>
-    Effect.gen(function* () {
-      const base = yield* setupBase();
+  it.effect(
+    "should reject updating contribution_fee while members are active",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
 
-      // After joinGroup, member_count == 1 in the on-chain group UTxO.
-      const { context, groupUtxo, groupDatum } = yield* setupMembership(base);
-      const { lucid, users } = context;
+        // After joinGroup, member_count == 1 in the on-chain group UTxO.
+        const { context, groupUtxo, groupDatum } = yield* setupMembership(base);
+        const { lucid, users } = context;
 
-      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
 
-      const groupTokenSuffix = extractTokenSuffix(groupUtxo, groupPolicyId!, assetNameLabels.prefix100);
-      const badDatum = { ...groupDatum, contribution_fee: groupDatum.contribution_fee + 1_000_000n };
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          groupPolicyId!,
+          assetNameLabels.prefix100,
+        );
+        const badDatum = {
+          ...groupDatum,
+          contribution_fee: groupDatum.contribution_fee + 1_000_000n,
+        };
 
-      const err = yield* Effect.flip(
-        unsignedUpdateGroupTxProgram(lucid, { groupTokenSuffix, updatedDatum: badDatum })
-      );
+        const err = yield* Effect.flip(
+          unsignedUpdateGroupTxProgram(lucid, {
+            groupTokenSuffix,
+            updatedDatum: badDatum,
+          }),
+        );
 
-      expect(err._tag).toBe("TransactionBuildError");
-    }),
+        expect(err._tag).toBe("TransactionBuildError");
+      }),
   );
 
   // --- Negative: delete a group that has not been deactivated ---
@@ -172,10 +199,14 @@ describe("Group Endpoints", () => {
 
       selectWalletFromSeed(lucid, users.admin.seedPhrase);
 
-      const groupTokenSuffix = extractTokenSuffix(groupUtxo, groupPolicyId!, assetNameLabels.prefix100);
+      const groupTokenSuffix = extractTokenSuffix(
+        groupUtxo,
+        groupPolicyId!,
+        assetNameLabels.prefix100,
+      );
 
       const err = yield* Effect.flip(
-        unsignedDeleteGroupTxProgram(lucid, { groupTokenSuffix })
+        unsignedDeleteGroupTxProgram(lucid, { groupTokenSuffix }),
       );
 
       expect(err._tag).toBe("TransactionBuildError");

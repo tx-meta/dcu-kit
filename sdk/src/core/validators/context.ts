@@ -9,13 +9,13 @@ import plutusJson from "../plutus.json";
 import { getScript, readValidators } from "./reader.js";
 
 export interface SpendingValidatorInfo {
-    script: Script;
-    address: string;
+  script: Script;
+  address: string;
 }
 
 export interface MintingValidatorInfo {
-    script: Script;
-    policyId: string;
+  script: Script;
+  policyId: string;
 }
 
 export interface DcuValidators {
@@ -34,7 +34,7 @@ export interface DcuValidators {
 }
 
 export const makeValidators = (
-  network: Network
+  network: Network,
 ): Effect.Effect<DcuValidators, Error> =>
   Effect.gen(function* () {
     const validators = yield* readValidators(plutusJson);

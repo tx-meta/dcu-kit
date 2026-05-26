@@ -21,11 +21,12 @@ const countArg = process.argv.indexOf("--count");
 const count = countArg !== -1 ? parseInt(process.argv[countArg + 1], 10) : 2;
 
 if (isNaN(count) || count < 1) {
-    console.error("--count must be a positive integer");
-    process.exit(1);
+  console.error("--count must be a positive integer");
+  process.exit(1);
 }
 
-const network = (process.env.NETWORK as "Preprod" | "Mainnet" | "Preview") ?? "Preprod";
+const network =
+  (process.env.NETWORK as "Preprod" | "Mainnet" | "Preview") ?? "Preprod";
 
 console.log(`Generating ${count} wallet(s) for ${network}...\n`);
 console.log("=".repeat(60));
@@ -33,21 +34,21 @@ console.log("=".repeat(60));
 const envLines: string[] = [];
 
 for (let i = 0; i < count; i++) {
-    const name = WALLET_NAMES[i] ?? `WALLET${i + 1}`;
-    const seedPhrase = generateSeedPhrase();
-    const { address, rewardAddress } = walletFromSeed(seedPhrase, {
-        addressType: "Base",
-        accountIndex: 0,
-        network,
-    });
+  const name = WALLET_NAMES[i] ?? `WALLET${i + 1}`;
+  const seedPhrase = generateSeedPhrase();
+  const { address, rewardAddress } = walletFromSeed(seedPhrase, {
+    addressType: "Base",
+    accountIndex: 0,
+    network,
+  });
 
-    console.log(`\n${name}`);
-    console.log("-".repeat(60));
-    console.log(`Address:        ${address}`);
-    console.log(`Reward address: ${rewardAddress}`);
-    console.log(`Seed phrase:    ${seedPhrase}`);
+  console.log(`\n${name}`);
+  console.log("-".repeat(60));
+  console.log(`Address:        ${address}`);
+  console.log(`Reward address: ${rewardAddress}`);
+  console.log(`Seed phrase:    ${seedPhrase}`);
 
-    envLines.push(`${name}_SEED="${seedPhrase}"`);
+  envLines.push(`${name}_SEED="${seedPhrase}"`);
 }
 
 console.log("\n" + "=".repeat(60));

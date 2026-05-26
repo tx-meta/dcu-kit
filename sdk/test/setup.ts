@@ -1,17 +1,28 @@
 import { Network, UTxO } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { DcuValidators, makeValidators } from "../src/core/validators/context.js";
+import {
+  DcuValidators,
+  makeValidators,
+} from "../src/core/validators/context.js";
 import {
   groupPolicyId,
   groupValidator,
   treasuryValidator,
   accountPolicyId,
 } from "../src/core/validators/constants.js";
-import { createAccountTestCase, createGroupTestCase, joinGroupTestCase } from "./actions.js";
+import {
+  createAccountTestCase,
+  createGroupTestCase,
+  joinGroupTestCase,
+} from "./actions.js";
 import { GroupDatum } from "../src/core/types.js";
 import { LucidContext, makeLucidContext } from "./context.js";
 import { SetupError } from "../src/core/errors.js";
-import { assetNameLabels, getScriptAddress, selectWalletFromSeed } from "../src/core/utils/index.js";
+import {
+  assetNameLabels,
+  getScriptAddress,
+  selectWalletFromSeed,
+} from "../src/core/utils/index.js";
 import { advanceBlock, awaitScriptUtxo, awaitWalletUtxo } from "./effects.js";
 
 // --- Types ---
@@ -42,7 +53,7 @@ export type MembershipSetupResult = {
   scripts: DcuValidators;
   groupDatum: GroupDatum;
   groupUtxo: UTxO;
-  userUtxo: UTxO;   // Account (222) token UTxO
+  userUtxo: UTxO; // Account (222) token UTxO
   adminUtxo: UTxO;
   memberUtxo: UTxO; // Treasury UTxO
 };
@@ -53,7 +64,10 @@ export const setupBase = (): Effect.Effect<BaseSetup, Error, never> =>
   Effect.gen(function* () {
     const { lucid, users, emulator } = yield* makeLucidContext();
     const network = lucid.config().network;
-    if (!network) return yield* Effect.fail(new SetupError({ message: "Invalid Network selection" }));
+    if (!network)
+      return yield* Effect.fail(
+        new SetupError({ message: "Invalid Network selection" }),
+      );
 
     const scripts = yield* makeValidators(network);
 
@@ -95,12 +109,17 @@ export const setupGroup = (
 
     yield* advanceBlock(emulator, 5);
 
-    const groupScriptAddress = yield* getScriptAddress(lucid, groupValidator.spendGroup);
+    const groupScriptAddress = yield* getScriptAddress(
+      lucid,
+      groupValidator.spendGroup,
+    );
 
     const groupUtxo = yield* awaitScriptUtxo(
       lucid,
       groupScriptAddress,
-      (x) => x.txHash === txHash && Object.keys(x.assets).some((k) => k.startsWith(groupPolicyId!)),
+      (x) =>
+        x.txHash === txHash &&
+        Object.keys(x.assets).some((k) => k.startsWith(groupPolicyId!)),
       "Group UTxO not found after creation",
       { maxWaitMs: 120_000 },
     );
@@ -111,7 +130,9 @@ export const setupGroup = (
         Object.keys(u.assets).some(
           (k) =>
             k.startsWith(groupPolicyId!) &&
-            k.slice(groupPolicyId!.length).startsWith(assetNameLabels.prefix222),
+            k
+              .slice(groupPolicyId!.length)
+              .startsWith(assetNameLabels.prefix222),
         ),
       "Admin UTxO not found after group creation",
     );
@@ -124,11 +145,17 @@ export const setupMembership = (
   groupDatumOverride?: Partial<GroupDatum>,
 ): Effect.Effect<MembershipSetupResult, Error, never> =>
   Effect.gen(function* () {
-    const { context, scripts, groupUtxo, groupDatum } = yield* setupGroup(base, groupDatumOverride);
+    const { context, scripts, groupUtxo, groupDatum } = yield* setupGroup(
+      base,
+      groupDatumOverride,
+    );
     const { lucid, users } = context;
 
     const { userUtxo } = yield* setupAccount(base);
-    if (!userUtxo) return yield* Effect.fail(new SetupError({ message: "User Account UTxO not found" }));
+    if (!userUtxo)
+      return yield* Effect.fail(
+        new SetupError({ message: "User Account UTxO not found" }),
+      );
 
     // setupAccount switches lucid to user1. Switch back to admin so we can locate
     // the group admin (222) token, which lives in admin's wallet.
@@ -140,7 +167,9 @@ export const setupMembership = (
         Object.keys(u.assets).some(
           (k) =>
             k.startsWith(groupPolicyId!) &&
-            k.slice(groupPolicyId!.length).startsWith(assetNameLabels.prefix222),
+            k
+              .slice(groupPolicyId!.length)
+              .startsWith(assetNameLabels.prefix222),
         ),
       `Admin UTxO not found in admin wallet after Account setup. Policy: ${groupPolicyId}`,
     );
@@ -153,19 +182,29 @@ export const setupMembership = (
 
     // joinGroupTestCase leaves lucid selecting user1 — the account (222) token is in
     // user1's wallet, so awaitWalletUtxo finds it there.
-    const groupScriptAddress    = yield* getScriptAddress(lucid, groupValidator.spendGroup);
-    const treasuryScriptAddress = yield* getScriptAddress(lucid, treasuryValidator.spendTreasury);
+    const groupScriptAddress = yield* getScriptAddress(
+      lucid,
+      groupValidator.spendGroup,
+    );
+    const treasuryScriptAddress = yield* getScriptAddress(
+      lucid,
+      treasuryValidator.spendTreasury,
+    );
 
     const [accountUtxo2, groupUtxo2, memberUtxo] = yield* Effect.all([
       awaitWalletUtxo(
         lucid,
-        (x) => x.txHash === txHash && Object.keys(x.assets).some((k) => k.startsWith(accountPolicyId)),
+        (x) =>
+          x.txHash === txHash &&
+          Object.keys(x.assets).some((k) => k.startsWith(accountPolicyId)),
         "Account UTxO not found after Join",
       ),
       awaitScriptUtxo(
         lucid,
         groupScriptAddress,
-        (x) => x.txHash === txHash && Object.keys(x.assets).some((k) => k.startsWith(groupPolicyId!)),
+        (x) =>
+          x.txHash === txHash &&
+          Object.keys(x.assets).some((k) => k.startsWith(groupPolicyId!)),
         "Group UTxO not found after Join",
       ),
       awaitScriptUtxo(

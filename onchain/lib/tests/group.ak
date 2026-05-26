@@ -977,7 +977,10 @@ test create_group__rejects_zero_max_members() {
   let output =
     common.test_script_utxo(
       policy_id,
-      assets.merge(assets.from_lovelace(2_000_000), assets.from_asset(policy_id, ref_tn, 1)),
+      assets.merge(
+        assets.from_lovelace(2_000_000),
+        assets.from_asset(policy_id, ref_tn, 1),
+      ),
       datum,
     )
   let input = common.test_input(output_ref, output)
@@ -1860,7 +1863,8 @@ test member_join__rejects_duplicate_join() {
   // Group already has #"aabb" registered — same account cannot occupy a second slot
   let group_in = group_input_with_names(policy_id, ref_tn, 1, [#"aabb"])
   // Provide a valid-looking output to ensure rejection is from the duplicate check
-  let group_out = group_output_with_names(policy_id, ref_tn, 2, [#"aabb", #"aabb"])
+  let group_out =
+    group_output_with_names(policy_id, ref_tn, 2, [#"aabb", #"aabb"])
   let mint = assets.from_asset(tp, #"aabb", 1)
 
   !validate_member_join(

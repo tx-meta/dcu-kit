@@ -1,67 +1,116 @@
-# DCU Off-Chain SDK
+# @tx-meta/dcu-sdk
 
-A TypeScript middleware layer for interacting with the **Decentralized Credit Union** smart contracts.
+[![npm](https://img.shields.io/npm/v/@tx-meta/dcu-sdk)](https://www.npmjs.com/package/@tx-meta/dcu-sdk)
+[![CI](https://github.com/txmeta/dcu-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/txmeta/dcu-toolkit/actions/workflows/ci.yml)
 
-## Developer Features
+TypeScript offchain SDK for the **DCU Toolkit** — a ROSCA protocol on Cardano. Built on [Lucid Evolution](https://github.com/Anastasia-Labs/lucid-evolution) and [Effect](https://effect.website/).
 
-- **Effect-Powered**: Built on the [Effect](https://effect.website/) ecosystem for robust, type-safe error handling and concurrency.
-- **Transaction Builders**: Abstracted logic for complex multi-validator transactions (Account, Group, and Treasury).
-
-## Integration Guide
-
-1. **Setup Environment**:
-```sh
-pnpm install
-```
-
-3. Build the SDK:
-```sh
-pnpm run build
-```
-
-4. Bundle the package:
-```sh
-pnpm repack
-```
-
-5. In your project's `package.json`, add as a dependency:
-```json
-{
-  "dependencies": {
-    "@dcu/sdk": "file:../sdk/dcu-sdk-0.1.0.tgz"
-  }
-}
-```
-
-## Testing
-
-Run all tests in lifecycle order (Account → Group → Treasury):
+## Installation
 
 ```sh
-pnpm test
+npm install @tx-meta/dcu-sdk
+# or
+pnpm add @tx-meta/dcu-sdk
 ```
 
-Run a specific suite:
+## Usage
 
-```sh
-pnpm test test/account.test.ts
-pnpm test test/group.test.ts
-pnpm test test/treasury.test.ts
-```
+Every endpoint returns a `makeReturn` object with three methods:
 
-Run tests matching a name pattern:
+```ts
+import { unsignedCreateAccountProgram } from "@tx-meta/dcu-sdk";
 
-```sh
-pnpm test -- -t "should create an account"
+const result = unsignedCreateAccountProgram(lucid, config);
+
+// Unsafe — throws on failure
+const tx = await result.unsafeRun();
+
+// Safe — returns Either
+const tx = await result.safeRun();
+
+// Effect — for composition
+const tx = result.program();
 ```
 
 ## API Overview
 
-The SDK exposes `unsigned...Program` functions that return `Effect` blueprints yielding a `Lucid` `TxSignBuilder`.
+### Account Endpoints
 
-### Core Endpoints
-- **Account Actions**: `Create`, `Update`, `Delete` (CIP-68).
-- **Group Management**: `Create`, `Join`, `Exit`, `Update`, `Delete`.
-- **Financial Operations**: `DistributePayout`, `MemberWithdraw`, `TerminateGroup`.
+| Function                       | Description                  |
+| ------------------------------ | ---------------------------- |
+| `unsignedCreateAccountProgram` | Mint CIP-68 membership token |
+| `unsignedUpdateAccountProgram` | Update account metadata      |
+| `unsignedDeleteAccountProgram` | Burn membership token        |
 
-For the underlying validator logic, see the [Design Specifications](../docs/dcu-kit-design-specs/dcu-kit.pdf).
+### Group Endpoints
+
+| Function                        | Description                           |
+| ------------------------------- | ------------------------------------- |
+| `unsignedCreateGroupProgram`    | Create a new ROSCA group              |
+| `unsignedJoinGroupProgram`      | Join a group, lock treasury deposit   |
+| `unsignedStartGroupProgram`     | Activate group, set rotation schedule |
+| `unsignedExitGroupProgram`      | Exit before or after maturity         |
+| `unsignedUpdateGroupProgram`    | Update group parameters               |
+| `unsignedDeleteGroupProgram`    | Delete an unstarted group             |
+| `unsignedTerminateGroupProgram` | Admin: terminate with penalty         |
+| `unsignedNextCycleProgram`      | Advance to next ROSCA cycle           |
+
+### Treasury Endpoints
+
+| Function                                | Description                       |
+| --------------------------------------- | --------------------------------- |
+| `unsignedDistributeRoundProgram`        | Pay out current round's borrower  |
+| `unsignedContributeProgram`             | Top up treasury balance           |
+| `unsignedDeferRoundProgram`             | Mark member as deferred for round |
+| `unsignedUpdatePayoutCredentialProgram` | Update payout destination         |
+| `unsignedExtendGraceWindowProgram`      | Admin: extend grace period        |
+
+### Admin
+
+| Function           | Description                            |
+| ------------------ | -------------------------------------- |
+| `deployScripts`    | Deploy validators as reference scripts |
+| `verifyDeployment` | Verify reference script UTxOs          |
+
+## Development
+
+```sh
+pnpm install
+pnpm format:check   # Prettier check
+pnpm format         # Auto-fix formatting
+pnpm lint           # ESLint
+pnpm tsc --noEmit   # Type check
+pnpm run build      # Compile to dist/
+NETWORK=Custom pnpm test  # Full test suite (Lucid emulator, no live network)
+```
+
+## Testing
+
+Tests use `vitest` + `@effect/vitest` against the Lucid emulator (real UPLC execution — no mocks):
+
+```sh
+NETWORK=Custom pnpm test                        # All suites
+NETWORK=Custom pnpm test test/account.test.ts   # Account only
+NETWORK=Custom pnpm test test/group.test.ts     # Group only
+NETWORK=Custom pnpm test test/treasury.test.ts  # Treasury only
+NETWORK=Custom pnpm test -- -t "pattern"        # Filter by name
+```
+
+`NETWORK=Custom` is required — without it the SDK attempts to connect to Preprod.
+
+## Publishing
+
+The SDK is published automatically via GitHub Actions when a GitHub Release is created:
+
+1. Merge your changes to `main`
+2. All CI checks must pass
+3. Create a GitHub Release tagged `vX.Y.Z`
+4. The [publish workflow](../.github/workflows/publish.yml) builds and publishes to npm with provenance attestation
+
+Manual publish (emergency): trigger `workflow_dispatch` from the Actions tab.
+
+The `NPM_TOKEN` secret must be set in the repository settings (Automation token with read/write package access).
+
+## License
+
+MIT

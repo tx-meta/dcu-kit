@@ -12,7 +12,7 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "paths": {
-      "@dcu/sdk": ["./src/index.ts"]
+      "@tx-meta/dcu-sdk": ["./src/index.ts"]
     }
   },
   "include": ["src", "test"],

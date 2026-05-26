@@ -63,35 +63,45 @@ describe("Account Endpoints", () => {
   );
 
   // --- Negative: delete account with active membership ---
-  it.effect("should reject deleting an account that has an active group membership", () =>
-    Effect.gen(function* () {
-      const base = yield* setupBase();
-      // setupMembership: account created → group created → user joined
-      const { context, scripts } = yield* setupMembership(base);
-      const { lucid } = context;
+  it.effect(
+    "should reject deleting an account that has an active group membership",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        // setupMembership: account created → group created → user joined
+        const { context, scripts } = yield* setupMembership(base);
+        const { lucid } = context;
 
-      // userUtxo from setupMembership is the wallet-side 222 auth token.
-      // deleteAccount needs the script-side 100 reference token to derive the suffix.
-      const scriptUtxos = yield* Effect.promise(() =>
-        lucid.utxosAt(scripts.account.spend.address)
-      );
-      const accountRefUtxo = scriptUtxos.find(u =>
-        Object.keys(u.assets).some(k => k.startsWith(scripts.account.mint.policyId))
-      );
-      if (!accountRefUtxo)
-        return yield* Effect.die(new SetupError({ message: "Account ref UTxO not found at script" }));
+        // userUtxo from setupMembership is the wallet-side 222 auth token.
+        // deleteAccount needs the script-side 100 reference token to derive the suffix.
+        const scriptUtxos = yield* Effect.promise(() =>
+          lucid.utxosAt(scripts.account.spend.address),
+        );
+        const accountRefUtxo = scriptUtxos.find((u) =>
+          Object.keys(u.assets).some((k) =>
+            k.startsWith(scripts.account.mint.policyId),
+          ),
+        );
+        if (!accountRefUtxo)
+          return yield* Effect.die(
+            new SetupError({ message: "Account ref UTxO not found at script" }),
+          );
 
-      const accountTokenSuffix = extractTokenSuffix(accountRefUtxo, accountPolicyId, assetNameLabels.prefix100);
+        const accountTokenSuffix = extractTokenSuffix(
+          accountRefUtxo,
+          accountPolicyId,
+          assetNameLabels.prefix100,
+        );
 
-      const err = yield* Effect.flip(
-        unsignedDeleteAccountTxProgram(lucid, { accountTokenSuffix })
-      );
+        const err = yield* Effect.flip(
+          unsignedDeleteAccountTxProgram(lucid, { accountTokenSuffix }),
+        );
 
-      expect(err._tag).toBe("TransactionBuildError");
-      // err.error is a typed field on TransactionBuildError — no cast needed
-      if (err._tag === "TransactionBuildError") {
-        expect(err.error).toContain("active membership");
-      }
-    }),
+        expect(err._tag).toBe("TransactionBuildError");
+        // err.error is a typed field on TransactionBuildError — no cast needed
+        if (err._tag === "TransactionBuildError") {
+          expect(err.error).toContain("active membership");
+        }
+      }),
   );
 });

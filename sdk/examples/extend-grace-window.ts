@@ -20,63 +20,89 @@
  * Reads groupTokenSuffix and the member's accountTokenSuffix from state.json.
  */
 
-import { extendGraceWindow, ExtendGraceWindowConfig, accountPolicyId, groupPolicyId } from "@dcu/sdk";
-import { makeLucid, cexplorerTxUrl, logError, logWalletInfo } from "./context.js";
-import { loadState, checkValidatorStaleness, accountSuffixKey } from "./state.js";
+import {
+  extendGraceWindow,
+  ExtendGraceWindowConfig,
+  accountPolicyId,
+  groupPolicyId,
+} from "@tx-meta/dcu-sdk";
+import {
+  makeLucid,
+  cexplorerTxUrl,
+  logError,
+  logWalletInfo,
+} from "./context.js";
+import {
+  loadState,
+  checkValidatorStaleness,
+  accountSuffixKey,
+} from "./state.js";
 
 async function main() {
-    const { lucid, isEmulator } = await makeLucid();
+  const { lucid, isEmulator } = await makeLucid();
 
-    if (isEmulator) {
-        console.log("This example requires a member in InsufficientCollateralState.");
-        console.log("These example scripts require existing on-chain state. Run on Preprod.");
-        process.exit(0);
-    }
+  if (isEmulator) {
+    console.log(
+      "This example requires a member in InsufficientCollateralState.",
+    );
+    console.log(
+      "These example scripts require existing on-chain state. Run on Preprod.",
+    );
+    process.exit(0);
+  }
 
-    const adminSeed = process.env.ADMIN_SEED ?? process.env.USER1_SEED;
-    if (!adminSeed) throw new Error("ADMIN_SEED not found in .env");
-    lucid.selectWallet.fromSeed(adminSeed);
-    await logWalletInfo(lucid, "ADMIN");
+  const adminSeed = process.env.ADMIN_SEED ?? process.env.USER1_SEED;
+  if (!adminSeed) throw new Error("ADMIN_SEED not found in .env");
+  lucid.selectWallet.fromSeed(adminSeed);
+  await logWalletInfo(lucid, "ADMIN");
 
-    checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
+  checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
 
-    const memberWallet = (process.env.MEMBER_WALLET ?? "USER1").toUpperCase();
-    const state        = loadState();
+  const memberWallet = (process.env.MEMBER_WALLET ?? "USER1").toUpperCase();
+  const state = loadState();
 
-    const { groupTokenSuffix } = state;
-    const memberAccountTokenSuffix = state[accountSuffixKey(memberWallet)];
+  const { groupTokenSuffix } = state;
+  const memberAccountTokenSuffix = state[accountSuffixKey(memberWallet)];
 
-    if (!groupTokenSuffix) throw new Error("groupTokenSuffix not found in state.json. Run create-group.ts first.");
-    if (!memberAccountTokenSuffix) throw new Error(
-        `${accountSuffixKey(memberWallet)} not found in state.json.\n` +
-        `Run: ACTIVE_WALLET=${memberWallet} pnpm run join-group`
+  if (!groupTokenSuffix)
+    throw new Error(
+      "groupTokenSuffix not found in state.json. Run create-group.ts first.",
+    );
+  if (!memberAccountTokenSuffix)
+    throw new Error(
+      `${accountSuffixKey(memberWallet)} not found in state.json.\n` +
+        `Run: ACTIVE_WALLET=${memberWallet} pnpm run join-group`,
     );
 
-    console.log(`Extending grace window for ${memberWallet}...`);
-    console.log("Requires the member to be in InsufficientCollateralState.");
-    console.log("The member should call 'pnpm run contribute' before grace_expires_at to exit ICS.");
+  console.log(`Extending grace window for ${memberWallet}...`);
+  console.log("Requires the member to be in InsufficientCollateralState.");
+  console.log(
+    "The member should call 'pnpm run contribute' before grace_expires_at to exit ICS.",
+  );
 
-    const config: ExtendGraceWindowConfig = {
-        groupTokenSuffix,
-        memberAccountTokenSuffix,
-    };
+  const config: ExtendGraceWindowConfig = {
+    groupTokenSuffix,
+    memberAccountTokenSuffix,
+  };
 
-    console.log("Building extend-grace-window transaction...");
-    const tx = await extendGraceWindow(lucid, config).unsafeRun();
+  console.log("Building extend-grace-window transaction...");
+  const tx = await extendGraceWindow(lucid, config).unsafeRun();
 
-    console.log("Signing and submitting...");
-    const signed = await tx.sign.withWallet().complete();
-    const txHash = await signed.submit();
-    console.log("Transaction submitted. Hash:", txHash);
-    console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
+  console.log("Signing and submitting...");
+  const signed = await tx.sign.withWallet().complete();
+  const txHash = await signed.submit();
+  console.log("Transaction submitted. Hash:", txHash);
+  console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
 
-    console.log("Waiting for confirmation...");
-    await lucid.awaitTx(txHash);
-    console.log(`Grace window extended for ${memberWallet}!`);
-    console.log(`Run 'ACTIVE_WALLET=${memberWallet} pnpm run contribute' before the new grace_expires_at.`);
+  console.log("Waiting for confirmation...");
+  await lucid.awaitTx(txHash);
+  console.log(`Grace window extended for ${memberWallet}!`);
+  console.log(
+    `Run 'ACTIVE_WALLET=${memberWallet} pnpm run contribute' before the new grace_expires_at.`,
+  );
 }
 
 main().catch((e) => {
-    logError(e);
-    process.exit(1);
+  logError(e);
+  process.exit(1);
 });
