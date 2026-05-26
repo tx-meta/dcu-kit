@@ -36,8 +36,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-          cache-dependency-path: sdk/pnpm-lock.yaml
 
       - name: 📦 Install Dependencies
         run: pnpm install --frozen-lockfile
@@ -55,7 +53,7 @@ jobs:
         run: pnpm run build
 
       - name: 📤 Upload Build Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sdk-dist
           path: sdk/dist

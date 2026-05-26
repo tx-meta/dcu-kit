@@ -109,24 +109,6 @@ NETWORK=Custom pnpm test -- -t "pattern"        # Filter by name
 
 `NETWORK=Custom` is required. Without it the SDK attempts to connect to Preprod.
 
-## Publishing
-
-The SDK is published automatically via GitHub Actions when a GitHub Release is created:
-
-1. Merge your changes to `main`
-2. All CI checks must pass
-3. Create a GitHub Release tagged `vX.Y.Z`
-4. The [publish workflow](https://github.com/tx-meta/dcu-kit/actions/workflows/publish.yml) builds and publishes to npm with provenance attestation
-
-If the workflow fails, publish manually from the `sdk/` directory:
-
-```sh
-pnpm run build
-pnpm publish --access public --no-git-checks
-```
-
-The `NPM_TOKEN` secret must be set in the repository settings (Automation token with read/write package access).
-
 ## License
 
 MIT
