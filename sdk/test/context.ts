@@ -12,7 +12,10 @@ import {
 import { ConfigurationError } from "../src/core/errors.js";
 import { Effect } from "effect";
 
-export type OnChainNetwork = Extract<Network, "Mainnet" | "Preprod" | "Preview">;
+export type OnChainNetwork = Extract<
+  Network,
+  "Mainnet" | "Preprod" | "Preview"
+>;
 
 // --- Types ---
 
@@ -38,27 +41,34 @@ export type ContextConfig = {
   provider: Provider;
 };
 
-const DEFAULT_CONFIG: ContextConfig = {
-  network: "Preprod",
-  provider: "Emulator",
-};
-
 // --- Config Loading ---
 
 const loadConfigFromEnv = (): ContextConfig => {
-  const network = (process.env.NETWORK as Network) || "Preprod";
+  const networkRaw = process.env.NETWORK;
+
+  // "Emulator" is not a valid Lucid Network — normalise to "Custom".
+  // When the network is local/emulated, ignore PROVIDER and API keys entirely.
+  if (!networkRaw || networkRaw === "Emulator" || networkRaw === "Custom") {
+    return { network: "Custom", provider: "Emulator" };
+  }
+
+  // Live network path — NETWORK must be Preprod | Preview | Mainnet
+  const network = networkRaw as Network;
   const providerEnv = process.env.PROVIDER as Provider | undefined;
 
-  let provider: Provider = "Emulator";
-
-  if (providerEnv) {
+  let provider: Provider;
+  if (providerEnv && providerEnv !== "Emulator") {
     provider = providerEnv;
-  } else if (process.env.BLOCKFROST_KEY) {
+  } else if (process.env.BLOCKFROST_KEY && process.env.BLOCKFROST_URL) {
     provider = "Blockfrost";
   } else if (process.env.MAESTRO_API_KEY) {
     provider = "Maestro";
   } else if (process.env.OGMIOS_URL && process.env.KUPO_URL) {
     provider = "Kupmios";
+  } else {
+    throw new Error(
+      `NETWORK=${network} requires a provider. Set PROVIDER= or supply BLOCKFROST_KEY / MAESTRO_API_KEY / OGMIOS_URL+KUPO_URL.`,
+    );
   }
 
   return { network, provider };
@@ -96,7 +106,13 @@ const makeEmulatorContext = () =>
 const makeMaestroContext = (network: OnChainNetwork) =>
   Effect.gen(function* () {
     const apiKey = process.env.MAESTRO_API_KEY;
-    if (!apiKey) return yield* Effect.die(new ConfigurationError({ configKey: "MAESTRO_API_KEY", message: "Missing MAESTRO_API_KEY" }));
+    if (!apiKey)
+      return yield* Effect.die(
+        new ConfigurationError({
+          configKey: "MAESTRO_API_KEY",
+          message: "Missing MAESTRO_API_KEY",
+        }),
+      );
 
     const maestro = new Maestro({
       network: network,
@@ -119,7 +135,12 @@ const makeBlockfrostContext = (network: OnChainNetwork) =>
     const url = process.env.BLOCKFROST_URL;
 
     if (!projectId || !url) {
-      return yield* Effect.die(new ConfigurationError({ configKey: "BLOCKFROST_KEY", message: "Missing BLOCKFROST_KEY or BLOCKFROST_URL" }));
+      return yield* Effect.die(
+        new ConfigurationError({
+          configKey: "BLOCKFROST_KEY",
+          message: "Missing BLOCKFROST_KEY or BLOCKFROST_URL",
+        }),
+      );
     }
 
     const blockfrost = new Blockfrost(url, projectId);
@@ -138,7 +159,12 @@ const makeKupmiosContext = (network: OnChainNetwork) =>
     const ogmiosUrl = process.env.OGMIOS_URL;
 
     if (!kupoUrl || !ogmiosUrl) {
-        return yield* Effect.die(new ConfigurationError({ configKey: "KUPO/OGMIOS_URL", message: "Missing KUPO_URL or OGMIOS_URL" }));
+      return yield* Effect.die(
+        new ConfigurationError({
+          configKey: "KUPO/OGMIOS_URL",
+          message: "Missing KUPO_URL or OGMIOS_URL",
+        }),
+      );
     }
 
     const kupmios = new Kupmios(kupoUrl, ogmiosUrl);
@@ -154,20 +180,28 @@ const makeKupmiosContext = (network: OnChainNetwork) =>
 const loadUsersFromEnv = () => {
   const adminSeed = process.env.ADMIN_SEED;
   const user1Seed = process.env.USER1_SEED;
-  // user2 might be optional or generated
-  const user2Seed = process.env.USER2_SEED || user1Seed;
+  const user2Seed = process.env.USER2_SEED;
 
-  if (!adminSeed || !user1Seed) {
-    throw new ConfigurationError({
-        configKey: "ADMIN_SEED/USER1_SEED",
-        message: "Missing ADMIN_SEED or USER1_SEED for live network testing."
-    });
+  if (!adminSeed || !user1Seed || !user2Seed) {
+    // Throw a native Error — this runs outside an Effect generator so Effect.fail
+    // is not available. The missing env var is a CI configuration bug, not a
+    // recoverable runtime condition.
+    const missing = [
+      !adminSeed && "ADMIN_SEED",
+      !user1Seed && "USER1_SEED",
+      !user2Seed && "USER2_SEED",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    throw new Error(
+      `Live network testing requires seed phrases for all three wallets. Missing: ${missing}.`,
+    );
   }
 
   return {
     admin: { seedPhrase: adminSeed },
     user1: { seedPhrase: user1Seed },
-    user2: { seedPhrase: user2Seed! },
+    user2: { seedPhrase: user2Seed },
   };
 };
 
@@ -184,32 +218,32 @@ const ensureOnChain = (network: Network, provider: string) =>
 // --- Entry Point ---
 
 export const makeLucidContext = (overrideConfig?: Partial<ContextConfig>) =>
-  Effect.gen(function* ($) {
+  Effect.gen(function* () {
     const envConfig = loadConfigFromEnv();
     const config = { ...envConfig, ...overrideConfig };
 
     if (config.provider === "Emulator") {
-      console.log("Context: Emulator");
+      console.log("Context: Emulator (local)");
     } else {
       console.log(`Context: ${config.provider} on ${config.network}`);
     }
 
     switch (config.provider) {
       case "Blockfrost":
-        return yield* $(
-          makeBlockfrostContext(yield* ensureOnChain(config.network, "Blockfrost")),
+        return yield* makeBlockfrostContext(
+          yield* ensureOnChain(config.network, "Blockfrost"),
         );
       case "Maestro":
-        return yield* $(
-          makeMaestroContext(yield* ensureOnChain(config.network, "Maestro")),
+        return yield* makeMaestroContext(
+          yield* ensureOnChain(config.network, "Maestro"),
         );
       case "Kupmios":
-        return yield* $(
-          makeKupmiosContext(yield* ensureOnChain(config.network, "Kupmios")),
+        return yield* makeKupmiosContext(
+          yield* ensureOnChain(config.network, "Kupmios"),
         );
       case "Emulator":
       default:
-        return yield* $(makeEmulatorContext());
+        return yield* makeEmulatorContext();
     }
   });
 

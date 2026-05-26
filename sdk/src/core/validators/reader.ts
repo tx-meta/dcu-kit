@@ -20,7 +20,7 @@ export interface Blueprint {
 
 export const readValidators = (
   blueprint: Blueprint,
-  params?: Data[] | null
+  params?: Data[] | null,
 ): Effect.Effect<ValidatorMap, BlueprintLoadError> =>
   Effect.gen(function* () {
     if (!blueprint.validators) {
@@ -28,7 +28,7 @@ export const readValidators = (
         new BlueprintLoadError({
           path: "in-memory blueprint",
           error: "Blueprint definition missing 'validators' field",
-        })
+        }),
       );
     }
 
@@ -44,7 +44,7 @@ export const readValidators = (
           new BlueprintLoadError({
             path: "in-memory blueprint",
             error: `Validator '${title}' missing compiledCode`,
-          })
+          }),
         );
       }
 
@@ -69,11 +69,9 @@ export const readValidators = (
 
 export const getScript = (
   validators: ValidatorMap,
-  title: string
+  title: string,
 ): Effect.Effect<Script, ValidatorNotFoundError> =>
   pipe(
     Option.fromNullable(validators[title]),
-    Effect.mapError(
-      () => new ValidatorNotFoundError({ validatorName: title })
-    )
+    Effect.mapError(() => new ValidatorNotFoundError({ validatorName: title })),
   );

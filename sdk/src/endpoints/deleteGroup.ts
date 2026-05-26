@@ -1,80 +1,108 @@
-import { LucidEvolution, Data, UTxO, fromText, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
+import {
+  LucidEvolution,
+  Data,
+  TxSignBuilder,
+  RedeemerBuilder,
+  Assets,
+  Constr,
+} from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
-import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { getScriptAddress } from "../core/utils/index.js";
-import { groupValidator } from "../core/validators/constants.js";
+import {
+  DcuError,
+  TransactionBuildError,
+  UtxoNotFoundError,
+} from "../core/errors.js";
+import {
+  patchInlineDatum,
+  assetNameLabels,
+  resolveUtxoByUnit,
+} from "../core/utils/index.js";
+import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 
 /**
- * Creates an unsigned transaction for deleting (deactivating) a DCU Group.
- * 
+ * Creates an unsigned transaction for deleting a DCU Group.
+ *
  * **Functionality:**
- * - Deactivates the Group by setting `is_active` to false.
- * - This is a "soft delete" as the UTxO remains but the group is non-functional.
- * 
+ * - Burns both group tokens (Reference 100 + Admin Auth 222).
+ * - Returns all ADA locked in the group UTxO (including creation_deposit) to the
+ *   admin wallet as transaction change.
+ *
  * **Constraints:**
- * - Group can only be deleted if `member_count` is 0.
- * 
+ * - Group must be deactivated first (is_active == false via updateGroup).
+ * - Group member_count must be 0 — all members must have exited.
+ *
  * @param lucid - Lucid instance with wallet selected.
- * @param groupUtxo - The Group Reference UTxO.
- * @param currentDatum - The current Group Datum.
- * @param adminUtxo - The Admin Auth UTxO.
+ * @param config - Delete Group Configuration.
  * @returns Effect yielding TxSignBuilder.
- * 
- * @example
- * ```typescript
- * const program = unsignedDeleteGroupTxProgram(lucid, 
- *   groupUtxo, currentDatum, adminUtxo
- * );
- * ```
  */
-
 export type DeleteGroupConfig = {
-    groupUtxo: UTxO;
-    currentDatum: GroupDatum;
-    adminUtxo: UTxO;
+  groupTokenSuffix: string;
 };
 
 export const unsignedDeleteGroupTxProgram = (
   lucid: LucidEvolution,
-  config: DeleteGroupConfig
+  config: DeleteGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-      const { groupUtxo, currentDatum, adminUtxo } = config;
-      const address = yield* getScriptAddress(lucid, groupValidator.spendGroup);
+    const { groupTokenSuffix } = config;
 
-      // Construct Updated Datum (Soft Delete / Deactivate)
-      const deactivatedDatum: GroupDatum = {
-          ...currentDatum,
-          is_active: false
-      };
+    const groupRefUnit =
+      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+    const adminUnit =
+      groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
 
-      const redeemer: RedeemerBuilder = {
-          kind: "selected",
-          makeRedeemer: (inputIndices: bigint[]) => {
-               // [groupUtxo, adminUtxo] -> [groupIndex, adminIndex]
-              return Data.to({
-                  RemoveGroup: {
-                      group_ref_token_name: fromText("GroupReference"),
-                      group_input_index: inputIndices[0],
-                      admin_input_index: inputIndices[1],
-                      group_output_index: 0n 
-                  }
-              }, GroupSpendRedeemer);
-          },
-          inputs: [groupUtxo, adminUtxo]
-      };
+    const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
+    const adminUtxo = yield* resolveUtxoByUnit(lucid, adminUnit);
+    const groupUtxo = patchInlineDatum(groupUtxoRaw);
 
-      return yield* lucid
-        .newTx()
-        .collectFrom([groupUtxo], redeemer)
-        .collectFrom([adminUtxo])
-        .attach.SpendingValidator(groupValidator.spendGroup)
-        .pay.ToContract(
-            address,
-            { kind: "inline", value: Data.to(deactivatedDatum, GroupDatum) },
-            groupUtxo.assets
-        )
-        .completeProgram()
-        .pipe(Effect.mapError(e => new TransactionBuildError({ operation: "deleteGroup", error: String(e) })));
+    const groupRefAsset = Object.keys(groupUtxo.assets).find((k) =>
+      k.startsWith(groupPolicyId!),
+    );
+    if (!groupRefAsset)
+      return yield* Effect.fail(
+        new UtxoNotFoundError({
+          tokenName: "GroupReference (100)",
+          address: groupUtxo.address,
+        }),
+      );
+    const groupRefName = groupRefAsset.slice(groupPolicyId!.length);
+
+    // Burn both tokens (ref + user, qty -1 each).
+    // BurnGroup is variant index 1 in GroupMintRedeemer — no fields, Constr(1, []).
+    const burnAssets: Assets = {
+      [groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix]: -1n,
+      [groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix]: -1n,
+    };
+    const burnRedeemer = Data.to(new Constr(1, []));
+
+    // RemoveGroup is variant index 1 in GroupSpendRedeemer.
+    // Fields: [group_ref_token_name, admin_input_index, group_input_index]
+    // (group_output_index removed — burn produces no group UTxO)
+    const spendRedeemer: RedeemerBuilder = {
+      kind: "selected",
+      makeRedeemer: (inputIndices: bigint[]) =>
+        Data.to(
+          new Constr(1, [groupRefName, inputIndices[0], inputIndices[1]]),
+        ),
+      inputs: [adminUtxo, groupUtxo],
+    };
+
+    const tx = yield* lucid
+      .newTx()
+      .collectFrom([adminUtxo])
+      .collectFrom([groupUtxo], spendRedeemer)
+      .mintAssets(burnAssets, burnRedeemer)
+      .attach.MintingPolicy(groupValidator.mintGroup)
+      .attach.SpendingValidator(groupValidator.spendGroup)
+      .completeProgram()
+      .pipe(
+        Effect.mapError(
+          (e) =>
+            new TransactionBuildError({
+              operation: "deleteGroup",
+              error: String(e),
+            }),
+        ),
+      );
+    return tx;
   });

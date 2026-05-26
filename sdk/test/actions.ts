@@ -1,485 +1,555 @@
 import { Effect } from "effect";
+import { UTxO } from "@lucid-evolution/lucid";
 import {
-  LucidEvolution,
-  UTxO,
-  fromText,
-} from "@lucid-evolution/lucid";
-import { unsignedCreateAccountTxProgram, CreateAccountConfig } from "../src/endpoints/createAccount.js";
-import { unsignedUpdateAccountTxProgram, UpdateAccountConfig } from "../src/endpoints/updateAccount.js";
-import { unsignedDeleteAccountTxProgram, DeleteAccountConfig } from "../src/endpoints/deleteAccount.js";
-import { unsignedCreateGroupTxProgram, CreateGroupConfig } from "../src/endpoints/createGroup.js";
-import { unsignedUpdateGroupTxProgram, UpdateGroupConfig } from "../src/endpoints/updateGroup.js";
-import { unsignedDeleteGroupTxProgram, DeleteGroupConfig } from "../src/endpoints/deleteGroup.js";
-import { unsignedJoinGroupTxProgram, JoinGroupConfig } from "../src/endpoints/joinGroup.js";
-import { unsignedDistributePayoutTxProgram, DistributePayoutConfig } from "../src/endpoints/distributePayout.js";
-import { unsignedMemberWithdrawTxProgram, MemberWithdrawConfig } from "../src/endpoints/memberWithdraw.js";
-import { unsignedExitGroupTxProgram, ExitGroupConfig } from "../src/endpoints/exitGroup.js";
-
-import { AccountDatum, GroupDatum } from "../src/core/types.js";
+  unsignedCreateAccountTxProgram,
+  CreateAccountConfig,
+} from "../src/endpoints/createAccount.js";
+import {
+  unsignedUpdateAccountTxProgram,
+  UpdateAccountConfig,
+} from "../src/endpoints/updateAccount.js";
+import {
+  unsignedDeleteAccountTxProgram,
+  DeleteAccountConfig,
+} from "../src/endpoints/deleteAccount.js";
+import {
+  unsignedCreateGroupTxProgram,
+  CreateGroupConfig,
+} from "../src/endpoints/createGroup.js";
+import {
+  unsignedUpdateGroupTxProgram,
+  UpdateGroupConfig,
+} from "../src/endpoints/updateGroup.js";
+import {
+  unsignedDeleteGroupTxProgram,
+  DeleteGroupConfig,
+} from "../src/endpoints/deleteGroup.js";
+import {
+  unsignedJoinGroupTxProgram,
+  JoinGroupConfig,
+} from "../src/endpoints/joinGroup.js";
+import {
+  unsignedDistributePayoutTxProgram,
+  DistributePayoutConfig,
+} from "../src/endpoints/distributePayout.js";
+import {
+  unsignedStartGroupTxProgram,
+  StartGroupConfig,
+} from "../src/endpoints/startGroup.js";
+import {
+  unsignedExitGroupTxProgram,
+  ExitGroupConfig,
+} from "../src/endpoints/exitGroup.js";
+import {
+  unsignedNextCycleTxProgram,
+  NextCycleConfig,
+} from "../src/endpoints/nextCycle.js";
+import { GroupDatum } from "../src/core/types.js";
 import { LucidContext } from "./context.js";
-import { DcuValidators } from "../src/core/validators/context.js";
-import { accountValidator, accountPolicyId } from "../src/core/validators/constants.js";
 import {
-  selectWalletFromSeed,
-  getWalletAddress,
+  accountPolicyId,
+  accountValidator,
+  groupPolicyId,
+  treasuryValidator,
+} from "../src/core/validators/constants.js";
+import {
+  assetNameLabels,
+  getScriptAddress,
   getUtxosAt,
-  signAndSubmit,
+  getWalletAddress,
   getWalletUtxos,
-  getScriptAddress
+  selectWalletFromSeed,
+  signAndSubmit,
 } from "../src/core/index.js";
-import { createDefaultAccountDatum, createDefaultGroupDatum } from "./utils.js";
+import { createDefaultGroupDatum, extractTokenSuffix } from "./utils.js";
 import { SetupError } from "../src/core/errors.js";
+import {
+  advanceBlock,
+  awaitScriptUtxo,
+  awaitWalletUtxo,
+  fetchScriptUtxosByTxHash,
+} from "./effects.js";
 
-// --- Types ---
+// --- Result Types ---
 
-export type CreateAccountResult = {
-  txHash: string;
-  accountConfig: AccountDatum;
-};
-
-export type UpdateAccountResult = {
-  txHash: string;
-};
-
-export type DeleteAccountResult = {
-  txHash: string;
-};
-
-export type CreateGroupResult = {
-    txHash: string;
-    groupDatum: GroupDatum;
-};
-
-export type UpdateGroupResult = {
-    txHash: string;
-};
-
-export type DeleteGroupResult = {
-    txHash: string;
-};
-
-export type JoinGroupResult = {
-    txHash: string;
-};
+export type CreateAccountResult = { txHash: string };
+export type UpdateAccountResult = { txHash: string };
+export type DeleteAccountResult = { txHash: string };
+export type CreateGroupResult = { txHash: string; groupDatum: GroupDatum };
+export type UpdateGroupResult = { txHash: string };
+export type DeleteGroupResult = { txHash: string };
+export type JoinGroupResult = { txHash: string };
+export type ExitGroupResult = { txHash: string };
 
 export type DistributePayoutResult = {
-    txHash: string;
-};
-
-export type MemberWithdrawResult = {
-    txHash: string;
-};
-
-export type ExitGroupResult = {
-    txHash: string;
+  txHash: string;
+  // Updated treasury UTxOs produced by the tx (one per member, claimable entries removed)
+  treasuryOutputs: UTxO[];
 };
 
 // --- Account Actions ---
 
 export type CreateAccountTestParams = {
-    datumOverride?: Partial<AccountDatum>;
+  email?: string;
+  phone?: string;
+  userSeed?: string; // defaults to users.user1 if not provided
 };
 
 export const createAccountTestCase = (
   context: LucidContext,
   params: CreateAccountTestParams = {},
-): Effect.Effect<CreateAccountResult & { outputs: { accountUtxo: UTxO, userUtxo: UTxO } }, Error, never> => {
-  return Effect.gen(function* () {
+): Effect.Effect<
+  CreateAccountResult & { outputs: { accountUtxo: UTxO; userUtxo: UTxO } },
+  Error,
+  never
+> =>
+  Effect.gen(function* () {
     const { lucid, users } = context;
-    const { datumOverride } = params;
+    const { email = "test@dcu.io", phone = "555-0001", userSeed } = params;
 
-    // 1. Arrange
-    selectWalletFromSeed(lucid, users.user1.seedPhrase);
+    selectWalletFromSeed(lucid, userSeed ?? users.user1.seedPhrase);
 
     const address = yield* getWalletAddress(lucid);
     const utxos = yield* getUtxosAt(lucid, address);
 
-    const adminTokenHex = "47726f757041646d696e"; 
-    const selectedUTxO = utxos.find(u => 
-        !Object.keys(u.assets).some(k => k.endsWith(adminTokenHex)) && 
-        u.assets.lovelace > 2_000_000n
-    ) || utxos[0];
+    // Exclude UTxOs that already carry the group admin (222) token — they were produced
+    // by a prior createGroup tx and would fail the CIP-68 uniqueness check if reused
+    // as the mint input for createAccount.
+    // "47726f757041646d696e" == fromText("GroupAdmin") — the fixed asset name used by
+    // the group validator's CreateGroup minting path.
+    const adminTokenHex = "47726f757041646d696e";
+    const selectedUTxO = utxos.find(
+      (u) =>
+        !Object.keys(u.assets).some((k) => k.endsWith(adminTokenHex)) &&
+        u.assets.lovelace > 2_000_000n,
+    );
+    if (!selectedUTxO)
+      return yield* Effect.fail(
+        new SetupError({
+          message: "No UTxO with sufficient lovelace found for user1",
+        }),
+      );
 
-    if (!selectedUTxO) return yield* Effect.die(new SetupError({ message: "No UTxOs found for user1" }));
-
-    const accountDatum = createDefaultAccountDatum(datumOverride);
-    
-    // 2. Construct Config
     const accountConfig: CreateAccountConfig = {
-        selected_out_ref: selectedUTxO,
-        account_datum: accountDatum
+      selected_out_ref: selectedUTxO,
+      email,
+      phone,
     };
 
-    // 3. Act
     const createAccountTx = yield* unsignedCreateAccountTxProgram(
       lucid,
-      accountConfig
+      accountConfig,
+    ).pipe(
+      Effect.timeout("60 seconds"),
+      Effect.catchTag("TimeoutException", () =>
+        Effect.fail(
+          new SetupError({
+            message: "createAccount completeProgram timed out",
+          }),
+        ),
+      ),
     );
     const txHash = yield* signAndSubmit(createAccountTx);
-    yield* Effect.promise(() => lucid.awaitTx(txHash));
+    yield* advanceBlock(context.emulator);
 
-    // 4. Verify & Fetch Outputs
-    const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
-    
-    // We filter specifically by the txHash to ensure we get the FRESHLY created tokens,
-    // avoiding stale tokens from previous test runs on shared/live environments.
-    
-    const scriptUtxos = yield* Effect.promise(() => lucid.utxosAt(accountScriptAddress));
-    const accountUtxo = scriptUtxos.find(u => 
-        u.txHash === txHash && 
-        Object.keys(u.assets).some(k => k.startsWith(accountPolicyId))
+    const accountScriptAddress = yield* getScriptAddress(
+      lucid,
+      accountValidator.spendAccount,
     );
-    
-    if (!accountUtxo) return yield* Effect.die(new Error("Account UTxO not found in script after creation"));
 
-    const walletUtxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
-    const userUtxo = walletUtxos.find(u => 
-        u.txHash === txHash &&
-        Object.keys(u.assets).some(k => k.startsWith(accountPolicyId))
-    );
-    
-    if (!userUtxo) return yield* Effect.die(new Error("User Auth Token not found in wallet after creation"));
+    const [accountUtxo, userUtxo] = yield* Effect.all([
+      awaitScriptUtxo(
+        lucid,
+        accountScriptAddress,
+        (x) =>
+          x.txHash === txHash &&
+          Object.keys(x.assets).some((k) => k.startsWith(accountPolicyId)),
+        "Account UTxO not found in script after creation",
+      ),
+      awaitWalletUtxo(
+        lucid,
+        (x) =>
+          x.txHash === txHash &&
+          Object.keys(x.assets).some((k) => k.startsWith(accountPolicyId)),
+        "User Auth Token not found in wallet after creation",
+      ),
+    ]);
 
-    return {
-      txHash,
-      accountConfig: accountDatum,
-      outputs: {
-          accountUtxo: accountUtxo as UTxO,
-          userUtxo: userUtxo as UTxO
-      }
-    };
+    return { txHash, outputs: { accountUtxo, userUtxo } };
   });
-};
 
 export type UpdateAccountTestParams = {
-    accountUtxo: UTxO;
-    userUtxo: UTxO;
-    updatedDatum: AccountDatum;
+  accountUtxo: UTxO;
+  email: string;
+  phone: string;
 };
 
 export const updateAccountTestCase = (
   context: LucidContext,
   params: UpdateAccountTestParams,
-): Effect.Effect<UpdateAccountResult & { outputs: { accountUtxo: UTxO } }, Error, never> => {
-  return Effect.gen(function* () {
+): Effect.Effect<
+  UpdateAccountResult & { outputs: { accountUtxo: UTxO } },
+  Error,
+  never
+> =>
+  Effect.gen(function* () {
     const { lucid } = context;
-    const { accountUtxo, userUtxo, updatedDatum } = params;
+    const { accountUtxo, email, phone } = params;
 
+    const accountTokenSuffix = extractTokenSuffix(
+      accountUtxo,
+      accountPolicyId,
+      assetNameLabels.prefix100,
+    );
     const updateConfig: UpdateAccountConfig = {
-      account_utxo: accountUtxo,
-      user_utxo: userUtxo,
-      account_datum: updatedDatum
+      accountTokenSuffix,
+      email,
+      phone,
     };
 
     const updateAccountTx = yield* unsignedUpdateAccountTxProgram(
       lucid,
-      updateConfig
+      updateConfig,
     );
     const txHash = yield* signAndSubmit(updateAccountTx);
-    yield* Effect.promise(() => lucid.awaitTx(txHash));
+    yield* advanceBlock(context.emulator);
 
-    const accountScriptAddress = yield* getScriptAddress(lucid, accountValidator.spendAccount);
-    const allScriptUtxos = yield* Effect.promise(() => lucid.utxosAt(accountScriptAddress));
-    
-    // Filter for the same Ref Token
-    const refTokenId = Object.keys(accountUtxo.assets).find(k => k.startsWith(accountPolicyId));
-    if (!refTokenId) return yield* Effect.die(new Error("Could not identify Ref Token in old UTxO"));
-    const tokenId = refTokenId; // clear type narrowing
+    const accountScriptAddress = yield* getScriptAddress(
+      lucid,
+      accountValidator.spendAccount,
+    );
+    const refTokenId = Object.keys(accountUtxo.assets).find((k) =>
+      k.startsWith(accountPolicyId),
+    );
+    if (!refTokenId)
+      return yield* Effect.fail(
+        new Error("Could not identify Ref Token in old UTxO"),
+      );
 
-    const newAccountUtxo = allScriptUtxos.find(u => Object.keys(u.assets).includes(tokenId));
+    const outputUtxo = yield* awaitScriptUtxo(
+      lucid,
+      accountScriptAddress,
+      (x) => x.txHash === txHash && Object.keys(x.assets).includes(refTokenId),
+      `Account UTxO not found after update for token ${refTokenId}`,
+    );
 
-    if (!newAccountUtxo) {
-        return yield* Effect.die(new Error(`Account UTxO not found after update for token ${refTokenId}`));
-    }
-    
-    const outputUtxo: UTxO = newAccountUtxo;
-
-    return {
-      txHash,
-      outputs: {
-          accountUtxo: outputUtxo
-      }
-    };
+    return { txHash, outputs: { accountUtxo: outputUtxo } };
   });
-};
 
-export type DeleteAccountTestParams = {
-    accountUtxo: UTxO;
-    userUtxo: UTxO;
-};
+export type DeleteAccountTestParams = { accountUtxo: UTxO };
 
 export const deleteAccountTestCase = (
   context: LucidContext,
   params: DeleteAccountTestParams,
-): Effect.Effect<DeleteAccountResult, Error, never> => {
-  return Effect.gen(function* () {
+): Effect.Effect<DeleteAccountResult, Error, never> =>
+  Effect.gen(function* () {
     const { lucid } = context;
-    const { accountUtxo, userUtxo } = params;
-    
-    // 1. Construct Config
-    const deleteConfig: DeleteAccountConfig = {
-        user_utxo: userUtxo,
-        account_utxo: accountUtxo
-    };
+    const { accountUtxo } = params;
+
+    const accountTokenSuffix = extractTokenSuffix(
+      accountUtxo,
+      accountPolicyId,
+      assetNameLabels.prefix100,
+    );
+    const deleteConfig: DeleteAccountConfig = { accountTokenSuffix };
 
     const deleteAccountTx = yield* unsignedDeleteAccountTxProgram(
       lucid,
       deleteConfig,
     );
     const txHash = yield* signAndSubmit(deleteAccountTx);
-    yield* Effect.promise(() => lucid.awaitTx(txHash));
+    yield* advanceBlock(context.emulator);
 
-    return {
-      txHash,
-    };
+    return { txHash };
   });
-};
 
 // --- Group Actions ---
 
 export type CreateGroupTestParams = {
-    datumOverride?: Partial<GroupDatum>;
-    creatorSeed?: string; 
+  datumOverride?: Partial<GroupDatum>;
+  creatorSeed?: string;
 };
 
 export const createGroupTestCase = (
-    context: LucidContext,
-    params: CreateGroupTestParams = {}
-): Effect.Effect<CreateGroupResult, Error, never> => {
-    return Effect.gen(function* () {
-        const { lucid, users } = context;
-        const { datumOverride, creatorSeed } = params;
-        
-        // Use provided creator (default ADMIN)
-        selectWalletFromSeed(lucid, creatorSeed || users.admin.seedPhrase);
-        
-        const utxos = yield* getWalletUtxos(lucid);
-        const selectedUTxO = utxos[0];
-        if (!selectedUTxO) return yield* Effect.die(new SetupError({ message: "No UTxOs found for Admin" }));
+  context: LucidContext,
+  params: CreateGroupTestParams = {},
+): Effect.Effect<CreateGroupResult, Error, never> =>
+  Effect.gen(function* () {
+    const { lucid, users } = context;
+    const { datumOverride, creatorSeed } = params;
 
-        const groupDatum = createDefaultGroupDatum(datumOverride);
+    selectWalletFromSeed(lucid, creatorSeed ?? users.admin.seedPhrase);
 
-        const groupConfig: CreateGroupConfig = {
-            groupDatum,
-            utxoToSpend: selectedUTxO
-        };
+    const utxos = yield* getWalletUtxos(lucid);
+    const selectedUTxO = utxos[0];
+    if (!selectedUTxO)
+      return yield* Effect.fail(
+        new SetupError({ message: "No UTxOs found for Admin" }),
+      );
 
-        const createGroupTx = yield* unsignedCreateGroupTxProgram(
-            lucid,
-            groupConfig
-        );
-        const txHash = yield* signAndSubmit(createGroupTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+    const groupDatum = createDefaultGroupDatum(datumOverride);
+    const groupConfig: CreateGroupConfig = {
+      groupDatum,
+      utxoToSpend: selectedUTxO,
+    };
 
-        return {
-            txHash,
-            groupDatum,
-        };
-    });
-};
+    const createGroupTx = yield* unsignedCreateGroupTxProgram(
+      lucid,
+      groupConfig,
+    );
+    const txHash = yield* signAndSubmit(createGroupTx);
+    yield* advanceBlock(context.emulator);
+
+    return { txHash, groupDatum };
+  });
 
 export type UpdateGroupTestParams = {
-    groupUtxo: UTxO;
-    updatedDatum: GroupDatum;
-    adminUtxo: UTxO;
+  groupUtxo: UTxO;
+  updatedDatum: GroupDatum;
 };
 
 export const updateGroupTestCase = (
-    context: LucidContext,
-    params: UpdateGroupTestParams
-): Effect.Effect<UpdateGroupResult, Error, never> => {
-    return Effect.gen(function* () {
-        const { lucid } = context;
-        const { groupUtxo, updatedDatum, adminUtxo } = params;
+  context: LucidContext,
+  params: UpdateGroupTestParams,
+): Effect.Effect<UpdateGroupResult, Error, never> =>
+  Effect.gen(function* () {
+    const { lucid } = context;
+    const { groupUtxo, updatedDatum } = params;
 
-        const updateConfig: UpdateGroupConfig = {
-            groupUtxo,
-            updatedDatum,
-            adminUtxo
-        };
+    const groupTokenSuffix = extractTokenSuffix(
+      groupUtxo,
+      groupPolicyId!,
+      assetNameLabels.prefix100,
+    );
+    const updateConfig: UpdateGroupConfig = { groupTokenSuffix, updatedDatum };
 
-        const updateGroupTx = yield* unsignedUpdateGroupTxProgram(
-            lucid,
-            updateConfig
-        );
-        const txHash = yield* signAndSubmit(updateGroupTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+    const updateGroupTx = yield* unsignedUpdateGroupTxProgram(
+      lucid,
+      updateConfig,
+    );
+    const txHash = yield* signAndSubmit(updateGroupTx);
+    yield* advanceBlock(context.emulator);
 
-        return {
-            txHash,
-        };
-    });
-};
+    return { txHash };
+  });
 
-export type DeleteGroupTestParams = {
-    groupUtxo: UTxO;
-    currentDatum: GroupDatum;
-    adminUtxo: UTxO;
-};
+export type DeleteGroupTestParams = { groupUtxo: UTxO };
 
 export const deleteGroupTestCase = (
-    context: LucidContext,
-    params: DeleteGroupTestParams
-): Effect.Effect<DeleteGroupResult, Error, never> => {
-    return Effect.gen(function* () {
-        const { lucid } = context;
-        const { groupUtxo, currentDatum, adminUtxo } = params;
+  context: LucidContext,
+  params: DeleteGroupTestParams,
+): Effect.Effect<DeleteGroupResult, Error, never> =>
+  Effect.gen(function* () {
+    const { lucid } = context;
+    const { groupUtxo } = params;
 
-        const deleteConfig: DeleteGroupConfig = {
-            groupUtxo,
-            currentDatum,
-            adminUtxo
-        };
+    const groupTokenSuffix = extractTokenSuffix(
+      groupUtxo,
+      groupPolicyId!,
+      assetNameLabels.prefix100,
+    );
+    const deleteConfig: DeleteGroupConfig = { groupTokenSuffix };
 
-        const deleteGroupTx = yield* unsignedDeleteGroupTxProgram(
-            lucid,
-            deleteConfig
-        );
-        const txHash = yield* signAndSubmit(deleteGroupTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+    const deleteGroupTx = yield* unsignedDeleteGroupTxProgram(
+      lucid,
+      deleteConfig,
+    );
+    const txHash = yield* signAndSubmit(deleteGroupTx);
+    yield* advanceBlock(context.emulator);
 
-        return {
-            txHash,
-        };
-    });
-};
+    return { txHash };
+  });
 
 // --- Treasury Actions ---
 
 export type JoinGroupTestParams = {
-    groupUtxo: UTxO;
-    accountUtxo: UTxO;
-    adminUtxo: UTxO;
-    contributionAmount: bigint;
-    userSeed: string; // User joining
+  groupUtxo: UTxO;
+  accountUtxo: UTxO;
+  userSeed: string;
 };
 
 export const joinGroupTestCase = (
-    context: LucidContext,
-    params: JoinGroupTestParams
-): Effect.Effect<JoinGroupResult, Error, never> => {
-    return Effect.gen(function* () {
-        const { lucid } = context;
-        const { groupUtxo, accountUtxo, adminUtxo, contributionAmount, userSeed } = params;
-        
-        selectWalletFromSeed(lucid, userSeed);
-        
-        const joinConfig: JoinGroupConfig = {
-            groupUtxo,
-            accountUtxo,
-            adminUtxo,
-            contributionAmount
-        };
+  context: LucidContext,
+  params: JoinGroupTestParams,
+): Effect.Effect<JoinGroupResult, Error, never> =>
+  Effect.gen(function* () {
+    const { lucid } = context;
+    const { groupUtxo, accountUtxo, userSeed } = params;
 
-        const joinTx = yield* unsignedJoinGroupTxProgram(
-            lucid,
-            joinConfig
-        );
-        const txHash = yield* signAndSubmit(joinTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+    selectWalletFromSeed(lucid, userSeed);
 
-        return { txHash };
-    });
+    const currentTime = BigInt(
+      context.emulator ? context.emulator.now() : Date.now(),
+    );
+
+    const groupTokenSuffix = extractTokenSuffix(
+      groupUtxo,
+      groupPolicyId!,
+      assetNameLabels.prefix100,
+    );
+    const accountTokenSuffix = extractTokenSuffix(
+      accountUtxo,
+      accountPolicyId,
+      assetNameLabels.prefix222,
+    );
+
+    const joinConfig: JoinGroupConfig = {
+      groupTokenSuffix,
+      accountTokenSuffix,
+      currentTime,
+    };
+
+    const joinTx = yield* unsignedJoinGroupTxProgram(lucid, joinConfig);
+    const txHash = yield* signAndSubmit(joinTx);
+    yield* advanceBlock(context.emulator);
+
+    return { txHash };
+  });
+
+export type StartGroupTestParams = {
+  groupUtxo: UTxO;
+  adminSeed?: string;
+  currentTime?: bigint;
 };
 
+export const startGroupTestCase = (
+  context: LucidContext,
+  params: StartGroupTestParams,
+): Effect.Effect<{ txHash: string }, Error, never> =>
+  Effect.gen(function* () {
+    const { lucid, users } = context;
+    const { groupUtxo, adminSeed, currentTime } = params;
+
+    selectWalletFromSeed(lucid, adminSeed ?? users.admin.seedPhrase);
+
+    const currentTimeFinal =
+      currentTime ??
+      BigInt(context.emulator ? context.emulator.now() : Date.now());
+    const groupTokenSuffix = extractTokenSuffix(
+      groupUtxo,
+      groupPolicyId!,
+      assetNameLabels.prefix100,
+    );
+    const startConfig: StartGroupConfig = {
+      groupTokenSuffix,
+      currentTime: currentTimeFinal,
+    };
+
+    const startTx = yield* unsignedStartGroupTxProgram(lucid, startConfig);
+    const txHash = yield* signAndSubmit(startTx);
+    yield* advanceBlock(context.emulator);
+
+    return { txHash };
+  });
+
 export type DistributePayoutTestParams = {
-    groupUtxo: UTxO;
-    treasuryUtxos: UTxO[];
-    callerSeed: string; 
+  groupUtxo: UTxO;
+  callerSeed: string;
 };
 
 export const distributePayoutTestCase = (
-    context: LucidContext,
-    params: DistributePayoutTestParams
-): Effect.Effect<DistributePayoutResult, Error, never> => {
-    return Effect.gen(function* () {
-        const { lucid } = context;
-        const { groupUtxo, treasuryUtxos, callerSeed } = params;
+  context: LucidContext,
+  params: DistributePayoutTestParams,
+): Effect.Effect<DistributePayoutResult, Error, never> =>
+  Effect.gen(function* () {
+    const { lucid } = context;
+    const { groupUtxo, callerSeed } = params;
 
-        selectWalletFromSeed(lucid, callerSeed);
+    selectWalletFromSeed(lucid, callerSeed);
 
-        const payoutConfig: DistributePayoutConfig = {
-            groupUtxo,
-            treasuryUtxos
-        };
+    const groupTokenSuffix = extractTokenSuffix(
+      groupUtxo,
+      groupPolicyId!,
+      assetNameLabels.prefix100,
+    );
+    const payoutConfig: DistributePayoutConfig = { groupTokenSuffix };
 
-        const payoutTx = yield* unsignedDistributePayoutTxProgram(
-            lucid,
-            payoutConfig
-        );
-        const txHash = yield* signAndSubmit(payoutTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+    const payoutTx = yield* unsignedDistributePayoutTxProgram(
+      lucid,
+      payoutConfig,
+    );
+    const txHash = yield* signAndSubmit(payoutTx);
+    yield* advanceBlock(context.emulator);
 
-        return { txHash };
-    });
-};
+    const treasuryAddress = yield* getScriptAddress(
+      lucid,
+      treasuryValidator.spendTreasury,
+    );
+    const treasuryOutputs = yield* fetchScriptUtxosByTxHash(
+      lucid,
+      treasuryAddress,
+      txHash,
+      "Failed to fetch treasury outputs after payout",
+    );
 
-export type MemberWithdrawTestParams = {
-    groupUtxo: UTxO;
-    accountUtxo: UTxO;
-    treasuryUtxo: UTxO;
-    withdrawAmount: bigint;
-    userSeed: string;
-};
-
-export const memberWithdrawTestCase = (
-    context: LucidContext,
-    params: MemberWithdrawTestParams
-): Effect.Effect<MemberWithdrawResult, Error, never> => {
-    return Effect.gen(function* () {
-        const { lucid } = context;
-        const { groupUtxo, accountUtxo, treasuryUtxo, withdrawAmount, userSeed } = params;
-
-        selectWalletFromSeed(lucid, userSeed);
-        
-        const withdrawConfig: MemberWithdrawConfig = {
-            groupUtxo,
-            accountUtxo,
-            treasuryUtxo,
-            withdrawAmount
-        };
-
-        const withdrawTx = yield* unsignedMemberWithdrawTxProgram(
-            lucid,
-            withdrawConfig
-        );
-        const txHash = yield* signAndSubmit(withdrawTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
-
-        return { txHash };
-    });
-};
+    return { txHash, treasuryOutputs };
+  });
 
 export type ExitGroupTestParams = {
-    groupUtxo: UTxO;
-    accountUtxo: UTxO;
-    treasuryUtxo: UTxO;
-    userSeed: string;
+  groupUtxo: UTxO;
+  accountUtxo: UTxO;
+  userSeed: string;
 };
 
 export const exitGroupTestCase = (
-    context: LucidContext,
-    params: ExitGroupTestParams
-): Effect.Effect<ExitGroupResult, Error, never> => {
-    return Effect.gen(function* () {
-        const { lucid } = context;
-        const { groupUtxo, accountUtxo, treasuryUtxo, userSeed } = params;
+  context: LucidContext,
+  params: ExitGroupTestParams,
+): Effect.Effect<ExitGroupResult, Error, never> =>
+  Effect.gen(function* () {
+    const { lucid } = context;
+    const { groupUtxo, accountUtxo, userSeed } = params;
 
-        selectWalletFromSeed(lucid, userSeed);
-        
-        const exitConfig: ExitGroupConfig = {
-            groupUtxo,
-            accountUtxo,
-            treasuryUtxo
-        };
+    selectWalletFromSeed(lucid, userSeed);
 
-        const exitTx = yield* unsignedExitGroupTxProgram(
-            lucid,
-            exitConfig
-        );
-        const txHash = yield* signAndSubmit(exitTx);
-        yield* Effect.promise(() => lucid.awaitTx(txHash));
+    const currentTime = BigInt(
+      context.emulator ? context.emulator.now() : Date.now(),
+    );
+    const groupTokenSuffix = extractTokenSuffix(
+      groupUtxo,
+      groupPolicyId!,
+      assetNameLabels.prefix100,
+    );
+    const accountTokenSuffix = extractTokenSuffix(
+      accountUtxo,
+      accountPolicyId,
+      assetNameLabels.prefix222,
+    );
 
-        return { txHash };
-    });
-};
+    const exitConfig: ExitGroupConfig = {
+      groupTokenSuffix,
+      accountTokenSuffix,
+      currentTime,
+    };
+
+    const exitTx = yield* unsignedExitGroupTxProgram(lucid, exitConfig);
+    const txHash = yield* signAndSubmit(exitTx);
+    yield* advanceBlock(context.emulator);
+
+    return { txHash };
+  });
+
+export type NextCycleResult = { txHash: string };
+
+export const nextCycleTestCase = (
+  context: LucidContext,
+  params: { groupUtxo: UTxO; adminSeed: string },
+): Effect.Effect<NextCycleResult, Error, never> =>
+  Effect.gen(function* () {
+    const { lucid } = context;
+    const { groupUtxo, adminSeed } = params;
+
+    selectWalletFromSeed(lucid, adminSeed);
+
+    const groupTokenSuffix = extractTokenSuffix(
+      groupUtxo,
+      groupPolicyId!,
+      assetNameLabels.prefix100,
+    );
+    const nextCycleConfig: NextCycleConfig = { groupTokenSuffix };
+
+    const tx = yield* unsignedNextCycleTxProgram(lucid, nextCycleConfig);
+    const txHash = yield* signAndSubmit(tx);
+    yield* advanceBlock(context.emulator);
+
+    return { txHash };
+  });

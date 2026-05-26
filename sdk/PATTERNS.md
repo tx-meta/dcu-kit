@@ -33,6 +33,7 @@ sdk/src/
 ```
 
 **Build order when starting a new project:**
+
 1. `core/errors.ts` — everything else imports from here
 2. `core/types.ts` — datum + redeemer schemas
 3. `core/validators/constants.ts` — load blueprint, derive policy IDs
@@ -61,7 +62,9 @@ export class UtxoNotFoundError extends Data.TaggedError("UtxoNotFound")<{
   readonly cause?: unknown;
 }> {}
 
-export class InsufficientUtxosError extends Data.TaggedError("InsufficientUtxos")<{
+export class InsufficientUtxosError extends Data.TaggedError(
+  "InsufficientUtxos",
+)<{
   readonly required: number;
   readonly available: number;
   readonly message?: string;
@@ -84,20 +87,26 @@ export class DatumDecodingError extends Data.TaggedError("DatumDecodingError")<{
 }> {}
 
 // --- Transaction ---
-export class TransactionBuildError extends Data.TaggedError("TransactionBuildError")<{
+export class TransactionBuildError extends Data.TaggedError(
+  "TransactionBuildError",
+)<{
   readonly operation: string;
   readonly error: string;
   readonly message?: string;
   readonly cause?: unknown;
 }> {}
 
-export class TransactionSignError extends Data.TaggedError("TransactionSignError")<{
+export class TransactionSignError extends Data.TaggedError(
+  "TransactionSignError",
+)<{
   readonly error: string;
   readonly message?: string;
   readonly cause?: unknown;
 }> {}
 
-export class TransactionSubmitError extends Data.TaggedError("TransactionSubmitError")<{
+export class TransactionSubmitError extends Data.TaggedError(
+  "TransactionSubmitError",
+)<{
   readonly txHash?: string;
   readonly error: string;
   readonly message?: string;
@@ -105,7 +114,9 @@ export class TransactionSubmitError extends Data.TaggedError("TransactionSubmitE
 }> {}
 
 // --- Validator ---
-export class ValidatorNotFoundError extends Data.TaggedError("ValidatorNotFound")<{
+export class ValidatorNotFoundError extends Data.TaggedError(
+  "ValidatorNotFound",
+)<{
   readonly validatorName: string;
   readonly message?: string;
   readonly cause?: unknown;
@@ -156,27 +167,43 @@ import { Data } from "@lucid-evolution/lucid";
 
 export const GroupDatumSchema = Data.Object({
   contribution_fee: Data.Integer(),
-  num_intervals:    Data.Integer(),
-  interval_length:  Data.Integer(),
-  member_count:     Data.Integer(),
-  start_time:       Data.Integer(),
-  is_active:        Data.Boolean(),
-  admin_pkh:        Data.Bytes(),
+  num_intervals: Data.Integer(),
+  interval_length: Data.Integer(),
+  member_count: Data.Integer(),
+  start_time: Data.Integer(),
+  is_active: Data.Boolean(),
+  admin_pkh: Data.Bytes(),
 });
 export type GroupDatum = Data.Static<typeof GroupDatumSchema>;
 export const GroupDatum = GroupDatumSchema as unknown as GroupDatum;
 
 // Redeemer — discriminated enum
 export const GroupRedeemerSchema = Data.Enum([
-  Data.Object({ CreateGroup: Data.Object({ input_index: Data.Integer(), output_index: Data.Integer() }) }),
-  Data.Object({ UpdateGroup: Data.Object({ group_input_index: Data.Integer(), admin_input_index: Data.Integer() }) }),
-  Data.Object({ DeleteGroup: Data.Object({ group_input_index: Data.Integer(), admin_input_index: Data.Integer() }) }),
+  Data.Object({
+    CreateGroup: Data.Object({
+      input_index: Data.Integer(),
+      output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    UpdateGroup: Data.Object({
+      group_input_index: Data.Integer(),
+      admin_input_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    DeleteGroup: Data.Object({
+      group_input_index: Data.Integer(),
+      admin_input_index: Data.Integer(),
+    }),
+  }),
 ]);
 export type GroupRedeemer = Data.Static<typeof GroupRedeemerSchema>;
 export const GroupRedeemer = GroupRedeemerSchema as unknown as GroupRedeemer;
 ```
 
 Rules:
+
 - Field names must match Aiken source **exactly** (snake_case)
 - Use `Data.Integer()` for all numeric fields (maps to Aiken `Int`)
 - Use `Data.Bytes()` for hashes, addresses, token names
@@ -189,12 +216,22 @@ Rules:
 
 Every endpoint follows this exact shape — no deviations:
 
-```typescript
-import { LucidEvolution, Data, UTxO, TxSignBuilder, RedeemerBuilder } from "@lucid-evolution/lucid";
+````typescript
+import {
+  LucidEvolution,
+  Data,
+  UTxO,
+  TxSignBuilder,
+  RedeemerBuilder,
+} from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { MyDatum, MyRedeemer } from "../core/types.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
-import { getWalletAddress, getScriptAddress, parseSafeDatum } from "../core/utils/index.js";
+import {
+  getWalletAddress,
+  getScriptAddress,
+  parseSafeDatum,
+} from "../core/utils/index.js";
 import { myValidator, myPolicyId } from "../core/validators/constants.js";
 
 /**
@@ -214,7 +251,7 @@ import { myValidator, myPolicyId } from "../core/validators/constants.js";
  * ```
  */
 export type MyOperationConfig = {
-  utxo:  UTxO;
+  utxo: UTxO;
   datum: MyDatum;
 };
 
@@ -224,7 +261,7 @@ export const unsignedMyOperationTxProgram = (
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     // 1. Hoist addresses — never inline lucid.wallet().address()
-    const address       = yield* getWalletAddress(lucid);
+    const address = yield* getWalletAddress(lucid);
     const scriptAddress = yield* getScriptAddress(lucid, myValidator.spend);
 
     // 2. Parse existing datum if consuming a script UTxO
@@ -233,9 +270,13 @@ export const unsignedMyOperationTxProgram = (
     // 3. Build redeemer — use RedeemerBuilder when redeemer references input indices
     const redeemer: RedeemerBuilder = {
       kind: "selected",
-      makeRedeemer: (inputIndices: bigint[]) => Data.to({
-        MyVariant: { input_index: inputIndices[0] }
-      }, MyRedeemer),
+      makeRedeemer: (inputIndices: bigint[]) =>
+        Data.to(
+          {
+            MyVariant: { input_index: inputIndices[0] },
+          },
+          MyRedeemer,
+        ),
       inputs: [config.utxo],
     };
 
@@ -250,12 +291,18 @@ export const unsignedMyOperationTxProgram = (
         config.utxo.assets,
       )
       .addSigner(address)
-      .completeProgram()                                          // NOT .complete()
-      .pipe(Effect.mapError(e =>
-        new TransactionBuildError({ operation: "myOperation", error: String(e) })
-      ));
+      .completeProgram() // NOT .complete()
+      .pipe(
+        Effect.mapError(
+          (e) =>
+            new TransactionBuildError({
+              operation: "myOperation",
+              error: String(e),
+            }),
+        ),
+      );
   });
-```
+````
 
 ---
 
@@ -265,7 +312,10 @@ Every exported endpoint is wrapped with `makeReturn()`:
 
 ```typescript
 import { makeReturn } from "../core/utils/index.js";
-import { unsignedMyOperationTxProgram, MyOperationConfig } from "./myOperation.js";
+import {
+  unsignedMyOperationTxProgram,
+  MyOperationConfig,
+} from "./myOperation.js";
 
 export const myOperation = (lucid: LucidEvolution, config: MyOperationConfig) =>
   makeReturn(unsignedMyOperationTxProgram(lucid, config));
@@ -279,10 +329,12 @@ const tx = await myOperation(lucid, config).unsafeRun();
 
 // Returns Either — use in application code
 const result = await myOperation(lucid, config).safeRun();
-if (Either.isLeft(result)) { /* handle error */ }
+if (Either.isLeft(result)) {
+  /* handle error */
+}
 
 // Returns Effect — use inside Effect.gen()
-const tx = yield* myOperation(lucid, config).program();
+const tx = yield * myOperation(lucid, config).program();
 ```
 
 ---
@@ -293,15 +345,17 @@ const tx = yield* myOperation(lucid, config).program();
 
 ```typescript
 // ✅
-const myDatum = yield* parseSafeDatum(utxo.datum, MyDatum);
+const myDatum = yield * parseSafeDatum(utxo.datum, MyDatum);
 
 // ❌ — unsafe, no Effect error, crashes on missing/malformed datum
 const myDatum = Data.from(utxo.datum!, MyDatum);
 ```
 
 For union datums that need a cast:
+
 ```typescript
-const myDatum = yield* parseSafeDatum(utxo.datum, MyDatum) as unknown as MyDatum;
+const myDatum = (yield *
+  parseSafeDatum(utxo.datum, MyDatum)) as unknown as MyDatum;
 ```
 
 ### `getWalletAddress(lucid)` — always hoist, never inline
@@ -317,7 +371,7 @@ const address = yield* getWalletAddress(lucid);
 ### `getScriptAddress(lucid, validator)` — returns Effect
 
 ```typescript
-const scriptAddress = yield* getScriptAddress(lucid, myValidator.spend);
+const scriptAddress = yield * getScriptAddress(lucid, myValidator.spend);
 ```
 
 ### `RedeemerBuilder` — required for any redeemer referencing input indices
@@ -326,10 +380,17 @@ const scriptAddress = yield* getScriptAddress(lucid, myValidator.spend);
 // ✅ — Lucid resolves indices at build time
 const redeemer: RedeemerBuilder = {
   kind: "selected",
-  makeRedeemer: (inputIndices: bigint[]) => Data.to({
-    MyVariant: { group_input_index: inputIndices[0], member_input_index: inputIndices[1] }
-  }, MyRedeemer),
-  inputs: [groupUtxo, memberUtxo],  // same order as inputIndices
+  makeRedeemer: (inputIndices: bigint[]) =>
+    Data.to(
+      {
+        MyVariant: {
+          group_input_index: inputIndices[0],
+          member_input_index: inputIndices[1],
+        },
+      },
+      MyRedeemer,
+    ),
+  inputs: [groupUtxo, memberUtxo], // same order as inputIndices
 };
 
 // ❌ — never hardcode indices
@@ -339,14 +400,14 @@ const redeemer = Data.to({ MyVariant: { group_input_index: 0n } }, MyRedeemer);
 ### `signAndSubmit(tx)` — signs with current wallet and submits
 
 ```typescript
-const txHash = yield* signAndSubmit(tx);
+const txHash = yield * signAndSubmit(tx);
 ```
 
 ### `waitForTx(lucid, txHash)` — polls until indexed
 
 ```typescript
-yield* waitForTx(lucid, txHash);                 // default: 5s interval, 24 retries
-yield* waitForTx(lucid, txHash, 3000, 10);       // custom interval + retries
+yield * waitForTx(lucid, txHash); // default: 5s interval, 24 retries
+yield * waitForTx(lucid, txHash, 3000, 10); // custom interval + retries
 ```
 
 ---
@@ -380,7 +441,7 @@ Build composable setup functions that extend a base result. Each level calls the
 
 export type BaseSetup = {
   network: Network;
-  context: LucidContext;    // { lucid, users, emulator }
+  context: LucidContext; // { lucid, users, emulator }
   scripts: MyValidators;
 };
 
@@ -388,13 +449,23 @@ export const setupBase = (): Effect.Effect<BaseSetup, Error, never> =>
   Effect.gen(function* () {
     const { lucid, users, emulator } = yield* makeLucidContext();
     const scripts = yield* makeValidators(lucid.config().network!);
-    return { network: lucid.config().network!, context: { lucid, users, emulator }, scripts };
+    return {
+      network: lucid.config().network!,
+      context: { lucid, users, emulator },
+      scripts,
+    };
   });
 
-export const setupEntity = (base: BaseSetup, overrides?: Partial<EntityDatum>) =>
+export const setupEntity = (
+  base: BaseSetup,
+  overrides?: Partial<EntityDatum>,
+) =>
   Effect.gen(function* () {
-    const { txHash, outputs } = yield* createEntityTestCase(base.context, { overrides });
-    if (base.context.emulator) yield* Effect.sync(() => base.context.emulator!.awaitBlock(5));
+    const { txHash, outputs } = yield* createEntityTestCase(base.context, {
+      overrides,
+    });
+    if (base.context.emulator)
+      yield* Effect.sync(() => base.context.emulator!.awaitBlock(5));
     return { ...base, entityUtxo: outputs.entityUtxo };
   });
 ```
@@ -403,14 +474,16 @@ Factory functions for default datums — always accept `overrides?`:
 
 ```typescript
 // test/utils.ts
-export const createDefaultGroupDatum = (overrides?: Partial<GroupDatum>): GroupDatum => ({
+export const createDefaultGroupDatum = (
+  overrides?: Partial<GroupDatum>,
+): GroupDatum => ({
   contribution_fee: 10_000_000n,
-  num_intervals:    10n,
-  interval_length:  3_600_000n,     // 1 hour in ms
-  member_count:     0n,
-  start_time:       BigInt(Date.now()),
-  is_active:        true,
-  admin_pkh:        "aabb...",
+  num_intervals: 10n,
+  interval_length: 3_600_000n, // 1 hour in ms
+  member_count: 0n,
+  start_time: BigInt(Date.now()),
+  is_active: true,
+  admin_pkh: "aabb...",
   ...overrides,
 });
 ```
@@ -426,9 +499,11 @@ describe("myOperation", () => {
     Effect.gen(function* () {
       const base = yield* setupBase();
       const { entityUtxo } = yield* setupEntity(base);
-      const tx = yield* unsignedMyOperationTxProgram(base.context.lucid, { utxo: entityUtxo });
+      const tx = yield* unsignedMyOperationTxProgram(base.context.lucid, {
+        utxo: entityUtxo,
+      });
       expect(tx).toBeDefined();
-    })
+    }),
   );
 });
 ```
@@ -439,26 +514,75 @@ describe("myOperation", () => {
 
 The test context supports four providers via environment variables:
 
-| Env | Provider |
-|-----|----------|
-| none (default) | Lucid Emulator |
-| `MAESTRO_API_KEY` | Maestro (Preprod) |
-| `BLOCKFROST_KEY` | Blockfrost (Preprod) |
+| Env                       | Provider              |
+| ------------------------- | --------------------- |
+| none (default)            | Lucid Emulator        |
+| `MAESTRO_API_KEY`         | Maestro (Preprod)     |
+| `BLOCKFROST_KEY`          | Blockfrost (Preprod)  |
 | `OGMIOS_URL` + `KUPO_URL` | Kupmios (custom node) |
 
 `NETWORK` env var sets the network (default: `Preprod`).
 
 ---
 
+## CIP-68 on-chain identity — token suffix, not UTxO reference
+
+**Never save a `txHash + outputIndex` as the durable identity of a CIP-68 entity.** Every spend
+invalidates those coordinates. Save the **token suffix** instead — the 28-byte hex string derived
+from the mint `OutputReference` via `blake2b_256(cbor(outref))[0..28]`. It never changes.
+
+```typescript
+// ✅ Correct — permanent, survives every update/withdraw
+state.accountTokenSuffix =
+  "181aee6df0d0a437ee3ef1e197ec133f8b1a83adc256472e2082f70b";
+
+// ❌ Wrong — stale after the next transaction that spends the UTxO
+state.accountUtxo = { txHash: "30135f...", outputIndex: 0 };
+```
+
+**Endpoint configs take `tokenSuffix: string`, not `UTxO` objects.** The SDK resolves the current
+UTxO on-chain via `lucid.utxoByUnit(policyId + prefix + suffix)` at call time. Callers never need to
+track which UTxO holds the token — only the suffix.
+
+**In examples / scripts:**
+
+- After `createAccount` / `createGroup`: fetch output 0 via `lucid.utxosByOutRef`, extract the
+  `prefix100` token key, slice off `policyId + prefix100` to get the suffix, write it to `state.json`.
+- All subsequent scripts load the suffix and pass it directly — no UTxO queries needed by the caller.
+
+**`resolveUtxoByUnit(lucid, unit)`** (in `src/core/utils/resolve.ts`) wraps `lucid.utxoByUnit` in
+an Effect that fails with `UtxoNotFoundError` on `undefined` (emulator) or network error:
+
+```typescript
+export const resolveUtxoByUnit = (
+  lucid: LucidEvolution,
+  unit: string,
+): Effect.Effect<UTxO, UtxoNotFoundError> =>
+  Effect.tryPromise({
+    try: () => lucid.utxoByUnit(unit),
+    catch: () => new UtxoNotFoundError({ tokenName: unit, address: "chain" }),
+  }).pipe(
+    Effect.filterOrFail(
+      (utxo): utxo is UTxO => utxo != null,
+      () => new UtxoNotFoundError({ tokenName: unit, address: "chain" }),
+    ),
+  );
+```
+
+---
+
 ## Common mistakes
 
-| Mistake | Fix |
-|---------|-----|
-| `.complete()` on tx | Use `completeProgram()` — returns Effect |
-| `Data.from(datum!)` | Use `parseSafeDatum(datum, Schema)` |
-| `lucid.wallet().address()` inline | Hoist: `yield* getWalletAddress(lucid)` |
-| Hardcoded input index in redeemer | Use `RedeemerBuilder { kind: "selected" }` |
-| Missing `makeReturn()` on endpoint | Every exported endpoint needs it |
-| Missing `Effect.mapError` on `completeProgram()` | Always pipe to `TransactionBuildError` |
-| Batching multiple endpoints in one commit | One commit per endpoint (after tests pass) |
-| Changing a datum type without updating spec first | Update spec → update types → retest |
+| Mistake                                             | Fix                                                         |
+| --------------------------------------------------- | ----------------------------------------------------------- |
+| `.complete()` on tx                                 | Use `completeProgram()` — returns Effect                    |
+| `Data.from(datum!)`                                 | Use `parseSafeDatum(datum, Schema)`                         |
+| `lucid.wallet().address()` inline                   | Hoist: `yield* getWalletAddress(lucid)`                     |
+| Hardcoded input index in redeemer                   | Use `RedeemerBuilder { kind: "selected" }`                  |
+| Missing `makeReturn()` on endpoint                  | Every exported endpoint needs it                            |
+| Missing `Effect.mapError` on `completeProgram()`    | Always pipe to `TransactionBuildError`                      |
+| Batching multiple endpoints in one commit           | One commit per endpoint (after tests pass)                  |
+| Changing a datum type without updating spec first   | Update spec → update types → retest                         |
+| Saving `{ txHash, outputIndex }` as entity identity | Save `tokenSuffix` — survives every spend                   |
+| Passing `UTxO` objects in endpoint configs          | Configs take `tokenSuffix: string`; SDK resolves UTxOs      |
+| Calling `lucid.utxoByUnit()` directly in endpoint   | Use `resolveUtxoByUnit()` — handles `undefined` on emulator |

@@ -32,7 +32,10 @@ fn valid_phone_hash() {
 }
 
 fn test_account_datum() -> AccountDatum {
-  AccountDatum { email_hash: valid_email_hash(), phone_hash: valid_phone_hash() }
+  AccountDatum {
+    email_hash: valid_email_hash(),
+    phone_hash: valid_phone_hash(),
+  }
 }
 
 // ─── is_account_datum_valid ───────────────────────────────────────────────────
@@ -159,7 +162,14 @@ test create_account_rejects_wrong_mint_quantity() fail {
     )
   let input = common.test_input(output_ref, ref_output)
 
-  validate_create_account(policy_id, 0, 0, [input], [ref_output, user_output], mint)
+  validate_create_account(
+    policy_id,
+    0,
+    0,
+    [input],
+    [ref_output, user_output],
+    mint,
+  )
 }
 
 // expect crash — missing user token causes `expect Some(1) = dict.get(minted_tokens, user_token_name)` to fail
@@ -308,7 +318,10 @@ test update_account_success() {
 
   let old_datum = test_account_datum()
   let new_datum =
-    AccountDatum { email_hash: valid_email_hash(), phone_hash: valid_phone_hash() }
+    AccountDatum {
+      email_hash: valid_email_hash(),
+      phone_hash: valid_phone_hash(),
+    }
 
   let account_utxo =
     common.test_script_utxo(
@@ -583,11 +596,7 @@ test remove_account_rejects_missing_ref_token_in_input() {
   let datum = test_account_datum()
   // Account input has no ref token
   let account_utxo =
-    common.test_script_utxo(
-      policy_id,
-      assets.from_lovelace(2000000),
-      datum,
-    )
+    common.test_script_utxo(policy_id, assets.from_lovelace(2000000), datum)
   let account_input = common.test_input(output_ref, account_utxo)
 
   let user_utxo =
@@ -710,15 +719,37 @@ test update__rejects_shared_output_for_two_accounts() {
 
   let datum = test_account_datum()
 
-  let account_a = common.test_script_utxo(policy_id, assets.from_asset(policy_id, ref_tn_a, 1), datum)
-  let account_b = common.test_script_utxo(policy_id, assets.from_asset(policy_id, ref_tn_b, 1), datum)
+  let account_a =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn_a, 1),
+      datum,
+    )
+  let account_b =
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn_b, 1),
+      datum,
+    )
   let input_a = common.test_input(output_ref_a, account_a)
   let input_b = common.test_input(output_ref_b, account_b)
 
-  let user_a = common.test_user_utxo(common.test_pkh(), assets.from_asset(policy_id, user_tn_a, 1), datum)
-  let user_b = common.test_user_utxo(common.test_pkh(), assets.from_asset(policy_id, user_tn_b, 1), datum)
-  let user_input_a = common.test_input(common.placeholder_input.output_reference, user_a)
-  let user_input_b = common.test_input(common.placeholder_input.output_reference, user_b)
+  let user_a =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn_a, 1),
+      datum,
+    )
+  let user_b =
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn_b, 1),
+      datum,
+    )
+  let user_input_a =
+    common.test_input(common.placeholder_input.output_reference, user_a)
+  let user_input_b =
+    common.test_input(common.placeholder_input.output_reference, user_b)
 
   // Single merged output carrying BOTH ref tokens — the account-merge attack
   let merged_output =
@@ -794,11 +825,7 @@ test update__rejects_missing_ref_token_in_account_input() {
   let datum = test_account_datum()
   // Account input has ADA only — no ref token
   let account_utxo =
-    common.test_script_utxo(
-      policy_id,
-      assets.from_lovelace(2_000_000),
-      datum,
-    )
+    common.test_script_utxo(policy_id, assets.from_lovelace(2_000_000), datum)
   let account_input = common.test_input(output_ref, account_utxo)
 
   let user_utxo =

@@ -26,8 +26,8 @@ pub fn unique_token_name(
 ) -> AssetName {
   let unique_hash = blake2b_256(cbor.serialise(output_ref))
   // CIP-68 Prefixes are 4 bytes. AssetNames max 32 bytes.
-  // We must limit the unique part to 28 bytes.
-  let chopped_hash = bytearray.slice(unique_hash, 0, 28)
+  // bytearray.slice is inclusive on both ends: indices 0..27 = 28 bytes.
+  let chopped_hash = bytearray.slice(unique_hash, 0, 27)
   bytearray.concat(prefix, chopped_hash)
 }
 

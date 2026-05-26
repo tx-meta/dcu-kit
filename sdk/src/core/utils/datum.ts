@@ -27,10 +27,16 @@ export const parseSafeDatum = <T>(
   datumType: T,
 ): Effect.Effect<T, InvalidDatumError> => {
   if (!datum) {
-    return Effect.fail(new InvalidDatumError({ field: "datum", reason: "missing datum" }));
+    return Effect.fail(
+      new InvalidDatumError({ field: "datum", reason: "missing datum" }),
+    );
   }
   return Effect.try({
     try: () => Data.from(datum, datumType),
-    catch: (error) => new InvalidDatumError({ field: "datum", reason: `invalid datum: ${error}` }),
+    catch: (error) =>
+      new InvalidDatumError({
+        field: "datum",
+        reason: `invalid datum: ${error}`,
+      }),
   });
 };

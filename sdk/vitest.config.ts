@@ -1,13 +1,17 @@
 import { defineConfig } from "vitest/config";
+import { config } from "dotenv";
+
+config({ path: ".env" });
 
 export default defineConfig({
   test: {
     reporters: "verbose",
     include: ["./test/**/*.test.ts"],
-    testTimeout: 300000,
-    alias: {
-      "libsodium-wrappers": "libsodium-wrappers-sumo/dist/modules-sumo/libsodium-wrappers.js",
+    testTimeout: 600000,
+    fileParallelism: false,
+    bail: 3,
+    sequence: {
+      shuffle: false,
     },
-    fileParallelism: false, // Critical: Prevent wallet UTxO contention on live network
   },
 });

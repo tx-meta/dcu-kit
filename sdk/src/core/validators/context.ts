@@ -9,13 +9,13 @@ import plutusJson from "../plutus.json";
 import { getScript, readValidators } from "./reader.js";
 
 export interface SpendingValidatorInfo {
-    script: Script;
-    address: string;
+  script: Script;
+  address: string;
 }
 
 export interface MintingValidatorInfo {
-    script: Script;
-    policyId: string;
+  script: Script;
+  policyId: string;
 }
 
 export interface DcuValidators {
@@ -34,7 +34,7 @@ export interface DcuValidators {
 }
 
 export const makeValidators = (
-  network: Network
+  network: Network,
 ): Effect.Effect<DcuValidators, Error> =>
   Effect.gen(function* () {
     const validators = yield* readValidators(plutusJson);
@@ -61,8 +61,8 @@ export const makeValidators = (
         mint: getMinting("account_validator.account.mint"),
       },
       group: {
-        spend: getSpending("group_validator.group.spend"),
-        mint: getMinting("group_validator.group.mint"),
+        spend: getSpending("group_validator.group_validator.spend"),
+        mint: getMinting("group_validator.group_validator.mint"),
       },
       treasury: {
         spend: getSpending("treasury_validator.treasury.spend"),

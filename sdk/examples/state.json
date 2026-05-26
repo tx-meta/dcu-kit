@@ -1,0 +1,18 @@
+{
+  "scriptRefTreasury": {
+    "txHash": "5647db2618678761c8b146d5aaa7ba2b1ae41dc729b33ea6e3252ec504db2424",
+    "outputIndex": 0
+  },
+  "scriptRefGroup": {
+    "txHash": "d75aa2ebb1741772a1466a800cee63a1076182f52609abd45448d1a5bdd791c7",
+    "outputIndex": 0
+  },
+  "groupTokenSuffix": "30d5af160e8911621b46eb8ee90d52b9680e4d8b7c18f0c2e2311dfd",
+  "groupPolicyId": "8a29191f7bc9e6a8c244213571bc6d203bf24fd3a24b76effd6af8bc",
+  "groupIntervalLength": 300000,
+  "adminAccountTokenSuffix": "788228880b3c3da17878c4bdecdbf7ac2e3e4377afd2e1e9b275cde6",
+  "accountTokenSuffix": "6bfb40be2fee25fbbdc8b324a8bdda84a72027dbd3220ac3fcc4eb35",
+  "user2AccountTokenSuffix": "da8693197a2c763ecdf3e404a36ecb63c4a39264726659cf2dbeb484",
+  "groupStartTime": 1779746634000,
+  "groupNumIntervals": 3
+}
