@@ -23,17 +23,17 @@ jobs:
 
     steps:
       - name: 📥 Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: 🔧 Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@v4
         with:
           version: 9
 
       # registry-url is required — it writes a .npmrc that wires NODE_AUTH_TOKEN
       # into the npm auth for registry.npmjs.org automatically.
       - name: 🔧 Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
