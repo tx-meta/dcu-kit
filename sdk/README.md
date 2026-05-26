@@ -55,26 +55,26 @@ const txHash = await signed.submit();
 
 ### Group Endpoints
 
-| Function          | Description                           |
-| ----------------- | ------------------------------------- |
-| `createGroup`     | Create a new ROSCA group              |
-| `joinGroup`       | Join a group, lock treasury deposit   |
-| `startGroup`      | Activate group, set rotation schedule |
-| `exitGroup`       | Exit before or after maturity         |
-| `updateGroup`     | Update group parameters               |
-| `deleteGroup`     | Delete an unstarted group             |
-| `terminateGroup`  | Admin: terminate with penalty         |
-| `nextCycle`       | Advance to next ROSCA cycle           |
+| Function         | Description                           |
+| ---------------- | ------------------------------------- |
+| `createGroup`    | Create a new ROSCA group              |
+| `joinGroup`      | Join a group, lock treasury deposit   |
+| `startGroup`     | Activate group, set rotation schedule |
+| `exitGroup`      | Exit before or after maturity         |
+| `updateGroup`    | Update group parameters               |
+| `deleteGroup`    | Delete an unstarted group             |
+| `terminateGroup` | Admin: terminate with penalty         |
+| `nextCycle`      | Advance to next ROSCA cycle           |
 
 ### Treasury Endpoints
 
-| Function                   | Description                       |
-| -------------------------- | --------------------------------- |
-| `distributePayout`         | Pay out current round's borrower  |
-| `contribute`               | Top up treasury balance           |
-| `deferRound`               | Mark member as deferred for round |
-| `updatePayoutCredential`   | Update payout destination         |
-| `extendGraceWindow`        | Admin: extend grace period        |
+| Function                 | Description                       |
+| ------------------------ | --------------------------------- |
+| `distributePayout`       | Pay out current round's borrower  |
+| `contribute`             | Top up treasury balance           |
+| `deferRound`             | Mark member as deferred for round |
+| `updatePayoutCredential` | Update payout destination         |
+| `extendGraceWindow`      | Admin: extend grace period        |
 
 ### Admin
 
