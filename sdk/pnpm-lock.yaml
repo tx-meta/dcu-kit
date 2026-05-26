@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  libsodium-wrappers-sumo: 0.8.2
+  libsodium-wrappers-sumo: 0.8.4
   libsodium-sumo: 0.8.2
 
 importers:
@@ -44,8 +44,8 @@ importers:
         specifier: ^0.8.4
         version: 0.8.4
       libsodium-wrappers-sumo:
-        specifier: 0.8.2
-        version: 0.8.2
+        specifier: 0.8.4
+        version: 0.8.4
       prettier:
         specifier: ^3.8.3
         version: 3.8.3
@@ -1321,8 +1321,8 @@ packages:
   libsodium-sumo@0.8.2:
     resolution: {integrity: sha512-uMgnjphJ717jLN+jFG1HUgNrK/gOVVfaO1DGZ1Ig/fKLKLVhvaH/sM1I1v784JFvmkJDaczDpi7xSYC4Jvdo1Q==}
 
-  libsodium-wrappers-sumo@0.8.2:
-    resolution: {integrity: sha512-wd1xAY++Kr6VMikSaa4EPRAHJmFvNlGWiiwU3Jh3GR1zRYF3/I3vy/wYsr4k3LVsNzwb9sqfEQ4LdVQ6zEebyQ==}
+  libsodium-wrappers-sumo@0.8.4:
+    resolution: {integrity: sha512-ql7hcgulKZ3ekfa2DGAogcCKsWU0diA/0nArz1CFzh93WQdb46/Kj18ka/Hifq6uA3Ush34Pc6vU/6HXeRwUkg==}
 
   libsodium-wrappers@0.8.4:
     resolution: {integrity: sha512-mu8aAWucZjTB5O/BtGXtW4e1agy7uHxNYG7zPthmmD1jU43LCDmSWZLN4JhflbdPXj3yDO4lxM1O9hLDgIOXDw==}
@@ -1919,7 +1919,7 @@ snapshots:
       '@cardano-sdk/util': 0.17.1
       blake2b: 2.1.4
       i: 0.3.7
-      libsodium-wrappers-sumo: 0.8.2
+      libsodium-wrappers-sumo: 0.8.4
       lodash: 4.17.23
       pbkdf2: 3.1.5
       ts-custom-error: 3.3.1
@@ -3141,7 +3141,7 @@ snapshots:
 
   libsodium-sumo@0.8.2: {}
 
-  libsodium-wrappers-sumo@0.8.2:
+  libsodium-wrappers-sumo@0.8.4:
     dependencies:
       libsodium-sumo: 0.8.2
 
