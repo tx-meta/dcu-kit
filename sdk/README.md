@@ -1,9 +1,9 @@
 # @tx-meta/dcu-sdk
 
 [![npm](https://img.shields.io/npm/v/@tx-meta/dcu-sdk)](https://www.npmjs.com/package/@tx-meta/dcu-sdk)
-[![CI](https://github.com/txmeta/dcu-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/txmeta/dcu-toolkit/actions/workflows/ci.yml)
+[![CI](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml)
 
-TypeScript offchain SDK for the **DCU Toolkit** — a ROSCA protocol on Cardano. Built on [Lucid Evolution](https://github.com/Anastasia-Labs/lucid-evolution) and [Effect](https://effect.website/).
+TypeScript offchain SDK for the **DCU Toolkit**, a ROSCA protocol on Cardano. Built on [Lucid Evolution](https://github.com/Anastasia-Labs/lucid-evolution) and [Effect](https://effect.website/).
 
 ## Installation
 
@@ -15,55 +15,66 @@ pnpm add @tx-meta/dcu-sdk
 
 ## Usage
 
-Every endpoint returns a `makeReturn` object with three methods:
+Every endpoint returns a `ProgramRunner` with three execution methods:
 
 ```ts
-import { unsignedCreateAccountProgram } from "@tx-meta/dcu-sdk";
+import { createAccount, CreateAccountConfig } from "@tx-meta/dcu-sdk";
 
-const result = unsignedCreateAccountProgram(lucid, config);
+const config: CreateAccountConfig = {
+  selected_out_ref: utxos[0],
+  email: "user@example.com",
+  phone: "555-0100",
+};
 
-// Unsafe — throws on failure
-const tx = await result.unsafeRun();
+// Unsafe: throws on failure
+const tx = await createAccount(lucid, config).unsafeRun();
 
-// Safe — returns Either
-const tx = await result.safeRun();
+// Safe: returns Either (no throw)
+const tx = await createAccount(lucid, config).safeRun();
 
-// Effect — for composition
-const tx = result.program();
+// Effect: for composition with other Effects
+const tx = createAccount(lucid, config).program();
+```
+
+Sign and submit after building:
+
+```ts
+const signed = await tx.sign.withWallet().complete();
+const txHash = await signed.submit();
 ```
 
 ## API Overview
 
 ### Account Endpoints
 
-| Function                       | Description                  |
-| ------------------------------ | ---------------------------- |
-| `unsignedCreateAccountProgram` | Mint CIP-68 membership token |
-| `unsignedUpdateAccountProgram` | Update account metadata      |
-| `unsignedDeleteAccountProgram` | Burn membership token        |
+| Function        | Description                  |
+| --------------- | ---------------------------- |
+| `createAccount` | Mint CIP-68 membership token |
+| `updateAccount` | Update account metadata      |
+| `deleteAccount` | Burn membership token        |
 
 ### Group Endpoints
 
-| Function                        | Description                           |
-| ------------------------------- | ------------------------------------- |
-| `unsignedCreateGroupProgram`    | Create a new ROSCA group              |
-| `unsignedJoinGroupProgram`      | Join a group, lock treasury deposit   |
-| `unsignedStartGroupProgram`     | Activate group, set rotation schedule |
-| `unsignedExitGroupProgram`      | Exit before or after maturity         |
-| `unsignedUpdateGroupProgram`    | Update group parameters               |
-| `unsignedDeleteGroupProgram`    | Delete an unstarted group             |
-| `unsignedTerminateGroupProgram` | Admin: terminate with penalty         |
-| `unsignedNextCycleProgram`      | Advance to next ROSCA cycle           |
+| Function          | Description                           |
+| ----------------- | ------------------------------------- |
+| `createGroup`     | Create a new ROSCA group              |
+| `joinGroup`       | Join a group, lock treasury deposit   |
+| `startGroup`      | Activate group, set rotation schedule |
+| `exitGroup`       | Exit before or after maturity         |
+| `updateGroup`     | Update group parameters               |
+| `deleteGroup`     | Delete an unstarted group             |
+| `terminateGroup`  | Admin: terminate with penalty         |
+| `nextCycle`       | Advance to next ROSCA cycle           |
 
 ### Treasury Endpoints
 
-| Function                                | Description                       |
-| --------------------------------------- | --------------------------------- |
-| `unsignedDistributeRoundProgram`        | Pay out current round's borrower  |
-| `unsignedContributeProgram`             | Top up treasury balance           |
-| `unsignedDeferRoundProgram`             | Mark member as deferred for round |
-| `unsignedUpdatePayoutCredentialProgram` | Update payout destination         |
-| `unsignedExtendGraceWindowProgram`      | Admin: extend grace period        |
+| Function                   | Description                       |
+| -------------------------- | --------------------------------- |
+| `distributePayout`         | Pay out current round's borrower  |
+| `contribute`               | Top up treasury balance           |
+| `deferRound`               | Mark member as deferred for round |
+| `updatePayoutCredential`   | Update payout destination         |
+| `extendGraceWindow`        | Admin: extend grace period        |
 
 ### Admin
 
@@ -86,7 +97,7 @@ NETWORK=Custom pnpm test  # Full test suite (Lucid emulator, no live network)
 
 ## Testing
 
-Tests use `vitest` + `@effect/vitest` against the Lucid emulator (real UPLC execution — no mocks):
+Tests use `vitest` + `@effect/vitest` against the Lucid emulator (real UPLC execution, no mocks):
 
 ```sh
 NETWORK=Custom pnpm test                        # All suites
@@ -96,7 +107,7 @@ NETWORK=Custom pnpm test test/treasury.test.ts  # Treasury only
 NETWORK=Custom pnpm test -- -t "pattern"        # Filter by name
 ```
 
-`NETWORK=Custom` is required — without it the SDK attempts to connect to Preprod.
+`NETWORK=Custom` is required. Without it the SDK attempts to connect to Preprod.
 
 ## Publishing
 
@@ -105,9 +116,14 @@ The SDK is published automatically via GitHub Actions when a GitHub Release is c
 1. Merge your changes to `main`
 2. All CI checks must pass
 3. Create a GitHub Release tagged `vX.Y.Z`
-4. The [publish workflow](../.github/workflows/publish.yml) builds and publishes to npm with provenance attestation
+4. The [publish workflow](https://github.com/tx-meta/dcu-kit/actions/workflows/publish.yml) builds and publishes to npm with provenance attestation
 
-Manual publish (emergency): trigger `workflow_dispatch` from the Actions tab.
+If the workflow fails, publish manually from the `sdk/` directory:
+
+```sh
+pnpm run build
+pnpm publish --access public --no-git-checks
+```
 
 The `NPM_TOKEN` secret must be set in the repository settings (Automation token with read/write package access).
 
