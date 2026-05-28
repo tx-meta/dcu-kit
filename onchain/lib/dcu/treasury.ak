@@ -7,7 +7,7 @@ use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
 use dcu/cip68
-use dcu/group.{GroupDatum}
+use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/utils.{get_lower_bound}
 
 /// Maximum number of grace window extensions an admin can grant a defaulting member.
@@ -183,7 +183,7 @@ fn indices_in_ascending_order(indices: List<Int>) -> Bool {
 //                     contribution asset (minimum collateral for one round)
 // [spec JoinGroup 8]: if joining_fee > 0, admin wallet receives joining fee
 // [security        ]: member user token must NOT go to any script address
-pub fn validate_join_group(
+pub fn validate_join_treasury(
   own_policy_id: PolicyId,
   account_policy_id: PolicyId,
   group_ref_input_index: Int,
@@ -197,7 +197,7 @@ pub fn validate_join_group(
   // [spec JoinGroup 2]: group spending input with valid GroupDatum
   expect Some(group_input) = list.at(inputs, group_ref_input_index)
   expect InlineDatum(group_datum_data) = group_input.output.datum
-  expect group: GroupDatum = group_datum_data
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
 
   // [spec JoinGroup]: group must be active
   let group_active = group.is_active
@@ -244,7 +244,7 @@ pub fn validate_join_group(
   //   ensures the Group validator's MemberJoin redeemer atomically updates member_count
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(go_data) = group_output.datum
-  expect updated_group: GroupDatum = go_data
+  expect GroupCip68Datum { extra: updated_group, .. } = go_data
   let member_count_incremented =
     updated_group.member_count == group.member_count + 1
 
@@ -393,7 +393,7 @@ pub fn validate_claim_penalty_mint(own_policy_id: PolicyId, mint: Value) -> Bool
 //                           reduced by contribution_fee in the contribution asset
 // [spec DistributeRound 8]: own output at script address with membership token
 // [security]: treasury_input_indices and treasury_output_indices strictly ascending
-pub fn validate_distribute(
+pub fn validate_distribute_treasury(
   own_policy_id: PolicyId,
   round_number: Int,
   group_ref_input_index: Int,
@@ -421,7 +421,7 @@ pub fn validate_distribute(
   // [spec DistributeRound 3]: group spending input with GroupDatum
   expect Some(group_input) = list.at(inputs, group_ref_input_index)
   expect InlineDatum(group_datum_data) = group_input.output.datum
-  expect group: GroupDatum = group_datum_data
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
 
   // [security]: strictly ascending indices — prevents duplicate-index attacks
   let indices_valid = indices_in_ascending_order(treasury_input_indices)
@@ -430,7 +430,7 @@ pub fn validate_distribute(
   // [spec DistributeRound 4]: group output has last_distributed_round = round_number
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(go_data) = group_output.datum
-  expect updated_group: GroupDatum = go_data
+  expect GroupCip68Datum { extra: updated_group, .. } = go_data
   let group_round_incremented =
     updated_group.last_distributed_round == round_number
 
@@ -639,7 +639,7 @@ pub fn validate_distribute(
 // [spec ExitGroup 4a]: Penalty path (active cycle): penalty output at penalty_output_index
 //                      has PenaltyState datum, retains membership token, >= penalty_fee locked
 // [spec ExitGroup 4b]: Mature/inactive path: membership token is burned
-pub fn validate_exit_group(
+pub fn validate_exit_treasury(
   own_policy_id: PolicyId,
   account_policy_id: PolicyId,
   group_ref_input_index: Int,
@@ -664,7 +664,7 @@ pub fn validate_exit_group(
   // [spec ExitGroup 3]: group spending input with GroupDatum
   expect Some(group_input) = list.at(inputs, group_ref_input_index)
   expect InlineDatum(group_datum_data) = group_input.output.datum
-  expect group: GroupDatum = group_datum_data
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
 
   // Extract group policy ID
   expect Script(group_policy_id) = group_input.output.address.payment_credential
@@ -694,7 +694,7 @@ pub fn validate_exit_group(
   // [spec ExitGroup 3]: group output — member_count decrements on BOTH paths
   expect Some(group_output_utxo) = list.at(outputs, group_output_index)
   expect InlineDatum(go_data) = group_output_utxo.datum
-  expect updated_group: GroupDatum = go_data
+  expect GroupCip68Datum { extra: updated_group, .. } = go_data
 
   // [spec ExitGroup Minor]: group output at correct address with ref token
   let group_output_at_correct_address =
@@ -1194,7 +1194,7 @@ pub fn validate_extend_grace(
 // [spec NextCycle 5]: own output datum: rounds_paid=0, is_deferred=False, all else frozen
 // [spec NextCycle 6]: output ADA unchanged; output at script address with membership token
 // [security]: treasury_input_indices and treasury_output_indices strictly ascending
-pub fn validate_next_cycle(
+pub fn validate_next_cycle_treasury(
   own_policy_id: PolicyId,
   group_input_index: Int,
   group_output_index: Int,
@@ -1219,7 +1219,7 @@ pub fn validate_next_cycle(
   // [spec NextCycle 3]: group spending input with GroupDatum
   expect Some(group_input) = list.at(inputs, group_input_index)
   expect InlineDatum(group_datum_data) = group_input.output.datum
-  expect group: GroupDatum = group_datum_data
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
 
   // [spec NextCycle 2]: this member's cycle is complete
   let member_cycle_complete = rounds_paid == group.num_rounds
@@ -1227,7 +1227,7 @@ pub fn validate_next_cycle(
   // [spec NextCycle 4]: group output confirms reset
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(go_data) = group_output.datum
-  expect updated_group: GroupDatum = go_data
+  expect GroupCip68Datum { extra: updated_group, .. } = go_data
   let group_reset =
     !updated_group.is_started && updated_group.last_distributed_round == -1
 

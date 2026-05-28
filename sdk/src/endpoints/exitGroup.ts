@@ -9,7 +9,7 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
-  GroupDatum,
+  GroupCip68Datum, GroupCip68DatumSchema, GroupDatum,
   GroupSpendRedeemer,
   TreasuryDatum,
   TreasuryDatumSchema,
@@ -30,6 +30,8 @@ import {
 } from "../core/errors.js";
 import {
   getScriptAddress,
+  parseGroupCip68Datum,
+  buildGroupCip68Datum,
   getWalletAddress,
   parseSafeDatum,
   patchInlineDatum,
@@ -173,7 +175,8 @@ export const unsignedExitGroupTxProgram = (
         }),
       );
 
-    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
+    const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
+    const groupDatum = groupCip68.groupDatum;
 
     const groupRefAssetEntry = Object.keys(groupUtxo.assets).find((k) =>
       k.startsWith(groupPolicyId!),
@@ -301,7 +304,7 @@ export const unsignedExitGroupTxProgram = (
       .addSigner(address)
       .pay.ToContract(
         groupAddress,
-        { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
+        { kind: "inline", value: buildGroupCip68Datum(groupCip68.metadata, groupCip68.version, updatedGroupDatum) },
         groupUtxo.assets,
       );
 

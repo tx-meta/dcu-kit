@@ -289,6 +289,7 @@ export const createGroupTestCase = (
 
     const groupDatum = createDefaultGroupDatum(datumOverride);
     const groupConfig: CreateGroupConfig = {
+      groupName: "Test Group",
       groupDatum,
       utxoToSpend: selectedUTxO,
     };

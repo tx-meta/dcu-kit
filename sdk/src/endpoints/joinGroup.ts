@@ -11,7 +11,7 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
-  GroupDatum,
+  GroupCip68Datum, GroupCip68DatumSchema, GroupDatum,
   TreasuryDatum,
   TreasuryRedeemer,
   GroupSpendRedeemer,
@@ -24,6 +24,8 @@ import {
 } from "../core/validators/constants.js";
 import {
   getScriptAddress,
+  parseGroupCip68Datum,
+  buildGroupCip68Datum,
   getWalletAddress,
   parseSafeDatum,
   patchInlineDatum,
@@ -94,7 +96,8 @@ export const unsignedJoinGroupTxProgram = (
     const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUserUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
     const accountUtxo = patchInlineDatum(accountUtxoRaw);
-    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
+    const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
+    const groupDatum = groupCip68.groupDatum;
 
     const assignedSlot = groupDatum.member_count;
 
@@ -233,7 +236,7 @@ export const unsignedJoinGroupTxProgram = (
       .mintAssets(mintingAssets, treasuryRedeemer)
       .pay.ToContract(
         groupAddress,
-        { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
+        { kind: "inline", value: buildGroupCip68Datum(groupCip68.metadata, groupCip68.version, updatedGroupDatum) },
         groupUtxo.assets,
       )
       .pay.ToContract(

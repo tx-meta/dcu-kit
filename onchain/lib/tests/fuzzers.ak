@@ -5,7 +5,6 @@ use dcu/group.{GroupDatum}
 // --- Group Datum Fuzzer ---
 
 pub fn gen_group_datum() {
-  let group_name <- fuzz.and_then(fuzz.bytearray())
   let contribution_fee <- fuzz.and_then(fuzz.int())
   let contribution_fee_policyid <- fuzz.and_then(fuzz.bytearray_fixed(28))
   let contribution_fee_assetname <- fuzz.and_then(fuzz.bytearray_fixed(28))
@@ -29,7 +28,6 @@ pub fn gen_group_datum() {
 
   fuzz.constant(
     GroupDatum {
-      group_name,
       contribution_fee_policyid,
       contribution_fee_assetname,
       contribution_fee,

@@ -2,13 +2,13 @@ use aiken/collection/list
 use cardano/address.{Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
-use dcu/group.{GroupDatum}
+use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/treasury.{
   ClaimPenalty, Contribute, DeferRound, DistributeRound, ExitGroup, ExtendGrace,
   JoinGroup, NextCycle, TreasuryDatum, TreasuryRedeemer, UpdatePayout,
   validate_claim_penalty, validate_claim_penalty_mint, validate_contribute,
-  validate_defer_round, validate_distribute, validate_exit_group,
-  validate_extend_grace, validate_join_group, validate_next_cycle,
+  validate_defer_round, validate_distribute_treasury, validate_exit_treasury,
+  validate_extend_grace, validate_join_treasury, validate_next_cycle_treasury,
   validate_update_payout,
 } as treasury_types
 
@@ -43,7 +43,7 @@ validator treasury(account_policy_id: PolicyId) {
         member_input_index,
         treasury_output_index,
       } ->
-        validate_join_group(
+        validate_join_treasury(
           policy_id,
           account_policy_id,
           group_ref_input_index,
@@ -97,7 +97,7 @@ validator treasury(account_policy_id: PolicyId) {
             },
           )
 
-        validate_distribute(
+        validate_distribute_treasury(
           // [security]: own policy_id derived from UTxO's script credential
           policy_id_from_utxo(inputs, utxo),
           round_number,
@@ -123,7 +123,7 @@ validator treasury(account_policy_id: PolicyId) {
         expect Some(treasury_input) = list.at(inputs, treasury_input_index)
         expect treasury_input.output_reference == utxo
 
-        validate_exit_group(
+        validate_exit_treasury(
           policy_id_from_utxo(inputs, utxo),
           account_policy_id,
           group_ref_input_index,
@@ -231,7 +231,7 @@ validator treasury(account_policy_id: PolicyId) {
         expect Script(group_policy_id) =
           group_ref_input.output.address.payment_credential
         expect InlineDatum(gd) = group_ref_input.output.datum
-        expect gd_typed: GroupDatum = gd
+        expect GroupCip68Datum { extra: gd_typed, .. } = gd
 
         validate_extend_grace(
           policy_id_from_utxo(inputs, utxo),
@@ -263,7 +263,7 @@ validator treasury(account_policy_id: PolicyId) {
             },
           )
 
-        validate_next_cycle(
+        validate_next_cycle_treasury(
           policy_id_from_utxo(inputs, utxo),
           group_input_index,
           group_output_index,

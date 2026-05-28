@@ -7,7 +7,7 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
-  GroupDatum,
+  GroupCip68Datum, GroupCip68DatumSchema, GroupDatum,
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
@@ -24,6 +24,8 @@ import {
 } from "../core/errors.js";
 import {
   getScriptAddress,
+  parseGroupCip68Datum,
+  buildGroupCip68Datum,
   getWalletAddress,
   parseSafeDatum,
   patchInlineDatum,
@@ -75,7 +77,8 @@ export const unsignedExtendGraceWindowTxProgram = (
     const adminUtxo = patchInlineDatum(adminUtxoRaw);
     const treasuryUtxo = patchInlineDatum(treasuryUtxoRaw);
 
-    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
+    const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
+    const groupDatum = groupCip68.groupDatum;
 
     const treasuryDatum = (yield* parseSafeDatum(
       treasuryUtxo.datum,

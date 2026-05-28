@@ -44,7 +44,6 @@ export const AccountRedeemer =
 // --- Group Validator Types ---
 
 export const GroupDatumSchema = Data.Object({
-  group_name: Data.Bytes(),
   contribution_fee_policyid: Data.Bytes(),
   contribution_fee_assetname: Data.Bytes(),
   contribution_fee: Data.Integer(),
@@ -70,6 +69,18 @@ export const GroupDatumSchema = Data.Object({
 
 export type GroupDatum = Data.Static<typeof GroupDatumSchema>;
 export const GroupDatum = GroupDatumSchema as unknown as GroupDatum;
+
+// CIP-68 wrapper for the group (100) reference token datum.
+// metadata["name"] (key = fromText("name")) is displayed by wallets as the group name.
+// Serialises as Constr(0, [map, int, GroupDatum]) per the CIP-68 spec.
+export const GroupCip68DatumSchema = Data.Object({
+  metadata: Data.Map(Data.Bytes(), Data.Bytes()),
+  version: Data.Integer(),
+  extra: GroupDatumSchema,
+});
+export type GroupCip68Datum = Data.Static<typeof GroupCip68DatumSchema>;
+export const GroupCip68Datum =
+  GroupCip68DatumSchema as unknown as GroupCip68Datum;
 
 export const GroupMintRedeemerSchema = Data.Enum([
   Data.Object({

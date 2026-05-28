@@ -32,6 +32,7 @@ import {
   assetNameLabels,
   parseSafeDatum,
   patchInlineDatum,
+  parseGroupCip68Datum,
 } from "../src/core/utils/index.js";
 import { SetupError } from "../src/core/errors.js";
 import {
@@ -40,7 +41,6 @@ import {
 } from "../src/core/validators/constants.js";
 import {
   GroupDatum,
-  GroupDatumSchema,
   TreasuryDatum,
   TreasuryDatumSchema,
 } from "../src/core/types.js";
@@ -419,10 +419,8 @@ describe("Treasury Endpoints", () => {
         // UpdateGroup enforces member_count and member_token_names are unchanged, so we
         // must pass the post-join datum — not the creation datum from setupMembership.
         const patchedGroupUtxo = patchInlineDatum(groupUtxo);
-        const currentGroupDatum = (yield* parseSafeDatum(
-          patchedGroupUtxo.datum,
-          GroupDatumSchema,
-        )) as unknown as GroupDatum;
+        const rawCip68 = yield* parseGroupCip68Datum(patchedGroupUtxo.datum);
+        const currentGroupDatum = rawCip68.groupDatum;
 
         // Deactivate the group: only is_active changes (True → False). All other fields preserved.
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
@@ -744,10 +742,10 @@ describe("Treasury Endpoints", () => {
       );
       if (!updatedGroupUtxo)
         throw new Error("Group UTxO not found after nextCycle");
-      const groupDatum = yield* parseSafeDatum(
+      const rawCip68 = yield* parseGroupCip68Datum(
         patchInlineDatum(updatedGroupUtxo).datum,
-        GroupDatumSchema,
       );
+      const groupDatum = rawCip68.groupDatum;
       expect(groupDatum.is_started).toBe(false);
       expect(groupDatum.last_distributed_round).toBe(-1n);
       expect(groupDatum.num_rounds).toBe(0n);

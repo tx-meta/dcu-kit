@@ -49,8 +49,7 @@ export function extractTokenSuffix(
 export const createDefaultGroupDatum = (
   overrides?: Partial<GroupDatum>,
 ): GroupDatum => ({
-  group_name: fromText("Test Group"),
-  // ADA is represented as empty bytes "" — NOT "00" (which is a 1-byte non-ADA token).
+  // contribution_fee_policyid: ADA is empty bytes "" — NOT "00" (which is a 1-byte non-ADA token).
   // The Aiken validator uses assets.quantity_of(value, policyid, assetname) for fee checks;
   // quantity_of(value, "", "") returns lovelace. Using "00" would look up a non-existent
   // token and return 0, causing fees_locked? to fail with "exited prematurely".

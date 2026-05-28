@@ -4,10 +4,10 @@ use cardano/address.{Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{OutputReference, Transaction}
 use dcu/group.{
-  BurnGroup, CloseGroup, CreateGroup, Distribute, Exit, GroupDatum,
+  BurnGroup, CloseGroup, CreateGroup, Distribute, Exit, GroupCip68Datum,
   GroupMintRedeemer, GroupSpendRedeemer, Join, NextCycle, StartGroup, UpdateGroup,
   validate_close_group, validate_create_group, validate_distribute_group,
-  validate_exit, validate_join, validate_next_cycle_group, validate_start_group,
+  validate_exit_group, validate_join_group, validate_next_cycle_group, validate_start_group,
   validate_update_group,
 }
 
@@ -44,7 +44,7 @@ validator group_validator(treasury_policy_id: PolicyId) {
   }
 
   spend(
-    datum: Option<GroupDatum>,
+    datum: Option<GroupCip68Datum>,
     redeemer: GroupSpendRedeemer,
     utxo: OutputReference,
     self: Transaction,
@@ -107,7 +107,7 @@ validator group_validator(treasury_policy_id: PolicyId) {
         expect Some(group_input) = list.at(inputs, group_input_index)
         expect group_input.output_reference == utxo
 
-        validate_join(
+        validate_join_group(
           policy_id,
           treasury_policy_id,
           group_ref_token_name,
@@ -130,7 +130,7 @@ validator group_validator(treasury_policy_id: PolicyId) {
         expect Some(group_input) = list.at(inputs, group_input_index)
         expect group_input.output_reference == utxo
 
-        validate_exit(
+        validate_exit_group(
           policy_id,
           treasury_policy_id,
           group_ref_token_name,

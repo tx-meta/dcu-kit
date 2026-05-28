@@ -6,12 +6,12 @@ use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
 }
 use dcu/cip68
-use dcu/group.{GroupDatum}
+use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/treasury.{
   DefaultState, PenaltyState, TreasuryDatum, TreasuryState,
   max_grace_extensions, validate_contribute, validate_defer_round,
-  validate_distribute, validate_exit_group, validate_extend_grace,
-  validate_join_group, validate_claim_penalty, validate_claim_penalty_mint,
+  validate_distribute_treasury, validate_exit_treasury, validate_extend_grace,
+  validate_join_treasury, validate_claim_penalty, validate_claim_penalty_mint,
   validate_update_payout,
 }
 use tests/common
@@ -46,7 +46,6 @@ fn group_ref_tn() -> assets.AssetName {
 // Distribute tests override is_started=True and last_distributed_round=-1.
 fn test_group_datum() -> GroupDatum {
   GroupDatum {
-    group_name: "Test Group",
     contribution_fee_policyid: assets.ada_policy_id,
     contribution_fee_assetname: #"",
     contribution_fee: 2_000_000,
@@ -70,6 +69,19 @@ fn test_group_datum() -> GroupDatum {
     member_token_names: [],
   }
 }
+fn test_group_cip68_datum() -> GroupCip68Datum {
+  GroupCip68Datum {
+    metadata: [Pair(#"6e616d65", "Test Group")],
+    version: 1,
+    extra: test_group_datum(),
+  }
+}
+
+fn cip68_with_group(extra: GroupDatum) -> GroupCip68Datum {
+  GroupCip68Datum { ..test_group_cip68_datum(), extra }
+}
+
+
 
 // Group UTxO at Script(group_policy) holding the ref token
 fn test_group_input() -> Input {
@@ -84,7 +96,7 @@ fn test_group_input() -> Input {
         stake_credential: None,
       },
       value,
-      datum: InlineDatum(test_group_datum()),
+      datum: InlineDatum(test_group_cip68_datum()),
       reference_script: None,
     }
   Input {
@@ -179,7 +191,7 @@ fn test_member_input() -> Input {
 // Group output at Script(group_policy) with the given member_count.
 fn test_group_output(member_count: Int) -> Output {
   let gp = group_policy()
-  let datum = GroupDatum { ..test_group_datum(), member_count }
+  let datum = cip68_with_group(GroupDatum { ..test_group_datum(), member_count })
   Output {
     address: Address { payment_credential: Script(gp), stake_credential: None },
     value: assets.from_lovelace(2_000_000)
@@ -239,7 +251,7 @@ fn test_admin_input() -> Input {
 // Helper: builds a group Input with an overridden member_count
 fn test_group_input_with_member_count(member_count: Int) -> Input {
   let gp = group_policy()
-  let datum = GroupDatum { ..test_group_datum(), member_count }
+  let datum = cip68_with_group(GroupDatum { ..test_group_datum(), member_count })
   let value =
     assets.from_lovelace(2_000_000)
       |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
@@ -313,7 +325,7 @@ test join_group__accepts_valid_join() {
     }
 
   // group_ref_input_index=0, group_output_index=1, member_input_index=1, treasury_output_index=0
-  validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_wrong_member_count_slot() {
@@ -341,7 +353,7 @@ test join_group__rejects_wrong_member_count_slot() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // rounds_paid != 0 at join time — validator rejects (fresh member must have rounds_paid == 0)
@@ -370,7 +382,7 @@ test join_group__rejects_nonzero_rounds_paid() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // is_deferred = True at join time — validator rejects (fresh member cannot be pre-deferred)
@@ -399,7 +411,7 @@ test join_group__rejects_is_deferred_at_join() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group is already started — startGroup seals membership, late joins rejected
@@ -421,7 +433,7 @@ test join_group__rejects_started_group() {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(started_datum),
+        datum: InlineDatum(cip68_with_group(started_datum)),
         reference_script: None,
       },
     }
@@ -440,7 +452,7 @@ test join_group__rejects_started_group() {
       },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-      datum: InlineDatum(GroupDatum { ..started_datum, member_count: 1 }),
+      datum: InlineDatum(cip68_with_group(GroupDatum { ..started_datum, member_count: 1 })),
       reference_script: None,
     }
   let mint = assets.from_asset(tp, member_tn(), 1)
@@ -454,7 +466,7 @@ test join_group__rejects_started_group() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_extra_token_minted() {
@@ -484,7 +496,7 @@ test join_group__rejects_extra_token_minted() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_insufficient_fees() {
@@ -512,7 +524,7 @@ test join_group__rejects_insufficient_fees() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // joining_fee > 0 but no output at creator_payment_credential — joining_fee_routed fails
@@ -536,7 +548,7 @@ test join_group__rejects_joining_fee_not_routed_to_admin() {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(group_datum_with_fee),
+        datum: InlineDatum(cip68_with_group(group_datum_with_fee)),
         reference_script: None,
       },
     }
@@ -555,7 +567,7 @@ test join_group__rejects_joining_fee_not_routed_to_admin() {
       },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-      datum: InlineDatum(GroupDatum { ..group_datum_with_fee, member_count: 1 }),
+      datum: InlineDatum(cip68_with_group(GroupDatum { ..group_datum_with_fee, member_count: 1 })),
       reference_script: None,
     }
   let mint = assets.from_asset(tp, member_tn(), 1)
@@ -570,7 +582,7 @@ test join_group__rejects_joining_fee_not_routed_to_admin() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // joining_fee > 0 and admin output at creator_payment_credential — should pass
@@ -593,7 +605,7 @@ test join_group__accepts_joining_fee_routed_to_admin() {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(group_datum_with_fee),
+        datum: InlineDatum(cip68_with_group(group_datum_with_fee)),
         reference_script: None,
       },
     }
@@ -612,7 +624,7 @@ test join_group__accepts_joining_fee_routed_to_admin() {
       },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-      datum: InlineDatum(GroupDatum { ..group_datum_with_fee, member_count: 1 }),
+      datum: InlineDatum(cip68_with_group(GroupDatum { ..group_datum_with_fee, member_count: 1 })),
       reference_script: None,
     }
   // Admin payment output at creator_payment_credential (test_pkh) with >= joining_fee (1M)
@@ -637,7 +649,7 @@ test join_group__accepts_joining_fee_routed_to_admin() {
       validity_range: interval.after(0),
     }
 
-  validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group is deactivated — group_active check fails
@@ -659,7 +671,7 @@ test join_group__rejects_inactive_group() {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(inactive_datum),
+        datum: InlineDatum(cip68_with_group(inactive_datum)),
         reference_script: None,
       },
     }
@@ -682,7 +694,7 @@ test join_group__rejects_inactive_group() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group is at max capacity (member_count == max_members) — join must be rejected
@@ -705,7 +717,7 @@ test join_group__rejects_group_at_capacity() {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(full_datum),
+        datum: InlineDatum(cip68_with_group(full_datum)),
         reference_script: None,
       },
     }
@@ -724,7 +736,7 @@ test join_group__rejects_group_at_capacity() {
       },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-      datum: InlineDatum(GroupDatum { ..full_datum, member_count: 4 }),
+      datum: InlineDatum(cip68_with_group(GroupDatum { ..full_datum, member_count: 4 })),
       reference_script: None,
     }
   let mint = assets.from_asset(tp, member_tn(), 1)
@@ -738,7 +750,7 @@ test join_group__rejects_group_at_capacity() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_token_stuffing_in_output() {
@@ -768,7 +780,7 @@ test join_group__rejects_token_stuffing_in_output() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_output_at_wallet() {
@@ -805,7 +817,7 @@ test join_group__rejects_output_at_wallet() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_member_input_without_account_nft() {
@@ -848,7 +860,7 @@ test join_group__rejects_member_input_without_account_nft() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_wrong_group_link() {
@@ -876,7 +888,7 @@ test join_group__rejects_wrong_group_link() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group already has member_tn() in member_token_names — same account cannot join twice
@@ -903,7 +915,7 @@ test join_group__rejects_duplicate_member() {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(group_datum_with_member),
+        datum: InlineDatum(cip68_with_group(group_datum_with_member)),
         reference_script: None,
       },
     }
@@ -927,7 +939,7 @@ test join_group__rejects_duplicate_member() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // ─── member_count / cross-validator state transition tests ────────────────────
@@ -959,7 +971,7 @@ test join_group__second_member_gets_sequential_slot() {
       validity_range: interval.after(0),
     }
 
-  validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // Slot collision guard: a second joiner must NOT be able to claim slot 0
@@ -988,7 +1000,7 @@ test join_group__rejects_slot_collision_with_existing_member() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group output with non-incremented member_count must be rejected.
@@ -1002,7 +1014,7 @@ test join_group__rejects_group_output_without_member_count_increment() {
     Output {
       address: group_input.output.address,
       value: group_input.output.value,
-      datum: InlineDatum(test_group_datum()),
+      datum: InlineDatum(test_group_cip68_datum()),
       reference_script: None,
     }
 
@@ -1023,7 +1035,7 @@ test join_group__rejects_group_output_without_member_count_increment() {
       validity_range: interval.after(0),
     }
 
-  !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // ─── validate_distribute ────────────────────────────────────────────────
@@ -1064,7 +1076,7 @@ fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
           stake_credential: None,
         },
         value: group_in_value,
-        datum: InlineDatum(group_datum),
+        datum: InlineDatum(cip68_with_group(group_datum)),
         reference_script: None,
       },
     }
@@ -1078,7 +1090,7 @@ fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
       },
       value: group_in_value,
       datum: InlineDatum(
-        GroupDatum { ..group_datum, last_distributed_round: 0 },
+        cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 0 }),
       ),
       reference_script: None,
     }
@@ -1115,7 +1127,7 @@ fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
 
 test distribute_round__accepts_valid_round() {
   let (tx, datum, utxo) = setup_distribute_round()
-  validate_distribute(
+  validate_distribute_treasury(
     treasury_policy(),
     0,
     // group_ref_input_index
@@ -1142,7 +1154,7 @@ test distribute_round__rejects_penalty_state_datum() fail {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
     }
-  validate_distribute(
+  validate_distribute_treasury(
     treasury_policy(),
     0,
     0,
@@ -1179,7 +1191,7 @@ test distribute_round__rejects_no_ada_reduction() {
       validity_range,
     }
 
-  !validate_distribute(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // Treasury output datum has stale rounds_paid (0 instead of 1) — output_datum_correct fails
@@ -1203,7 +1215,7 @@ test distribute_round__rejects_wrong_datum_update() {
       validity_range,
     }
 
-  !validate_distribute(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // Borrower output at a script address instead of a wallet — borrower_at_correct_wallet fails
@@ -1231,7 +1243,7 @@ test distribute_round__rejects_borrower_output_at_script() {
       validity_range,
     }
 
-  !validate_distribute(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // current_slot = 0, but only treasury input has assigned_slot = 1
@@ -1262,7 +1274,7 @@ test distribute_round__rejects_when_borrower_absent() fail {
           stake_credential: None,
         },
         value: group_in_value,
-        datum: InlineDatum(group_datum),
+        datum: InlineDatum(cip68_with_group(group_datum)),
         reference_script: None,
       },
     }
@@ -1274,7 +1286,7 @@ test distribute_round__rejects_when_borrower_absent() fail {
       },
       value: group_in_value,
       datum: InlineDatum(
-        GroupDatum { ..group_datum, last_distributed_round: 0 },
+        cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 0 }),
       ),
       reference_script: None,
     }
@@ -1303,7 +1315,7 @@ test distribute_round__rejects_when_borrower_absent() fail {
     }
 
   // list.find_map returns None → expect Some(borrower_cred) crashes
-  validate_distribute(
+  validate_distribute_treasury(
     tp,
     0,
     0,
@@ -1320,7 +1332,7 @@ test distribute_round__rejects_when_borrower_absent() fail {
 // Duplicate output indices: [0, 0] not strictly ascending — indices_in_ascending_order fails
 test distribute_round__rejects_duplicate_output_index() {
   let (tx, datum, utxo) = setup_distribute_round()
-  !validate_distribute(
+  !validate_distribute_treasury(
     treasury_policy(),
     0,
     0,
@@ -1364,7 +1376,7 @@ test distribute_round__rejects_wrong_round_number() {
           stake_credential: None,
         },
         value: group_in_value,
-        datum: InlineDatum(group_datum),
+        datum: InlineDatum(cip68_with_group(group_datum)),
         reference_script: None,
       },
     }
@@ -1376,7 +1388,7 @@ test distribute_round__rejects_wrong_round_number() {
       },
       value: group_in_value,
       datum: InlineDatum(
-        GroupDatum { ..group_datum, last_distributed_round: 1 },
+        cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 1 }),
       ),
       reference_script: None,
     }
@@ -1408,7 +1420,7 @@ test distribute_round__rejects_wrong_round_number() {
     }
 
   // round_number=1 but rounds_paid=0 → member_at_correct_round = False → returns False
-  !validate_distribute(
+  !validate_distribute_treasury(
     tp,
     1,
     0,
@@ -1432,12 +1444,12 @@ test distribute_round__rejects_unchanged_group_round() {
   expect Some(old_group_out) = list.at(outputs, 1)
   expect Some(borrower_out) = list.at(outputs, 2)
   expect InlineDatum(gd_data) = old_group_out.datum
-  expect gd: GroupDatum = gd_data
+  expect GroupCip68Datum { extra: gd, .. } = gd_data
   // Replace group output with stale last_distributed_round = -1
   let stale_group_out =
     Output {
       ..old_group_out,
-      datum: InlineDatum(GroupDatum { ..gd, last_distributed_round: -1 }),
+      datum: InlineDatum(cip68_with_group(GroupDatum { ..gd, last_distributed_round: -1 })),
     }
 
   let bad_tx =
@@ -1448,7 +1460,7 @@ test distribute_round__rejects_unchanged_group_round() {
       validity_range,
     }
 
-  !validate_distribute(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // ─── validate_exit_group ──────────────────────────────────────────────────────
@@ -1474,7 +1486,7 @@ test exit_group__accepts_early_exit_with_penalty() {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(active_group_datum),
+        datum: InlineDatum(cip68_with_group(active_group_datum)),
         reference_script: None,
       },
     }
@@ -1512,7 +1524,7 @@ test exit_group__accepts_early_exit_with_penalty() {
       validity_range: interval.after(current_time),
     }
 
-  validate_exit_group(tp, account_policy(), 0, 1, 1, 0, datum, tx)
+  validate_exit_treasury(tp, account_policy(), 0, 1, 1, 0, datum, tx)
 }
 
 // Mature exit: group is_active=False → burn path
@@ -1535,7 +1547,7 @@ test exit_group__accepts_mature_exit_with_burn() {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(inactive_group_datum),
+        datum: InlineDatum(cip68_with_group(inactive_group_datum)),
         reference_script: None,
       },
     }
@@ -1556,7 +1568,7 @@ test exit_group__accepts_mature_exit_with_burn() {
       validity_range: interval.after(500),
     }
 
-  validate_exit_group(tp, account_policy(), 0, 0, 1, 0, datum, tx)
+  validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, datum, tx)
 }
 
 // fail: expect TreasuryState crashes when datum is PenaltyState
@@ -1583,7 +1595,7 @@ test exit_group__rejects_penalty_state_datum() fail {
       validity_range: interval.after(current_time),
     }
 
-  validate_exit_group(tp, account_policy(), 0, 0, 1, 0, penalty_datum, tx)
+  validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, penalty_datum, tx)
 }
 
 // Member input holds no token matching member_reference_tokenname → member_authorized fails
@@ -1641,7 +1653,7 @@ test exit_group__rejects_member_input_without_user_token() {
       validity_range: interval.after(current_time),
     }
 
-  !validate_exit_group(tp, account_policy(), 0, 1, 1, 0, datum, tx)
+  !validate_exit_treasury(tp, account_policy(), 0, 1, 1, 0, datum, tx)
 }
 
 // Mature exit path: group inactive but no burn — token_burned fails
@@ -1664,7 +1676,7 @@ test exit_group__rejects_mature_exit_without_burn() {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(inactive_group_datum),
+        datum: InlineDatum(cip68_with_group(inactive_group_datum)),
         reference_script: None,
       },
     }
@@ -1683,7 +1695,7 @@ test exit_group__rejects_mature_exit_without_burn() {
       validity_range: interval.after(500),
     }
 
-  !validate_exit_group(tp, account_policy(), 0, 0, 1, 0, datum, tx)
+  !validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, datum, tx)
 }
 
 test exit_group__rejects_early_exit_missing_penalty_fee() {
@@ -1723,7 +1735,7 @@ test exit_group__rejects_early_exit_missing_penalty_fee() {
       validity_range: interval.after(current_time),
     }
 
-  !validate_exit_group(tp, account_policy(), 0, 1, 1, 0, datum, tx)
+  !validate_exit_treasury(tp, account_policy(), 0, 1, 1, 0, datum, tx)
 }
 
 // Penalty output holds exactly penalty_fee — member reclaims the rest as change
@@ -1764,7 +1776,7 @@ test exit_group__accepts_member_reclaims_refund() {
       validity_range: interval.after(current_time),
     }
 
-  validate_exit_group(tp, account_policy(), 0, 1, 1, 0, datum, tx)
+  validate_exit_treasury(tp, account_policy(), 0, 1, 1, 0, datum, tx)
 }
 
 // Pre-cycle exit: current_time < start_time → free exit (token burned, no penalty)
@@ -1792,7 +1804,7 @@ test exit_group__accepts_pre_cycle_exit_without_penalty() {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(pre_cycle_group_datum),
+        datum: InlineDatum(cip68_with_group(pre_cycle_group_datum)),
         reference_script: None,
       },
     }
@@ -1811,7 +1823,7 @@ test exit_group__accepts_pre_cycle_exit_without_penalty() {
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
       datum: InlineDatum(
-        GroupDatum { ..pre_cycle_group_datum, member_count: 0 },
+        cip68_with_group(GroupDatum { ..pre_cycle_group_datum, member_count: 0 }),
       ),
       reference_script: None,
     }
@@ -1826,7 +1838,7 @@ test exit_group__accepts_pre_cycle_exit_without_penalty() {
       validity_range: interval.after(1500),
     }
 
-  validate_exit_group(tp, account_policy(), 0, 0, 1, 0, datum, tx)
+  validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, datum, tx)
 }
 
 // In-cycle burn attempt: is_early_exit = True but no penalty output — expect PenaltyState crashes
@@ -1849,7 +1861,7 @@ test exit_group__rejects_in_cycle_burn_without_penalty() fail {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(active_group_datum),
+        datum: InlineDatum(cip68_with_group(active_group_datum)),
         reference_script: None,
       },
     }
@@ -1871,7 +1883,7 @@ test exit_group__rejects_in_cycle_burn_without_penalty() fail {
       validity_range: interval.after(current_time),
     }
 
-  validate_exit_group(tp, account_policy(), 0, 0, 1, 0, datum, tx)
+  validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, datum, tx)
 }
 
 // In-cycle early exit: group output member_count not decremented — group_count_decremented fails
@@ -1913,7 +1925,7 @@ test exit_group__rejects_early_exit_without_group_count_decrement() {
       validity_range: interval.after(current_time),
     }
 
-  !validate_exit_group(tp, account_policy(), 0, 1, 1, 0, datum, tx)
+  !validate_exit_treasury(tp, account_policy(), 0, 1, 1, 0, datum, tx)
 }
 
 // ExitGroup: treasury datum's group_reference_tokenname mismatches actual group input
@@ -1936,7 +1948,7 @@ test exit_group__rejects_wrong_group_link() {
         },
         value: assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(inactive_group_datum),
+        datum: InlineDatum(cip68_with_group(inactive_group_datum)),
         reference_script: None,
       },
     }
@@ -1964,7 +1976,7 @@ test exit_group__rejects_wrong_group_link() {
       validity_range: interval.after(500),
     }
 
-  !validate_exit_group(tp, account_policy(), 0, 0, 1, 0, wrong_datum, tx)
+  !validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, wrong_datum, tx)
 }
 
 // ─── validate_claim_penalty ──────────────────────────────────────────

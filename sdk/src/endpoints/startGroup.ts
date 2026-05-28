@@ -5,10 +5,12 @@ import {
   RedeemerBuilder,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
+import { GroupCip68Datum, GroupCip68DatumSchema, GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 import {
   getScriptAddress,
+  parseGroupCip68Datum,
+  buildGroupCip68Datum,
   getWalletAddress,
   parseSafeDatum,
   patchInlineDatum,
@@ -56,7 +58,8 @@ export const unsignedStartGroupTxProgram = (
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
     const adminUtxo = patchInlineDatum(adminUtxoRaw);
 
-    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
+    const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
+    const groupDatum = groupCip68.groupDatum;
 
     const groupRefAsset = Object.keys(groupUtxo.assets).find((k) =>
       k.startsWith(groupPolicyId!),
@@ -115,7 +118,7 @@ export const unsignedStartGroupTxProgram = (
       .collectFrom([groupUtxo], redeemer)
       .pay.ToContract(
         groupAddress,
-        { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
+        { kind: "inline", value: buildGroupCip68Datum(groupCip68.metadata, groupCip68.version, updatedGroupDatum) },
         groupUtxo.assets,
       )
       .pay.ToAddress(adminAddress, { [groupUserUnit]: 1n })

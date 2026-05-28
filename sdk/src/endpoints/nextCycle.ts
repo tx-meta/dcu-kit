@@ -7,7 +7,7 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
-  GroupDatum,
+  GroupCip68Datum, GroupCip68DatumSchema, GroupDatum,
   GroupSpendRedeemer,
   TreasuryDatum,
   TreasuryDatumSchema,
@@ -21,6 +21,8 @@ import {
 } from "../core/validators/constants.js";
 import {
   getScriptAddress,
+  parseGroupCip68Datum,
+  buildGroupCip68Datum,
   getWalletAddress,
   parseSafeDatum,
   patchInlineDatum,
@@ -69,7 +71,8 @@ export const unsignedNextCycleTxProgram = (
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
     const adminUtxo = patchInlineDatum(adminUtxoRaw);
 
-    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
+    const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
+    const groupDatum = groupCip68.groupDatum;
 
     if (!groupDatum.is_started) {
       return yield* Effect.fail(
@@ -261,7 +264,7 @@ export const unsignedNextCycleTxProgram = (
     // Output 0: group (reset). Outputs 1..n: treasury UTxOs (reset, ADA preserved).
     const withGroupOutput = baseTx.pay.ToContract(
       groupAddress,
-      { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
+      { kind: "inline", value: buildGroupCip68Datum(groupCip68.metadata, groupCip68.version, updatedGroupDatum) },
       groupUtxo.assets,
     );
 
