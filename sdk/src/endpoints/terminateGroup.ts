@@ -167,7 +167,7 @@ export const unsignedTerminateGroupTxProgram = (
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            TerminateGroup: {
+            ClaimPenalty: {
               group_input_index: inputIndices[0],
               admin_input_index: inputIndices[1],
             },
@@ -181,7 +181,7 @@ export const unsignedTerminateGroupTxProgram = (
     // ignores all redeemer fields. Use a plain redeemer to avoid sharing a
     // RedeemerBuilder between spend and mint contexts.
     const mintBurnRedeemer = Data.to(
-      { TerminateGroup: { group_input_index: 0n, admin_input_index: 0n } },
+      { ClaimPenalty: { group_input_index: 0n, admin_input_index: 0n } },
       TreasuryRedeemer,
     );
 
@@ -211,7 +211,7 @@ export const unsignedTerminateGroupTxProgram = (
         Effect.mapError(
           (e) =>
             new TransactionBuildError({
-              operation: "terminateGroup",
+              operation: "claimPenalty",
               error: String(e),
             }),
         ),

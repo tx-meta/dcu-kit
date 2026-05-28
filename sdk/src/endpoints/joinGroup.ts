@@ -167,7 +167,7 @@ export const unsignedJoinGroupTxProgram = (
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            MemberJoin: {
+            Join: {
               group_ref_token_name: groupRefName,
               member_token_name: accountAssetName,
               group_input_index: inputIndices[0],
@@ -206,13 +206,13 @@ export const unsignedJoinGroupTxProgram = (
     );
 
     // Route joining_fee to admin wallet when non-zero.
-    // Aiken checks: list.any(outputs, o -> pkh == admin_payment_credential && qty >= joining_fee)
+    // Aiken checks: list.any(outputs, o -> pkh == creator_payment_credential && qty >= joining_fee)
     const network = lucid.config().network!;
     const adminFeeAddress =
       groupDatum.joining_fee > 0n
         ? credentialToAddress(network, {
             type: "Key",
-            hash: groupDatum.admin_payment_credential,
+            hash: groupDatum.creator_payment_credential,
           })
         : null;
     const adminFeeAssets: Assets | null =

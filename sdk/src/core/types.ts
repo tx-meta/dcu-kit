@@ -3,8 +3,8 @@ import { Data } from "@lucid-evolution/lucid";
 // --- Account Validator Types ---
 
 export const AccountDatumSchema = Data.Object({
-  email_hash: Data.Bytes(),
-  phone_hash: Data.Bytes(),
+  display_name: Data.Bytes(),
+  contact: Data.Bytes(),
 });
 export type AccountDatum = Data.Static<typeof AccountDatumSchema>;
 export const AccountDatum = AccountDatumSchema as unknown as AccountDatum;
@@ -25,14 +25,14 @@ export const AccountRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    RemoveAccount: Data.Object({
+    CloseAccount: Data.Object({
       reference_token_name: Data.Bytes(),
       user_input_index: Data.Integer(),
       account_input_index: Data.Integer(),
     }),
   }),
   Data.Object({
-    DeleteAccount: Data.Object({
+    BurnAccount: Data.Object({
       reference_token_name: Data.Bytes(),
     }),
   }),
@@ -44,6 +44,7 @@ export const AccountRedeemer =
 // --- Group Validator Types ---
 
 export const GroupDatumSchema = Data.Object({
+  group_name: Data.Bytes(),
   contribution_fee_policyid: Data.Bytes(),
   contribution_fee_assetname: Data.Bytes(),
   contribution_fee: Data.Integer(),
@@ -56,14 +57,14 @@ export const GroupDatumSchema = Data.Object({
   grace_period_length: Data.Integer(),
   creator_bond: Data.Integer(),
   interval_length: Data.Integer(),
-  num_intervals: Data.Integer(),
+  num_rounds: Data.Integer(),
   max_members: Data.Integer(),
   member_count: Data.Integer(),
   is_active: Data.Boolean(),
   is_started: Data.Boolean(),
   start_time: Data.Integer(),
   last_distributed_round: Data.Integer(),
-  admin_payment_credential: Data.Bytes(),
+  creator_payment_credential: Data.Bytes(),
   member_token_names: Data.Array(Data.Bytes()),
 });
 
@@ -94,14 +95,14 @@ export const GroupSpendRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    RemoveGroup: Data.Object({
+    CloseGroup: Data.Object({
       group_ref_token_name: Data.Bytes(),
       admin_input_index: Data.Integer(),
       group_input_index: Data.Integer(),
     }),
   }),
   Data.Object({
-    MemberJoin: Data.Object({
+    Join: Data.Object({
       group_ref_token_name: Data.Bytes(),
       member_token_name: Data.Bytes(),
       group_input_index: Data.Integer(),
@@ -109,7 +110,7 @@ export const GroupSpendRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    MemberExit: Data.Object({
+    Exit: Data.Object({
       group_ref_token_name: Data.Bytes(),
       member_token_name: Data.Bytes(),
       group_input_index: Data.Integer(),
@@ -125,7 +126,7 @@ export const GroupSpendRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    DistributeRound: Data.Object({
+    Distribute: Data.Object({
       group_ref_token_name: Data.Bytes(),
       group_input_index: Data.Integer(),
       group_output_index: Data.Integer(),
@@ -166,7 +167,7 @@ export const TreasuryDatumSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    InsufficientCollateralState: Data.Object({
+    DefaultState: Data.Object({
       group_reference_tokenname: Data.Bytes(),
       member_reference_tokenname: Data.Bytes(),
       grace_expires_at: Data.Integer(),
@@ -189,7 +190,7 @@ export const TreasuryRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    TerminateGroup: Data.Object({
+    ClaimPenalty: Data.Object({
       group_input_index: Data.Integer(),
       admin_input_index: Data.Integer(),
     }),
@@ -229,14 +230,14 @@ export const TreasuryRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    UpdatePayoutCredential: Data.Object({
+    UpdatePayout: Data.Object({
       member_input_index: Data.Integer(),
       treasury_input_index: Data.Integer(),
       treasury_output_index: Data.Integer(),
     }),
   }),
   Data.Object({
-    ExtendGraceWindow: Data.Object({
+    ExtendGrace: Data.Object({
       group_ref_input_index: Data.Integer(),
       admin_input_index: Data.Integer(),
       treasury_input_index: Data.Integer(),

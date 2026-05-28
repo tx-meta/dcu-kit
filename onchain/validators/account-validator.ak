@@ -3,9 +3,9 @@ use cardano/address.{Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{OutputReference, Transaction}
 use dcu/account.{
-  AccountDatum, AccountRedeemer, CreateAccount, DeleteAccount, RemoveAccount,
-  UpdateAccount, validate_create_account, validate_delete_account,
-  validate_remove_account, validate_update_account,
+  AccountDatum, AccountRedeemer, BurnAccount, CloseAccount, CreateAccount,
+  UpdateAccount, validate_burn_account, validate_close_account,
+  validate_create_account, validate_update_account,
 } as account_types
 
 // account_validator
@@ -15,10 +15,10 @@ use dcu/account.{
 // User NFT (prefix-222) held in the member's wallet.
 //
 // mint  — CreateAccount: issue ref + user NFT pair
-//       — DeleteAccount: burn both tokens (called alongside RemoveAccount spend)
+//       — BurnAccount:   burn both tokens (called alongside CloseAccount spend)
 //
 // spend — UpdateAccount: update AccountDatum, requires user NFT as proof
-//       — RemoveAccount: consume account UTxO + burn ref token, requires user NFT
+//       — CloseAccount:  consume account UTxO + burn ref token, requires user NFT
 validator account {
   mint(redeemer: AccountRedeemer, policy_id: PolicyId, tx: Transaction) {
     let Transaction { inputs, outputs, mint, .. } = tx
@@ -34,10 +34,10 @@ validator account {
           mint,
         )
 
-      DeleteAccount { reference_token_name } ->
-        validate_delete_account(policy_id, reference_token_name, mint)
+      BurnAccount { reference_token_name } ->
+        validate_burn_account(policy_id, reference_token_name, mint)
 
-      // UpdateAccount and RemoveAccount are spend redeemers — reject at mint
+      // UpdateAccount and CloseAccount are spend redeemers — reject at mint
       _ -> fail
     }
   }
@@ -82,7 +82,7 @@ validator account {
         )
       }
 
-      RemoveAccount {
+      CloseAccount {
         reference_token_name,
         user_input_index,
         account_input_index,
@@ -91,7 +91,7 @@ validator account {
         expect Some(account_input) = list.at(inputs, account_input_index)
         expect account_input.output_reference == utxo
 
-        validate_remove_account(
+        validate_close_account(
           policy_id,
           reference_token_name,
           user_input_index,
@@ -101,7 +101,7 @@ validator account {
         )
       }
 
-      // CreateAccount and DeleteAccount are mint redeemers — reject at spend
+      // CreateAccount and BurnAccount are mint redeemers — reject at spend
       _ -> fail
     }
   }

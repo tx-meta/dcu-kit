@@ -4,11 +4,11 @@ use cardano/address.{Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{OutputReference, Transaction}
 use dcu/group.{
-  BurnGroup, CreateGroup, DistributeRound, GroupDatum, GroupMintRedeemer,
-  GroupSpendRedeemer, MemberExit, MemberJoin, NextCycle, RemoveGroup, StartGroup,
-  UpdateGroup, validate_create_group, validate_distribute_round_group,
-  validate_member_exit, validate_member_join, validate_next_cycle_group,
-  validate_remove_group, validate_start_group, validate_update_group,
+  BurnGroup, CloseGroup, CreateGroup, Distribute, Exit, GroupDatum,
+  GroupMintRedeemer, GroupSpendRedeemer, Join, NextCycle, StartGroup, UpdateGroup,
+  validate_close_group, validate_create_group, validate_distribute_group,
+  validate_exit, validate_join, validate_next_cycle_group, validate_start_group,
+  validate_update_group,
 }
 
 validator group_validator(treasury_policy_id: PolicyId) {
@@ -82,12 +82,12 @@ validator group_validator(treasury_policy_id: PolicyId) {
         )
       }
 
-      RemoveGroup { group_ref_token_name, admin_input_index, group_input_index } -> {
+      CloseGroup { group_ref_token_name, admin_input_index, group_input_index } -> {
         // [security]: self-reference — same pattern as UpdateGroup above
         expect Some(group_input) = list.at(inputs, group_input_index)
         expect group_input.output_reference == utxo
 
-        validate_remove_group(
+        validate_close_group(
           policy_id,
           group_ref_token_name,
           admin_input_index,
@@ -97,7 +97,7 @@ validator group_validator(treasury_policy_id: PolicyId) {
         )
       }
 
-      MemberJoin {
+      Join {
         group_ref_token_name,
         member_token_name,
         group_input_index,
@@ -107,7 +107,7 @@ validator group_validator(treasury_policy_id: PolicyId) {
         expect Some(group_input) = list.at(inputs, group_input_index)
         expect group_input.output_reference == utxo
 
-        validate_member_join(
+        validate_join(
           policy_id,
           treasury_policy_id,
           group_ref_token_name,
@@ -120,7 +120,7 @@ validator group_validator(treasury_policy_id: PolicyId) {
         )
       }
 
-      MemberExit {
+      Exit {
         group_ref_token_name,
         member_token_name,
         group_input_index,
@@ -130,7 +130,7 @@ validator group_validator(treasury_policy_id: PolicyId) {
         expect Some(group_input) = list.at(inputs, group_input_index)
         expect group_input.output_reference == utxo
 
-        validate_member_exit(
+        validate_exit(
           policy_id,
           treasury_policy_id,
           group_ref_token_name,
@@ -165,7 +165,7 @@ validator group_validator(treasury_policy_id: PolicyId) {
         )
       }
 
-      DistributeRound {
+      Distribute {
         group_ref_token_name,
         group_input_index,
         group_output_index,
@@ -175,7 +175,7 @@ validator group_validator(treasury_policy_id: PolicyId) {
         expect Some(group_input) = list.at(inputs, group_input_index)
         expect group_input.output_reference == utxo
 
-        validate_distribute_round_group(
+        validate_distribute_group(
           policy_id,
           group_ref_token_name,
           group_input_index,

@@ -124,7 +124,7 @@ export const unsignedDeleteAccountTxProgram = (
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            RemoveAccount: {
+            CloseAccount: {
               reference_token_name: refTokenName,
               user_input_index: inputIndices[0],
               account_input_index: inputIndices[1],
@@ -136,7 +136,7 @@ export const unsignedDeleteAccountTxProgram = (
     };
 
     const mintRedeemer = Data.to(
-      { DeleteAccount: { reference_token_name: refTokenName } },
+      { BurnAccount: { reference_token_name: refTokenName } },
       AccountRedeemer,
     );
 

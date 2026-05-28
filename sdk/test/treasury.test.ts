@@ -72,7 +72,7 @@ describe("Treasury Endpoints", () => {
   );
 
   // --- Exit Group (Standard) ---
-  // With num_intervals=0 (no startGroup called), maturityTime = start_time.
+  // With num_rounds=0 (no startGroup called), maturityTime = start_time.
   // Any exit at or after start_time is a mature exit (token burn, full refund).
   it.effect("should allow a member to exit", () =>
     Effect.gen(function* () {
@@ -92,7 +92,7 @@ describe("Treasury Endpoints", () => {
   );
 
   // --- Terminate Group ---
-  // startGroup (with >= 2 members) sets num_intervals=2 and anchors start_time.
+  // startGroup (with >= 2 members) sets num_rounds=2 and anchors start_time.
   // An exit shortly after startGroup is an early exit → PenaltyState created.
   // terminateGroup then burns that PenaltyState UTxO.
   it.effect("should allow terminating a membership (burn)", () =>
@@ -126,7 +126,7 @@ describe("Treasury Endpoints", () => {
         userSeed: users.user2.seedPhrase,
       });
 
-      // startGroup: seals membership, sets num_intervals=2, start_time=now.
+      // startGroup: seals membership, sets num_rounds=2, start_time=now.
       yield* startGroupTestCase(context, { groupUtxo });
 
       // user1 early exit: now < start_time + 2*interval_length → PenaltyState created.
@@ -195,7 +195,7 @@ describe("Treasury Endpoints", () => {
           userSeed: users.user2.seedPhrase,
         });
 
-        // startGroup: sets num_intervals=2, is_started=true, start_time=now.
+        // startGroup: sets num_rounds=2, is_started=true, start_time=now.
         yield* startGroupTestCase(context, { groupUtxo });
 
         // Distribute round 0: currentSlot=0%2=0 → user1 receives the pot.
@@ -278,7 +278,7 @@ describe("Treasury Endpoints", () => {
   );
 
   // --- Negative: exitGroup after treasury UTxO has been burned ---
-  // With num_intervals=0 (no startGroup), every exit is a mature exit (burn).
+  // With num_rounds=0 (no startGroup), every exit is a mature exit (burn).
   // After the burn, no TreasuryState exists for that account → second exit fails.
   it.effect("should fail exiting when the treasury UTxO no longer exists", () =>
     Effect.gen(function* () {
@@ -319,7 +319,7 @@ describe("Treasury Endpoints", () => {
   );
 
   // --- Positive: joinGroup routes joining_fee to admin wallet ---
-  // When joining_fee > 0, the SDK adds an output to admin_payment_credential.
+  // When joining_fee > 0, the SDK adds an output to creator_payment_credential.
   // The Aiken validator enforces this: joining_fee_routed? fails if the output is absent.
   it.effect(
     "should route joining_fee to the admin wallet when joining_fee > 0",
@@ -328,14 +328,14 @@ describe("Treasury Endpoints", () => {
         const base = yield* setupBase();
         const { lucid, users } = base.context;
 
-        // Derive the group creator's PKH so admin_payment_credential points to a real wallet.
+        // Derive the group creator's PKH so creator_payment_credential points to a real wallet.
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
         const adminAddress = yield* getWalletAddress(lucid);
         const adminPkh = paymentCredentialOf(adminAddress).hash;
 
         const { groupUtxo } = yield* setupGroup(base, {
           joining_fee: 1_000_000n,
-          admin_payment_credential: adminPkh,
+          creator_payment_credential: adminPkh,
         });
         const { userUtxo } = yield* setupAccount(base);
         if (!userUtxo)
@@ -488,7 +488,7 @@ describe("Treasury Endpoints", () => {
         userSeed: users.user2.seedPhrase,
       });
 
-      // startGroup: seals membership, num_intervals=2, start_time = emulator.now().
+      // startGroup: seals membership, num_rounds=2, start_time = emulator.now().
       yield* startGroupTestCase(context, { groupUtxo });
 
       // Distribute round 0 then round 1. The endpoint reads last_distributed_round
@@ -566,10 +566,10 @@ describe("Treasury Endpoints", () => {
       }),
   );
 
-  // --- UpdatePayoutCredential ---
+  // --- UpdatePayout ---
   // Member updates their payout destination to their current wallet address.
   it.effect(
-    "should allow a member to update their payout credential (UpdatePayoutCredential)",
+    "should allow a member to update their payout credential (UpdatePayout)",
     () =>
       Effect.gen(function* () {
         const base = yield* setupBase();
@@ -592,9 +592,9 @@ describe("Treasury Endpoints", () => {
       }),
   );
 
-  // --- ExtendGraceWindow ---
+  // --- ExtendGrace ---
   // User1 joins with an intentionally low deposit (3 ADA = 1.5 × contribution_fee).
-  // After distribute round 0, user1's balance = 3M - 2M = 1M < 2M → InsufficientCollateralState.
+  // After distribute round 0, user1's balance = 3M - 2M = 1M < 2M → DefaultState.
   // Admin then extends the grace window (grace_extensions_used 0 → 1).
   //
   // Why overrideDepositLovelace = 3_000_000?
@@ -602,7 +602,7 @@ describe("Treasury Endpoints", () => {
   //   After one round: 4M - 2M = 2M which is NOT < 2M (no ICS trigger).
   //   With 3M: 3M - 2M = 1M < 2M → ICS triggered on round 0.
   it.effect(
-    "should allow admin to extend a member's grace window (ExtendGraceWindow)",
+    "should allow admin to extend a member's grace window (ExtendGrace)",
     () =>
       Effect.gen(function* () {
         const base = yield* setupBase();
@@ -652,7 +652,7 @@ describe("Treasury Endpoints", () => {
 
         yield* startGroupTestCase(context, { groupUtxo });
 
-        // Distribute round 0: user1 has 3M - 2M = 1M < 2M → InsufficientCollateralState.
+        // Distribute round 0: user1 has 3M - 2M = 1M < 2M → DefaultState.
         yield* distributePayoutTestCase(context, {
           groupUtxo,
           callerSeed: users.user1.seedPhrase,
@@ -710,7 +710,7 @@ describe("Treasury Endpoints", () => {
         userSeed: users.user2.seedPhrase,
       });
 
-      // Seal membership: num_intervals=2, start_time=now.
+      // Seal membership: num_rounds=2, start_time=now.
       yield* startGroupTestCase(context, { groupUtxo });
 
       // Distribute all 2 rounds (one awaitBlock = one interval).
@@ -750,7 +750,7 @@ describe("Treasury Endpoints", () => {
       );
       expect(groupDatum.is_started).toBe(false);
       expect(groupDatum.last_distributed_round).toBe(-1n);
-      expect(groupDatum.num_intervals).toBe(0n);
+      expect(groupDatum.num_rounds).toBe(0n);
       expect(groupDatum.start_time).toBe(0n);
       // member_count and member_token_names preserved
       expect(groupDatum.member_count).toBe(2n);

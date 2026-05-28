@@ -36,8 +36,8 @@ pub type TreasuryDatum {
   }
   // Transition state for members whose balance drops below contribution_fee.
   // Admin may grant up to max_grace_extensions extensions; after that,
-  // the membership is considered forfeit and the admin withdraws via TerminateGroup.
-  InsufficientCollateralState {
+  // the membership is considered forfeit and the admin withdraws via ClaimPenalty.
+  DefaultState {
     group_reference_tokenname: AssetName,
     member_reference_tokenname: AssetName,
     // POSIX ms timestamp when the current grace window expires.
@@ -57,7 +57,7 @@ pub type TreasuryRedeemer {
     member_input_index: Int,
     treasury_output_index: Int,
   }
-  TerminateGroup {
+  ClaimPenalty {
     // Group input (spending) to derive the group policy_id for admin token check.
     group_input_index: Int,
     // Admin input holding the group (222) user token.
@@ -96,14 +96,14 @@ pub type TreasuryRedeemer {
     treasury_output_index: Int,
   }
   // Member updates their payout destination credential.
-  UpdatePayoutCredential {
+  UpdatePayout {
     member_input_index: Int,
     treasury_input_index: Int,
     treasury_output_index: Int,
   }
-  // Admin grants a grace window extension to a member in InsufficientCollateralState.
+  // Admin grants a grace window extension to a member in DefaultState.
   // grace_period_length (from the group datum) is passed from the entry point.
-  ExtendGraceWindow {
+  ExtendGrace {
     group_ref_input_index: Int,
     admin_input_index: Int,
     treasury_input_index: Int,
@@ -277,7 +277,7 @@ pub fn validate_join_group(
         fn(o) {
           when o.address.payment_credential is {
             VerificationKey(pkh) ->
-              pkh == group.admin_payment_credential && assets.quantity_of(
+              pkh == group.creator_payment_credential && assets.quantity_of(
                 o.value,
                 group.joining_fee_policyid,
                 group.joining_fee_assetname,
@@ -361,14 +361,14 @@ pub fn validate_join_group(
   }
 }
 
-// ─── Mint: TerminateGroup / ExitGroup (burn) ──────────────────────────────────
+// ─── Mint: ClaimPenalty / ExitGroup (burn) ──────────────────────────────────
 
-// validate_terminate_group
+// validate_claim_penalty_mint
 // ─────────────────────────────────────────────────────────────────────────────
-// [spec TerminateGroup 1]: exactly one membership token is burned under this policy.
-//   Covers both PenaltyWithdraw (TerminateGroup redeemer) and mature ExitGroup burn.
+// [spec ClaimPenalty 1]: exactly one membership token is burned under this policy.
+//   Covers both PenaltyWithdraw (ClaimPenalty redeemer) and mature ExitGroup burn.
 // [security]: no net minting — prevents burn-and-remint attack.
-pub fn validate_terminate_group(own_policy_id: PolicyId, mint: Value) -> Bool {
+pub fn validate_claim_penalty_mint(own_policy_id: PolicyId, mint: Value) -> Bool {
   let minted_tokens = assets.tokens(mint, own_policy_id)
   // Exactly one entry, with quantity -1
   expect [Pair(_, qty)] = dict.to_pairs(minted_tokens)
@@ -377,7 +377,7 @@ pub fn validate_terminate_group(own_policy_id: PolicyId, mint: Value) -> Bool {
 
 // ─── Spend: DistributeRound ───────────────────────────────────────────────────
 
-// validate_distribute_round
+// validate_distribute
 // ─────────────────────────────────────────────────────────────────────────────
 // NOTE: self-reference check (own UTxO is at one of treasury_input_indices) is
 //       enforced at the entry point before this function.
@@ -393,7 +393,7 @@ pub fn validate_terminate_group(own_policy_id: PolicyId, mint: Value) -> Bool {
 //                           reduced by contribution_fee in the contribution asset
 // [spec DistributeRound 8]: own output at script address with membership token
 // [security]: treasury_input_indices and treasury_output_indices strictly ascending
-pub fn validate_distribute_round(
+pub fn validate_distribute(
   own_policy_id: PolicyId,
   round_number: Int,
   group_ref_input_index: Int,
@@ -446,7 +446,7 @@ pub fn validate_distribute_round(
 
   // [spec DistributeRound 6a]: find the primary member (assigned_slot == current_slot)
   // and check whether they have deferred their payout.
-  let current_slot = round_number % group.num_intervals
+  let current_slot = round_number % group.num_rounds
   expect Some((primary_cred, primary_is_deferred)) =
     list.find_map(
       treasury_input_indices,
@@ -476,10 +476,10 @@ pub fn validate_distribute_round(
     )
 
   // [spec DistributeRound 6b]: if the primary member is deferred, route payout to
-  // (current_slot + 1) % num_intervals instead; always reset is_deferred after distribute.
+  // (current_slot + 1) % num_rounds instead; always reset is_deferred after distribute.
   let effective_slot =
     if primary_is_deferred {
-      ( current_slot + 1 ) % group.num_intervals
+      ( current_slot + 1 ) % group.num_rounds
     } else {
       current_slot
     }
@@ -560,17 +560,17 @@ pub fn validate_distribute_round(
     )
   let balance_deducted = output_bal == input_bal - group.contribution_fee
 
-  // [spec DistributeRound 7a]: output datum transitions to InsufficientCollateralState
+  // [spec DistributeRound 7a]: output datum transitions to DefaultState
   // only when post-round balance is below threshold AND there are future rounds remaining.
-  // On the final round (round_number + 1 == num_intervals) a zero-balance member stays
+  // On the final round (round_number + 1 == num_rounds) a zero-balance member stays
   // in TreasuryState so they can exit via the standard mature-exit burn path.
-  let is_last_round = round_number + 1 == group.num_intervals
+  let is_last_round = round_number + 1 == group.num_rounds
   let transition_to_ics = output_bal < group.contribution_fee && !is_last_round
   let current_time = get_lower_bound(tx)
 
   let output_datum_correct =
     if transition_to_ics {
-      output_datum == InsufficientCollateralState {
+      output_datum == DefaultState {
         group_reference_tokenname,
         member_reference_tokenname,
         grace_expires_at: current_time + group.grace_period_length,
@@ -687,7 +687,7 @@ pub fn validate_exit_group(
   //   in_cycle   (active && past start && pre-maturity) → penalty exit, PenaltyState
   //   post_cycle (past maturity || inactive)            → free exit, token burned
   let maturity_time =
-    group.start_time + group.num_intervals * group.interval_length
+    group.start_time + group.num_rounds * group.interval_length
   let is_early_exit =
     group.is_active && group.start_time <= current_time && current_time < maturity_time
 
@@ -781,14 +781,14 @@ pub fn validate_exit_group(
   }
 }
 
-// ─── Spend: TerminateGroup ────────────────────────────────────────────────────
+// ─── Spend: ClaimPenalty ────────────────────────────────────────────────────
 
 // validate_spend_terminate_group
 // ─────────────────────────────────────────────────────────────────────────────
 // [spec PenaltyWithdraw 1]: datum must be PenaltyState
 // [spec PenaltyWithdraw 2]: membership token is burned (verified in mint handler)
 // [spec PenaltyWithdraw 3]: admin must hold the group (222) user token
-pub fn validate_spend_terminate_group(
+pub fn validate_claim_penalty(
   own_policy_id: PolicyId,
   datum: TreasuryDatum,
   group_policy_id: PolicyId,
@@ -990,19 +990,19 @@ pub fn validate_defer_round(
   }
 }
 
-// ─── Spend: UpdatePayoutCredential ────────────────────────────────────────────
+// ─── Spend: UpdatePayout ────────────────────────────────────────────
 
-// validate_update_payout_credential
+// validate_update_payout
 // ─────────────────────────────────────────────────────────────────────────────
 // Member updates their payout destination to their current wallet address.
 // The new credential is derived from the account token input — proving control.
 //
-// [spec UpdatePayoutCredential 1]: datum must be TreasuryState
-// [spec UpdatePayoutCredential 2]: member input holds the Account NFT
-// [spec UpdatePayoutCredential 3]: output datum: same but member_payment_credential
+// [spec UpdatePayout 1]: datum must be TreasuryState
+// [spec UpdatePayout 2]: member input holds the Account NFT
+// [spec UpdatePayout 3]: output datum: same but member_payment_credential
 //                                   = member's current wallet pkh
-// [spec UpdatePayoutCredential 4]: output ADA unchanged; output at script with token
-pub fn validate_update_payout_credential(
+// [spec UpdatePayout 4]: output ADA unchanged; output at script with token
+pub fn validate_update_payout(
   own_policy_id: PolicyId,
   account_policy_id: PolicyId,
   member_input_index: Int,
@@ -1013,7 +1013,7 @@ pub fn validate_update_payout_credential(
 ) -> Bool {
   let Transaction { inputs, outputs, .. } = tx
 
-  // [spec UpdatePayoutCredential 1]: datum must be TreasuryState — destructure all fields for reconstruction
+  // [spec UpdatePayout 1]: datum must be TreasuryState — destructure all fields for reconstruction
   expect TreasuryState {
     group_reference_tokenname: upd_group_tn,
     member_reference_tokenname,
@@ -1023,7 +1023,7 @@ pub fn validate_update_payout_credential(
     member_payment_credential: _old_pkh,
   } = datum
 
-  // [spec UpdatePayoutCredential 2]: member auth — account token proves identity
+  // [spec UpdatePayout 2]: member auth — account token proves identity
   let member_authorized =
     member_has_user_token(
       inputs,
@@ -1044,7 +1044,7 @@ pub fn validate_update_payout_credential(
   expect InlineDatum(output_datum_data) = own_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
 
-  // [spec UpdatePayoutCredential 3]: output datum: same but with new credential
+  // [spec UpdatePayout 3]: output datum: same but with new credential
   let expected_datum =
     TreasuryState {
       group_reference_tokenname: upd_group_tn,
@@ -1056,7 +1056,7 @@ pub fn validate_update_payout_credential(
     }
   let datum_correct = output_datum == expected_datum
 
-  // [spec UpdatePayoutCredential 4]: ADA unchanged
+  // [spec UpdatePayout 4]: ADA unchanged
   let input_ada = assets.lovelace_of(own_input.output.value)
   let output_ada = assets.lovelace_of(own_output.value)
   let ada_unchanged = output_ada == input_ada
@@ -1081,20 +1081,20 @@ pub fn validate_update_payout_credential(
   }
 }
 
-// ─── Spend: ExtendGraceWindow ─────────────────────────────────────────────────
+// ─── Spend: ExtendGrace ─────────────────────────────────────────────────
 
-// validate_extend_grace_window
+// validate_extend_grace
 // ─────────────────────────────────────────────────────────────────────────────
-// Admin grants an additional grace window to a member in InsufficientCollateralState.
+// Admin grants an additional grace window to a member in DefaultState.
 // grace_period_length is read from the group datum and passed from the entry point.
 //
-// [spec ExtendGraceWindow 1]: datum must be InsufficientCollateralState
-// [spec ExtendGraceWindow 2]: grace_extensions_used < max_grace_extensions
-// [spec ExtendGraceWindow 3]: admin holds the group (222) user token
-// [spec ExtendGraceWindow 4]: output datum: grace_extensions_used + 1,
+// [spec ExtendGrace 1]: datum must be DefaultState
+// [spec ExtendGrace 2]: grace_extensions_used < max_grace_extensions
+// [spec ExtendGrace 3]: admin holds the group (222) user token
+// [spec ExtendGrace 4]: output datum: grace_extensions_used + 1,
 //                              grace_expires_at + grace_period_length, all else frozen
-// [spec ExtendGraceWindow 5]: output ADA unchanged; output at script with token
-pub fn validate_extend_grace_window(
+// [spec ExtendGrace 5]: output ADA unchanged; output at script with token
+pub fn validate_extend_grace(
   own_policy_id: PolicyId,
   group_policy_id: PolicyId,
   grace_period_length: Int,
@@ -1106,8 +1106,8 @@ pub fn validate_extend_grace_window(
 ) -> Bool {
   let Transaction { inputs, outputs, .. } = tx
 
-  // [spec ExtendGraceWindow 1]: datum must be InsufficientCollateralState
-  expect InsufficientCollateralState {
+  // [spec ExtendGrace 1]: datum must be DefaultState
+  expect DefaultState {
     member_reference_tokenname,
     group_reference_tokenname,
     grace_expires_at,
@@ -1115,10 +1115,10 @@ pub fn validate_extend_grace_window(
     rounds_paid,
   } = datum
 
-  // [spec ExtendGraceWindow 2]: extension limit not yet reached
+  // [spec ExtendGrace 2]: extension limit not yet reached
   let extensions_available = grace_extensions_used < max_grace_extensions
 
-  // [spec ExtendGraceWindow 3]: admin auth via group (222) user token
+  // [spec ExtendGrace 3]: admin auth via group (222) user token
   let admin_token_name =
     cip68.prefix_222
       |> bytearray.concat(
@@ -1139,9 +1139,9 @@ pub fn validate_extend_grace_window(
   expect InlineDatum(output_datum_data) = own_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
 
-  // [spec ExtendGraceWindow 4]: output datum with extended grace window
+  // [spec ExtendGrace 4]: output datum with extended grace window
   let expected_datum =
-    InsufficientCollateralState {
+    DefaultState {
       group_reference_tokenname,
       member_reference_tokenname,
       grace_expires_at: grace_expires_at + grace_period_length,
@@ -1150,7 +1150,7 @@ pub fn validate_extend_grace_window(
     }
   let datum_correct = output_datum == expected_datum
 
-  // [spec ExtendGraceWindow 5]: ADA unchanged
+  // [spec ExtendGrace 5]: ADA unchanged
   let input_ada = assets.lovelace_of(own_input.output.value)
   let output_ada = assets.lovelace_of(own_output.value)
   let ada_unchanged = output_ada == input_ada
@@ -1188,7 +1188,7 @@ pub fn validate_extend_grace_window(
 // confirms the reset (is_started=False, last_distributed_round=-1).
 //
 // [spec NextCycle 1]: datum must be TreasuryState
-// [spec NextCycle 2]: rounds_paid == group.num_intervals (cycle complete)
+// [spec NextCycle 2]: rounds_paid == group.num_rounds (cycle complete)
 // [spec NextCycle 3]: group spending input at group_input_index has GroupDatum
 // [spec NextCycle 4]: group output is_started=False and last_distributed_round=-1
 // [spec NextCycle 5]: own output datum: rounds_paid=0, is_deferred=False, all else frozen
@@ -1222,7 +1222,7 @@ pub fn validate_next_cycle(
   expect group: GroupDatum = group_datum_data
 
   // [spec NextCycle 2]: this member's cycle is complete
-  let member_cycle_complete = rounds_paid == group.num_intervals
+  let member_cycle_complete = rounds_paid == group.num_rounds
 
   // [spec NextCycle 4]: group output confirms reset
   expect Some(group_output) = list.at(outputs, group_output_index)

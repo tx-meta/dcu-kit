@@ -8,11 +8,11 @@ use cardano/transaction.{
 use dcu/cip68
 use dcu/group.{GroupDatum}
 use dcu/treasury.{
-  InsufficientCollateralState, PenaltyState, TreasuryDatum, TreasuryState,
+  DefaultState, PenaltyState, TreasuryDatum, TreasuryState,
   max_grace_extensions, validate_contribute, validate_defer_round,
-  validate_distribute_round, validate_exit_group, validate_extend_grace_window,
-  validate_join_group, validate_spend_terminate_group, validate_terminate_group,
-  validate_update_payout_credential,
+  validate_distribute, validate_exit_group, validate_extend_grace,
+  validate_join_group, validate_claim_penalty, validate_claim_penalty_mint,
+  validate_update_payout,
 }
 use tests/common
 
@@ -42,10 +42,11 @@ fn group_ref_tn() -> assets.AssetName {
 }
 
 // Group datum for treasury tests. is_started=False (join tests need this).
-// num_intervals=3 kept so exit tests compute maturity_time = 0+3*1000 = 3000 correctly.
+// num_rounds=3 kept so exit tests compute maturity_time = 0+3*1000 = 3000 correctly.
 // Distribute tests override is_started=True and last_distributed_round=-1.
 fn test_group_datum() -> GroupDatum {
   GroupDatum {
+    group_name: "Test Group",
     contribution_fee_policyid: assets.ada_policy_id,
     contribution_fee_assetname: #"",
     contribution_fee: 2_000_000,
@@ -58,14 +59,14 @@ fn test_group_datum() -> GroupDatum {
     grace_period_length: 0,
     creator_bond: 0,
     interval_length: 1000,
-    num_intervals: 3,
+    num_rounds: 3,
     max_members: 30,
     member_count: 0,
     is_active: True,
     is_started: False,
     start_time: 0,
     last_distributed_round: -1,
-    admin_payment_credential: common.test_pkh(),
+    creator_payment_credential: common.test_pkh(),
     member_token_names: [],
   }
 }
@@ -117,9 +118,9 @@ fn test_treasury_state(assigned_slot: Int) -> TreasuryDatum {
   build_treasury_state(assigned_slot, group_ref_tn(), 0, False)
 }
 
-// InsufficientCollateralState datum for extend_grace_window tests
+// DefaultState datum for extend_grace_window tests
 fn test_insufficient_collateral_state() -> TreasuryDatum {
-  InsufficientCollateralState {
+  DefaultState {
     group_reference_tokenname: group_ref_tn(),
     member_reference_tokenname: member_tn(),
     grace_expires_at: 5000,
@@ -261,17 +262,17 @@ fn test_group_input_with_member_count(member_count: Int) -> Input {
   }
 }
 
-// ─── validate_terminate_group (mint: burn path) ───────────────────────────────
+// ─── validate_claim_penalty_mint (mint: burn path) ───────────────────────────────
 
 test terminate_group__accepts_valid_burn() {
   let mint = assets.from_asset(treasury_policy(), member_tn(), -1)
-  validate_terminate_group(treasury_policy(), mint)
+  validate_claim_penalty_mint(treasury_policy(), mint)
 }
 
 /// validate_terminate_group returns False (not crash) when qty != -1 — use !
 test terminate_group__rejects_positive_qty() {
   let mint = assets.from_asset(treasury_policy(), member_tn(), 1)
-  !validate_terminate_group(treasury_policy(), mint)
+  !validate_claim_penalty_mint(treasury_policy(), mint)
 }
 
 // fail annotation: expect crashes when two tokens in the dict
@@ -280,7 +281,7 @@ test terminate_group__rejects_two_tokens_burned() fail {
   let mint =
     assets.from_asset(treasury_policy(), member_tn(), -1)
       |> assets.merge(assets.from_asset(treasury_policy(), other_tn, -1))
-  validate_terminate_group(treasury_policy(), mint)
+  validate_claim_penalty_mint(treasury_policy(), mint)
 }
 
 // ─── validate_join_group ──────────────────────────────────────────────────────
@@ -514,7 +515,7 @@ test join_group__rejects_insufficient_fees() {
   !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
-// joining_fee > 0 but no output at admin_payment_credential — joining_fee_routed fails
+// joining_fee > 0 but no output at creator_payment_credential — joining_fee_routed fails
 test join_group__rejects_joining_fee_not_routed_to_admin() {
   let tp = treasury_policy()
 
@@ -572,7 +573,7 @@ test join_group__rejects_joining_fee_not_routed_to_admin() {
   !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
-// joining_fee > 0 and admin output at admin_payment_credential — should pass
+// joining_fee > 0 and admin output at creator_payment_credential — should pass
 test join_group__accepts_joining_fee_routed_to_admin() {
   let tp = treasury_policy()
 
@@ -614,7 +615,7 @@ test join_group__accepts_joining_fee_routed_to_admin() {
       datum: InlineDatum(GroupDatum { ..group_datum_with_fee, member_count: 1 }),
       reference_script: None,
     }
-  // Admin payment output at admin_payment_credential (test_pkh) with >= joining_fee (1M)
+  // Admin payment output at creator_payment_credential (test_pkh) with >= joining_fee (1M)
   let admin_output =
     Output {
       address: Address {
@@ -1025,9 +1026,9 @@ test join_group__rejects_group_output_without_member_count_increment() {
   !validate_join_group(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
-// ─── validate_distribute_round ────────────────────────────────────────────────
+// ─── validate_distribute ────────────────────────────────────────────────
 //
-// Setup: round_number = 0, group.num_intervals = 3
+// Setup: round_number = 0, group.num_rounds = 3
 // current_slot = 0 % 3 = 0 → borrower has assigned_slot = 0
 // Treasury input: 5M ADA, rounds_paid = 0
 // Treasury output: 3M ADA (5M - 2M contribution_fee), rounds_paid = 1, is_deferred = False
@@ -1044,7 +1045,7 @@ fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
   let group_datum =
     GroupDatum {
       ..test_group_datum(),
-      num_intervals: 3,
+      num_rounds: 3,
       is_started: True,
       last_distributed_round: -1,
     }
@@ -1114,7 +1115,7 @@ fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
 
 test distribute_round__accepts_valid_round() {
   let (tx, datum, utxo) = setup_distribute_round()
-  validate_distribute_round(
+  validate_distribute(
     treasury_policy(),
     0,
     // group_ref_input_index
@@ -1141,7 +1142,7 @@ test distribute_round__rejects_penalty_state_datum() fail {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
     }
-  validate_distribute_round(
+  validate_distribute(
     treasury_policy(),
     0,
     0,
@@ -1178,7 +1179,7 @@ test distribute_round__rejects_no_ada_reduction() {
       validity_range,
     }
 
-  !validate_distribute_round(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // Treasury output datum has stale rounds_paid (0 instead of 1) — output_datum_correct fails
@@ -1202,7 +1203,7 @@ test distribute_round__rejects_wrong_datum_update() {
       validity_range,
     }
 
-  !validate_distribute_round(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // Borrower output at a script address instead of a wallet — borrower_at_correct_wallet fails
@@ -1230,7 +1231,7 @@ test distribute_round__rejects_borrower_output_at_script() {
       validity_range,
     }
 
-  !validate_distribute_round(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // current_slot = 0, but only treasury input has assigned_slot = 1
@@ -1242,7 +1243,7 @@ test distribute_round__rejects_when_borrower_absent() fail {
   let group_datum =
     GroupDatum {
       ..test_group_datum(),
-      num_intervals: 3,
+      num_rounds: 3,
       is_started: True,
       last_distributed_round: -1,
     }
@@ -1302,7 +1303,7 @@ test distribute_round__rejects_when_borrower_absent() fail {
     }
 
   // list.find_map returns None → expect Some(borrower_cred) crashes
-  validate_distribute_round(
+  validate_distribute(
     tp,
     0,
     0,
@@ -1319,7 +1320,7 @@ test distribute_round__rejects_when_borrower_absent() fail {
 // Duplicate output indices: [0, 0] not strictly ascending — indices_in_ascending_order fails
 test distribute_round__rejects_duplicate_output_index() {
   let (tx, datum, utxo) = setup_distribute_round()
-  !validate_distribute_round(
+  !validate_distribute(
     treasury_policy(),
     0,
     0,
@@ -1344,7 +1345,7 @@ test distribute_round__rejects_wrong_round_number() {
   let group_datum =
     GroupDatum {
       ..test_group_datum(),
-      num_intervals: 3,
+      num_rounds: 3,
       is_started: True,
       last_distributed_round: 0,
     }
@@ -1407,7 +1408,7 @@ test distribute_round__rejects_wrong_round_number() {
     }
 
   // round_number=1 but rounds_paid=0 → member_at_correct_round = False → returns False
-  !validate_distribute_round(
+  !validate_distribute(
     tp,
     1,
     0,
@@ -1447,7 +1448,7 @@ test distribute_round__rejects_unchanged_group_round() {
       validity_range,
     }
 
-  !validate_distribute_round(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // ─── validate_exit_group ──────────────────────────────────────────────────────
@@ -1966,7 +1967,7 @@ test exit_group__rejects_wrong_group_link() {
   !validate_exit_group(tp, account_policy(), 0, 0, 1, 0, wrong_datum, tx)
 }
 
-// ─── validate_spend_terminate_group ──────────────────────────────────────────
+// ─── validate_claim_penalty ──────────────────────────────────────────
 
 test spend_terminate_group__accepts_penalty_burn() {
   let tp = treasury_policy()
@@ -1976,7 +1977,7 @@ test spend_terminate_group__accepts_penalty_burn() {
       member_reference_tokenname: member_tn(),
     }
   let mint = assets.from_asset(tp, member_tn(), -1)
-  validate_spend_terminate_group(
+  validate_claim_penalty(
     tp,
     datum,
     group_policy(),
@@ -1991,7 +1992,7 @@ test spend_terminate_group__rejects_treasury_state_datum() fail {
   let tp = treasury_policy()
   let datum = test_treasury_state(0)
   let mint = assets.from_asset(tp, member_tn(), -1)
-  validate_spend_terminate_group(
+  validate_claim_penalty(
     tp,
     datum,
     group_policy(),
@@ -2009,7 +2010,7 @@ test spend_terminate_group__rejects_no_burn() {
       member_reference_tokenname: member_tn(),
     }
   let mint = assets.zero
-  !validate_spend_terminate_group(
+  !validate_claim_penalty(
     tp,
     datum,
     group_policy(),
@@ -2028,7 +2029,7 @@ test spend_terminate_group__rejects_wrong_token_burned() {
     }
   let wrong_tn = #"dddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
   let mint = assets.from_asset(tp, wrong_tn, -1)
-  !validate_spend_terminate_group(
+  !validate_claim_penalty(
     tp,
     datum,
     group_policy(),
@@ -2062,7 +2063,7 @@ test spend_terminate_group__rejects_no_admin_token() {
       },
     }
   let mint = assets.from_asset(tp, member_tn(), -1)
-  !validate_spend_terminate_group(
+  !validate_claim_penalty(
     tp,
     datum,
     group_policy(),
@@ -2373,7 +2374,7 @@ test update_payout_credential__accepts_valid_update() {
       outputs: [treasury_out],
     }
 
-  validate_update_payout_credential(
+  validate_update_payout(
     tp,
     account_policy(),
     0,
@@ -2434,7 +2435,7 @@ test update_payout_credential__rejects_no_member_token() {
       outputs: [treasury_out],
     }
 
-  !validate_update_payout_credential(
+  !validate_update_payout(
     tp,
     account_policy(),
     0,
@@ -2463,7 +2464,7 @@ test extend_grace_window__accepts_valid_extension() {
 
   // Expected output: grace_expires_at = 5000 + 1000 (grace_period_length), extensions = 1
   let expected_datum =
-    InsufficientCollateralState {
+    DefaultState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
       grace_expires_at: 6000,
@@ -2480,7 +2481,7 @@ test extend_grace_window__accepts_valid_extension() {
     }
 
   // grace_period_length = 1000 (passed from entry point reading group datum)
-  validate_extend_grace_window(
+  validate_extend_grace(
     tp,
     group_policy(),
     1000,
@@ -2501,7 +2502,7 @@ test extend_grace_window__rejects_max_extensions_reached() {
 
   // grace_extensions_used already at maximum
   let datum =
-    InsufficientCollateralState {
+    DefaultState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
       grace_expires_at: 5000,
@@ -2517,7 +2518,7 @@ test extend_grace_window__rejects_max_extensions_reached() {
   let admin_input = test_admin_input()
 
   let expected_datum =
-    InsufficientCollateralState {
+    DefaultState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
       grace_expires_at: 6000,
@@ -2533,7 +2534,7 @@ test extend_grace_window__rejects_max_extensions_reached() {
       outputs: [treasury_out],
     }
 
-  !validate_extend_grace_window(
+  !validate_extend_grace(
     tp,
     group_policy(),
     1000,
@@ -2576,7 +2577,7 @@ test extend_grace_window__rejects_no_admin_token() {
     }
 
   let expected_datum =
-    InsufficientCollateralState {
+    DefaultState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: member_tn(),
       grace_expires_at: 6000,
@@ -2592,7 +2593,7 @@ test extend_grace_window__rejects_no_admin_token() {
       outputs: [treasury_out],
     }
 
-  !validate_extend_grace_window(
+  !validate_extend_grace(
     tp,
     group_policy(),
     1000,

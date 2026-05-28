@@ -87,6 +87,7 @@ pub fn test_user_utxo(pkh: ByteArray, value: Value, datum: Data) -> Output {
 
 pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
   GroupDatum {
+    group_name: "Test Group",
     contribution_fee_policyid: policy_id,
     contribution_fee_assetname: "",
     contribution_fee: 1000,
@@ -99,19 +100,19 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     grace_period_length: 0,
     creator_bond: 0,
     interval_length: 1000,
-    // num_intervals = 0 before startGroup; tests that need active rotation
-    // should set num_intervals explicitly via record update syntax
-    num_intervals: 0,
+    // num_rounds = 0 before startGroup; tests that need active rotation
+    // should set num_rounds explicitly via record update syntax
+    num_rounds: 0,
     max_members: 30,
     member_count: 0,
     is_active: True,
     // is_started = False at creation; tests simulating post-startGroup state
-    // should set is_started = True and num_intervals = member_count explicitly
+    // should set is_started = True and num_rounds = member_count explicitly
     is_started: False,
     // start_time = 0; tests simulating active cycle should set this explicitly
     start_time: 0,
     last_distributed_round: -1,
-    admin_payment_credential: test_pkh(),
+    creator_payment_credential: test_pkh(),
     member_token_names: [],
   }
 }

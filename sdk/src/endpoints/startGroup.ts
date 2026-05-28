@@ -26,7 +26,7 @@ import {
  *
  * **Functionality:**
  * - Seals membership: no new members can join after startGroup.
- * - Sets num_intervals = member_count (fixing the rotation schedule).
+ * - Sets num_rounds = member_count (fixing the rotation schedule).
  * - Sets start_time = tx validity lower bound (anchoring the schedule).
  * - Requires at least 2 members (enforced by the on-chain validator).
  *
@@ -81,7 +81,7 @@ export const unsignedStartGroupTxProgram = (
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       is_started: true,
-      num_intervals: groupDatum.member_count,
+      num_rounds: groupDatum.member_count,
       start_time: now,
     };
 

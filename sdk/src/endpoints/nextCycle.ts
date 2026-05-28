@@ -33,8 +33,8 @@ import { DcuError, TransactionBuildError } from "../core/errors.js";
  * Creates an unsigned transaction for resetting a mature ROSCA group to a new cycle.
  *
  * **Functionality:**
- * - Requires all rounds to have been distributed (last_distributed_round + 1 == num_intervals).
- * - Resets GroupDatum: is_started=false, last_distributed_round=-1, num_intervals=0, start_time=0.
+ * - Requires all rounds to have been distributed (last_distributed_round + 1 == num_rounds).
+ * - Resets GroupDatum: is_started=false, last_distributed_round=-1, num_rounds=0, start_time=0.
  * - Resets all active TreasuryState UTxOs: rounds_paid=0, is_deferred=false.
  * - Members remain in the group at their existing slots.
  * - After nextCycle: members re-deposit via contribute, then admin calls startGroup.
@@ -87,9 +87,9 @@ export const unsignedNextCycleTxProgram = (
         }),
       );
     }
-    if (groupDatum.last_distributed_round + 1n !== groupDatum.num_intervals) {
+    if (groupDatum.last_distributed_round + 1n !== groupDatum.num_rounds) {
       const remaining =
-        groupDatum.num_intervals - (groupDatum.last_distributed_round + 1n);
+        groupDatum.num_rounds - (groupDatum.last_distributed_round + 1n);
       return yield* Effect.fail(
         new TransactionBuildError({
           operation: "nextCycle",
@@ -144,14 +144,14 @@ export const unsignedNextCycleTxProgram = (
       { concurrency: "unbounded" },
     );
 
-    // Include only TreasuryState UTxOs belonging to this group where rounds_paid == num_intervals.
+    // Include only TreasuryState UTxOs belonging to this group where rounds_paid == num_rounds.
     // ICS and PenaltyState UTxOs are excluded — admin must resolve those before starting next cycle.
     const memberStates: { utxo: UTxO; datum: TreasuryDatum }[] = [];
     for (const state of parsedStates) {
       if (!state || !("TreasuryState" in state.datum)) continue;
       const ts = state.datum.TreasuryState;
       if (ts.group_reference_tokenname !== groupRefName) continue;
-      if (ts.rounds_paid !== groupDatum.num_intervals) continue;
+      if (ts.rounds_paid !== groupDatum.num_rounds) continue;
       memberStates.push(state);
     }
 
@@ -176,7 +176,7 @@ export const unsignedNextCycleTxProgram = (
       ...groupDatum,
       is_started: false,
       last_distributed_round: -1n,
-      num_intervals: 0n,
+      num_rounds: 0n,
       start_time: 0n,
     };
 

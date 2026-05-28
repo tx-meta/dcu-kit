@@ -3,7 +3,7 @@ use cardano/assets
 use cardano/transaction.{OutputReference}
 use dcu/account.{
   AccountDatum, is_account_datum_valid, validate_create_account,
-  validate_delete_account, validate_remove_account, validate_update_account,
+  validate_burn_account, validate_close_account, validate_update_account,
 }
 use dcu/cip68
 use tests/common
@@ -17,14 +17,14 @@ fn with_min_ada(value: assets.Value) -> assets.Value {
   assets.merge(assets.from_lovelace(2_000_000), value)
 }
 
-fn valid_email_hash() {
+fn valid_display_name() {
   bytearray.take(
     #"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
     32,
   )
 }
 
-fn valid_phone_hash() {
+fn valid_contact() {
   bytearray.take(
     #"2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
     32,
@@ -33,8 +33,8 @@ fn valid_phone_hash() {
 
 fn test_account_datum() -> AccountDatum {
   AccountDatum {
-    email_hash: valid_email_hash(),
-    phone_hash: valid_phone_hash(),
+    display_name: valid_display_name(),
+    contact: valid_contact(),
   }
 }
 
@@ -44,28 +44,28 @@ test datum_valid__both_hashes() {
   is_account_datum_valid(test_account_datum())
 }
 
-test datum_valid__email_only() {
+test datum_valid__display_name_only() {
   let datum =
     AccountDatum {
-      email_hash: valid_email_hash(),
-      // phone_hash is too short — invalid
-      phone_hash: #"aabb",
+      display_name: valid_display_name(),
+      // contact is too short — invalid
+      contact: #"aabb",
     }
   is_account_datum_valid(datum)
 }
 
-test datum_valid__phone_only() {
+test datum_valid__contact_only() {
   let datum =
     AccountDatum {
-      // email_hash is empty — invalid
-      email_hash: #"",
-      phone_hash: valid_phone_hash(),
+      // display_name is empty — invalid
+      display_name: #"",
+      contact: valid_contact(),
     }
   is_account_datum_valid(datum)
 }
 
 test datum_invalid__both_empty() {
-  let datum = AccountDatum { email_hash: #"", phone_hash: #"" }
+  let datum = AccountDatum { display_name: #"", contact: #"" }
   !is_account_datum_valid(datum)
 }
 
@@ -113,7 +113,7 @@ test create_account_rejects_invalid_datum() {
       |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
 
   // Both hashes are empty — invalid datum
-  let bad_datum = AccountDatum { email_hash: #"", phone_hash: #"" }
+  let bad_datum = AccountDatum { display_name: #"", contact: #"" }
   let ref_output =
     common.test_script_utxo(
       policy_id,
@@ -259,9 +259,9 @@ test create_account_rejects_user_token_to_script() {
   )
 }
 
-// ─── validate_delete_account ─────────────────────────────────────────────────
+// ─── validate_burn_account ─────────────────────────────────────────────────
 
-test delete_account_success() {
+test burn_account_success() {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, user_tn) = common.setup_cip68(policy_id)
 
@@ -269,21 +269,21 @@ test delete_account_success() {
     assets.from_asset(policy_id, ref_tn, -1)
       |> assets.merge(assets.from_asset(policy_id, user_tn, -1))
 
-  validate_delete_account(policy_id, ref_tn, mint)
+  validate_burn_account(policy_id, ref_tn, mint)
 }
 
 // expect crash — missing user token burn causes `expect Some(-1) = dict.get(minted_tokens, user_token_name)` to fail
-test delete_account_rejects_partial_burn() fail {
+test burn_account_rejects_partial_burn() fail {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
 
   let mint = assets.from_asset(policy_id, ref_tn, -1)
 
-  validate_delete_account(policy_id, ref_tn, mint)
+  validate_burn_account(policy_id, ref_tn, mint)
 }
 
 // expect crash — burning qty -2 causes `expect Some(-1) = dict.get(minted_tokens, reference_token_name)` to fail
-test delete_account_rejects_wrong_burn_amount() fail {
+test burn_account_rejects_wrong_burn_amount() fail {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, user_tn) = common.setup_cip68(policy_id)
 
@@ -291,10 +291,10 @@ test delete_account_rejects_wrong_burn_amount() fail {
     assets.from_asset(policy_id, ref_tn, -2)
       |> assets.merge(assets.from_asset(policy_id, user_tn, -1))
 
-  validate_delete_account(policy_id, ref_tn, mint)
+  validate_burn_account(policy_id, ref_tn, mint)
 }
 
-test delete_account_rejects_extra_token_minted() {
+test burn_account_rejects_extra_token_minted() {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, user_tn) = common.setup_cip68(policy_id)
 
@@ -307,7 +307,7 @@ test delete_account_rejects_extra_token_minted() {
       |> assets.merge(assets.from_asset(policy_id, user_tn, -1))
       |> assets.merge(assets.from_asset(policy_id, extra_tn, 1))
 
-  !validate_delete_account(policy_id, ref_tn, mint)
+  !validate_burn_account(policy_id, ref_tn, mint)
 }
 
 // ─── validate_update_account ─────────────────────────────────────────────────
@@ -319,8 +319,8 @@ test update_account_success() {
   let old_datum = test_account_datum()
   let new_datum =
     AccountDatum {
-      email_hash: valid_email_hash(),
-      phone_hash: valid_phone_hash(),
+      display_name: valid_display_name(),
+      contact: valid_contact(),
     }
 
   let account_utxo =
@@ -480,9 +480,9 @@ test update_account_rejects_missing_ref_token_in_output() {
   )
 }
 
-// ─── validate_remove_account ─────────────────────────────────────────────────
+// ─── validate_close_account ─────────────────────────────────────────────────
 
-test remove_account_success() {
+test close_account_success() {
   let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
 
@@ -506,7 +506,7 @@ test remove_account_success() {
 
   let mint = assets.from_asset(policy_id, ref_tn, -1)
 
-  validate_remove_account(
+  validate_close_account(
     policy_id,
     ref_tn,
     1,
@@ -516,7 +516,7 @@ test remove_account_success() {
   )
 }
 
-test remove_account_rejects_no_user_token() {
+test close_account_rejects_no_user_token() {
   let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, _) = common.setup_cip68(policy_id)
 
@@ -544,7 +544,7 @@ test remove_account_rejects_no_user_token() {
 
   let mint = assets.from_asset(policy_id, ref_tn, -1)
 
-  !validate_remove_account(
+  !validate_close_account(
     policy_id,
     ref_tn,
     1,
@@ -554,7 +554,7 @@ test remove_account_rejects_no_user_token() {
   )
 }
 
-test remove_account_rejects_no_burn() {
+test close_account_rejects_no_burn() {
   let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
 
@@ -579,7 +579,7 @@ test remove_account_rejects_no_burn() {
   // No burn at all
   let mint = assets.zero
 
-  !validate_remove_account(
+  !validate_close_account(
     policy_id,
     ref_tn,
     1,
@@ -589,7 +589,7 @@ test remove_account_rejects_no_burn() {
   )
 }
 
-test remove_account_rejects_missing_ref_token_in_input() {
+test close_account_rejects_missing_ref_token_in_input() {
   let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
 
@@ -610,7 +610,7 @@ test remove_account_rejects_missing_ref_token_in_input() {
 
   let mint = assets.from_asset(policy_id, ref_tn, -1)
 
-  !validate_remove_account(
+  !validate_close_account(
     policy_id,
     ref_tn,
     1,
@@ -799,7 +799,7 @@ test update__rejects_invalid_output_datum() {
     common.test_input(common.placeholder_input.output_reference, user_utxo)
 
   // Output datum has both hashes empty — fails is_account_datum_valid
-  let bad_datum = AccountDatum { email_hash: #"", phone_hash: #"" }
+  let bad_datum = AccountDatum { display_name: #"", contact: #"" }
   let output_bad_datum =
     common.test_script_utxo(
       policy_id,
@@ -880,7 +880,7 @@ test remove__rejects_wrong_ref_token_burn_amount() {
   // Burn qty -2 instead of -1
   let mint = assets.from_asset(policy_id, ref_tn, -2)
 
-  !validate_remove_account(
+  !validate_close_account(
     policy_id,
     ref_tn,
     1,
@@ -893,8 +893,8 @@ test remove__rejects_wrong_ref_token_burn_amount() {
 // ─── Property tests ───────────────────────────────────────────────────────────
 
 test prop_create_account_datum_validity(datum via gen_account_datum()) {
-  let email_valid = bytearray.length(datum.email_hash) == 32
-  let phone_valid = bytearray.length(datum.phone_hash) == 32
-  let expected = email_valid || phone_valid
+  let name_valid = bytearray.length(datum.display_name) > 0
+  let contact_valid = bytearray.length(datum.contact) > 0
+  let expected = name_valid || contact_valid
   is_account_datum_valid(datum) == expected
 }

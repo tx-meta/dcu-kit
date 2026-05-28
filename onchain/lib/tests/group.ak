@@ -4,8 +4,8 @@ use cardano/assets
 use cardano/transaction.{Input, Output, OutputReference}
 use dcu/cip68
 use dcu/group.{
-  GroupDatum, validate_create_group, validate_member_exit, validate_member_join,
-  validate_remove_group, validate_update_group,
+  GroupDatum, validate_create_group, validate_exit, validate_join,
+  validate_close_group, validate_update_group,
 }
 use tests/common
 use tests/fuzzers.{gen_group_datum}
@@ -612,7 +612,7 @@ test remove_group_success() {
     )
   let mint = make_burn_mint(policy_id, ref_tn, user_tn)
 
-  validate_remove_group(
+  validate_close_group(
     policy_id,
     ref_tn,
     1,
@@ -647,7 +647,7 @@ test remove_group_fail_still_active() {
     )
   let mint = make_burn_mint(policy_id, ref_tn, user_tn)
 
-  !validate_remove_group(
+  !validate_close_group(
     policy_id,
     ref_tn,
     1,
@@ -687,7 +687,7 @@ test remove_group_fail_members() {
     )
   let mint = make_burn_mint(policy_id, ref_tn, user_tn)
 
-  !validate_remove_group(
+  !validate_close_group(
     policy_id,
     ref_tn,
     1,
@@ -723,7 +723,7 @@ test remove_group_fail_no_burn() {
   // No burn in mint — tokens not included
   let mint = assets.zero
 
-  !validate_remove_group(
+  !validate_close_group(
     policy_id,
     ref_tn,
     1,
@@ -759,7 +759,7 @@ test remove_group_fail_partial_burn() {
   // Only ref token burned — user token ghost remains
   let mint = assets.from_asset(policy_id, ref_tn, -1)
 
-  !validate_remove_group(
+  !validate_close_group(
     policy_id,
     ref_tn,
     1,
@@ -914,8 +914,8 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
 
   // Define what makes a datum "Invalid"
   let is_invalid =
-    datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.creator_bond < 0 || datum.interval_length <= 0 || datum.num_intervals != 0 || datum.max_members <= 0 || datum.member_count != 0 || !datum.is_active || bytearray.length(
-      datum.admin_payment_credential,
+    datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.creator_bond < 0 || datum.interval_length <= 0 || datum.num_rounds != 0 || datum.max_members <= 0 || datum.member_count != 0 || !datum.is_active || bytearray.length(
+      datum.creator_payment_credential,
     ) != 28
 
   // The Property:
@@ -935,18 +935,18 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
   }
 }
 
-// --- Security: num_intervals must be 0 at creation (set by startGroup) ---
+// --- Security: num_rounds must be 0 at creation (set by startGroup) ---
 
-test create_group__rejects_nonzero_num_intervals() {
+test create_group__rejects_nonzero_num_rounds() {
   let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let mint =
     assets.from_asset(policy_id, ref_tn, 1)
       |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
 
-  // num_intervals = 1 is non-zero — must be 0 at creation
+  // num_rounds = 1 is non-zero — must be 0 at creation
   let datum =
-    GroupDatum { ..common.test_group_datum(policy_id), num_intervals: 1 }
+    GroupDatum { ..common.test_group_datum(policy_id), num_rounds: 1 }
   let output =
     common.test_script_utxo(
       policy_id,
@@ -994,8 +994,8 @@ test create_group__rejects_zero_max_members() {
   !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
-// admin_payment_credential shorter than 28 bytes — bytearray.length check fails
-test create_group__rejects_invalid_admin_payment_credential() {
+// creator_payment_credential shorter than 28 bytes — bytearray.length check fails
+test create_group__rejects_invalid_creator_payment_credential() {
   let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let mint =
@@ -1006,7 +1006,7 @@ test create_group__rejects_invalid_admin_payment_credential() {
   let datum =
     GroupDatum {
       ..common.test_group_datum(policy_id),
-      admin_payment_credential: #"aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbcc",
+      creator_payment_credential: #"aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbcc",
     }
   let output =
     common.test_script_utxo(
@@ -1153,7 +1153,7 @@ test remove_group__rejects_missing_admin_token() {
     )
   let mint = make_burn_mint(policy_id, ref_tn, ref_tn)
 
-  !validate_remove_group(
+  !validate_close_group(
     policy_id,
     ref_tn,
     1,
@@ -1197,7 +1197,7 @@ test remove_group__rejects_extra_token_in_burn() {
       |> assets.merge(assets.from_asset(policy_id, user_tn, -1))
       |> assets.merge(assets.from_asset(policy_id, other_tn, -1))
 
-  !validate_remove_group(
+  !validate_close_group(
     policy_id,
     ref_tn,
     1,
@@ -1509,7 +1509,7 @@ fn treasury_input_with_token(tp: assets.PolicyId, member_tn: ByteArray) -> Input
   )
 }
 
-// MemberJoin: first member joins — member_count 0 → 1
+// Join: first member joins — member_count 0 → 1
 test member_join__accepts_valid_join() {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
@@ -1522,7 +1522,7 @@ test member_join__accepts_valid_join() {
   // Treasury minting exactly 1 token proves JoinGroup ran
   let mint = assets.from_asset(tp, #"aabb", 1)
 
-  validate_member_join(
+  validate_join(
     policy_id,
     tp,
     ref_tn,
@@ -1535,7 +1535,7 @@ test member_join__accepts_valid_join() {
   )
 }
 
-// MemberJoin: second member joins — member_count 1 → 2
+// Join: second member joins — member_count 1 → 2
 // group_in.member_token_names = [] (group_input_with_count uses test_group_datum default);
 // #"aabb" is not in [], so member_not_duplicate passes.
 test member_join__accepts_second_member() {
@@ -1548,7 +1548,7 @@ test member_join__accepts_second_member() {
   let group_out = group_output_with_names(policy_id, ref_tn, 2, [#"aabb"])
   let mint = assets.from_asset(tp, #"aabb", 1)
 
-  validate_member_join(
+  validate_join(
     policy_id,
     tp,
     ref_tn,
@@ -1561,7 +1561,7 @@ test member_join__accepts_second_member() {
   )
 }
 
-// MemberJoin: no treasury mint — proves JoinGroup did NOT run → rejected
+// Join: no treasury mint — proves JoinGroup did NOT run → rejected
 test member_join__rejects_no_treasury_mint() {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
@@ -1572,7 +1572,7 @@ test member_join__rejects_no_treasury_mint() {
   // Mint is empty — treasury_minting fails immediately
   let mint = assets.zero
 
-  !validate_member_join(
+  !validate_join(
     policy_id,
     tp,
     ref_tn,
@@ -1585,7 +1585,7 @@ test member_join__rejects_no_treasury_mint() {
   )
 }
 
-// MemberJoin: group output has wrong member_count (not incremented) → rejected
+// Join: group output has wrong member_count (not incremented) → rejected
 test member_join__rejects_member_count_not_incremented() {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
@@ -1596,7 +1596,7 @@ test member_join__rejects_member_count_not_incremented() {
   let group_out = group_output_with_count(policy_id, ref_tn, 0)
   let mint = assets.from_asset(tp, #"aabb", 1)
 
-  !validate_member_join(
+  !validate_join(
     policy_id,
     tp,
     ref_tn,
@@ -1609,7 +1609,7 @@ test member_join__rejects_member_count_not_incremented() {
   )
 }
 
-// MemberJoin: group output has over-incremented member_count → rejected
+// Join: group output has over-incremented member_count → rejected
 test member_join__rejects_member_count_over_incremented() {
   let policy_id = common.test_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
@@ -1620,7 +1620,7 @@ test member_join__rejects_member_count_over_incremented() {
   let group_out = group_output_with_count(policy_id, ref_tn, 2)
   let mint = assets.from_asset(tp, #"aabb", 1)
 
-  !validate_member_join(
+  !validate_join(
     policy_id,
     tp,
     ref_tn,
@@ -1635,7 +1635,7 @@ test member_join__rejects_member_count_over_incremented() {
 
 // ─── validate_member_exit ─────────────────────────────────────────────────────
 
-// MemberExit: mature exit — member_count 1 → 0 (token burned by treasury)
+// Exit: mature exit — member_count 1 → 0 (token burned by treasury)
 test member_exit__accepts_valid_exit() {
   let policy_id = common.test_policy_id()
   let tp = treasury_policy_id()
@@ -1647,7 +1647,7 @@ test member_exit__accepts_valid_exit() {
   // treasury_in holds the membership token — satisfies member_token_authenticated
   let treasury_in = treasury_input_with_token(tp, #"aabb")
 
-  validate_member_exit(
+  validate_exit(
     policy_id,
     tp,
     ref_tn,
@@ -1660,7 +1660,7 @@ test member_exit__accepts_valid_exit() {
   )
 }
 
-// MemberExit: member_count 2 → 1 (partial exit with remaining members)
+// Exit: member_count 2 → 1 (partial exit with remaining members)
 // group_in.member_token_names = [#"aabb"] (only registering the exiting member
 // for simplicity — count=2 being inconsistent with 1 name is acceptable in unit tests).
 test member_exit__accepts_partial_exit() {
@@ -1673,7 +1673,7 @@ test member_exit__accepts_partial_exit() {
   let group_out = group_output_with_count(policy_id, ref_tn, 1)
   let treasury_in = treasury_input_with_token(tp, #"aabb")
 
-  validate_member_exit(
+  validate_exit(
     policy_id,
     tp,
     ref_tn,
@@ -1686,7 +1686,7 @@ test member_exit__accepts_partial_exit() {
   )
 }
 
-// MemberExit: group output member_count not decremented → rejected
+// Exit: group output member_count not decremented → rejected
 test member_exit__rejects_member_count_not_decremented() {
   let policy_id = common.test_policy_id()
   let tp = treasury_policy_id()
@@ -1697,7 +1697,7 @@ test member_exit__rejects_member_count_not_decremented() {
   let group_out = group_output_with_count(policy_id, ref_tn, 1)
   let treasury_in = treasury_input_with_token(tp, #"aabb")
 
-  !validate_member_exit(
+  !validate_exit(
     policy_id,
     tp,
     ref_tn,
@@ -1710,7 +1710,7 @@ test member_exit__rejects_member_count_not_decremented() {
   )
 }
 
-// MemberExit: cannot exit when member_count == 0 (expect crashes)
+// Exit: cannot exit when member_count == 0 (expect crashes)
 test member_exit__rejects_exit_when_no_members() fail {
   let policy_id = common.test_policy_id()
   let tp = treasury_policy_id()
@@ -1721,7 +1721,7 @@ test member_exit__rejects_exit_when_no_members() fail {
   let treasury_in = treasury_input_with_token(tp, #"aabb")
 
   // expect current.member_count >= 1 crashes when member_count == 0
-  validate_member_exit(
+  validate_exit(
     policy_id,
     tp,
     ref_tn,
@@ -1734,7 +1734,7 @@ test member_exit__rejects_exit_when_no_members() fail {
   )
 }
 
-// MemberExit: no treasury UTxO holding the membership token in inputs → rejected
+// Exit: no treasury UTxO holding the membership token in inputs → rejected
 // Proves member_token_authenticated must find the treasury UTxO
 test member_exit__rejects_no_treasury_action() {
   let policy_id = common.test_policy_id()
@@ -1746,7 +1746,7 @@ test member_exit__rejects_no_treasury_action() {
   let group_out = group_output_with_count(policy_id, ref_tn, 0)
 
   // No treasury input — member_token_authenticated fails
-  !validate_member_exit(
+  !validate_exit(
     policy_id,
     tp,
     ref_tn,
@@ -1791,7 +1791,7 @@ test member_join__rejects_group_ada_drain() {
     )
   let mint = assets.from_asset(tp, #"aa", 1)
 
-  !validate_member_join(
+  !validate_join(
     policy_id,
     tp,
     ref_tn,
@@ -1840,7 +1840,7 @@ test member_exit__rejects_group_ada_drain() {
     )
   let treasury_in = treasury_input_with_token(tp, #"aabb")
 
-  !validate_member_exit(
+  !validate_exit(
     policy_id,
     tp,
     ref_tn,
@@ -1853,7 +1853,7 @@ test member_exit__rejects_group_ada_drain() {
   )
 }
 
-// MemberJoin: duplicate join — member_token_name already in registry → rejected
+// Join: duplicate join — member_token_name already in registry → rejected
 // member_not_duplicate = !list.any([#"aabb"], fn(n) { n == #"aabb" }) = False
 test member_join__rejects_duplicate_join() {
   let policy_id = common.test_policy_id()
@@ -1867,7 +1867,7 @@ test member_join__rejects_duplicate_join() {
     group_output_with_names(policy_id, ref_tn, 2, [#"aabb", #"aabb"])
   let mint = assets.from_asset(tp, #"aabb", 1)
 
-  !validate_member_join(
+  !validate_join(
     policy_id,
     tp,
     ref_tn,

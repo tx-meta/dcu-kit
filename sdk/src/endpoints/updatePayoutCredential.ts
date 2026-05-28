@@ -101,7 +101,7 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            UpdatePayoutCredential: {
+            UpdatePayout: {
               member_input_index: inputIndices[0],
               treasury_input_index: inputIndices[1],
               treasury_output_index: 0n,
@@ -128,7 +128,7 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
         Effect.mapError(
           (e) =>
             new TransactionBuildError({
-              operation: "updatePayoutCredential",
+              operation: "updatePayout",
               error: String(e),
             }),
         ),

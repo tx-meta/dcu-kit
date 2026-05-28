@@ -35,7 +35,7 @@ import {
  * Creates an unsigned transaction for extending a member's grace window.
  *
  * **Functionality:**
- * - Admin grants an additional grace period to a member in InsufficientCollateralState.
+ * - Admin grants an additional grace period to a member in DefaultState.
  * - Increments grace_extensions_used by 1 and extends grace_expires_at by grace_period_length.
  * - Rejected on-chain when grace_extensions_used has reached max_grace_extensions (2).
  * - The group UTxO is consumed as a reference input (not spent) to read grace_period_length
@@ -63,7 +63,7 @@ export const unsignedExtendGraceWindowTxProgram = (
     // Admin holds the group (222) user token — proves admin identity
     const adminUnit =
       groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
-    // Member's treasury UTxO (must be InsufficientCollateralState)
+    // Member's treasury UTxO (must be DefaultState)
     const memberRefName = assetNameLabels.prefix222 + memberAccountTokenSuffix;
     const treasuryUnit = treasuryPolicyId! + memberRefName;
 
@@ -81,16 +81,16 @@ export const unsignedExtendGraceWindowTxProgram = (
       treasuryUtxo.datum,
       TreasuryDatumSchema,
     )) as unknown as TreasuryDatum;
-    if (!("InsufficientCollateralState" in treasuryDatum)) {
+    if (!("DefaultState" in treasuryDatum)) {
       return yield* Effect.fail(
         new InvalidDatumError({
           field: "treasuryDatum",
-          reason: "Expected InsufficientCollateralState for ExtendGraceWindow",
+          reason: "Expected DefaultState for ExtendGraceWindow",
         }),
       );
     }
 
-    const ics = treasuryDatum.InsufficientCollateralState;
+    const ics = treasuryDatum.DefaultState;
 
     const memberToken = toUnit(treasuryPolicyId!, memberRefName);
     const address = yield* getWalletAddress(lucid);
@@ -100,7 +100,7 @@ export const unsignedExtendGraceWindowTxProgram = (
     );
 
     const updatedDatum: TreasuryDatum = {
-      InsufficientCollateralState: {
+      DefaultState: {
         ...ics,
         grace_expires_at: ics.grace_expires_at + groupDatum.grace_period_length,
         grace_extensions_used: ics.grace_extensions_used + 1n,
@@ -115,7 +115,7 @@ export const unsignedExtendGraceWindowTxProgram = (
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            ExtendGraceWindow: {
+            ExtendGrace: {
               group_ref_input_index: 0n, // first (only) reference input
               admin_input_index: inputIndices[0],
               treasury_input_index: inputIndices[1],
@@ -147,7 +147,7 @@ export const unsignedExtendGraceWindowTxProgram = (
         Effect.mapError(
           (e) =>
             new TransactionBuildError({
-              operation: "extendGraceWindow",
+              operation: "extendGrace",
               error: String(e),
             }),
         ),
