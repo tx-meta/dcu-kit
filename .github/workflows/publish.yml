@@ -6,7 +6,7 @@ name: Publish SDK to npm
 # workflow_dispatch allows manual publish from the Actions tab if needed.
 on:
   release:
-    types: [created, published]
+    types: [published]
   workflow_dispatch:
 
 jobs:
@@ -44,7 +44,20 @@ jobs:
       - name: 🏗️ Build
         run: pnpm run build
 
+      - name: 🔍 Check if version already published
+        id: version_check
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          PKG_NAME=$(node -p "require('./package.json').name")
+          if npm view "${PKG_NAME}@${PKG_VERSION}" version 2>/dev/null | grep -q "${PKG_VERSION}"; then
+            echo "already_published=true" >> $GITHUB_OUTPUT
+            echo "⚠️ ${PKG_NAME}@${PKG_VERSION} is already on npm — skipping publish."
+          else
+            echo "already_published=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: 🚀 Publish
+        if: steps.version_check.outputs.already_published == 'false'
         run: pnpm publish --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
