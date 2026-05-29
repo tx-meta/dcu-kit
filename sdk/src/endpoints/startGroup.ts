@@ -9,8 +9,9 @@ import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 import {
   getScriptAddress,
+  parseGroupCip68Datum,
+  buildGroupCip68Datum,
   getWalletAddress,
-  parseSafeDatum,
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
@@ -26,7 +27,7 @@ import {
  *
  * **Functionality:**
  * - Seals membership: no new members can join after startGroup.
- * - Sets num_intervals = member_count (fixing the rotation schedule).
+ * - Sets num_rounds = member_count (fixing the rotation schedule).
  * - Sets start_time = tx validity lower bound (anchoring the schedule).
  * - Requires at least 2 members (enforced by the on-chain validator).
  *
@@ -56,7 +57,8 @@ export const unsignedStartGroupTxProgram = (
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
     const adminUtxo = patchInlineDatum(adminUtxoRaw);
 
-    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
+    const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
+    const groupDatum = groupCip68.groupDatum;
 
     const groupRefAsset = Object.keys(groupUtxo.assets).find((k) =>
       k.startsWith(groupPolicyId!),
@@ -81,7 +83,7 @@ export const unsignedStartGroupTxProgram = (
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       is_started: true,
-      num_intervals: groupDatum.member_count,
+      num_rounds: groupDatum.member_count,
       start_time: now,
     };
 
@@ -115,7 +117,14 @@ export const unsignedStartGroupTxProgram = (
       .collectFrom([groupUtxo], redeemer)
       .pay.ToContract(
         groupAddress,
-        { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
+        {
+          kind: "inline",
+          value: buildGroupCip68Datum(
+            groupCip68.metadata,
+            groupCip68.version,
+            updatedGroupDatum,
+          ),
+        },
         groupUtxo.assets,
       )
       .pay.ToAddress(adminAddress, { [groupUserUnit]: 1n })

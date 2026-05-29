@@ -21,15 +21,16 @@ import {
   accountValidator,
   accountPolicyId,
 } from "../core/validators/constants.js";
-import { sha256 } from "@noble/hashes/sha2";
-import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
+import { fromText } from "@lucid-evolution/lucid";
 
 // --- Configuration ---
 
 export type UpdateAccountConfig = {
   accountTokenSuffix: string;
-  email: string;
-  phone: string;
+  // Raw UTF-8 display name. Defaults to wallet address when omitted.
+  display_name?: string;
+  // Raw UTF-8 secondary contact identifier. Defaults to wallet address when omitted.
+  contact?: string;
 };
 
 // --- Endpoint ---
@@ -59,7 +60,8 @@ export const unsignedUpdateAccountTxProgram = (
   config: UpdateAccountConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { accountTokenSuffix, email, phone } = config;
+    const { accountTokenSuffix, display_name, contact } = config;
+    const address = yield* getWalletAddress(lucid);
 
     const refUnit =
       accountPolicyId + assetNameLabels.prefix100 + accountTokenSuffix;
@@ -70,7 +72,6 @@ export const unsignedUpdateAccountTxProgram = (
     const user_utxo = yield* resolveUtxoByUnit(lucid, userUnit);
     const account_utxo = patchInlineDatum(account_utxo_raw);
 
-    const address = yield* getWalletAddress(lucid);
     const { userTokenName, refTokenName } = yield* findCip68TokenPair(
       [user_utxo, account_utxo],
       accountPolicyId,
@@ -81,8 +82,8 @@ export const unsignedUpdateAccountTxProgram = (
     );
 
     const accountDatum: AccountDatum = {
-      email_hash: bytesToHex(sha256(utf8ToBytes(email))),
-      phone_hash: bytesToHex(sha256(utf8ToBytes(phone))),
+      display_name: fromText(display_name ?? address),
+      contact: fromText(contact ?? address),
     };
     const datum = Data.to(accountDatum, AccountDatum);
 

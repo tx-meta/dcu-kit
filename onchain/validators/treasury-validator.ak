@@ -2,14 +2,14 @@ use aiken/collection/list
 use cardano/address.{Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
-use dcu/group.{GroupDatum}
+use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/treasury.{
-  Contribute, DeferRound, DistributeRound, ExitGroup, ExtendGraceWindow,
-  JoinGroup, NextCycle, TerminateGroup, TreasuryDatum, TreasuryRedeemer,
-  UpdatePayoutCredential, validate_contribute, validate_defer_round,
-  validate_distribute_round, validate_exit_group, validate_extend_grace_window,
-  validate_join_group, validate_next_cycle, validate_spend_terminate_group,
-  validate_terminate_group, validate_update_payout_credential,
+  ClaimPenalty, Contribute, DeferRound, DistributeRound, ExitGroup, ExtendGrace,
+  JoinGroup, NextCycle, TreasuryDatum, TreasuryRedeemer, UpdatePayout,
+  validate_claim_penalty, validate_claim_penalty_mint, validate_contribute,
+  validate_defer_round, validate_distribute_treasury, validate_exit_treasury,
+  validate_extend_grace, validate_join_treasury, validate_next_cycle_treasury,
+  validate_update_payout,
 } as treasury_types
 
 // treasury(account_policy_id)
@@ -43,7 +43,7 @@ validator treasury(account_policy_id: PolicyId) {
         member_input_index,
         treasury_output_index,
       } ->
-        validate_join_group(
+        validate_join_treasury(
           policy_id,
           account_policy_id,
           group_ref_input_index,
@@ -53,11 +53,11 @@ validator treasury(account_policy_id: PolicyId) {
           tx,
         )
 
-      // TerminateGroup redeemer covers PenaltyWithdraw burn path.
+      // ClaimPenalty redeemer covers PenaltyWithdraw burn path.
       // ExitGroup redeemer covers mature (inactive/past-rotation) burn path.
       // Both paths require exactly 1 token burned under this policy.
-      TerminateGroup { .. } -> validate_terminate_group(policy_id, mint)
-      ExitGroup { .. } -> validate_terminate_group(policy_id, mint)
+      ClaimPenalty { .. } -> validate_claim_penalty_mint(policy_id, mint)
+      ExitGroup { .. } -> validate_claim_penalty_mint(policy_id, mint)
 
       // All other redeemers are spend-only — reject at mint
       _ -> fail
@@ -97,7 +97,7 @@ validator treasury(account_policy_id: PolicyId) {
             },
           )
 
-        validate_distribute_round(
+        validate_distribute_treasury(
           // [security]: own policy_id derived from UTxO's script credential
           policy_id_from_utxo(inputs, utxo),
           round_number,
@@ -123,7 +123,7 @@ validator treasury(account_policy_id: PolicyId) {
         expect Some(treasury_input) = list.at(inputs, treasury_input_index)
         expect treasury_input.output_reference == utxo
 
-        validate_exit_group(
+        validate_exit_treasury(
           policy_id_from_utxo(inputs, utxo),
           account_policy_id,
           group_ref_input_index,
@@ -135,14 +135,17 @@ validator treasury(account_policy_id: PolicyId) {
         )
       }
 
-      TerminateGroup { group_input_index, admin_input_index } -> {
+      ClaimPenalty { group_ref_input_index, admin_input_index } -> {
         // Derive group_policy_id from the group input's script credential.
-        // TerminateGroup does NOT update group state — only reads it for admin auth.
-        expect Some(group_input) = list.at(inputs, group_input_index)
-        expect Script(group_policy_id) =
-          group_input.output.address.payment_credential
+        // ClaimPenalty does NOT update group state — the group is a read-only
+        // reference input, same pattern as ExtendGrace.
+        expect Some(group_ref_input) = list.at(
+          reference_inputs,
+          group_ref_input_index,
+        )
+        expect Script(group_policy_id) = group_ref_input.output.address.payment_credential
 
-        validate_spend_terminate_group(
+        validate_claim_penalty(
           policy_id_from_utxo(inputs, utxo),
           treasury_datum,
           group_policy_id,
@@ -194,7 +197,7 @@ validator treasury(account_policy_id: PolicyId) {
         )
       }
 
-      UpdatePayoutCredential {
+      UpdatePayout {
         member_input_index,
         treasury_input_index,
         treasury_output_index,
@@ -203,7 +206,7 @@ validator treasury(account_policy_id: PolicyId) {
         expect Some(treasury_input) = list.at(inputs, treasury_input_index)
         expect treasury_input.output_reference == utxo
 
-        validate_update_payout_credential(
+        validate_update_payout(
           policy_id_from_utxo(inputs, utxo),
           account_policy_id,
           member_input_index,
@@ -214,7 +217,7 @@ validator treasury(account_policy_id: PolicyId) {
         )
       }
 
-      ExtendGraceWindow {
+      ExtendGrace {
         group_ref_input_index,
         admin_input_index,
         treasury_input_index,
@@ -226,14 +229,15 @@ validator treasury(account_policy_id: PolicyId) {
 
         // Derive group_policy_id and grace_period_length from the group reference input.
         // The group is NOT spent here — only read for admin token auth and grace window length.
-        expect Some(group_ref_input) =
-          list.at(reference_inputs, group_ref_input_index)
-        expect Script(group_policy_id) =
-          group_ref_input.output.address.payment_credential
+        expect Some(group_ref_input) = list.at(
+          reference_inputs,
+          group_ref_input_index,
+        )
+        expect Script(group_policy_id) = group_ref_input.output.address.payment_credential
         expect InlineDatum(gd) = group_ref_input.output.datum
-        expect gd_typed: GroupDatum = gd
+        expect GroupCip68Datum { extra: gd_typed, .. } = gd
 
-        validate_extend_grace_window(
+        validate_extend_grace(
           policy_id_from_utxo(inputs, utxo),
           group_policy_id,
           gd_typed.grace_period_length,
@@ -263,7 +267,7 @@ validator treasury(account_policy_id: PolicyId) {
             },
           )
 
-        validate_next_cycle(
+        validate_next_cycle_treasury(
           policy_id_from_utxo(inputs, utxo),
           group_input_index,
           group_output_index,
@@ -293,8 +297,10 @@ validator treasury(account_policy_id: PolicyId) {
 // The address is trusted because it comes from the transaction inputs, not
 // from the redeemer.
 fn policy_id_from_utxo(inputs: List<Input>, utxo: OutputReference) -> PolicyId {
-  expect Some(own_input) =
-    list.find(inputs, fn(i) { i.output_reference == utxo })
+  expect Some(own_input) = list.find(
+    inputs,
+    fn(i) { i.output_reference == utxo },
+  )
   expect Script(policy_id) = own_input.output.address.payment_credential
   policy_id
 }

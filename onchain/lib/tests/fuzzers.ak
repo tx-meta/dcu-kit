@@ -17,14 +17,14 @@ pub fn gen_group_datum() {
   let grace_period_length <- fuzz.and_then(fuzz.int())
   let creator_bond <- fuzz.and_then(fuzz.int())
   let interval_length <- fuzz.and_then(fuzz.int())
-  let num_intervals <- fuzz.and_then(fuzz.int())
+  let num_rounds <- fuzz.and_then(fuzz.int())
   let max_members <- fuzz.and_then(fuzz.int())
   let member_count <- fuzz.and_then(fuzz.int())
   let is_active <- fuzz.and_then(fuzz.bool())
   let is_started <- fuzz.and_then(fuzz.bool())
   let start_time <- fuzz.and_then(fuzz.int())
   let last_distributed_round <- fuzz.and_then(fuzz.int())
-  let admin_payment_credential <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let creator_payment_credential <- fuzz.and_then(fuzz.bytearray_fixed(28))
 
   fuzz.constant(
     GroupDatum {
@@ -40,14 +40,14 @@ pub fn gen_group_datum() {
       grace_period_length,
       creator_bond,
       interval_length,
-      num_intervals,
+      num_rounds,
       max_members,
       member_count,
       is_active,
       is_started,
       start_time,
       last_distributed_round,
-      admin_payment_credential,
+      creator_payment_credential,
       member_token_names: [],
     },
   )
@@ -56,8 +56,8 @@ pub fn gen_group_datum() {
 // --- Account Datum Fuzzer ---
 
 pub fn gen_account_datum() {
-  let email_hash <- fuzz.and_then(fuzz.bytearray())
-  let phone_hash <- fuzz.and_then(fuzz.bytearray())
+  let display_name <- fuzz.and_then(fuzz.bytearray())
+  let contact <- fuzz.and_then(fuzz.bytearray())
 
-  fuzz.constant(AccountDatum { email_hash, phone_hash })
+  fuzz.constant(AccountDatum { display_name, contact })
 }

@@ -30,6 +30,8 @@ import {
 } from "../core/errors.js";
 import {
   getScriptAddress,
+  parseGroupCip68Datum,
+  buildGroupCip68Datum,
   getWalletAddress,
   parseSafeDatum,
   patchInlineDatum,
@@ -173,7 +175,8 @@ export const unsignedExitGroupTxProgram = (
         }),
       );
 
-    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
+    const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
+    const groupDatum = groupCip68.groupDatum;
 
     const groupRefAssetEntry = Object.keys(groupUtxo.assets).find((k) =>
       k.startsWith(groupPolicyId!),
@@ -208,7 +211,7 @@ export const unsignedExitGroupTxProgram = (
     const now = currentTime !== undefined ? rawNow : rawNow - (rawNow % 1000n);
     const maturityTime =
       groupDatum.start_time +
-      groupDatum.num_intervals * groupDatum.interval_length;
+      groupDatum.num_rounds * groupDatum.interval_length;
     const isEarlyExit =
       groupDatum.is_active &&
       groupDatum.start_time <= now &&
@@ -229,7 +232,7 @@ export const unsignedExitGroupTxProgram = (
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            MemberExit: {
+            Exit: {
               group_ref_token_name: groupRefName,
               member_token_name: memberRefName,
               group_input_index: inputIndices[0],
@@ -301,7 +304,14 @@ export const unsignedExitGroupTxProgram = (
       .addSigner(address)
       .pay.ToContract(
         groupAddress,
-        { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
+        {
+          kind: "inline",
+          value: buildGroupCip68Datum(
+            groupCip68.metadata,
+            groupCip68.version,
+            updatedGroupDatum,
+          ),
+        },
         groupUtxo.assets,
       );
 

@@ -75,7 +75,7 @@ export const unsignedDeleteGroupTxProgram = (
     };
     const burnRedeemer = Data.to(new Constr(1, []));
 
-    // RemoveGroup is variant index 1 in GroupSpendRedeemer.
+    // CloseGroup is variant index 1 in GroupSpendRedeemer.
     // Fields: [group_ref_token_name, admin_input_index, group_input_index]
     // (group_output_index removed — burn produces no group UTxO)
     const spendRedeemer: RedeemerBuilder = {
