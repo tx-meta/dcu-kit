@@ -130,8 +130,7 @@ pub fn test_group_cip68_datum(policy_id: PolicyId) -> GroupCip68Datum {
 pub fn setup_cip68(
   _policy_id: PolicyId,
 ) -> (OutputReference, ByteArray, ByteArray) {
-  let tx_id =
-    #"0000000000000000000000000000000000000000000000000000000000000000"
+  let tx_id = #"0000000000000000000000000000000000000000000000000000000000000000"
   let output_ref = OutputReference { transaction_id: tx_id, output_index: 0 }
   let ref_tn = cip68.unique_token_name(output_ref, cip68.prefix_100)
   let user_tn = cip68.unique_token_name(output_ref, cip68.prefix_222)

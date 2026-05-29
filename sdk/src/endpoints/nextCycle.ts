@@ -7,7 +7,9 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
-  GroupCip68Datum, GroupCip68DatumSchema, GroupDatum,
+  GroupCip68Datum,
+  GroupCip68DatumSchema,
+  GroupDatum,
   GroupSpendRedeemer,
   TreasuryDatum,
   TreasuryDatumSchema,
@@ -264,7 +266,14 @@ export const unsignedNextCycleTxProgram = (
     // Output 0: group (reset). Outputs 1..n: treasury UTxOs (reset, ADA preserved).
     const withGroupOutput = baseTx.pay.ToContract(
       groupAddress,
-      { kind: "inline", value: buildGroupCip68Datum(groupCip68.metadata, groupCip68.version, updatedGroupDatum) },
+      {
+        kind: "inline",
+        value: buildGroupCip68Datum(
+          groupCip68.metadata,
+          groupCip68.version,
+          updatedGroupDatum,
+        ),
+      },
       groupUtxo.assets,
     );
 

@@ -23,12 +23,12 @@ import { resolve } from "path";
 
 // ─── Protocol limits (Babbage / Conway era) ───────────────────────────────────
 const PROTOCOL = {
-  TX_SIZE_MAX: 16_384,         // bytes
-  CPU_MAX: 10_000_000_000,     // steps per transaction
-  MEM_MAX: 14_000_000,         // units per transaction
+  TX_SIZE_MAX: 16_384, // bytes
+  CPU_MAX: 10_000_000_000, // steps per transaction
+  MEM_MAX: 14_000_000, // units per transaction
   // ExUnit fee pricing (current protocol parameters)
-  PRICE_MEM: 0.0577,           // lovelace per memory unit
-  PRICE_CPU: 0.0000721,        // lovelace per CPU step
+  PRICE_MEM: 0.0577, // lovelace per memory unit
+  PRICE_CPU: 0.0000721, // lovelace per CPU step
 } as const;
 
 // ─── ANSI helpers ─────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ interface BlockfrostTx {
 
 interface BlockfrostRedeemer {
   tx_index: number;
-  purpose: string;       // "spend" | "mint" | "cert" | "reward"
+  purpose: string; // "spend" | "mint" | "cert" | "reward"
   script_hash: string;
   unit_mem: string;
   unit_steps: string;
@@ -150,9 +150,7 @@ async function main(): Promise<void> {
   const RULE = "─".repeat(72);
   const DOUBLE = "═".repeat(72);
 
-  console.log(
-    `\n${BLD}Transaction Inspector${RST}  ${DIM}${network}${RST}`,
-  );
+  console.log(`\n${BLD}Transaction Inspector${RST}  ${DIM}${network}${RST}`);
   console.log(DOUBLE);
 
   // Fetch tx info and redeemers in parallel
@@ -169,9 +167,7 @@ async function main(): Promise<void> {
     ]);
   } catch (e) {
     console.error(`\nFailed to fetch transaction: ${(e as Error).message}`);
-    console.error(
-      "Is the tx hash correct and already confirmed on-chain?",
-    );
+    console.error("Is the tx hash correct and already confirmed on-chain?");
     process.exit(1);
   }
 
@@ -180,11 +176,13 @@ async function main(): Promise<void> {
   const subdomain = network === "Mainnet" ? "" : `${network.toLowerCase()}.`;
   const explorerUrl = `https://${subdomain}cexplorer.io/tx/${txHash}`;
 
+  console.log(`\n  Hash    : ${DIM}${tx.hash}${RST}`);
   console.log(
-    `\n  Hash    : ${DIM}${tx.hash}${RST}`,
+    `  Block   : ${commas(tx.block_height)}  Slot: ${commas(tx.slot)}`,
   );
-  console.log(`  Block   : ${commas(tx.block_height)}  Slot: ${commas(tx.slot)}`);
-  console.log(`  Fee     : ${BLD}${ada(BigInt(tx.fees))}${RST}  ${DIM}(${commas(tx.fees)} lovelace)${RST}`);
+  console.log(
+    `  Fee     : ${BLD}${ada(BigInt(tx.fees))}${RST}  ${DIM}(${commas(tx.fees)} lovelace)${RST}`,
+  );
   console.log(
     `  Size    : ${commas(tx.size)} / ${commas(PROTOCOL.TX_SIZE_MAX)} bytes  ${bar(sizePct, 20)} ${pctStr(sizePct)}`,
   );
@@ -210,7 +208,9 @@ async function main(): Promise<void> {
 
   // ─── Per-redeemer breakdown ────────────────────────────────────────────────
   console.log(`\n${RULE}`);
-  console.log(`${BLD} Redeemers  (${redeemers.length} script execution${redeemers.length !== 1 ? "s" : ""})${RST}`);
+  console.log(
+    `${BLD} Redeemers  (${redeemers.length} script execution${redeemers.length !== 1 ? "s" : ""})${RST}`,
+  );
   console.log(RULE);
 
   let totalCpu = 0;
@@ -251,8 +251,7 @@ async function main(): Promise<void> {
     totalMem += groupMem;
     totalScriptFees += groupFee;
 
-    const countLabel =
-      count > 1 ? ` ${DIM}× ${count} executions${RST}` : "";
+    const countLabel = count > 1 ? ` ${DIM}× ${count} executions${RST}` : "";
     console.log(
       `\n  ${BLD}${g.purpose.toUpperCase()}${RST}  ${GRN}${g.name}${RST}${countLabel}`,
     );
@@ -287,7 +286,9 @@ async function main(): Promise<void> {
   const networkFee = txFee - totalScriptFees;
 
   console.log(`\n${RULE}`);
-  console.log(`${BLD} Budget totals${RST}  ${DIM}(sum across all redeemers)${RST}`);
+  console.log(
+    `${BLD} Budget totals${RST}  ${DIM}(sum across all redeemers)${RST}`,
+  );
   console.log(RULE);
   console.log(
     `  CPU  ${commas(totalCpu).padStart(15)} / ${commas(PROTOCOL.CPU_MAX)} steps  ${bar(totalCpuPct)} ${pctStr(totalCpuPct)}`,
@@ -306,9 +307,7 @@ async function main(): Promise<void> {
   console.log(
     `  Script fees (ExUnits): ${ada(totalScriptFees).padEnd(14)} ${DIM}(mem × 0.0577) + (cpu × 0.0000721)${RST}`,
   );
-  console.log(
-    `  ${BLD}Total fee           : ${ada(txFee)}${RST}`,
-  );
+  console.log(`  ${BLD}Total fee           : ${ada(txFee)}${RST}`);
 
   // ─── Remaining headroom ────────────────────────────────────────────────────
   const cpuRemaining = PROTOCOL.CPU_MAX - totalCpu;

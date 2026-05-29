@@ -5,7 +5,12 @@ import {
   RedeemerBuilder,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { GroupCip68Datum, GroupCip68DatumSchema, GroupDatum, GroupSpendRedeemer } from "../core/types.js";
+import {
+  GroupCip68Datum,
+  GroupCip68DatumSchema,
+  GroupDatum,
+  GroupSpendRedeemer,
+} from "../core/types.js";
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 import {
   getScriptAddress,
@@ -118,7 +123,14 @@ export const unsignedStartGroupTxProgram = (
       .collectFrom([groupUtxo], redeemer)
       .pay.ToContract(
         groupAddress,
-        { kind: "inline", value: buildGroupCip68Datum(groupCip68.metadata, groupCip68.version, updatedGroupDatum) },
+        {
+          kind: "inline",
+          value: buildGroupCip68Datum(
+            groupCip68.metadata,
+            groupCip68.version,
+            updatedGroupDatum,
+          ),
+        },
         groupUtxo.assets,
       )
       .pay.ToAddress(adminAddress, { [groupUserUnit]: 1n })

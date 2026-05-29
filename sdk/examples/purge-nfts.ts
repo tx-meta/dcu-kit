@@ -99,7 +99,9 @@ async function main() {
   }
 
   const state = sweepAll ? null : loadState();
-  const activeAccountSuffix = state ? state[accountSuffixKey(activeWallet)] : null;
+  const activeAccountSuffix = state
+    ? state[accountSuffixKey(activeWallet)]
+    : null;
   const activeGroupSuffix = state ? state.groupTokenSuffix : null;
 
   // Collect every (222) token that should be swept.

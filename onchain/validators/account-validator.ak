@@ -54,8 +54,10 @@ validator account {
     expect Some(_) = datum
 
     // [security]: extract own policy_id from the UTxO being spent
-    expect Some(own_input) =
-      list.find(inputs, fn(i) { i.output_reference == utxo })
+    expect Some(own_input) = list.find(
+      inputs,
+      fn(i) { i.output_reference == utxo },
+    )
     expect Script(policy_id) = own_input.output.address.payment_credential
 
     when redeemer is {

@@ -39,7 +39,7 @@ import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
  * @returns Effect yielding a TxSignBuilder ready for signing.
  */
 export type CreateGroupConfig = {
-  groupName: string;    // displayed by wallets — goes into metadata["name"]
+  groupName: string; // displayed by wallets — goes into metadata["name"]
   groupDatum: GroupDatum;
   utxoToSpend: OutRef;
 };

@@ -97,8 +97,7 @@ export function printSlotSchedule(
   console.log(`Next slot in:      ${secsLeft}s`);
   for (const slot of memberSlots) {
     const slotsAway =
-      (slot - currentSlot + state.groupNumRounds!) %
-      state.groupNumRounds!;
+      (slot - currentSlot + state.groupNumRounds!) % state.groupNumRounds!;
     const msAway =
       slotsAway === 0
         ? 0

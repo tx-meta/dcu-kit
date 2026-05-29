@@ -17,7 +17,10 @@ import {
   patchInlineDatum,
 } from "../src/core/utils/index.js";
 import { createDefaultGroupDatum, extractTokenSuffix } from "./utils.js";
-import { groupPolicyId, groupValidator } from "../src/core/validators/constants.js";
+import {
+  groupPolicyId,
+  groupValidator,
+} from "../src/core/validators/constants.js";
 import { toText } from "@lucid-evolution/lucid";
 
 describe("Group Endpoints", () => {

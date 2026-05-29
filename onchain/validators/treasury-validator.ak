@@ -139,10 +139,11 @@ validator treasury(account_policy_id: PolicyId) {
         // Derive group_policy_id from the group input's script credential.
         // ClaimPenalty does NOT update group state — the group is a read-only
         // reference input, same pattern as ExtendGrace.
-        expect Some(group_ref_input) =
-          list.at(reference_inputs, group_ref_input_index)
-        expect Script(group_policy_id) =
-          group_ref_input.output.address.payment_credential
+        expect Some(group_ref_input) = list.at(
+          reference_inputs,
+          group_ref_input_index,
+        )
+        expect Script(group_policy_id) = group_ref_input.output.address.payment_credential
 
         validate_claim_penalty(
           policy_id_from_utxo(inputs, utxo),
@@ -228,10 +229,11 @@ validator treasury(account_policy_id: PolicyId) {
 
         // Derive group_policy_id and grace_period_length from the group reference input.
         // The group is NOT spent here — only read for admin token auth and grace window length.
-        expect Some(group_ref_input) =
-          list.at(reference_inputs, group_ref_input_index)
-        expect Script(group_policy_id) =
-          group_ref_input.output.address.payment_credential
+        expect Some(group_ref_input) = list.at(
+          reference_inputs,
+          group_ref_input_index,
+        )
+        expect Script(group_policy_id) = group_ref_input.output.address.payment_credential
         expect InlineDatum(gd) = group_ref_input.output.datum
         expect GroupCip68Datum { extra: gd_typed, .. } = gd
 
@@ -295,8 +297,10 @@ validator treasury(account_policy_id: PolicyId) {
 // The address is trusted because it comes from the transaction inputs, not
 // from the redeemer.
 fn policy_id_from_utxo(inputs: List<Input>, utxo: OutputReference) -> PolicyId {
-  expect Some(own_input) =
-    list.find(inputs, fn(i) { i.output_reference == utxo })
+  expect Some(own_input) = list.find(
+    inputs,
+    fn(i) { i.output_reference == utxo },
+  )
   expect Script(policy_id) = own_input.output.address.payment_credential
   policy_id
 }

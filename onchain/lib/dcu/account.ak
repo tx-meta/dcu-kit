@@ -64,10 +64,14 @@ pub fn validate_create_account(
   // [spec CreateAccount 1]: input at input_index is consumed to derive unique CIP-68 names
   expect Some(params_input) = list.at(inputs, input_index)
 
-  let ref_token_name =
-    cip68.unique_token_name(params_input.output_reference, cip68.prefix_100)
-  let user_token_name =
-    cip68.unique_token_name(params_input.output_reference, cip68.prefix_222)
+  let ref_token_name = cip68.unique_token_name(
+    params_input.output_reference,
+    cip68.prefix_100,
+  )
+  let user_token_name = cip68.unique_token_name(
+    params_input.output_reference,
+    cip68.prefix_222,
+  )
 
   // [spec CreateAccount 2]: exactly two tokens minted — ref (100) qty 1, user (222) qty 1
   let minted_tokens = assets.tokens(mint, policy_id)
@@ -84,26 +88,29 @@ pub fn validate_create_account(
 
   // [spec CreateAccount 6]: user (222) token must go to a VerificationKey address —
   //                         if sent to a script, account authority is permanently lost
-  expect Some(user_output) =
-    list.find(
-      outputs,
-      fn(o) { assets.quantity_of(o.value, policy_id, user_token_name) == 1 },
-    )
-  let user_token_to_wallet =
-    when user_output.address.payment_credential is {
-      VerificationKey(_) -> True
-      Script(_) -> False
-    }
+  expect Some(user_output) = list.find(
+    outputs,
+    fn(o) { assets.quantity_of(o.value, policy_id, user_token_name) == 1 },
+  )
+  let user_token_to_wallet = when user_output.address.payment_credential is {
+    VerificationKey(_) -> True
+    Script(_) -> False
+  }
 
-  let output_at_script_address =
-    output.address.payment_credential == Script(policy_id)
+  let output_at_script_address = output.address.payment_credential == Script(
+    policy_id,
+  )
 
-  let output_has_ref_token =
-    assets.quantity_of(output.value, policy_id, ref_token_name) == 1
+  let output_has_ref_token = assets.quantity_of(
+    output.value,
+    policy_id,
+    ref_token_name,
+  ) == 1
 
   // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
-  let output_clean_value =
-    assets.policies(output.value) == [ada_policy_id, policy_id]
+  let output_clean_value = assets.policies(output.value) == [
+    ada_policy_id, policy_id,
+  ]
 
   and {
     exact_mint_quantity?,
@@ -166,19 +173,21 @@ pub fn validate_update_account(
 ) -> Bool {
   // [spec UpdateAccount 1]: account input at account_input_index holds the ref (100) token
   expect Some(account_input) = list.at(inputs, account_input_index)
-  let ref_token_present =
-    assets.quantity_of(
-      account_input.output.value,
-      policy_id,
-      reference_token_name,
-    ) == 1
+  let ref_token_present = assets.quantity_of(
+    account_input.output.value,
+    policy_id,
+    reference_token_name,
+  ) == 1
 
   // [spec UpdateAccount 2]: user input at user_input_index holds the user (222) token
   //                         — proves the caller owns the account (authorization)
   let user_token_name = cip68.convert_ref_to_user_token(reference_token_name)
   expect Some(user_input) = list.at(inputs, user_input_index)
-  let user_token_present =
-    assets.quantity_of(user_input.output.value, policy_id, user_token_name) == 1
+  let user_token_present = assets.quantity_of(
+    user_input.output.value,
+    policy_id,
+    user_token_name,
+  ) == 1
 
   // [spec UpdateAccount 3]: output at account_output_index is back at the same script address
   // [spec UpdateAccount 4]: output retains the ref (100) token
@@ -224,23 +233,28 @@ pub fn validate_close_account(
 ) -> Bool {
   // [spec CloseAccount 1]: account input at account_input_index holds the ref (100) token
   expect Some(account_input) = list.at(inputs, account_input_index)
-  let ref_token_present =
-    assets.quantity_of(
-      account_input.output.value,
-      policy_id,
-      reference_token_name,
-    ) == 1
+  let ref_token_present = assets.quantity_of(
+    account_input.output.value,
+    policy_id,
+    reference_token_name,
+  ) == 1
 
   // [spec CloseAccount 2]: user input at user_input_index holds the user (222) token
   //                        — proves the caller owns the account (authorization)
   let user_token_name = cip68.convert_ref_to_user_token(reference_token_name)
   expect Some(user_input) = list.at(inputs, user_input_index)
-  let user_token_present =
-    assets.quantity_of(user_input.output.value, policy_id, user_token_name) == 1
+  let user_token_present = assets.quantity_of(
+    user_input.output.value,
+    policy_id,
+    user_token_name,
+  ) == 1
 
   // [spec CloseAccount 3]: ref (100) token is burned in this transaction (qty -1)
-  let ref_token_burned =
-    assets.quantity_of(mint, policy_id, reference_token_name) == -1
+  let ref_token_burned = assets.quantity_of(
+    mint,
+    policy_id,
+    reference_token_name,
+  ) == -1
 
   and {
     ref_token_present?,

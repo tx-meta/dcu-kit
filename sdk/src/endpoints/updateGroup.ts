@@ -6,7 +6,12 @@ import {
   Assets,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { GroupCip68Datum, GroupCip68DatumSchema, GroupDatum, GroupSpendRedeemer } from "../core/types.js";
+import {
+  GroupCip68Datum,
+  GroupCip68DatumSchema,
+  GroupDatum,
+  GroupSpendRedeemer,
+} from "../core/types.js";
 import {
   DcuError,
   TransactionBuildError,
@@ -112,7 +117,14 @@ export const unsignedUpdateGroupTxProgram = (
       .collectFrom([groupUtxo], redeemer)
       .pay.ToContract(
         address,
-        { kind: "inline", value: buildGroupCip68Datum(groupCip68.metadata, groupCip68.version, updatedDatum) },
+        {
+          kind: "inline",
+          value: buildGroupCip68Datum(
+            groupCip68.metadata,
+            groupCip68.version,
+            updatedDatum,
+          ),
+        },
         groupAssets,
       )
       .attach.SpendingValidator(groupValidator.spendGroup)

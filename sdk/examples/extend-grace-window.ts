@@ -42,9 +42,7 @@ async function main() {
   const { lucid, isEmulator } = await makeLucid();
 
   if (isEmulator) {
-    console.log(
-      "This example requires a member in DefaultState.",
-    );
+    console.log("This example requires a member in DefaultState.");
     console.log(
       "These example scripts require existing on-chain state. Run on Preprod.",
     );

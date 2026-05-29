@@ -5,10 +5,10 @@ use cardano/assets.{PolicyId}
 use cardano/transaction.{OutputReference, Transaction}
 use dcu/group.{
   BurnGroup, CloseGroup, CreateGroup, Distribute, Exit, GroupCip68Datum,
-  GroupMintRedeemer, GroupSpendRedeemer, Join, NextCycle, StartGroup, UpdateGroup,
-  validate_close_group, validate_create_group, validate_distribute_group,
-  validate_exit_group, validate_join_group, validate_next_cycle_group, validate_start_group,
-  validate_update_group,
+  GroupMintRedeemer, GroupSpendRedeemer, Join, NextCycle, StartGroup,
+  UpdateGroup, validate_close_group, validate_create_group,
+  validate_distribute_group, validate_exit_group, validate_join_group,
+  validate_next_cycle_group, validate_start_group, validate_update_group,
 }
 
 validator group_validator(treasury_policy_id: PolicyId) {
@@ -55,8 +55,10 @@ validator group_validator(treasury_policy_id: PolicyId) {
     expect Some(_) = datum
 
     // Extract own PolicyId from the input being spent
-    expect Some(own_input) =
-      list.find(inputs, fn(i) { i.output_reference == utxo })
+    expect Some(own_input) = list.find(
+      inputs,
+      fn(i) { i.output_reference == utxo },
+    )
     expect Script(policy_id) = own_input.output.address.payment_credential
 
     when redeemer is {

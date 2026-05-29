@@ -101,7 +101,9 @@ const alwaysFails = byName["always_fails"];
 const RULE = "─".repeat(72);
 const DOUBLE = "═".repeat(72);
 
-console.log(`\n${BLD}DCU Validator Script Sizes${RST}  ${DIM}(Cardano tx limit: 16,384 bytes)${RST}`);
+console.log(
+  `\n${BLD}DCU Validator Script Sizes${RST}  ${DIM}(Cardano tx limit: 16,384 bytes)${RST}`,
+);
 console.log(DOUBLE);
 
 // Per-validator table
@@ -110,10 +112,14 @@ for (const v of unique) {
   const pct = (v.bytes / TX_SIZE_LIMIT) * 100;
   const nameCol = v.name.padEnd(nameWidth);
   const sizeCol = fmt(v.bytes).padEnd(26);
-  console.log(`  ${BLD}${nameCol}${RST}  ${sizeCol}  ${bar(pct)} ${pctStr(pct)}`);
+  console.log(
+    `  ${BLD}${nameCol}${RST}  ${sizeCol}  ${bar(pct)} ${pctStr(pct)}`,
+  );
 }
 
-console.log(`\n  ${"Validator".padEnd(nameWidth)}  ${"Hash (script identity)".padEnd(26)}`);
+console.log(
+  `\n  ${"Validator".padEnd(nameWidth)}  ${"Hash (script identity)".padEnd(26)}`,
+);
 console.log(`  ${RULE.slice(0, nameWidth + 30)}`);
 for (const v of unique) {
   console.log(`  ${v.name.padEnd(nameWidth)}  ${DIM}${v.hash}${RST}`);
@@ -123,7 +129,9 @@ for (const v of unique) {
 console.log(`\n${RULE}`);
 console.log(`${BLD} Operations × inline script cost${RST}`);
 console.log(`${RULE}`);
-console.log(`${DIM} (inline = script bytes included in the tx body itself)${RST}\n`);
+console.log(
+  `${DIM} (inline = script bytes included in the tx body itself)${RST}\n`,
+);
 
 type Row = { op: string; bytes: number; note: string };
 const rows: Row[] = [];
@@ -169,9 +177,7 @@ for (const r of rows) {
     : `${GRN}✓ safe inline${RST}`;
   console.log(`  ${opCol}  ${bar(pct, 16)} ${pctStr(pct)}  ${status}`);
   if (exceeds) {
-    console.log(
-      `  ${"".padEnd(opWidth)}  ${DIM}(${r.note})${RST}`,
-    );
+    console.log(`  ${"".padEnd(opWidth)}  ${DIM}(${r.note})${RST}`);
   }
 }
 

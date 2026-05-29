@@ -171,43 +171,51 @@ pub fn validate_create_group(
 
   expect Some(params_input) = list.at(inputs, input_index)
 
-  let ref_token_name =
-    cip68.unique_token_name(params_input.output_reference, cip68.prefix_100)
-  let user_token_name =
-    cip68.unique_token_name(params_input.output_reference, cip68.prefix_222)
+  let ref_token_name = cip68.unique_token_name(
+    params_input.output_reference,
+    cip68.prefix_100,
+  )
+  let user_token_name = cip68.unique_token_name(
+    params_input.output_reference,
+    cip68.prefix_222,
+  )
 
   let minted_tokens = assets.tokens(mint, policy_id)
   expect Some(1) = dict.get(minted_tokens, ref_token_name)
   expect Some(1) = dict.get(minted_tokens, user_token_name)
   let exact_mint_quantity = dict.size(minted_tokens) == 2
 
-  expect Some(user_output) =
-    list.find(
-      outputs,
-      fn(o) { assets.quantity_of(o.value, policy_id, user_token_name) == 1 },
-    )
-  let user_token_to_wallet =
-    when user_output.address.payment_credential is {
-      VerificationKey(_) -> True
-      Script(_) -> False
-    }
+  expect Some(user_output) = list.find(
+    outputs,
+    fn(o) { assets.quantity_of(o.value, policy_id, user_token_name) == 1 },
+  )
+  let user_token_to_wallet = when user_output.address.payment_credential is {
+    VerificationKey(_) -> True
+    Script(_) -> False
+  }
 
-  let output_at_script_address =
-    output.address.payment_credential == Script(policy_id)
+  let output_at_script_address = output.address.payment_credential == Script(
+    policy_id,
+  )
 
-  let output_has_ref_token =
-    assets.quantity_of(output.value, policy_id, ref_token_name) == 1
+  let output_has_ref_token = assets.quantity_of(
+    output.value,
+    policy_id,
+    ref_token_name,
+  ) == 1
 
   // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
-  let output_clean_value =
-    assets.policies(output.value) == [ada_policy_id, policy_id]
+  let output_clean_value = assets.policies(output.value) == [
+    ada_policy_id, policy_id,
+  ]
 
   // [spec CreateGroup 14]: metadata["name"] must be present and non-empty
-  let name_valid =
-    when list.find(metadata, fn(p) { p.1st == cip68_name_key }) is {
-      Some(Pair(_, name)) -> bytearray.length(name) > 0
-      None -> False
-    }
+  let name_valid = when
+    list.find(metadata, fn(p) { p.1st == cip68_name_key })
+  is {
+    Some(Pair(_, name)) -> bytearray.length(name) > 0
+    None -> False
+  }
 
   and {
     exact_mint_quantity?,
@@ -283,29 +291,32 @@ pub fn validate_update_group(
 
   // 2. Validate Admin Authorization
   expect Some(admin_input) = list.at(inputs, admin_input_index)
-  let user_token_name =
-    cip68.prefix_222
-      |> bytearray.concat(
-          bytearray.drop(group_ref_token_name, cip68.prefix_length),
-        )
+  let user_token_name = cip68.prefix_222
+    |> bytearray.concat(
+        bytearray.drop(group_ref_token_name, cip68.prefix_length),
+      )
   expect
     assets.quantity_of(admin_input.output.value, policy_id, user_token_name) == 1
 
   // 3. Validate Group Output — unwrap CIP-68 from both input and output
   expect InlineDatum(input_datum_data) = group_input.output.datum
-  expect GroupCip68Datum {
-    metadata: input_metadata,
-    version: input_version,
-    extra: current_datum,
-  } = input_datum_data
+  expect  
+      GroupCip68Datum {
+        metadata: input_metadata,
+        version: input_version,
+        extra: current_datum,
+      }
+    = input_datum_data
 
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(datum_data) = group_output.datum
-  expect GroupCip68Datum {
-    metadata: output_metadata,
-    version: output_version,
-    extra: updated_datum,
-  } = datum_data
+  expect  
+      GroupCip68Datum {
+        metadata: output_metadata,
+        version: output_version,
+        extra: updated_datum,
+      }
+    = datum_data
 
   // [security 3]: critical fields include amounts AND policy IDs AND asset names AND
   // schedule parameters. Switching fee currency is an economic rug-pull; changing
@@ -313,8 +324,7 @@ pub fn validate_update_group(
   // joins. creator_bond and grace_period_length affect member economics. All must be
   // frozen while any member is active.
   // metadata and version are also critical — group name cannot change once members join.
-  let is_critical_update =
-    output_metadata != input_metadata || output_version != input_version || updated_datum.contribution_fee != current_datum.contribution_fee || updated_datum.contribution_fee_policyid != current_datum.contribution_fee_policyid || updated_datum.contribution_fee_assetname != current_datum.contribution_fee_assetname || updated_datum.joining_fee != current_datum.joining_fee || updated_datum.joining_fee_policyid != current_datum.joining_fee_policyid || updated_datum.joining_fee_assetname != current_datum.joining_fee_assetname || updated_datum.penalty_fee != current_datum.penalty_fee || updated_datum.penalty_fee_policyid != current_datum.penalty_fee_policyid || updated_datum.penalty_fee_assetname != current_datum.penalty_fee_assetname || updated_datum.creator_bond != current_datum.creator_bond || updated_datum.grace_period_length != current_datum.grace_period_length || updated_datum.interval_length != current_datum.interval_length || updated_datum.creator_payment_credential != current_datum.creator_payment_credential || updated_datum.start_time != current_datum.start_time || updated_datum.max_members != current_datum.max_members
+  let is_critical_update = output_metadata != input_metadata || output_version != input_version || updated_datum.contribution_fee != current_datum.contribution_fee || updated_datum.contribution_fee_policyid != current_datum.contribution_fee_policyid || updated_datum.contribution_fee_assetname != current_datum.contribution_fee_assetname || updated_datum.joining_fee != current_datum.joining_fee || updated_datum.joining_fee_policyid != current_datum.joining_fee_policyid || updated_datum.joining_fee_assetname != current_datum.joining_fee_assetname || updated_datum.penalty_fee != current_datum.penalty_fee || updated_datum.penalty_fee_policyid != current_datum.penalty_fee_policyid || updated_datum.penalty_fee_assetname != current_datum.penalty_fee_assetname || updated_datum.creator_bond != current_datum.creator_bond || updated_datum.grace_period_length != current_datum.grace_period_length || updated_datum.interval_length != current_datum.interval_length || updated_datum.creator_payment_credential != current_datum.creator_payment_credential || updated_datum.start_time != current_datum.start_time || updated_datum.max_members != current_datum.max_members
 
   let is_safe_update = !is_critical_update || current_datum.member_count == 0
 
@@ -323,8 +333,9 @@ pub fn validate_update_group(
   let out_ada = assets.lovelace_of(group_output.value)
 
   // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
-  let output_clean_value =
-    assets.policies(group_output.value) == [ada_policy_id, policy_id]
+  let output_clean_value = assets.policies(group_output.value) == [
+    ada_policy_id, policy_id,
+  ]
 
   and {
     (group_output.address == group_input.output.address)?,
@@ -385,13 +396,15 @@ pub fn validate_close_group(
 
   // 2. Validate Admin Authorization
   expect Some(admin_input) = list.at(inputs, admin_input_index)
-  let user_token_name =
-    cip68.prefix_222
-      |> bytearray.concat(
-          bytearray.drop(group_ref_token_name, cip68.prefix_length),
-        )
-  let admin_authorized =
-    assets.quantity_of(admin_input.output.value, policy_id, user_token_name) == 1
+  let user_token_name = cip68.prefix_222
+    |> bytearray.concat(
+        bytearray.drop(group_ref_token_name, cip68.prefix_length),
+      )
+  let admin_authorized = assets.quantity_of(
+    admin_input.output.value,
+    policy_id,
+    user_token_name,
+  ) == 1
 
   // [spec CloseGroup 3]: group must be deactivated before it can be dissolved
   let is_deactivated = !current_datum.is_active
@@ -459,35 +472,36 @@ pub fn validate_join_group(
 
   // [spec Join 2]: treasury mints exactly 1 token under treasury policy
   let minted_treasury_tokens = assets.tokens(mint, treasury_policy_id)
-  let treasury_minting =
-    dict.get(minted_treasury_tokens, member_token_name) == Some(1) && dict.size(
-      minted_treasury_tokens,
-    ) == 1
+  let treasury_minting = dict.get(minted_treasury_tokens, member_token_name) == Some(
+    1,
+  ) && dict.size(minted_treasury_tokens) == 1
 
   // [security MemberJoin]: prevent double-join
-  let member_not_duplicate =
-    !list.any(current.member_token_names, fn(n) { n == member_token_name })
+  let member_not_duplicate = !list.any(
+    current.member_token_names,
+    fn(n) { n == member_token_name },
+  )
 
   // [spec Join 4]: only member_count increments and member_token_names appended;
   // all other fields unchanged; metadata and version preserved
-  let expected =
-    GroupCip68Datum {
-      metadata,
-      version,
-      extra: GroupDatum {
-        ..current,
-        member_count: current.member_count + 1,
-        member_token_names: [member_token_name, ..current.member_token_names],
-      },
-    }
+  let expected = GroupCip68Datum {
+    metadata,
+    version,
+    extra: GroupDatum {
+      ..current,
+      member_count: current.member_count + 1,
+      member_token_names: [member_token_name, ..current.member_token_names],
+    },
+  }
 
   // [security]: ADA must not decrease
   let in_ada = assets.lovelace_of(group_input.output.value)
   let out_ada = assets.lovelace_of(group_output.value)
 
   // [security]: output holds only ADA + own policy
-  let output_clean_value =
-    assets.policies(group_output.value) == [ada_policy_id, policy_id]
+  let output_clean_value = assets.policies(group_output.value) == [
+    ada_policy_id, policy_id,
+  ]
 
   and {
     not_started?,
@@ -524,7 +538,6 @@ pub fn validate_exit_group(
   group_output_index: Int,
   inputs: List<Input>,
   outputs: List<Output>,
-
 ) -> Bool {
   // [spec Exit 1]: group input holds the ref token
   expect Some(group_input) = list.at(inputs, group_input_index)
@@ -548,44 +561,41 @@ pub fn validate_exit_group(
 
   // [spec Exit 2 & 5]: member_count decrements by 1; member removed from registry;
   // all other fields frozen; metadata and version preserved
-  let expected =
-    GroupCip68Datum {
-      metadata,
-      version,
-      extra: GroupDatum {
-        ..current,
-        member_count: current.member_count - 1,
-        member_token_names: list.filter(
-          current.member_token_names,
-          fn(n) { n != member_token_name },
-        ),
-      },
-    }
+  let expected = GroupCip68Datum {
+    metadata,
+    version,
+    extra: GroupDatum {
+      ..current,
+      member_count: current.member_count - 1,
+      member_token_names: list.filter(
+        current.member_token_names,
+        fn(n) { n != member_token_name },
+      ),
+    },
+  }
 
   // [security]: ADA must not decrease
   let in_ada = assets.lovelace_of(group_input.output.value)
   let out_ada = assets.lovelace_of(group_output.value)
 
   // [security]: output holds only ADA + own policy
-  let output_clean_value =
-    assets.policies(group_output.value) == [ada_policy_id, policy_id]
+  let output_clean_value = assets.policies(group_output.value) == [
+    ada_policy_id, policy_id,
+  ]
 
   // [security MemberExit 6]: authenticate member_token_name via treasury spending input
-  let member_token_authenticated =
-    list.any(
-      inputs,
-      fn(i) {
-        assets.quantity_of(
-          i.output.value,
-          treasury_policy_id,
-          member_token_name,
-        ) == 1
-      },
-    )
+  let member_token_authenticated = list.any(
+    inputs,
+    fn(i) {
+      assets.quantity_of(i.output.value, treasury_policy_id, member_token_name) == 1
+    },
+  )
 
   // [security MemberExit]: member must exist in current registry
-  let member_exists =
-    list.any(current.member_token_names, fn(n) { n == member_token_name })
+  let member_exists = list.any(
+    current.member_token_names,
+    fn(n) { n == member_token_name },
+  )
 
   and {
     member_token_authenticated?,
@@ -636,13 +646,15 @@ pub fn validate_start_group(
 
   // [spec StartGroup 2]: admin holds the user (222) token
   expect Some(admin_input) = list.at(inputs, admin_input_index)
-  let user_token_name =
-    cip68.prefix_222
-      |> bytearray.concat(
-          bytearray.drop(group_ref_token_name, cip68.prefix_length),
-        )
-  let admin_authorized =
-    assets.quantity_of(admin_input.output.value, policy_id, user_token_name) == 1
+  let user_token_name = cip68.prefix_222
+    |> bytearray.concat(
+        bytearray.drop(group_ref_token_name, cip68.prefix_length),
+      )
+  let admin_authorized = assets.quantity_of(
+    admin_input.output.value,
+    policy_id,
+    user_token_name,
+  ) == 1
 
   // [spec StartGroup 3]: group must not already be started
   let not_already_started = !current.is_started
@@ -656,25 +668,25 @@ pub fn validate_start_group(
   expect InlineDatum(output_datum_data) = group_output.datum
   expect updated_cip68: GroupCip68Datum = output_datum_data
 
-  let expected =
-    GroupCip68Datum {
-      metadata,
-      version,
-      extra: GroupDatum {
-        ..current,
-        is_started: True,
-        num_rounds: current.member_count,
-        start_time: current_time,
-      },
-    }
+  let expected = GroupCip68Datum {
+    metadata,
+    version,
+    extra: GroupDatum {
+      ..current,
+      is_started: True,
+      num_rounds: current.member_count,
+      start_time: current_time,
+    },
+  }
 
   // [security]: ADA must not decrease
   let in_ada = assets.lovelace_of(group_input.output.value)
   let out_ada = assets.lovelace_of(group_output.value)
 
   // [security]: output holds only ADA + own policy
-  let output_clean_value =
-    assets.policies(group_output.value) == [ada_policy_id, policy_id]
+  let output_clean_value = assets.policies(group_output.value) == [
+    ada_policy_id, policy_id,
+  ]
 
   and {
     admin_authorized?,
@@ -735,8 +747,7 @@ pub fn validate_distribute_group(
 
   // [spec DistributeRound 4]: time gate — round can't run before its scheduled start
   let current_time = get_lower_bound(tx)
-  let round_start_time =
-    current.start_time + round_number * current.interval_length
+  let round_start_time = current.start_time + round_number * current.interval_length
   let time_valid = current_time >= round_start_time
 
   // [spec DistributeRound 5]: round must be within the current cycle
@@ -747,20 +758,20 @@ pub fn validate_distribute_group(
   expect updated_cip68: GroupCip68Datum = output_datum_data
 
   // [spec DistributeRound 6]: only last_distributed_round changes; metadata/version frozen
-  let expected =
-    GroupCip68Datum {
-      metadata,
-      version,
-      extra: GroupDatum { ..current, last_distributed_round: round_number },
-    }
+  let expected = GroupCip68Datum {
+    metadata,
+    version,
+    extra: GroupDatum { ..current, last_distributed_round: round_number },
+  }
 
   // [security]: ADA must not decrease
   let in_ada = assets.lovelace_of(group_input.output.value)
   let out_ada = assets.lovelace_of(group_output.value)
 
   // [security]: output holds only ADA + own policy
-  let output_clean_value =
-    assets.policies(group_output.value) == [ada_policy_id, policy_id]
+  let output_clean_value = assets.policies(group_output.value) == [
+    ada_policy_id, policy_id,
+  ]
 
   and {
     group_started?,
@@ -813,46 +824,47 @@ pub fn validate_next_cycle_group(
   expect InlineDatum(input_datum_data) = group_input.output.datum
   expect GroupCip68Datum { metadata, version, extra: current } = input_datum_data
 
-  let user_token_name =
-    cip68.prefix_222
-      |> bytearray.concat(
-          bytearray.drop(group_ref_token_name, cip68.prefix_length),
-        )
+  let user_token_name = cip68.prefix_222
+    |> bytearray.concat(
+        bytearray.drop(group_ref_token_name, cip68.prefix_length),
+      )
   expect Some(admin_input) = list.at(inputs, admin_input_index)
-  let admin_authorized =
-    assets.quantity_of(admin_input.output.value, policy_id, user_token_name) == 1
+  let admin_authorized = assets.quantity_of(
+    admin_input.output.value,
+    policy_id,
+    user_token_name,
+  ) == 1
 
   // [spec NextCycle 3]: group must be started and active
   let group_started = current.is_started
   let group_active = current.is_active
 
   // [spec NextCycle 4]: all rounds have been distributed
-  let all_rounds_done =
-    current.last_distributed_round + 1 == current.num_rounds
+  let all_rounds_done = current.last_distributed_round + 1 == current.num_rounds
 
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(output_datum_data) = group_output.datum
   expect updated_cip68: GroupCip68Datum = output_datum_data
 
   // [spec NextCycle 5]: reset cycle fields; metadata and version preserved
-  let expected =
-    GroupCip68Datum {
-      metadata,
-      version,
-      extra: GroupDatum {
-        ..current,
-        is_started: False,
-        last_distributed_round: -1,
-        num_rounds: 0,
-        start_time: 0,
-      },
-    }
+  let expected = GroupCip68Datum {
+    metadata,
+    version,
+    extra: GroupDatum {
+      ..current,
+      is_started: False,
+      last_distributed_round: -1,
+      num_rounds: 0,
+      start_time: 0,
+    },
+  }
 
   let in_ada = assets.lovelace_of(group_input.output.value)
   let out_ada = assets.lovelace_of(group_output.value)
 
-  let output_clean_value =
-    assets.policies(group_output.value) == [ada_policy_id, policy_id]
+  let output_clean_value = assets.policies(group_output.value) == [
+    ada_policy_id, policy_id,
+  ]
 
   and {
     admin_authorized?,
