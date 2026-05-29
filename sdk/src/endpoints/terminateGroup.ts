@@ -8,8 +8,6 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
-  GroupDatum,
-  GroupSpendRedeemer,
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
@@ -17,7 +15,6 @@ import {
 import {
   treasuryValidator,
   treasuryPolicyId,
-  groupValidator,
   groupPolicyId,
 } from "../core/validators/constants.js";
 import {
@@ -39,20 +36,22 @@ import {
 
 export type TerminateGroupConfig = {
   groupTokenSuffix: string;
-  memberAccountTokenSuffix: string; // suffix of the account whose PenaltyState UTxO to claim
+  memberAccountTokenSuffix: string;
 };
 
 // --- Endpoint ---
 
 /**
- * Creates an unsigned transaction for terminating a Group membership (penalty withdrawal).
+ * Creates an unsigned transaction for claiming a PenaltyState UTxO (penalty withdrawal).
  *
  * **Functionality:**
- * - Admin withdraws a PenaltyState Treasury UTxO after member early exit.
- * - Burns the membership token and releases locked ADA to the admin.
- * - Requires the group UTxO as a spending input (to derive group policy for admin auth).
+ * - Admin withdraws a PenaltyState Treasury UTxO after a member's early exit.
+ * - Burns the membership token and releases the locked ADA to the admin.
+ * - The group UTxO is a read-only reference input — not spent — used only to
+ *   derive the group policy ID for admin token authorisation. Same pattern as
+ *   ExtendGrace. The group validator does not run.
  *
- * @param lucid - Lucid instance with wallet selected.
+ * @param lucid - Lucid instance with wallet selected (admin wallet).
  * @param config - TerminateGroupConfig.
  * @returns Effect yielding TxSignBuilder.
  */
@@ -68,9 +67,11 @@ export const unsignedTerminateGroupTxProgram = (
     const adminUnit =
       groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
 
+    // Group UTxO — reference input only, not spent
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
-    const adminUtxo = yield* resolveUtxoByUnit(lucid, adminUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
+
+    const adminUtxo = yield* resolveUtxoByUnit(lucid, adminUnit);
 
     // Find the PenaltyState treasury UTxO for this member
     const memberRefName = assetNameLabels.prefix222 + memberAccountTokenSuffix;
@@ -118,100 +119,55 @@ export const unsignedTerminateGroupTxProgram = (
       return yield* Effect.fail(
         new InvalidDatumError({
           field: "treasuryDatum",
-          reason: "Expected PenaltyState for TerminateGroup",
+          reason: "Expected PenaltyState for ClaimPenalty",
         }),
       );
     }
 
-    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
-
-    const groupRefAssetEntry = Object.keys(groupUtxo.assets).find((k) =>
-      k.startsWith(groupPolicyId!),
-    );
-    if (!groupRefAssetEntry)
-      return yield* Effect.fail(
-        new UtxoNotFoundError({
-          tokenName: "GroupReference (100)",
-          address: groupUtxo.address,
-        }),
-      );
-    const groupRefName = groupRefAssetEntry.slice(groupPolicyId!.length);
-
     const memberToken = toUnit(treasuryPolicyId!, memberRefName);
     const burnAssets: Assets = { [memberToken]: -1n };
-    const groupAssets: Assets = { ...groupUtxo.assets };
 
-    // Group validator redeemer: UpdateGroup — admin spends group UTxO and returns it unchanged.
-    // This is required because the treasury validator reads the group input from tx.inputs
-    // (spending inputs) to derive the group policy ID for admin token verification.
-    const groupRedeemer: RedeemerBuilder = {
-      kind: "selected",
-      makeRedeemer: (inputIndices: bigint[]) =>
-        Data.to(
-          {
-            UpdateGroup: {
-              group_ref_token_name: groupRefName,
-              admin_input_index: inputIndices[1],
-              group_input_index: inputIndices[0],
-              group_output_index: 0n,
-            },
-          },
-          GroupSpendRedeemer,
-        ),
-      inputs: [groupUtxo, adminUtxo],
-    };
-
-    // Treasury validator spend redeemer: TerminateGroup
+    // Treasury spend redeemer — group_ref_input_index: 0 (first reference input)
     const treasurySpendRedeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            TerminateGroup: {
-              group_input_index: inputIndices[0],
-              admin_input_index: inputIndices[1],
+            ClaimPenalty: {
+              group_ref_input_index: 0n, // first (only) reference input
+              admin_input_index: inputIndices[0],
             },
           },
           TreasuryRedeemer,
         ),
-      inputs: [groupUtxo, adminUtxo],
+      inputs: [adminUtxo],
     };
 
-    // The mint handler (TerminateGroup branch) calls validate_terminate_group which
-    // ignores all redeemer fields. Use a plain redeemer to avoid sharing a
-    // RedeemerBuilder between spend and mint contexts.
+    // Mint redeemer — validate_claim_penalty_mint ignores redeemer fields
     const mintBurnRedeemer = Data.to(
-      { TerminateGroup: { group_input_index: 0n, admin_input_index: 0n } },
+      { ClaimPenalty: { group_ref_input_index: 0n, admin_input_index: 0n } },
       TreasuryRedeemer,
     );
 
     const address = yield* getWalletAddress(lucid);
-    const groupAddress = yield* getScriptAddress(
-      lucid,
-      groupValidator.spendGroup,
-    );
 
     const tx = yield* lucid
       .newTx()
-      .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom([adminUtxo])
       .collectFrom([treasuryUtxo], treasurySpendRedeemer)
+      .readFrom([groupUtxo])
       .mintAssets(burnAssets, mintBurnRedeemer)
       .addSigner(address)
-      .pay.ToContract(
-        groupAddress,
-        { kind: "inline", value: Data.to(groupDatum, GroupDatum) },
-        groupAssets,
-      )
       .attach.MintingPolicy(treasuryValidator.mintTreasury)
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
-      .attach.SpendingValidator(groupValidator.spendGroup)
-      .completeProgram()
+      .completeProgram(
+        lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
+      )
       .pipe(
         Effect.mapError(
           (e) =>
             new TransactionBuildError({
-              operation: "terminateGroup",
+              operation: "claimPenalty",
               error: String(e),
             }),
         ),

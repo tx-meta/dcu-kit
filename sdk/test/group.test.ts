@@ -12,9 +12,16 @@ import { unsignedDeleteGroupTxProgram } from "../src/endpoints/deleteGroup.js";
 import {
   selectWalletFromSeed,
   assetNameLabels,
+  parseGroupCip68Datum,
+  getScriptAddress,
+  patchInlineDatum,
 } from "../src/core/utils/index.js";
 import { createDefaultGroupDatum, extractTokenSuffix } from "./utils.js";
-import { groupPolicyId } from "../src/core/validators/constants.js";
+import {
+  groupPolicyId,
+  groupValidator,
+} from "../src/core/validators/constants.js";
+import { toText } from "@lucid-evolution/lucid";
 
 describe("Group Endpoints", () => {
   // --- Create Group ---
@@ -28,6 +35,40 @@ describe("Group Endpoints", () => {
       expect(txHash).toHaveLength(64);
       expect(groupDatum.is_active).toBe(true);
       expect(groupDatum.member_count).toBe(0n);
+    }),
+  );
+
+  // --- Group name readable from on-chain datum ---
+  // Verifies the CIP-68 wrapper is written correctly and the metadata["name"] key
+  // resolves to the groupName string passed to CreateGroupConfig.
+  it.effect("should store the group name in CIP-68 metadata on-chain", () =>
+    Effect.gen(function* () {
+      const { context } = yield* setupBase();
+
+      const { txHash } = yield* createGroupTestCase(context, {
+        datumOverride: {},
+      });
+
+      const groupAddress = yield* getScriptAddress(
+        context.lucid,
+        groupValidator.spendGroup,
+      );
+      const utxos = yield* Effect.tryPromise(() =>
+        context.lucid.utxosAt(groupAddress),
+      );
+      const groupUtxo = utxos.find((u) => u.txHash === txHash);
+      expect(groupUtxo).toBeDefined();
+
+      const cip68 = yield* parseGroupCip68Datum(
+        patchInlineDatum(groupUtxo!).datum,
+      );
+
+      // metadata is a Plutus Map — at runtime it's a JS Map<string, string>
+      // Key = fromText("name") = "6e616d65"
+      const metadataMap = cip68.metadata as unknown as Map<string, string>;
+      const nameHex = metadataMap.get("6e616d65");
+      expect(nameHex).toBeDefined();
+      expect(toText(nameHex!)).toBe("Test Group");
     }),
   );
 

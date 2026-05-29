@@ -50,21 +50,24 @@ async function main() {
       `No UTxOs in ${activeWallet} wallet. Please fund it first.`,
     );
 
-  const emails: Record<string, string> = {
+  // display_name is the raw UTF-8 string shown in the UI (ADA handle, username, etc.)
+  // contact is a secondary identifier (social handle, email address, etc.)
+  // Both are optional — omitting either defaults to the wallet address as a fallback.
+  const displayNames: Record<string, string> = {
+    ADMIN: "@admin",
+    USER1: "@user1",
+    USER2: "@user2",
+  };
+  const contacts: Record<string, string> = {
     ADMIN: "admin@web3.ada",
     USER1: "user1@web3.ada",
     USER2: "user2@web3.ada",
   };
-  const phones: Record<string, string> = {
-    ADMIN: "555-0000",
-    USER1: "555-0100",
-    USER2: "555-0200",
-  };
 
   const config: CreateAccountConfig = {
     selected_out_ref: utxos[0],
-    email: emails[activeWallet] ?? "member@web3.ada",
-    phone: phones[activeWallet] ?? "555-0000",
+    display_name: displayNames[activeWallet] ?? "@member",
+    contact: contacts[activeWallet] ?? "member@web3.ada",
   };
 
   console.log("Building transaction...");

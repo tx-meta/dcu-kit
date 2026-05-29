@@ -95,9 +95,9 @@ async function main() {
     creator_bond: CONTRIBUTION_FEE,
 
     interval_length: INTERVAL_LENGTH,
-    // num_intervals MUST be 0 at creation — the on-chain validator enforces this.
+    // num_rounds MUST be 0 at creation — the on-chain validator enforces this.
     // StartGroup sets it to member_count when sealing membership.
-    num_intervals: 0n,
+    num_rounds: 0n,
     max_members: MAX_MEMBERS,
 
     member_count: 0n,
@@ -107,11 +107,14 @@ async function main() {
     start_time: 0n,
     last_distributed_round: -1n,
     grace_period_length: 0n,
-    admin_payment_credential: adminPkh,
+    creator_payment_credential: adminPkh,
     member_token_names: [],
   };
 
   const config: CreateGroupConfig = {
+    // groupName goes into the CIP-68 metadata map (metadata["name"]) on the group
+    // reference token. Wallets display this name when showing the group NFT.
+    groupName: process.env.GROUP_NAME ?? "My DCU Group",
     groupDatum,
     utxoToSpend: utxos[0],
   };
@@ -142,7 +145,7 @@ async function main() {
   );
 
   // Save interval_length now — it's fixed at creation.
-  // groupStartTime and groupNumIntervals are saved by start-group.ts after StartGroup is called.
+  // groupStartTime and groupNumRounds are saved by start-group.ts after StartGroup is called.
   saveState({
     groupTokenSuffix,
     groupPolicyId: groupPolicyId!,

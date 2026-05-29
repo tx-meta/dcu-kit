@@ -24,8 +24,9 @@ import {
 } from "../core/validators/constants.js";
 import {
   getScriptAddress,
+  parseGroupCip68Datum,
+  buildGroupCip68Datum,
   getWalletAddress,
-  parseSafeDatum,
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
@@ -94,7 +95,8 @@ export const unsignedJoinGroupTxProgram = (
     const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUserUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
     const accountUtxo = patchInlineDatum(accountUtxoRaw);
-    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
+    const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
+    const groupDatum = groupCip68.groupDatum;
 
     const assignedSlot = groupDatum.member_count;
 
@@ -167,7 +169,7 @@ export const unsignedJoinGroupTxProgram = (
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            MemberJoin: {
+            Join: {
               group_ref_token_name: groupRefName,
               member_token_name: accountAssetName,
               group_input_index: inputIndices[0],
@@ -206,13 +208,13 @@ export const unsignedJoinGroupTxProgram = (
     );
 
     // Route joining_fee to admin wallet when non-zero.
-    // Aiken checks: list.any(outputs, o -> pkh == admin_payment_credential && qty >= joining_fee)
+    // Aiken checks: list.any(outputs, o -> pkh == creator_payment_credential && qty >= joining_fee)
     const network = lucid.config().network!;
     const adminFeeAddress =
       groupDatum.joining_fee > 0n
         ? credentialToAddress(network, {
             type: "Key",
-            hash: groupDatum.admin_payment_credential,
+            hash: groupDatum.creator_payment_credential,
           })
         : null;
     const adminFeeAssets: Assets | null =
@@ -233,7 +235,14 @@ export const unsignedJoinGroupTxProgram = (
       .mintAssets(mintingAssets, treasuryRedeemer)
       .pay.ToContract(
         groupAddress,
-        { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
+        {
+          kind: "inline",
+          value: buildGroupCip68Datum(
+            groupCip68.metadata,
+            groupCip68.version,
+            updatedGroupDatum,
+          ),
+        },
         groupUtxo.assets,
       )
       .pay.ToContract(

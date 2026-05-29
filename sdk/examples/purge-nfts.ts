@@ -1,21 +1,29 @@
 /**
- * Purge Stale DCU Tokens
+ * Purge DCU (222) User Tokens
  *
- * Sweeps accumulated DCU (222) user tokens from past test sessions to a
- * permanent graveyard address, and consolidates all remaining wallet UTxOs
- * (ADA + any active tokens) into a single change output.
+ * Sweeps CIP-68 (222) user tokens from the wallet to a permanent graveyard
+ * address and consolidates all remaining UTxOs into a single change output.
  *
- * "Stale" = any AccountUser(222) or GroupAdmin(222) token whose suffix does
- * NOT match the active suffix stored in state.json for this wallet.
- * The (100) reference tokens live at script addresses and are handled by
- * delete-account / delete-group.
+ * Two modes:
+ *
+ *   Default (stale-only):
+ *     Sweeps (222) tokens under the CURRENT accountPolicyId / groupPolicyId
+ *     whose suffix does NOT match the active suffix in state.json.
+ *     Use this to clean up tokens from previous test runs of the same validator.
+ *
+ *   SWEEP_ALL=true:
+ *     Sweeps EVERY CIP-68 (222) token in the wallet — any policy ID, any suffix.
+ *     Use this when the wallet has tokens from multiple past deployments
+ *     (different validator hashes) and you just want a clean slate.
+ *     The paired (100) reference tokens are already permanently orphaned at
+ *     dead script addresses and cannot be recovered regardless.
  *
  * Usage:
- *   ACTIVE_WALLET=ADMIN pnpm run purge-nfts
- *   pnpm run purge-nfts                       — USER1 (default)
- *   ACTIVE_WALLET=USER2 pnpm run purge-nfts
+ *   ACTIVE_WALLET=ADMIN pnpm run purge-nfts               — stale-only, ADMIN
+ *   ACTIVE_WALLET=ADMIN SWEEP_ALL=true pnpm run purge-nfts — sweep everything
+ *   ACTIVE_WALLET=USER2 SWEEP_ALL=true pnpm run purge-nfts
  *
- * Cost: 2 ADA per stale token (min-UTxO locked in graveyard permanently).
+ * Cost: 2 ADA per token (min-UTxO locked in graveyard permanently).
  * Graveyard: key-hash "DCU_GRAVEYARD_V1" padded to 28 bytes — no known
  * private key; tokens sent there are permanently unspendable.
  */
@@ -39,8 +47,12 @@ import { loadState, accountSuffixKey } from "./state.js";
 const GRAVEYARD_KEY_HASH =
   "4443555f4752415645594152445f5631000000000000000000000000";
 
-// 2 ADA per stale token — safely exceeds the min-UTxO for any single native token.
+// 2 ADA per token — safely exceeds the min-UTxO for any single native token.
 const GRAVEYARD_MIN_ADA = 2_000_000n;
+
+// CIP-68 (222) prefix — any token whose asset name starts with this is a
+// CIP-68 user token. DCU mints all its user-facing tokens with this prefix.
+const PREFIX_222 = assetNameLabels.prefix222; // "000de140"
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -52,6 +64,7 @@ async function main() {
     process.exit(0);
   }
 
+  const sweepAll = process.env.SWEEP_ALL === "true";
   const activeWallet = (process.env.ACTIVE_WALLET ?? "USER1").toUpperCase();
   const walletSeed =
     process.env[`${activeWallet}_SEED`] ?? process.env.USER1_SEED;
@@ -59,23 +72,23 @@ async function main() {
   lucid.selectWallet.fromSeed(walletSeed);
   await logWalletInfo(lucid, activeWallet);
 
-  const state = loadState();
-  const activeAccountSuffix = state[accountSuffixKey(activeWallet)];
-  const activeGroupSuffix = state.groupTokenSuffix;
-
-  console.log(
-    `Active account suffix : ${activeAccountSuffix ?? "(none in state.json)"}`,
-  );
-  console.log(
-    `Active group suffix   : ${activeGroupSuffix ?? "(none in state.json)"}`,
-  );
-
   const network = lucid.config().network!;
   const graveyardAddress = credentialToAddress(network, {
     type: "Key",
     hash: GRAVEYARD_KEY_HASH,
   });
-  console.log(`Graveyard address    : ${graveyardAddress}\n`);
+
+  if (sweepAll) {
+    console.log("Mode: SWEEP_ALL — every CIP-68 (222) token will be swept.");
+  } else {
+    const state = loadState();
+    const activeAccountSuffix = state[accountSuffixKey(activeWallet)];
+    const activeGroupSuffix = state.groupTokenSuffix;
+    console.log(
+      `Mode: stale-only  (active account: ${activeAccountSuffix ?? "none"}, active group: ${activeGroupSuffix ?? "none"})`,
+    );
+  }
+  console.log(`Graveyard: ${graveyardAddress}\n`);
 
   const allUtxos = (await lucid.wallet().getUtxos()).filter(
     (u) => !u.scriptRef,
@@ -85,8 +98,14 @@ async function main() {
     return;
   }
 
-  // Identify stale DCU (222) tokens across all wallet UTxOs.
-  const staleUnits: string[] = [];
+  const state = sweepAll ? null : loadState();
+  const activeAccountSuffix = state
+    ? state[accountSuffixKey(activeWallet)]
+    : null;
+  const activeGroupSuffix = state ? state.groupTokenSuffix : null;
+
+  // Collect every (222) token that should be swept.
+  const sweepUnits: string[] = [];
   for (const utxo of allUtxos) {
     for (const unit of Object.keys(utxo.assets)) {
       if (unit === "lovelace") continue;
@@ -95,53 +114,61 @@ async function main() {
       const prefix = assetName.slice(0, 8);
       const suffix = assetName.slice(8);
 
-      if (prefix !== assetNameLabels.prefix222) continue;
+      if (prefix !== PREFIX_222) continue;
 
-      const isStaleAccount =
-        policyId === accountPolicyId && suffix !== activeAccountSuffix;
-      const isStaleGroup =
-        groupPolicyId != null &&
-        policyId === groupPolicyId &&
-        suffix !== activeGroupSuffix;
+      if (sweepAll) {
+        // SWEEP_ALL: grab every (222) token regardless of policy or suffix
+        sweepUnits.push(unit);
+      } else {
+        // Stale-only: only current DCU policies, non-active suffixes
+        const isStaleAccount =
+          policyId === accountPolicyId && suffix !== activeAccountSuffix;
+        const isStaleGroup =
+          groupPolicyId != null &&
+          policyId === groupPolicyId &&
+          suffix !== activeGroupSuffix;
 
-      if (isStaleAccount || isStaleGroup) {
-        staleUnits.push(unit);
+        if (isStaleAccount || isStaleGroup) sweepUnits.push(unit);
       }
     }
   }
 
-  if (staleUnits.length === 0) {
-    console.log("No stale DCU tokens found — wallet is already clean.");
+  if (sweepUnits.length === 0) {
+    console.log("No tokens to sweep — wallet is already clean.");
     if (allUtxos.length > 1) {
       console.log(
-        `(${allUtxos.length} UTxOs present — run with CONSOLIDATE=true to consolidate ADA anyway)`,
+        `(${allUtxos.length} UTxOs present — run with SWEEP_ALL=true to consolidate ADA anyway)`,
       );
     }
     return;
   }
 
-  console.log(`Found ${staleUnits.length} stale token(s):`);
-  for (const unit of staleUnits) {
+  // Pretty-print what we're about to sweep
+  console.log(`Sweeping ${sweepUnits.length} token(s):`);
+  for (const unit of sweepUnits) {
     const policyId = unit.slice(0, 56);
-    const assetName = unit.slice(56);
-    const suffix = assetName.slice(8);
-    const kind =
-      policyId === accountPolicyId ? "AccountUser(222)" : "GroupAdmin(222)";
-    console.log(`  • ${kind}  suffix: ${suffix.slice(0, 16)}...`);
+    const suffix = unit.slice(64); // skip policy (56) + prefix (8)
+    const knownPolicy =
+      policyId === accountPolicyId
+        ? "AccountUser(222)"
+        : groupPolicyId && policyId === groupPolicyId
+          ? "GroupCreator(222)"
+          : `Unknown(222) policy:${policyId.slice(0, 8)}...`;
+    console.log(`  • ${knownPolicy}  suffix: ${suffix.slice(0, 16)}...`);
   }
 
-  const adaCost = BigInt(staleUnits.length) * GRAVEYARD_MIN_ADA;
+  const adaCost = BigInt(sweepUnits.length) * GRAVEYARD_MIN_ADA;
   console.log(
-    `\nADA locked in graveyard: ${adaCost / 1_000_000n} ADA (${GRAVEYARD_MIN_ADA / 1_000_000n} ADA × ${staleUnits.length})`,
+    `\nADA locked in graveyard: ${adaCost / 1_000_000n} ADA (${GRAVEYARD_MIN_ADA / 1_000_000n} ADA × ${sweepUnits.length})`,
   );
   console.log(
-    `Collecting all ${allUtxos.length} wallet UTxOs → consolidated ADA + active tokens return as change.\n`,
+    `Collecting all ${allUtxos.length} UTxOs → consolidated ADA + change.\n`,
   );
 
-  // Collect every wallet UTxO for consolidation, then route each stale token
-  // to the graveyard. Active tokens and remaining ADA return as a single change output.
+  // Collect every wallet UTxO for consolidation, then send each swept token
+  // to the graveyard. Remaining ADA returns as a single change output.
   let txBuilder = lucid.newTx().collectFrom(allUtxos);
-  for (const unit of staleUnits) {
+  for (const unit of sweepUnits) {
     txBuilder = txBuilder.pay.ToAddress(graveyardAddress, {
       [unit]: 1n,
       lovelace: GRAVEYARD_MIN_ADA,
@@ -160,7 +187,7 @@ async function main() {
   console.log("\nWaiting for confirmation...");
   await lucid.awaitTx(txHash);
   console.log(
-    `Done! ${staleUnits.length} stale token(s) swept. Wallet UTxOs consolidated.`,
+    `Done! ${sweepUnits.length} token(s) swept, UTxOs consolidated into one.`,
   );
   console.log("Run 'pnpm run show-wallets' to verify.");
 }

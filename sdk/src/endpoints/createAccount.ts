@@ -20,15 +20,18 @@ import {
   accountValidator,
   accountPolicyId,
 } from "../core/validators/constants.js";
-import { sha256 } from "@noble/hashes/sha2";
-import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
+import { fromText } from "@lucid-evolution/lucid";
 
 // --- Configuration ---
 
 export type CreateAccountConfig = {
   selected_out_ref: OutRef;
-  email: string;
-  phone: string;
+  // Raw UTF-8 display name (username, ADA Handle, Discord handle, etc.).
+  // Defaults to wallet address when omitted.
+  display_name?: string;
+  // Raw UTF-8 secondary contact identifier.
+  // Defaults to wallet address when omitted.
+  contact?: string;
 };
 
 // --- Endpoint ---
@@ -40,22 +43,25 @@ export type CreateAccountConfig = {
  * - Mints a unique pair of CIP-68 tokens (Reference + User Auth).
  * - Locks the Reference NFT in the Account Script with the provided datum.
  * - Sends the User Auth NFT to the user's wallet.
- * - Initializes the Account Datum (Email Hash, Phone Hash) on-chain.
+ * - Initializes the Account Datum (display_name, contact) on-chain as raw UTF-8.
+ *   Both fields default to the wallet address when omitted.
  *
  * @param lucid - Lucid instance with wallet selected.
- * @param config - CreateAccountConfig (UTxO + Datum).
+ * @param config - CreateAccountConfig (UTxO + optional identity fields).
  * @returns Effect yielding TxSignBuilder.
  *
  * @example
  * ```ts
 import { createAccount } from "@tx-meta/dcu-sdk";
 
+// Minimal — both fields default to wallet address
+const program = createAccount(lucid, { selected_out_ref: utxo });
+
+// With explicit identity
 const program = createAccount(lucid, {
   selected_out_ref: utxo,
-  account_datum: { 
-     email_hash: "abcd...", 
-     phone_hash: "1234..." 
-  }
+  display_name: "@alice",
+  contact: "alice@dcu.io",
 });
 ```
  */
@@ -77,8 +83,8 @@ export const unsignedCreateAccountTxProgram = (
       yield* createCip68TokenNames(selectedUtxo);
 
     const accountDatum: AccountDatum = {
-      email_hash: bytesToHex(sha256(utf8ToBytes(config.email))),
-      phone_hash: bytesToHex(sha256(utf8ToBytes(config.phone))),
+      display_name: fromText(config.display_name ?? address),
+      contact: fromText(config.contact ?? address),
     };
     const datum = Data.to(accountDatum, AccountDatum);
 

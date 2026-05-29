@@ -3,7 +3,7 @@
  *
  * Tops up a member's treasury UTxO balance by adding ADA without changing
  * any other datum fields. Used when a member's balance is running low
- * (but they are still in TreasuryState — not yet in InsufficientCollateralState).
+ * (but they are still in TreasuryState — not yet in DefaultState).
  *
  * Wallet selection:
  *   Default (USER1): uses USER1_SEED
@@ -74,7 +74,7 @@ async function main() {
     `Topping up ${activeWallet}'s treasury UTxO by ${topUpAmount / 1_000_000n} ADA...`,
   );
   console.log(
-    "Note: only valid when the treasury UTxO is in TreasuryState (not InsufficientCollateralState).",
+    "Note: only valid when the treasury UTxO is in TreasuryState (not DefaultState).",
   );
 
   const config: ContributeConfig = {

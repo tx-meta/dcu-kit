@@ -23,6 +23,8 @@ import {
 } from "../core/validators/constants.js";
 import {
   getScriptAddress,
+  parseGroupCip68Datum,
+  buildGroupCip68Datum,
   parseSafeDatum,
   patchInlineDatum,
   assetNameLabels,
@@ -68,7 +70,8 @@ export const unsignedDistributePayoutTxProgram = (
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
 
-    const groupDatum = yield* parseSafeDatum(groupUtxo.datum, GroupDatum);
+    const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
+    const groupDatum = groupCip68.groupDatum;
 
     const groupRefAsset = Object.keys(groupUtxo.assets).find((k) =>
       k.startsWith(groupPolicyId!),
@@ -90,7 +93,7 @@ export const unsignedDistributePayoutTxProgram = (
         }),
       );
     }
-    if (groupDatum.num_intervals === 0n) {
+    if (groupDatum.num_rounds === 0n) {
       return yield* Effect.fail(
         new TransactionBuildError({
           operation: "distributeRound",
@@ -100,16 +103,16 @@ export const unsignedDistributePayoutTxProgram = (
     }
 
     const roundNumber = groupDatum.last_distributed_round + 1n;
-    if (roundNumber >= groupDatum.num_intervals) {
+    if (roundNumber >= groupDatum.num_rounds) {
       return yield* Effect.fail(
         new TransactionBuildError({
           operation: "distributeRound",
-          error: `All ${groupDatum.num_intervals} rounds have been distributed (rounds 0–${groupDatum.num_intervals - 1n} complete). Group is mature — members can now call exit-group.`,
+          error: `All ${groupDatum.num_rounds} rounds have been distributed (rounds 0–${groupDatum.num_rounds - 1n} complete). Group is mature — members can now call exit-group.`,
         }),
       );
     }
 
-    const currentSlot = Number(roundNumber % groupDatum.num_intervals);
+    const currentSlot = Number(roundNumber % groupDatum.num_rounds);
 
     const treasuryAddress = yield* getScriptAddress(
       lucid,
@@ -144,7 +147,7 @@ export const unsignedDistributePayoutTxProgram = (
 
     // Filter to TreasuryState UTxOs belonging to this group that are ready for this round.
     // Also capture is_deferred for the primary slot holder — mirrors the Aiken routing:
-    //   if primary is deferred → effectiveSlot = (currentSlot + 1) % num_intervals
+    //   if primary is deferred → effectiveSlot = (currentSlot + 1) % num_rounds
     const memberStates: { utxo: UTxO; datum: TreasuryDatum }[] = [];
     let primaryPaymentCred: string | undefined;
     let primaryIsDeferred = false;
@@ -181,7 +184,7 @@ export const unsignedDistributePayoutTxProgram = (
     }
 
     // Mirror Aiken spec DistributeRound 6b: deferred primary → next slot receives the payout.
-    const numIntervals = Number(groupDatum.num_intervals);
+    const numIntervals = Number(groupDatum.num_rounds);
     const effectiveSlot = primaryIsDeferred
       ? (currentSlot + 1) % numIntervals
       : currentSlot;
@@ -259,7 +262,7 @@ export const unsignedDistributePayoutTxProgram = (
       makeRedeemer: (indices: bigint[]) =>
         Data.to(
           {
-            DistributeRound: {
+            Distribute: {
               group_ref_token_name: groupRefName,
               group_input_index: indices[0],
               group_output_index: 0n,
@@ -318,11 +321,18 @@ export const unsignedDistributePayoutTxProgram = (
 
     const baseTxWithGroup = baseTx.pay.ToContract(
       groupAddress,
-      { kind: "inline", value: Data.to(updatedGroupDatum, GroupDatum) },
+      {
+        kind: "inline",
+        value: buildGroupCip68Datum(
+          groupCip68.metadata,
+          groupCip68.version,
+          updatedGroupDatum,
+        ),
+      },
       groupUtxo.assets,
     );
 
-    const isLastRound = roundNumber + 1n === groupDatum.num_intervals;
+    const isLastRound = roundNumber + 1n === groupDatum.num_rounds;
 
     const withTreasuryOutputs = memberStates.reduce((tx, state) => {
       if (!("TreasuryState" in state.datum)) return tx;
@@ -338,12 +348,14 @@ export const unsignedDistributePayoutTxProgram = (
 
       const updatedDatum: TreasuryDatum = transitionToIcs
         ? {
-            InsufficientCollateralState: {
+            DefaultState: {
               group_reference_tokenname: ts.group_reference_tokenname,
               member_reference_tokenname: ts.member_reference_tokenname,
               grace_expires_at: validFrom + groupDatum.grace_period_length,
               grace_extensions_used: 0n,
               rounds_paid: roundNumber + 1n,
+              assigned_slot: ts.assigned_slot,
+              member_payment_credential: ts.member_payment_credential,
             },
           }
         : {

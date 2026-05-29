@@ -40,6 +40,7 @@ import {
   DistributePayoutConfig,
   groupPolicyId,
   GroupDatum,
+  GroupCip68Datum,
   assetNameLabels,
 } from "@tx-meta/dcu-sdk";
 import { loadState, ExampleState } from "./state.js";
@@ -142,7 +143,7 @@ async function checkRound(
 
   let groupDatum: GroupDatum;
   try {
-    groupDatum = Data.from(groupUtxo.datum, GroupDatum);
+    groupDatum = Data.from(groupUtxo.datum, GroupCip68Datum).extra;
   } catch (e) {
     return { ready: false, reason: `Failed to decode group datum: ${e}` };
   }
@@ -159,10 +160,10 @@ async function checkRound(
 
   const roundNumber = groupDatum.last_distributed_round + 1n;
 
-  if (roundNumber >= groupDatum.num_intervals) {
+  if (roundNumber >= groupDatum.num_rounds) {
     return {
       ready: false,
-      reason: `All ${groupDatum.num_intervals} rounds complete. Group is mature — members can exit.`,
+      reason: `All ${groupDatum.num_rounds} rounds complete. Group is mature — members can exit.`,
     };
   }
 
@@ -233,7 +234,7 @@ async function tick(
 
   const { roundNumber, groupDatum } = status;
   console.log(
-    `[cron] Round ${roundNumber + 1n} of ${groupDatum.num_intervals} is open — submitting distribute-payout...`,
+    `[cron] Round ${roundNumber + 1n} of ${groupDatum.num_rounds} is open — submitting distribute-payout...`,
   );
 
   const scriptRefs = await loadScriptRefs(lucid, state);
@@ -257,7 +258,7 @@ async function tick(
     console.log("[cron] Waiting for on-chain confirmation...");
     await lucid.awaitTx(txHash);
     console.log(
-      `[cron] Confirmed: round ${roundNumber + 1n} of ${groupDatum.num_intervals} distributed.`,
+      `[cron] Confirmed: round ${roundNumber + 1n} of ${groupDatum.num_rounds} distributed.`,
     );
 
     return { submitted: true, sleepMs: SUBMIT_COOLDOWN_MS };

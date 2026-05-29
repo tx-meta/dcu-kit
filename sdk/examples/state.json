@@ -1,18 +1,19 @@
 {
   "scriptRefTreasury": {
-    "txHash": "5647db2618678761c8b146d5aaa7ba2b1ae41dc729b33ea6e3252ec504db2424",
+    "txHash": "729f6063360948b9407d660e185d03cb40af6882186043b7f09751bc8c4e470f",
     "outputIndex": 0
   },
   "scriptRefGroup": {
-    "txHash": "d75aa2ebb1741772a1466a800cee63a1076182f52609abd45448d1a5bdd791c7",
+    "txHash": "23f74a73aae73bfbd9e1d13af1c130401f66feed3c17a7e53b737ceb2616dc6a",
     "outputIndex": 0
   },
-  "groupTokenSuffix": "30d5af160e8911621b46eb8ee90d52b9680e4d8b7c18f0c2e2311dfd",
-  "groupPolicyId": "8a29191f7bc9e6a8c244213571bc6d203bf24fd3a24b76effd6af8bc",
+  "adminAccountTokenSuffix": "1bad50066455c2cb37592a5692f7cba8faae5621edd3b2e0283a5f3d",
+  "accountPolicyId": "394027d4084e26f5beb74518cd25a6e5bcee316a9cad7ee8e54a6c02",
+  "accountTokenSuffix": "5f90cddef19fa5d9de98ac01503615fd6e12dbd299023b112e2db922",
+  "user2AccountTokenSuffix": "16d692dbcfbf89c071f79a1faf0ab0536c362d5d124ca65692da65c8",
+  "groupTokenSuffix": "134f79cea7e59913e4a96f7a8a063612980c47838b3f39f63b5bf4bc",
+  "groupPolicyId": "36c85c77027636fe29f6961907876ec549f6005bb0cc14aaa5f9a85e",
   "groupIntervalLength": 300000,
-  "adminAccountTokenSuffix": "788228880b3c3da17878c4bdecdbf7ac2e3e4377afd2e1e9b275cde6",
-  "accountTokenSuffix": "6bfb40be2fee25fbbdc8b324a8bdda84a72027dbd3220ac3fcc4eb35",
-  "user2AccountTokenSuffix": "da8693197a2c763ecdf3e404a36ecb63c4a39264726659cf2dbeb484",
-  "groupStartTime": 1779746634000,
-  "groupNumIntervals": 3
+  "groupStartTime": 1780013358000,
+  "groupNumRounds": 3
 }

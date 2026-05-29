@@ -37,8 +37,8 @@ describe("Account Endpoints", () => {
 
       const { txHash } = yield* updateAccountTestCase(context, {
         accountUtxo,
-        email: "updated@dcu.io",
-        phone: "555-9999",
+        display_name: "updated_alice",
+        contact: "updated@dcu.io",
       });
 
       expect(txHash).toBeDefined();

@@ -40,7 +40,7 @@ export type ExampleState = {
   groupTokenSuffix?: string;
   groupStartTime?: number; // POSIX ms — from group datum at creation
   groupIntervalLength?: number; // ms
-  groupNumIntervals?: number;
+  groupNumRounds?: number;
 
   // Reference script UTxOs — deployed once by deploy-scripts.ts, used by all
   // transactions that would otherwise exceed the 16KB Cardano tx size limit.
@@ -69,12 +69,12 @@ export function computeSlotInfo(
   if (
     !state.groupStartTime ||
     !state.groupIntervalLength ||
-    !state.groupNumIntervals
+    !state.groupNumRounds
   )
     return null;
   const elapsed = Date.now() - state.groupStartTime;
   const currentSlot =
-    Math.floor(elapsed / state.groupIntervalLength) % state.groupNumIntervals;
+    Math.floor(elapsed / state.groupIntervalLength) % state.groupNumRounds;
   const slotElapsed = elapsed % state.groupIntervalLength;
   const msUntilNextSlot = state.groupIntervalLength - slotElapsed;
   return { currentSlot, msUntilNextSlot };
@@ -97,8 +97,7 @@ export function printSlotSchedule(
   console.log(`Next slot in:      ${secsLeft}s`);
   for (const slot of memberSlots) {
     const slotsAway =
-      (slot - currentSlot + state.groupNumIntervals!) %
-      state.groupNumIntervals!;
+      (slot - currentSlot + state.groupNumRounds!) % state.groupNumRounds!;
     const msAway =
       slotsAway === 0
         ? 0

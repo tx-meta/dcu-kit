@@ -7,10 +7,12 @@ import {
   Constr,
   Assets,
   toUnit,
+  fromText,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum } from "../core/types.js";
 import {
+  buildGroupCip68Datum,
   getScriptAddress,
   getWalletAddress,
   createCip68TokenNames,
@@ -37,6 +39,7 @@ import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
  * @returns Effect yielding a TxSignBuilder ready for signing.
  */
 export type CreateGroupConfig = {
+  groupName: string; // displayed by wallets — goes into metadata["name"]
   groupDatum: GroupDatum;
   utxoToSpend: OutRef;
 };
@@ -46,7 +49,7 @@ export const unsignedCreateGroupTxProgram = (
   config: CreateGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupDatum, utxoToSpend } = config;
+    const { groupName, groupDatum, utxoToSpend } = config;
 
     if (!groupPolicyId)
       yield* Effect.fail(
@@ -59,7 +62,11 @@ export const unsignedCreateGroupTxProgram = (
       groupValidator.spendGroup,
     );
 
-    const datum = Data.to(groupDatum, GroupDatum);
+    const datum = buildGroupCip68Datum(
+      new Map([[fromText("name"), fromText(groupName)]]),
+      1n,
+      groupDatum,
+    );
 
     // Resolve the full UTxO from the OutRef so we can compute CIP-68 names
     // (which require the txHash + outputIndex) and collect from it.

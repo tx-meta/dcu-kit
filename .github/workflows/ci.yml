@@ -81,7 +81,7 @@ jobs:
       - name: 🔧 Setup Aiken
         uses: aiken-lang/setup-aiken@v1
         with:
-          version: v1.1.19
+          version: v1.1.22
 
       - name: 🎨 Check Formatting
         run: aiken fmt --check

@@ -13,6 +13,7 @@ import {
   updateGroup,
   UpdateGroupConfig,
   GroupDatum,
+  GroupCip68Datum,
   groupPolicyId,
   assetNameLabels,
 } from "@tx-meta/dcu-sdk";
@@ -79,9 +80,9 @@ async function main() {
     groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
   const groupUtxo = await lucid.utxoByUnit(groupUnit);
   if (!groupUtxo) throw new Error("Group UTxO not found on-chain.");
-  const currentDatum = Data.from(groupUtxo.datum!, GroupDatum);
+  const currentDatum = Data.from(groupUtxo.datum!, GroupCip68Datum).extra;
 
-  // Critical fields (fees, intervals, admin_payment_credential, start_time, max_members)
+  // Critical fields (fees, intervals, creator_payment_credential, start_time, max_members)
   // are frozen while any member is active. The only non-critical update allowed with
   // active members is deactivation (is_active: true → false).
   let updatedDatum: GroupDatum;

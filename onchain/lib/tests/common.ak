@@ -4,7 +4,7 @@ use cardano/address.{Address, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value, zero}
 use cardano/transaction.{InlineDatum, Input, NoDatum, Output, OutputReference}
 use dcu/cip68
-use dcu/group.{GroupDatum}
+use dcu/group.{GroupCip68Datum, GroupDatum}
 
 // --- Constants & Placeholders ---
 
@@ -99,28 +99,38 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     grace_period_length: 0,
     creator_bond: 0,
     interval_length: 1000,
-    // num_intervals = 0 before startGroup; tests that need active rotation
-    // should set num_intervals explicitly via record update syntax
-    num_intervals: 0,
+    // num_rounds = 0 before startGroup; tests that need active rotation
+    // should set num_rounds explicitly via record update syntax
+    num_rounds: 0,
     max_members: 30,
     member_count: 0,
     is_active: True,
     // is_started = False at creation; tests simulating post-startGroup state
-    // should set is_started = True and num_intervals = member_count explicitly
+    // should set is_started = True and num_rounds = member_count explicitly
     is_started: False,
     // start_time = 0; tests simulating active cycle should set this explicitly
     start_time: 0,
     last_distributed_round: -1,
-    admin_payment_credential: test_pkh(),
+    creator_payment_credential: test_pkh(),
     member_token_names: [],
+  }
+}
+
+/// CIP-68 wrapper around test_group_datum with a valid "name" metadata entry.
+/// Use this as the datum in group UTxO outputs across all group tests.
+pub fn test_group_cip68_datum(policy_id: PolicyId) -> GroupCip68Datum {
+  GroupCip68Datum {
+    // key = UTF-8("name") = 0x6e616d65
+    metadata: [Pair(#"6e616d65", "Test Group")],
+    version: 1,
+    extra: test_group_datum(policy_id),
   }
 }
 
 pub fn setup_cip68(
   _policy_id: PolicyId,
 ) -> (OutputReference, ByteArray, ByteArray) {
-  let tx_id =
-    #"0000000000000000000000000000000000000000000000000000000000000000"
+  let tx_id = #"0000000000000000000000000000000000000000000000000000000000000000"
   let output_ref = OutputReference { transaction_id: tx_id, output_index: 0 }
   let ref_tn = cip68.unique_token_name(output_ref, cip68.prefix_100)
   let user_tn = cip68.unique_token_name(output_ref, cip68.prefix_222)

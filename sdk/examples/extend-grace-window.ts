@@ -1,7 +1,7 @@
 /**
  * Extend Grace Window Example
  *
- * Admin extends the grace period for a member who is in InsufficientCollateralState (ICS).
+ * Admin extends the grace period for a member who is in DefaultState (ICS).
  * ICS occurs when a member's treasury balance falls below contribution_fee after a payout
  * round. The member has until grace_expires_at to call contribute and top up their balance.
  *
@@ -42,9 +42,7 @@ async function main() {
   const { lucid, isEmulator } = await makeLucid();
 
   if (isEmulator) {
-    console.log(
-      "This example requires a member in InsufficientCollateralState.",
-    );
+    console.log("This example requires a member in DefaultState.");
     console.log(
       "These example scripts require existing on-chain state. Run on Preprod.",
     );
@@ -75,7 +73,7 @@ async function main() {
     );
 
   console.log(`Extending grace window for ${memberWallet}...`);
-  console.log("Requires the member to be in InsufficientCollateralState.");
+  console.log("Requires the member to be in DefaultState.");
   console.log(
     "The member should call 'pnpm run contribute' before grace_expires_at to exit ICS.",
   );

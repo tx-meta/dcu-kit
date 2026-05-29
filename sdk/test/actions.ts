@@ -90,8 +90,8 @@ export type DistributePayoutResult = {
 // --- Account Actions ---
 
 export type CreateAccountTestParams = {
-  email?: string;
-  phone?: string;
+  display_name?: string;
+  contact?: string;
   userSeed?: string; // defaults to users.user1 if not provided
 };
 
@@ -105,7 +105,7 @@ export const createAccountTestCase = (
 > =>
   Effect.gen(function* () {
     const { lucid, users } = context;
-    const { email = "test@dcu.io", phone = "555-0001", userSeed } = params;
+    const { display_name, contact, userSeed } = params;
 
     selectWalletFromSeed(lucid, userSeed ?? users.user1.seedPhrase);
 
@@ -132,8 +132,8 @@ export const createAccountTestCase = (
 
     const accountConfig: CreateAccountConfig = {
       selected_out_ref: selectedUTxO,
-      email,
-      phone,
+      display_name,
+      contact,
     };
 
     const createAccountTx = yield* unsignedCreateAccountTxProgram(
@@ -180,8 +180,8 @@ export const createAccountTestCase = (
 
 export type UpdateAccountTestParams = {
   accountUtxo: UTxO;
-  email: string;
-  phone: string;
+  display_name?: string;
+  contact?: string;
 };
 
 export const updateAccountTestCase = (
@@ -194,7 +194,7 @@ export const updateAccountTestCase = (
 > =>
   Effect.gen(function* () {
     const { lucid } = context;
-    const { accountUtxo, email, phone } = params;
+    const { accountUtxo, display_name, contact } = params;
 
     const accountTokenSuffix = extractTokenSuffix(
       accountUtxo,
@@ -203,8 +203,8 @@ export const updateAccountTestCase = (
     );
     const updateConfig: UpdateAccountConfig = {
       accountTokenSuffix,
-      email,
-      phone,
+      display_name,
+      contact,
     };
 
     const updateAccountTx = yield* unsignedUpdateAccountTxProgram(
@@ -289,6 +289,7 @@ export const createGroupTestCase = (
 
     const groupDatum = createDefaultGroupDatum(datumOverride);
     const groupConfig: CreateGroupConfig = {
+      groupName: "Test Group",
       groupDatum,
       utxoToSpend: selectedUTxO,
     };
