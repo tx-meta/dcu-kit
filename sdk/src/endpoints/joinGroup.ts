@@ -11,8 +11,6 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
-  GroupCip68Datum,
-  GroupCip68DatumSchema,
   GroupDatum,
   TreasuryDatum,
   TreasuryRedeemer,
@@ -29,7 +27,6 @@ import {
   parseGroupCip68Datum,
   buildGroupCip68Datum,
   getWalletAddress,
-  parseSafeDatum,
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,

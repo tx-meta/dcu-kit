@@ -37,7 +37,7 @@ describe("Account Endpoints", () => {
 
       const { txHash } = yield* updateAccountTestCase(context, {
         accountUtxo,
-        username: "updated_alice",
+        display_name: "updated_alice",
         contact: "updated@dcu.io",
       });
 

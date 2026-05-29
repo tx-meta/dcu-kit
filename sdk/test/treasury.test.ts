@@ -40,7 +40,6 @@ import {
   accountPolicyId,
 } from "../src/core/validators/constants.js";
 import {
-  GroupDatum,
   TreasuryDatum,
   TreasuryDatumSchema,
 } from "../src/core/types.js";

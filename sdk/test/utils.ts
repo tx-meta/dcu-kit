@@ -5,7 +5,7 @@
  * Eliminates boilerplate and ensures consistency across tests.
  */
 
-import { UTxO, fromText } from "@lucid-evolution/lucid";
+import { UTxO } from "@lucid-evolution/lucid";
 import { GroupDatum } from "../src/core/types.js";
 
 /**

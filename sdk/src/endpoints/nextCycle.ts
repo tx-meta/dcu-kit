@@ -7,8 +7,6 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
-  GroupCip68Datum,
-  GroupCip68DatumSchema,
   GroupDatum,
   GroupSpendRedeemer,
   TreasuryDatum,
