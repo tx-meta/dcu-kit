@@ -4,7 +4,7 @@
  * Resets a mature ROSCA group for another rotation cycle. All rounds must be
  * distributed before this can run. Members keep their assigned slots and
  * membership tokens; the group datum is reset (is_started=false,
- * last_distributed_round=-1, num_intervals=0, start_time=0).
+ * last_distributed_round=-1, num_rounds=0, start_time=0).
  *
  * After next-cycle:
  *   1. Members re-deposit via: pnpm run contribute

@@ -6,12 +6,12 @@
  *
  * What StartGroup does on-chain:
  *   - Sets is_started = true (one-way latch; prevents further joins)
- *   - Sets num_intervals = member_count (fixes the rotation length)
+ *   - Sets num_rounds = member_count (fixes the rotation length)
  *   - Sets start_time = tx validity lower bound (anchors round timing)
  *   - Requires member_count >= 2 (enforced by the validator)
  *
  * After this call:
- *   - groupStartTime, groupNumIntervals are saved to state.json
+ *   - groupStartTime, groupNumRounds are saved to state.json
  *   - distribute-payout can now be called once the first interval elapses
  *
  * Wallet selection:
@@ -25,7 +25,7 @@ import {
   StartGroupConfig,
   groupPolicyId,
   assetNameLabels,
-  GroupDatum,
+  GroupCip68Datum,
 } from "@tx-meta/dcu-sdk";
 import { Data } from "@lucid-evolution/lucid";
 import {
@@ -79,12 +79,12 @@ async function main() {
     throw new Error(
       "Group UTxO not found on-chain. Is groupTokenSuffix correct?",
     );
-  const groupDatum = Data.from(groupUtxo.datum!, GroupDatum);
+  const groupDatum = Data.from(groupUtxo.datum!, GroupCip68Datum).extra;
 
   if (groupDatum.is_started) {
     console.error("\nERROR: Group is already started.");
     console.error(
-      `  is_started = true, num_intervals = ${groupDatum.num_intervals}, start_time = ${groupDatum.start_time}`,
+      `  is_started = true, num_rounds = ${groupDatum.num_rounds}, start_time = ${groupDatum.start_time}`,
     );
     process.exit(1);
   }
@@ -101,14 +101,14 @@ async function main() {
 
   console.log(`Starting group with ${groupDatum.member_count} members...`);
   console.log(
-    `  After start: num_intervals = ${groupDatum.member_count}, rotation begins immediately.`,
+    `  After start: num_rounds = ${groupDatum.member_count}, rotation begins immediately.`,
   );
 
   const config: StartGroupConfig = {
     groupTokenSuffix,
   };
 
-  console.log("Building startGroup transaction...");
+  console.log("Building start-group transaction...");
   const tx = await startGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
@@ -125,23 +125,23 @@ async function main() {
   // validFrom value used when building the tx — not Date.now().
   const [updatedUtxo] = await lucid.utxosByOutRef([{ txHash, outputIndex: 0 }]);
   if (!updatedUtxo)
-    throw new Error("Could not fetch updated group UTxO after startGroup.");
-  const updatedDatum = Data.from(updatedUtxo.datum!, GroupDatum);
+    throw new Error("Could not fetch updated group UTxO after start-group.");
+  const updatedDatum = Data.from(updatedUtxo.datum!, GroupCip68Datum).extra;
 
   const groupStartTime = Number(updatedDatum.start_time);
-  const groupNumIntervals = Number(updatedDatum.num_intervals);
+  const groupNumRounds = Number(updatedDatum.num_rounds);
   const groupIntervalLength =
     state.groupIntervalLength ?? Number(updatedDatum.interval_length);
 
-  saveState({ groupStartTime, groupNumIntervals, groupIntervalLength });
+  saveState({ groupStartTime, groupNumRounds, groupIntervalLength });
 
   printSlotSchedule(
-    { groupStartTime, groupNumIntervals, groupIntervalLength },
-    Array.from({ length: groupNumIntervals }, (_, i) => i),
+    { groupStartTime, groupNumRounds, groupIntervalLength },
+    Array.from({ length: groupNumRounds }, (_, i) => i),
   );
 
   console.log("Group started successfully!");
-  console.log(`  num_intervals : ${groupNumIntervals}`);
+  console.log(`  num_rounds : ${groupNumRounds}`);
   console.log(`  start_time    : ${new Date(groupStartTime).toISOString()}`);
   console.log(`  interval_length: ${groupIntervalLength / 60_000} minutes`);
   console.log("\nNext steps:");

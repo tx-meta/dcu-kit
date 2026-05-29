@@ -28,10 +28,12 @@
     "purge-nfts": "pnpm run build && node dist/purge-nfts.js",
     "generate-wallets": "tsup generate-wallets.ts --format esm --clean && node dist/generate-wallets.js",
     "cron-daemon": "pnpm run build && node dist/cron-daemon.js",
-    "reset-state": "tsx reset-state.ts"
+    "reset-state": "tsx reset-state.ts",
+    "show-script-sizes": "pnpm run build && node dist/show-script-sizes.js",
+    "inspect-tx": "pnpm run build && node dist/inspect-tx.js"
   },
   "dependencies": {
-    "@tx-meta/dcu-sdk": "file:../dcu-sdk-0.1.1.tgz",
+    "@tx-meta/dcu-sdk": "file:../dcu-sdk-0.2.5.tgz",
     "@lucid-evolution/lucid": "0.4.31",
     "dotenv": "^16.4.7",
     "effect": "3.21.2"

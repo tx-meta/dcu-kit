@@ -184,6 +184,8 @@ export const TreasuryDatumSchema = Data.Enum([
       grace_expires_at: Data.Integer(),
       grace_extensions_used: Data.Integer(),
       rounds_paid: Data.Integer(),
+      assigned_slot: Data.Integer(),
+      member_payment_credential: Data.Bytes(),
     }),
   }),
 ]);
@@ -202,7 +204,7 @@ export const TreasuryRedeemerSchema = Data.Enum([
   }),
   Data.Object({
     ClaimPenalty: Data.Object({
-      group_input_index: Data.Integer(),
+      group_ref_input_index: Data.Integer(),
       admin_input_index: Data.Integer(),
     }),
   }),

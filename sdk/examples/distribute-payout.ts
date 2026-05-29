@@ -23,7 +23,7 @@ import {
   DistributePayoutConfig,
   accountPolicyId,
   groupPolicyId,
-  GroupDatum,
+  GroupCip68Datum,
   TreasuryDatum,
   TreasuryDatumSchema,
   treasuryValidator,
@@ -85,10 +85,10 @@ async function main() {
     throw new Error(
       "Group UTxO not found on-chain. Is groupTokenSuffix correct?",
     );
-  const groupDatum = Data.from(groupUtxo.datum!, GroupDatum);
+  const groupDatum = Data.from(groupUtxo.datum!, GroupCip68Datum).extra;
 
   const nextRound = groupDatum.last_distributed_round + 1n;
-  const totalRounds = groupDatum.num_intervals;
+  const totalRounds = groupDatum.num_rounds;
 
   if (nextRound >= totalRounds) {
     console.log(

@@ -524,7 +524,7 @@ pub fn validate_exit_group(
   group_output_index: Int,
   inputs: List<Input>,
   outputs: List<Output>,
-  _mint: Value,
+
 ) -> Bool {
   // [spec Exit 1]: group input holds the ref token
   expect Some(group_input) = list.at(inputs, group_input_index)

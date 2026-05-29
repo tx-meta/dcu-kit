@@ -139,7 +139,6 @@ validator group_validator(treasury_policy_id: PolicyId) {
           group_output_index,
           inputs,
           outputs,
-          self.mint,
         )
       }
 

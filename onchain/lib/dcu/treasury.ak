@@ -35,8 +35,9 @@ pub type TreasuryDatum {
     member_reference_tokenname: AssetName,
   }
   // Transition state for members whose balance drops below contribution_fee.
-  // Admin may grant up to max_grace_extensions extensions; after that,
-  // the membership is considered forfeit and the admin withdraws via ClaimPenalty.
+  // The grace window is the opportunity to top up (via Contribute) and recover
+  // back to TreasuryState. Admin may extend the window up to max_grace_extensions
+  // times. If the window expires without top-up, admin withdraws via ClaimPenalty.
   DefaultState {
     group_reference_tokenname: AssetName,
     member_reference_tokenname: AssetName,
@@ -44,8 +45,13 @@ pub type TreasuryDatum {
     grace_expires_at: Int,
     // Number of grace extensions already granted (max = max_grace_extensions).
     grace_extensions_used: Int,
-    // rounds_paid at the time of transition — carried for record keeping.
+    // rounds_paid at the time of transition — carried for record keeping and
+    // restored when the member recovers back to TreasuryState.
     rounds_paid: Int,
+    // Rotation slot — preserved so TreasuryState can be fully reconstructed on recovery.
+    assigned_slot: Int,
+    // Payment key hash — preserved for payout routing on recovery.
+    member_payment_credential: ByteArray,
   }
 }
 
@@ -58,8 +64,9 @@ pub type TreasuryRedeemer {
     treasury_output_index: Int,
   }
   ClaimPenalty {
-    // Group input (spending) to derive the group policy_id for admin token check.
-    group_input_index: Int,
+    // Group UTxO as a reference input — not spent, only read to derive
+    // the group policy_id for admin token verification. Same pattern as ExtendGrace.
+    group_ref_input_index: Int,
     // Admin input holding the group (222) user token.
     admin_input_index: Int,
   }
@@ -408,9 +415,13 @@ pub fn validate_distribute_treasury(
   let Transaction { inputs, outputs, .. } = tx
 
   // [spec DistributeRound 1]: datum must be TreasuryState
+  // Capture assigned_slot and member_payment_credential so they can be carried
+  // into DefaultState — required for recovery back to TreasuryState via Contribute.
   expect TreasuryState {
     member_reference_tokenname,
     group_reference_tokenname,
+    assigned_slot,
+    member_payment_credential,
     rounds_paid,
     ..
   } = datum
@@ -576,6 +587,8 @@ pub fn validate_distribute_treasury(
         grace_expires_at: current_time + group.grace_period_length,
         grace_extensions_used: 0,
         rounds_paid: round_number + 1,
+        assigned_slot,
+        member_payment_credential,
       }
     } else {
       expect TreasuryState {
@@ -829,13 +842,23 @@ pub fn validate_claim_penalty(
 
 // validate_contribute
 // ─────────────────────────────────────────────────────────────────────────────
-// Member tops up their treasury balance to remain above contribution_fee threshold.
+// Member tops up their treasury balance. Two valid input datum states:
 //
-// [spec Contribute 1]: datum must be TreasuryState (PenaltyState / InsufficientCollateral
-//                      cannot receive contributions via this path)
+//   TreasuryState — regular top-up while active. Datum is unchanged.
+//
+//   DefaultState  — recovery top-up during grace window. The grace window
+//                   exists precisely for this purpose. Output datum transitions
+//                   back to TreasuryState (using the slot and credential carried
+//                   in DefaultState). If the member doesn't recover before grace
+//                   expires, the admin may call ClaimPenalty.
+//
+// PenaltyState cannot receive contributions (member has already forfeited).
+//
+// [spec Contribute 1]: datum must be TreasuryState or DefaultState
 // [spec Contribute 2]: member input holds the Account NFT (user token)
-// [spec Contribute 3]: treasury output datum is structurally identical to input datum
-// [spec Contribute 4]: treasury output ADA > input ADA (balance must actually increase)
+// [spec Contribute 3a]: TreasuryState path — output datum structurally unchanged
+// [spec Contribute 3b]: DefaultState path — output datum is TreasuryState (recovery)
+// [spec Contribute 4]: ADA balance must increase (member is topping up)
 // [spec Contribute 5]: treasury output at script address with membership token
 pub fn validate_contribute(
   own_policy_id: PolicyId,
@@ -848,8 +871,15 @@ pub fn validate_contribute(
 ) -> Bool {
   let Transaction { inputs, outputs, .. } = tx
 
-  // [spec Contribute 1]: datum must be TreasuryState
-  expect TreasuryState { member_reference_tokenname, .. } = datum
+  // [spec Contribute 1]: extract member token name — valid for both datum states
+  let member_reference_tokenname =
+    when datum is {
+      TreasuryState { member_reference_tokenname, .. } ->
+        member_reference_tokenname
+      DefaultState { member_reference_tokenname, .. } ->
+        member_reference_tokenname
+      PenaltyState { .. } -> fail @"PenaltyState cannot receive contributions"
+    }
 
   // [spec Contribute 2]: member auth
   let member_authorized =
@@ -867,13 +897,40 @@ pub fn validate_contribute(
   expect InlineDatum(output_datum_data) = own_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
 
-  // [spec Contribute 3]: datum structurally unchanged
-  let datum_unchanged = output_datum == datum
-
-  // [spec Contribute 4]: ADA balance must increase (member is topping up)
+  // [spec Contribute 4]: ADA balance must increase — contribution asset check
+  // (Both ADA groups (lovelace) and token groups track balance via lovelace here;
+  //  a separate contribution-asset check requires reading the group datum which
+  //  would add redeemer complexity — see roadmap for future hardening.)
   let input_ada = assets.lovelace_of(own_input.output.value)
   let output_ada = assets.lovelace_of(own_output.value)
   let balance_increased = output_ada > input_ada
+
+  // [spec Contribute 3a/3b]: output datum validation differs by input datum state
+  let datum_correct =
+    when datum is {
+      TreasuryState { .. } ->
+        // Regular top-up: datum must be structurally unchanged
+        output_datum == datum
+
+      DefaultState {
+        group_reference_tokenname,
+        assigned_slot,
+        rounds_paid,
+        member_payment_credential,
+        ..
+      } ->
+        // Recovery: transition back to TreasuryState using the preserved fields
+        output_datum == TreasuryState {
+          group_reference_tokenname,
+          member_reference_tokenname,
+          assigned_slot,
+          rounds_paid,
+          is_deferred: False,
+          member_payment_credential,
+        }
+
+      PenaltyState { .. } -> False
+    }
 
   // [spec Contribute 5]: output at script address with membership token
   let output_at_script =
@@ -887,7 +944,7 @@ pub fn validate_contribute(
 
   and {
     member_authorized?,
-    datum_unchanged?,
+    datum_correct?,
     output_at_script?,
     token_retained?,
     clean_output_value?,
@@ -1020,7 +1077,7 @@ pub fn validate_update_payout(
     assigned_slot: upd_slot,
     rounds_paid: upd_rounds,
     is_deferred: upd_deferred,
-    member_payment_credential: _old_pkh,
+    ..
   } = datum
 
   // [spec UpdatePayout 2]: member auth — account token proves identity
@@ -1113,6 +1170,8 @@ pub fn validate_extend_grace(
     grace_expires_at,
     grace_extensions_used,
     rounds_paid,
+    assigned_slot,
+    member_payment_credential,
   } = datum
 
   // [spec ExtendGrace 2]: extension limit not yet reached
@@ -1139,7 +1198,8 @@ pub fn validate_extend_grace(
   expect InlineDatum(output_datum_data) = own_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
 
-  // [spec ExtendGrace 4]: output datum with extended grace window
+  // [spec ExtendGrace 4]: output datum with extended grace window; slot and
+  // payment credential preserved for potential recovery via Contribute
   let expected_datum =
     DefaultState {
       group_reference_tokenname,
@@ -1147,6 +1207,8 @@ pub fn validate_extend_grace(
       grace_expires_at: grace_expires_at + grace_period_length,
       grace_extensions_used: grace_extensions_used + 1,
       rounds_paid,
+      assigned_slot,
+      member_payment_credential,
     }
   let datum_correct = output_datum == expected_datum
 

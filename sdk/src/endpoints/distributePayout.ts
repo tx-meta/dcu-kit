@@ -347,6 +347,8 @@ export const unsignedDistributePayoutTxProgram = (
               grace_expires_at: validFrom + groupDatum.grace_period_length,
               grace_extensions_used: 0n,
               rounds_paid: roundNumber + 1n,
+              assigned_slot: ts.assigned_slot,
+              member_payment_credential: ts.member_payment_credential,
             },
           }
         : {

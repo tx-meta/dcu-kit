@@ -135,12 +135,14 @@ validator treasury(account_policy_id: PolicyId) {
         )
       }
 
-      ClaimPenalty { group_input_index, admin_input_index } -> {
+      ClaimPenalty { group_ref_input_index, admin_input_index } -> {
         // Derive group_policy_id from the group input's script credential.
-        // ClaimPenalty does NOT update group state — only reads it for admin auth.
-        expect Some(group_input) = list.at(inputs, group_input_index)
+        // ClaimPenalty does NOT update group state — the group is a read-only
+        // reference input, same pattern as ExtendGrace.
+        expect Some(group_ref_input) =
+          list.at(reference_inputs, group_ref_input_index)
         expect Script(group_policy_id) =
-          group_input.output.address.payment_credential
+          group_ref_input.output.address.payment_credential
 
         validate_claim_penalty(
           policy_id_from_utxo(inputs, utxo),

@@ -46,7 +46,7 @@ function labelToken(
       prefix4 === assetNameLabels.prefix100
         ? "GroupRef(100)"
         : prefix4 === assetNameLabels.prefix222
-          ? "GroupAdmin(222)"
+          ? "GroupCreator(222)"
           : `GroupToken(${prefix4})`;
   } else if (policyId === knownAccountPolicy) {
     kind =

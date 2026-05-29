@@ -27,7 +27,7 @@ const GROUPS: Record<string, string[]> = {
     "groupTokenSuffix",
     "groupStartTime",
     "groupIntervalLength",
-    "groupNumIntervals",
+    "groupNumRounds",
   ],
 };
 

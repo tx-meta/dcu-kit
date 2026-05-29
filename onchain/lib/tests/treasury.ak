@@ -130,7 +130,7 @@ fn test_treasury_state(assigned_slot: Int) -> TreasuryDatum {
   build_treasury_state(assigned_slot, group_ref_tn(), 0, False)
 }
 
-// DefaultState datum for extend_grace_window tests
+// DefaultState datum for extend_grace_window and contribute recovery tests
 fn test_insufficient_collateral_state() -> TreasuryDatum {
   DefaultState {
     group_reference_tokenname: group_ref_tn(),
@@ -138,6 +138,8 @@ fn test_insufficient_collateral_state() -> TreasuryDatum {
     grace_expires_at: 5000,
     grace_extensions_used: 0,
     rounds_paid: 0,
+    assigned_slot: 0,
+    member_payment_credential: common.test_pkh(),
   }
 }
 
@@ -2482,6 +2484,8 @@ test extend_grace_window__accepts_valid_extension() {
       grace_expires_at: 6000,
       grace_extensions_used: 1,
       rounds_paid: 0,
+      assigned_slot: 0,
+      member_payment_credential: common.test_pkh(),
     }
   let treasury_out = test_treasury_output(expected_datum, in_value)
 
@@ -2520,6 +2524,8 @@ test extend_grace_window__rejects_max_extensions_reached() {
       grace_expires_at: 5000,
       grace_extensions_used: max_grace_extensions,
       rounds_paid: 0,
+      assigned_slot: 0,
+      member_payment_credential: common.test_pkh(),
     }
   let in_value = treasury_value()
   let treasury_in =
@@ -2536,6 +2542,8 @@ test extend_grace_window__rejects_max_extensions_reached() {
       grace_expires_at: 6000,
       grace_extensions_used: max_grace_extensions + 1,
       rounds_paid: 0,
+      assigned_slot: 0,
+      member_payment_credential: common.test_pkh(),
     }
   let treasury_out = test_treasury_output(expected_datum, in_value)
 
@@ -2595,6 +2603,8 @@ test extend_grace_window__rejects_no_admin_token() {
       grace_expires_at: 6000,
       grace_extensions_used: 1,
       rounds_paid: 0,
+      assigned_slot: 0,
+      member_payment_credential: common.test_pkh(),
     }
   let treasury_out = test_treasury_output(expected_datum, in_value)
 

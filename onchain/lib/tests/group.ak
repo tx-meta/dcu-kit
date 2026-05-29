@@ -1524,7 +1524,6 @@ test member_exit__accepts_valid_exit() {
     0,
     [group_in, treasury_in],
     [group_out],
-    assets.zero,
   )
 }
 
@@ -1550,7 +1549,6 @@ test member_exit__accepts_partial_exit() {
     0,
     [group_in, treasury_in],
     [group_out],
-    assets.zero,
   )
 }
 
@@ -1574,7 +1572,6 @@ test member_exit__rejects_member_count_not_decremented() {
     0,
     [group_in, treasury_in],
     [group_out],
-    assets.zero,
   )
 }
 
@@ -1598,7 +1595,6 @@ test member_exit__rejects_exit_when_no_members() fail {
     0,
     [group_in, treasury_in],
     [group_out],
-    assets.zero,
   )
 }
 
@@ -1623,7 +1619,6 @@ test member_exit__rejects_no_treasury_action() {
     0,
     [group_in],
     [group_out],
-    assets.zero,
   )
 }
 
@@ -1717,7 +1712,6 @@ test member_exit__rejects_group_ada_drain() {
     0,
     [group_in, treasury_in],
     [group_out],
-    assets.zero,
   )
 }
 

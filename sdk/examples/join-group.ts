@@ -21,7 +21,7 @@ import {
   accountPolicyId,
   treasuryPolicyId,
   assetNameLabels,
-  GroupDatum,
+  GroupCip68Datum,
 } from "@tx-meta/dcu-sdk";
 import { Data, UTxO } from "@lucid-evolution/lucid";
 import {
@@ -157,9 +157,9 @@ async function main() {
     throw new Error(
       "Group UTxO not found on-chain. Is groupTokenSuffix correct?",
     );
-  const groupDatum = Data.from(groupUtxo.datum!, GroupDatum);
+  const groupDatum = Data.from(groupUtxo.datum!, GroupCip68Datum).extra;
   // Contribution covers all future rounds: max_members * contribution_fee.
-  // num_intervals is 0 at creation and only set by StartGroup — cannot use it here.
+  // num_rounds is 0 at creation and only set by StartGroup — cannot use it here.
   const contributionAmount =
     groupDatum.max_members * groupDatum.contribution_fee;
   const assignedSlot = Number(groupDatum.member_count);
@@ -258,7 +258,7 @@ async function main() {
   }
 
   // TREASURY_DEPOSIT_OVERRIDE lets you join with a non-standard deposit (lovelace).
-  // Use this to engineer InsufficientCollateralState for testing contribute and
+  // Use this to engineer DefaultState for testing contribute and
   // extend-grace-window. Example: TREASURY_DEPOSIT_OVERRIDE=5000000 joins with 5 ADA
   // instead of max_members × contribution_fee, so ICS triggers after round 0.
   // Never use this in production — members with low deposits become insolvent early.
