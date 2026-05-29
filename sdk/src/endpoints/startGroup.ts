@@ -5,10 +5,7 @@ import {
   RedeemerBuilder,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import {
-  GroupDatum,
-  GroupSpendRedeemer,
-} from "../core/types.js";
+import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
 import {
   getScriptAddress,

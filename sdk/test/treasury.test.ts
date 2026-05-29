@@ -39,10 +39,7 @@ import {
   groupPolicyId,
   accountPolicyId,
 } from "../src/core/validators/constants.js";
-import {
-  TreasuryDatum,
-  TreasuryDatumSchema,
-} from "../src/core/types.js";
+import { TreasuryDatum, TreasuryDatumSchema } from "../src/core/types.js";
 import { extractTokenSuffix } from "./utils.js";
 import { advanceBlock } from "./effects.js";
 

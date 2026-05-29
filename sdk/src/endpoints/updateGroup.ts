@@ -6,10 +6,7 @@ import {
   Assets,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import {
-  GroupDatum,
-  GroupSpendRedeemer,
-} from "../core/types.js";
+import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import {
   DcuError,
   TransactionBuildError,
