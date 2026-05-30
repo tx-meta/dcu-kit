@@ -82,5 +82,8 @@ export const createDefaultGroupDatum = (
   creator_payment_credential:
     "a0a1a2a3a4a5a6a7a8a9b0b1b2b3b4b5b6b7b8b9c0c1c2c3c4c5c6c7",
   member_token_names: [],
+  // 1 = PerRound (traditional ROSCA, default). Set to max_members for FullUpfront,
+  // or any k in [1, max_members] for partial collateral.
+  collateral_rounds: 1n,
   ...overrides,
 });

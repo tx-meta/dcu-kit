@@ -516,9 +516,14 @@ describe("Treasury Endpoints", () => {
     () =>
       Effect.gen(function* () {
         const base = yield* setupBase();
-        const { context, userUtxo } = yield* setupMembership(base);
+        const { context, groupUtxo, userUtxo } = yield* setupMembership(base);
         const { lucid, users } = context;
 
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          groupPolicyId!,
+          assetNameLabels.prefix100,
+        );
         const accountTokenSuffix = extractTokenSuffix(
           userUtxo,
           accountPolicyId,
@@ -527,8 +532,56 @@ describe("Treasury Endpoints", () => {
 
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
         const txBuilder = yield* unsignedContributeTxProgram(lucid, {
+          groupTokenSuffix,
           accountTokenSuffix,
           topUpAmount: 2_000_000n,
+        });
+        const txHash = yield* signAndSubmit(txBuilder);
+        expect(txHash).toHaveLength(64);
+      }),
+  );
+
+  // --- Native-token group (end-to-end) ---
+  // A group whose contribution asset is a native token (not ADA): Join must lock the
+  // token in the treasury, and Contribute must top up the token balance.
+  it.effect(
+    "should support a native-token contribution group (Join locks token, Contribute tops up)",
+    () =>
+      Effect.gen(function* () {
+        const tokenPolicy =
+          "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0";
+        const tokenName = "55534454"; // "USDT"
+        const tokenUnit = tokenPolicy + tokenName;
+
+        // Seed every emulator wallet with the native token so members can deposit it.
+        const base = yield* setupBase({ [tokenUnit]: 1_000_000n });
+        const { context, groupUtxo, userUtxo, memberUtxo } =
+          yield* setupMembership(base, {
+            contribution_fee_policyid: tokenPolicy,
+            contribution_fee_assetname: tokenName,
+            contribution_fee: 5n,
+          });
+        const { lucid, users } = context;
+
+        // Join locks max_members (30) × contribution_fee (5) = 150 tokens in the treasury.
+        expect(memberUtxo.assets[tokenUnit]).toBe(150n);
+
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          groupPolicyId!,
+          assetNameLabels.prefix100,
+        );
+        const accountTokenSuffix = extractTokenSuffix(
+          userUtxo,
+          accountPolicyId,
+          assetNameLabels.prefix222,
+        );
+
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const txBuilder = yield* unsignedContributeTxProgram(lucid, {
+          groupTokenSuffix,
+          accountTokenSuffix,
+          topUpAmount: 5n,
         });
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);

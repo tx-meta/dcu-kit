@@ -66,6 +66,7 @@ fn test_group_datum() -> GroupDatum {
     last_distributed_round: -1,
     creator_payment_credential: common.test_pkh(),
     member_token_names: [],
+    collateral_rounds: 1,
   }
 }
 
@@ -99,6 +100,52 @@ fn test_group_input() -> Input {
     },
     output,
   }
+}
+
+// --- Native-token contribution group fixtures ---
+// A group whose contribution asset is a native token (not ADA), fee = 1000 units.
+fn token_policy() -> assets.PolicyId {
+  #"04040404040404040404040404040404040404040404040404040404"
+}
+
+fn token_name() -> assets.AssetName {
+  #"746f6b656e"
+}
+
+fn token_group_datum() -> GroupDatum {
+  GroupDatum {
+    ..test_group_datum(),
+    contribution_fee_policyid: token_policy(),
+    contribution_fee_assetname: token_name(),
+    contribution_fee: 1000,
+  }
+}
+
+// Group reference input advertising the native-token contribution asset.
+fn token_group_input() -> Input {
+  let gp = group_policy()
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value,
+    datum: InlineDatum(cip68_with_group(token_group_datum())),
+    reference_script: None,
+  }
+  Input {
+    output_reference: OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output,
+  }
+}
+
+// Treasury value: min ADA + membership token + `token_amount` native contribution tokens.
+fn token_treasury_value(token_amount: Int) -> assets.Value {
+  assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(treasury_policy(), member_tn(), 1))
+    |> assets.merge(assets.from_asset(token_policy(), token_name(), token_amount))
 }
 
 // Core builder — single definition point for TreasuryState test datums.
@@ -250,6 +297,27 @@ fn test_group_input_with_member_count(member_count: Int) -> Input {
   let datum = cip68_with_group(
     GroupDatum { ..test_group_datum(), member_count },
   )
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value,
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
+  Input {
+    output_reference: OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output,
+  }
+}
+
+// Group reference input with a custom collateral_rounds (FullUpfront / partial tests).
+fn group_input_collateral(cr: Int) -> Input {
+  let gp = group_policy()
+  let datum = cip68_with_group(GroupDatum { ..test_group_datum(), collateral_rounds: cr })
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
   let output = Output {
@@ -499,6 +567,59 @@ test join_group__rejects_insufficient_fees() {
   }
 
   !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+}
+
+// FullUpfront / partial: with collateral_rounds = 3 the join floor is 3 × 2M = 6M.
+// A 5M deposit is below the floor → rejected.
+test join_group__rejects_below_collateral_rounds() {
+  let tp = treasury_policy()
+
+  let group_input = group_input_collateral(3)
+  let member_input = test_member_input()
+
+  let datum = test_treasury_state(0)
+  let output_value = assets.from_lovelace(5_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_output = test_treasury_output(datum, output_value)
+  let group_out = test_group_output(1)
+
+  let mint = assets.from_asset(tp, member_tn(), 1)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, member_input],
+    outputs: [treasury_output, group_out],
+    mint,
+    validity_range: interval.after(0),
+  }
+
+  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+}
+
+// Same group (collateral_rounds = 3): a 6M deposit meets the full floor → accepted.
+test join_group__accepts_full_collateral() {
+  let tp = treasury_policy()
+
+  let group_input = group_input_collateral(3)
+  let member_input = test_member_input()
+
+  let datum = test_treasury_state(0)
+  let output_value = assets.from_lovelace(6_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_output = test_treasury_output(datum, output_value)
+  let group_out = test_group_output(1)
+
+  let mint = assets.from_asset(tp, member_tn(), 1)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, member_input],
+    outputs: [treasury_output, group_out],
+    mint,
+    validity_range: interval.after(0),
+  }
+
+  validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
 }
 
 // joining_fee > 0 but no output at creator_payment_credential — joining_fee_routed fails
@@ -1967,13 +2088,15 @@ test contribute__accepts_valid_top_up() {
   let tx = Transaction {
     ..transaction.placeholder,
     inputs: [member_input, treasury_in],
+    reference_inputs: [test_group_input()],
     outputs: [treasury_out],
   }
 
-  // member_input_index=0, treasury_output_index=0; utxo=treasury_utxo_ref()
+  // group_ref_input_index=0, member_input_index=0, treasury_output_index=0
   validate_contribute(
     tp,
     account_policy(),
+    0,
     0,
     0,
     datum,
@@ -2003,12 +2126,14 @@ test contribute__rejects_penalty_state() fail {
   let tx = Transaction {
     ..transaction.placeholder,
     inputs: [member_input, treasury_in],
+    reference_inputs: [test_group_input()],
     outputs: [treasury_out],
   }
 
   validate_contribute(
     tp,
     account_policy(),
+    0,
     0,
     0,
     datum,
@@ -2029,19 +2154,21 @@ test contribute__rejects_no_ada_increase() {
   )
   let member_input = test_member_input()
 
-  // Output ADA == input ADA — not increased
+  // Output balance == input balance — not increased
   let out_value = treasury_value()
   let treasury_out = test_treasury_output(datum, out_value)
 
   let tx = Transaction {
     ..transaction.placeholder,
     inputs: [member_input, treasury_in],
+    reference_inputs: [test_group_input()],
     outputs: [treasury_out],
   }
 
   !validate_contribute(
     tp,
     account_policy(),
+    0,
     0,
     0,
     datum,
@@ -2071,12 +2198,160 @@ test contribute__rejects_datum_changed() {
   let tx = Transaction {
     ..transaction.placeholder,
     inputs: [member_input, treasury_in],
+    reference_inputs: [test_group_input()],
     outputs: [treasury_out],
   }
 
   !validate_contribute(
     tp,
     account_policy(),
+    0,
+    0,
+    0,
+    datum,
+    treasury_utxo_ref(),
+    tx,
+  )
+}
+
+// --- Native-token support ---
+
+// Member tops up a NATIVE-TOKEN treasury: token balance 1000 → 2000.
+test contribute__accepts_native_token_top_up() {
+  let tp = treasury_policy()
+
+  let datum = test_treasury_state(0)
+  let in_value = token_treasury_value(1000)
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, in_value),
+  )
+  let member_input = test_member_input()
+
+  let out_value = token_treasury_value(2000)
+  let treasury_out = test_treasury_output(datum, out_value)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [member_input, treasury_in],
+    reference_inputs: [token_group_input()],
+    outputs: [treasury_out],
+  }
+
+  validate_contribute(
+    tp,
+    account_policy(),
+    0,
+    0,
+    0,
+    datum,
+    treasury_utxo_ref(),
+    tx,
+  )
+}
+
+// DefaultState recovery is REJECTED when the topped-up token balance is below
+// contribution_fee (500 < 1000) — closes the "+1 unit recovery" gap.
+test contribute__rejects_default_recovery_below_fee() {
+  let tp = treasury_policy()
+
+  let datum = test_insufficient_collateral_state()
+  let in_value = token_treasury_value(0)
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, in_value),
+  )
+  let member_input = test_member_input()
+
+  let out_value = token_treasury_value(500)
+  let out_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let treasury_out = test_treasury_output(out_datum, out_value)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [member_input, treasury_in],
+    reference_inputs: [token_group_input()],
+    outputs: [treasury_out],
+  }
+
+  !validate_contribute(
+    tp,
+    account_policy(),
+    0,
+    0,
+    0,
+    datum,
+    treasury_utxo_ref(),
+    tx,
+  )
+}
+
+// DefaultState recovery is ACCEPTED when the topped-up token balance reaches
+// contribution_fee (1000 == 1000).
+test contribute__accepts_default_recovery_at_fee() {
+  let tp = treasury_policy()
+
+  let datum = test_insufficient_collateral_state()
+  let in_value = token_treasury_value(0)
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, in_value),
+  )
+  let member_input = test_member_input()
+
+  let out_value = token_treasury_value(1000)
+  let out_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let treasury_out = test_treasury_output(out_datum, out_value)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [member_input, treasury_in],
+    reference_inputs: [token_group_input()],
+    outputs: [treasury_out],
+  }
+
+  validate_contribute(
+    tp,
+    account_policy(),
+    0,
+    0,
+    0,
+    datum,
+    treasury_utxo_ref(),
+    tx,
+  )
+}
+
+// DeferRound must NOT let a tx siphon the contribution token while keeping ADA:
+// output preserves ADA + membership token but drops the 1000 native tokens → rejected
+// by the full value-preservation check.
+test defer_round__rejects_token_siphon() {
+  let tp = treasury_policy()
+
+  let datum = test_treasury_state(0)
+  let in_value = token_treasury_value(1000)
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, in_value),
+  )
+  let member_input = test_member_input()
+
+  // Correct deferred datum, but the contribution tokens are gone from the output.
+  let out_datum = build_treasury_state(0, group_ref_tn(), 0, True)
+  let out_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_out = test_treasury_output(out_datum, out_value)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [member_input, treasury_in],
+    outputs: [treasury_out],
+  }
+
+  !validate_defer_round(
+    tp,
+    account_policy(),
+    0,
     0,
     0,
     datum,

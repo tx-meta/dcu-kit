@@ -90,6 +90,8 @@ pub type TreasuryRedeemer {
   }
   // Member tops up their treasury balance to remain above contribution_fee.
   Contribute {
+    // Group UTxO as a reference input — read for the contribution asset + fee.
+    group_ref_input_index: Int,
     member_input_index: Int,
     treasury_input_index: Int,
     treasury_output_index: Int,
@@ -165,6 +167,15 @@ fn indices_in_ascending_order(indices: List<Int>) -> Bool {
     [_] -> True
     [a, b, ..rest] -> a < b && indices_in_ascending_order([b, ..rest])
   }
+}
+
+// only_allowed_policies
+// True when every policy present in `value` is one of `allowed`. Replaces the
+// strict `policies == [ada_policy_id, own_policy_id]` guard so a group's chosen
+// contribution token may be held in the treasury output while still preventing
+// unbounded value accumulation (no policy outside the allowed set).
+fn only_allowed_policies(value: Value, allowed: List<PolicyId>) -> Bool {
+  list.all(assets.policies(value), fn(p) { list.has(allowed, p) })
 }
 
 // ─── Mint: JoinGroup ──────────────────────────────────────────────────────────
@@ -264,13 +275,15 @@ pub fn validate_join_treasury(
     expected_group_token_name,
   ) == 1
 
-  // [spec JoinGroup 7]: treasury output holds at least contribution_fee in the
-  //   contribution asset — minimum collateral to participate in one round
+  // [spec JoinGroup 7]: treasury output holds at least the configured collateral floor
+  //   (contribution_fee * collateral_rounds) in the contribution asset. collateral_rounds
+  //   = 1 for traditional PerRound groups, max_members for FullUpfront. Deposits are not
+  //   capped — a member may lock more and distribute deducts contribution_fee per round.
   let fees_locked = assets.quantity_of(
     treasury_output.value,
     group.contribution_fee_policyid,
     group.contribution_fee_assetname,
-  ) >= group.contribution_fee
+  ) >= group.contribution_fee * group.collateral_rounds
 
   // [spec JoinGroup 8]: if joining_fee > 0, admin wallet receives joining fee
   let joining_fee_routed = if group.joining_fee == 0 {
@@ -343,8 +356,11 @@ pub fn validate_join_treasury(
     (dict.to_pairs(assets.tokens(treasury_output.value, own_policy_id)) == [
       Pair(member_reference_tokenname, 1),
     ])?,
-    // [security]: only ADA + own policy in treasury output
-    (assets.policies(treasury_output.value) == [ada_policy_id, own_policy_id])?,
+    // [security]: only ADA, own policy, and the group's contribution token may be held
+    only_allowed_policies(
+      treasury_output.value,
+      [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
+    )?,
     group_link_valid?,
     slot_valid?,
     rounds_paid_valid?,
@@ -594,10 +610,11 @@ pub fn validate_distribute_treasury(
   let token_retained = dict.to_pairs(
     assets.tokens(own_output.value, own_policy_id),
   ) == [Pair(member_reference_tokenname, 1)]
-  // [security]: only ADA + own policy — prevents unbounded value accumulation
-  let clean_output_value = assets.policies(own_output.value) == [
-    ada_policy_id, own_policy_id,
-  ]
+  // [security]: only ADA, own policy, and the group's contribution token
+  let clean_output_value = only_allowed_policies(
+    own_output.value,
+    [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
+  )
 
   // [spec DistributeRound 6c]: borrower output at scheduled member's wallet,
   //   receiving at least total_payout in the contribution asset
@@ -840,25 +857,38 @@ pub fn validate_claim_penalty(
 // [spec Contribute 2]: member input holds the Account NFT (user token)
 // [spec Contribute 3a]: TreasuryState path — output datum structurally unchanged
 // [spec Contribute 3b]: DefaultState path — output datum is TreasuryState (recovery)
-// [spec Contribute 4]: ADA balance must increase (member is topping up)
+// [spec Contribute 4]: contribution-asset balance must increase (member is topping up).
+//                      The group reference input supplies the contribution asset + fee.
+// [spec Contribute 4b]: DefaultState recovery additionally requires the output balance to
+//                      reach contribution_fee — a member cannot recover with a token dust top-up.
 // [spec Contribute 5]: treasury output at script address with membership token
+// NOTE: the group is a read-only reference input. The group-link check below is
+//       defense-in-depth; full robustness against a forged group input requires the
+//       trusted group↔treasury binding tracked as ISSUE A (settings NFT).
 pub fn validate_contribute(
   own_policy_id: PolicyId,
   account_policy_id: PolicyId,
+  group_ref_input_index: Int,
   member_input_index: Int,
   treasury_output_index: Int,
   datum: TreasuryDatum,
   utxo: OutputReference,
   tx: Transaction,
 ) -> Bool {
-  let Transaction { inputs, outputs, .. } = tx
+  let Transaction { inputs, outputs, reference_inputs, .. } = tx
 
-  // [spec Contribute 1]: extract member token name — valid for both datum states
-  let member_reference_tokenname = when datum is {
-    TreasuryState { member_reference_tokenname, .. } ->
-      member_reference_tokenname
-    DefaultState { member_reference_tokenname, .. } ->
-      member_reference_tokenname
+  // [spec Contribute 1]: extract member + group token names — valid for both datum states
+  let (member_reference_tokenname, datum_group_tokenname) = when datum is {
+    TreasuryState {
+      member_reference_tokenname,
+      group_reference_tokenname,
+      ..
+    } -> (member_reference_tokenname, group_reference_tokenname)
+    DefaultState {
+      member_reference_tokenname,
+      group_reference_tokenname,
+      ..
+    } -> (member_reference_tokenname, group_reference_tokenname)
     PenaltyState { .. } -> fail @"PenaltyState cannot receive contributions"
   }
 
@@ -870,6 +900,15 @@ pub fn validate_contribute(
     account_policy_id,
   )
 
+  // Read the group reference input for the contribution asset + fee, and verify it
+  // links to this treasury (defense-in-depth — see ISSUE A note above).
+  expect Some(group_ref_input) = list.at(reference_inputs, group_ref_input_index)
+  expect InlineDatum(group_datum_data) = group_ref_input.output.datum
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
+  let group_link_valid = datum_group_tokenname == find_group_token_name(
+    group_ref_input,
+  )
+
   expect Some(own_input) = list.find(
     inputs,
     fn(i) { i.output_reference == utxo },
@@ -879,13 +918,26 @@ pub fn validate_contribute(
   expect InlineDatum(output_datum_data) = own_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
 
-  // [spec Contribute 4]: ADA balance must increase — contribution asset check
-  // (Both ADA groups (lovelace) and token groups track balance via lovelace here;
-  //  a separate contribution-asset check requires reading the group datum which
-  //  would add redeemer complexity — see roadmap for future hardening.)
-  let input_ada = assets.lovelace_of(own_input.output.value)
-  let output_ada = assets.lovelace_of(own_output.value)
-  let balance_increased = output_ada > input_ada
+  // [spec Contribute 4]: contribution-asset balance must increase (works for ADA and
+  // any native token — for ADA groups contribution_fee_policyid == ada_policy_id).
+  let input_bal = assets.quantity_of(
+    own_input.output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
+  let output_bal = assets.quantity_of(
+    own_output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
+  let balance_increased = output_bal > input_bal
+
+  // [spec Contribute 4b]: DefaultState recovery must restore at least contribution_fee —
+  // closes the "+1 unit recovery" gap that defeated the grace/default mechanism.
+  let recovery_funded = when datum is {
+    DefaultState { .. } -> output_bal >= group.contribution_fee
+    _ -> True
+  }
 
   // [spec Contribute 3a/3b]: output datum validation differs by input datum state
   let datum_correct = when datum is {
@@ -920,17 +972,21 @@ pub fn validate_contribute(
   let token_retained = dict.to_pairs(
     assets.tokens(own_output.value, own_policy_id),
   ) == [Pair(member_reference_tokenname, 1)]
-  let clean_output_value = assets.policies(own_output.value) == [
-    ada_policy_id, own_policy_id,
-  ]
+  // [security]: only ADA, own policy, and the group's contribution token may be held
+  let clean_output_value = only_allowed_policies(
+    own_output.value,
+    [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
+  )
 
   and {
     member_authorized?,
+    group_link_valid?,
     datum_correct?,
     output_at_script?,
     token_retained?,
     clean_output_value?,
     balance_increased?,
+    recovery_funded?,
   }
 }
 
@@ -1004,31 +1060,24 @@ pub fn validate_defer_round(
   }
   let datum_correct = output_datum == expected_datum
 
-  // [spec DeferRound 5]: ADA unchanged
-  let input_ada = assets.lovelace_of(own_input.output.value)
-  let output_ada = assets.lovelace_of(own_output.value)
-  let ada_unchanged = output_ada == input_ada
+  // [spec DeferRound 5]: full value preserved — DeferRound only flips a datum flag and
+  // must not move ANY asset (ADA or the contribution token). Stronger than the old
+  // ADA-only check and native-token-correct.
+  let value_preserved = own_output.value == own_input.output.value
 
   // Output at script address with membership token
   let output_at_script = own_output.address.payment_credential == Script(
     own_policy_id,
   )
-  let token_retained = dict.to_pairs(
-    assets.tokens(own_output.value, own_policy_id),
-  ) == [Pair(member_reference_tokenname, 1)]
-  let clean_output_value = assets.policies(own_output.value) == [
-    ada_policy_id, own_policy_id,
-  ]
+  // token retention is implied by value_preserved (output value == input value).
 
   and {
     correct_round?,
     not_already_deferred?,
     member_authorized?,
     datum_correct?,
-    ada_unchanged?,
+    value_preserved?,
     output_at_script?,
-    token_retained?,
-    clean_output_value?,
   }
 }
 
@@ -1099,29 +1148,21 @@ pub fn validate_update_payout(
   }
   let datum_correct = output_datum == expected_datum
 
-  // [spec UpdatePayout 4]: ADA unchanged
-  let input_ada = assets.lovelace_of(own_input.output.value)
-  let output_ada = assets.lovelace_of(own_output.value)
-  let ada_unchanged = output_ada == input_ada
+  // [spec UpdatePayout 4]: full value preserved — only the payout credential changes,
+  // no asset (ADA or contribution token) may move. Native-token-correct.
+  let value_preserved = own_output.value == own_input.output.value
 
   // Output at script address with membership token
   let output_at_script = own_output.address.payment_credential == Script(
     own_policy_id,
   )
-  let token_retained = dict.to_pairs(
-    assets.tokens(own_output.value, own_policy_id),
-  ) == [Pair(member_reference_tokenname, 1)]
-  let clean_output_value = assets.policies(own_output.value) == [
-    ada_policy_id, own_policy_id,
-  ]
+  // token retention is implied by value_preserved (output value == input value).
 
   and {
     member_authorized?,
     datum_correct?,
-    ada_unchanged?,
+    value_preserved?,
     output_at_script?,
-    token_retained?,
-    clean_output_value?,
   }
 }
 
@@ -1200,30 +1241,22 @@ pub fn validate_extend_grace(
   }
   let datum_correct = output_datum == expected_datum
 
-  // [spec ExtendGrace 5]: ADA unchanged
-  let input_ada = assets.lovelace_of(own_input.output.value)
-  let output_ada = assets.lovelace_of(own_output.value)
-  let ada_unchanged = output_ada == input_ada
+  // [spec ExtendGrace 5]: full value preserved — only the grace window extends,
+  // no asset (ADA or contribution token) may move. Native-token-correct.
+  let value_preserved = own_output.value == own_input.output.value
 
   // Output at script address with membership token
   let output_at_script = own_output.address.payment_credential == Script(
     own_policy_id,
   )
-  let token_retained = dict.to_pairs(
-    assets.tokens(own_output.value, own_policy_id),
-  ) == [Pair(member_reference_tokenname, 1)]
-  let clean_output_value = assets.policies(own_output.value) == [
-    ada_policy_id, own_policy_id,
-  ]
+  // token retention is implied by value_preserved (output value == input value).
 
   and {
     extensions_available?,
     admin_authorized?,
     datum_correct?,
-    ada_unchanged?,
+    value_preserved?,
     output_at_script?,
-    token_retained?,
-    clean_output_value?,
   }
 }
 
@@ -1319,25 +1352,19 @@ pub fn validate_next_cycle_treasury(
   }
   let datum_correct = output_datum == expected_datum
 
-  // [spec NextCycle 6]: ADA exactly preserved (no distribution in this handler)
+  // [spec NextCycle 6]: full value preserved — NextCycle only resets datum counters;
+  // no distribution happens here, so no asset (ADA or contribution token) may move.
   expect Some(own_input) = list.find(
     inputs,
     fn(i) { i.output_reference == utxo },
   )
-  let input_ada = assets.lovelace_of(own_input.output.value)
-  let output_ada = assets.lovelace_of(own_output.value)
-  let ada_preserved = output_ada == input_ada
+  let value_preserved = own_output.value == own_input.output.value
 
   // Output at script address with membership token
   let output_at_script = own_output.address.payment_credential == Script(
     own_policy_id,
   )
-  let token_retained = dict.to_pairs(
-    assets.tokens(own_output.value, own_policy_id),
-  ) == [Pair(member_reference_tokenname, 1)]
-  let clean_output_value = assets.policies(own_output.value) == [
-    ada_policy_id, own_policy_id,
-  ]
+  // token retention is implied by value_preserved (output value == input value).
 
   and {
     member_cycle_complete?,
@@ -1345,9 +1372,7 @@ pub fn validate_next_cycle_treasury(
     indices_valid?,
     output_indices_valid?,
     datum_correct?,
-    ada_preserved?,
+    value_preserved?,
     output_at_script?,
-    token_retained?,
-    clean_output_value?,
   }
 }

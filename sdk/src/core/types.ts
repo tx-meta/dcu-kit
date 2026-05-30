@@ -44,29 +44,80 @@ export const AccountRedeemer =
 // --- Group Validator Types ---
 
 export const GroupDatumSchema = Data.Object({
+  /** Policy ID of the contribution asset. Empty string (`""`) means ADA (lovelace). */
   contribution_fee_policyid: Data.Bytes(),
+  /** Asset name of the contribution asset. Empty string (`""`) means ADA (lovelace). */
   contribution_fee_assetname: Data.Bytes(),
+  /** Amount due per round in the contribution asset's smallest unit (lovelace for ADA). */
   contribution_fee: Data.Integer(),
+  /** Policy ID of the one-time joining fee asset. Empty string = ADA. */
   joining_fee_policyid: Data.Bytes(),
+  /** Asset name of the one-time joining fee asset. Empty string = ADA. */
   joining_fee_assetname: Data.Bytes(),
+  /** One-time joining fee in the asset's smallest unit. 0 = no joining fee. */
   joining_fee: Data.Integer(),
+  /** Policy ID of the early-exit penalty asset. Empty string = ADA. */
   penalty_fee_policyid: Data.Bytes(),
+  /** Asset name of the early-exit penalty asset. Empty string = ADA. */
   penalty_fee_assetname: Data.Bytes(),
+  /** Early-exit penalty amount in the asset's smallest unit. */
   penalty_fee: Data.Integer(),
+  /** Grace window duration in **POSIX milliseconds**. 0 = immediate DefaultState on shortfall. */
   grace_period_length: Data.Integer(),
+  /** ADA locked in the group UTxO at creation (lovelace). Returned on `deleteGroup`. */
   creator_bond: Data.Integer(),
+  /**
+   * Duration of each rotation slot in **POSIX milliseconds**.
+   * @example 300_000n // 5 minutes
+   * @example 3_600_000n // 1 hour
+   */
   interval_length: Data.Integer(),
+  /**
+   * Total number of rotation rounds in the current cycle. 0 until `startGroup` seals
+   * membership, at which point it is set to `member_count` and frozen for the cycle.
+   */
   num_rounds: Data.Integer(),
+  /** Maximum number of members allowed. Recommended ≤ 30 to stay within tx execution limits. */
   max_members: Data.Integer(),
+  /** Current active member count. Incremented by `joinGroup`, decremented by `exitGroup`. */
   member_count: Data.Integer(),
+  /** False once deactivated by `updateGroup`. Deactivation is one-way — cannot be reversed. */
   is_active: Data.Boolean(),
+  /**
+   * False at creation; set to true by `startGroup`. One-way latch — no further joins
+   * are accepted and `num_rounds` / `start_time` are frozen once true.
+   */
   is_started: Data.Boolean(),
+  /**
+   * ROSCA rotation anchor in **POSIX milliseconds**. 0 until `startGroup` sets it to
+   * the transaction's validity lower bound.
+   * Round N opens at: `start_time + N * interval_length`
+   */
   start_time: Data.Integer(),
+  /**
+   * Index of the last completed distribution round. -1 before the first distribute;
+   * incremented atomically with each `distributeRound` call.
+   */
   last_distributed_round: Data.Integer(),
+  /** 28-byte payment key hash of the group creator. Joining fees are routed here. */
   creator_payment_credential: Data.Bytes(),
+  /** On-chain membership registry — one CIP-68 token name per active member. */
   member_token_names: Data.Array(Data.Bytes()),
+  /**
+   * Rounds' worth of contribution_fee a member must lock at join.
+   * 1 = PerRound (traditional, default); max_members = FullUpfront; k = partial.
+   * Join floor = contribution_fee × collateral_rounds. Deposits are never capped.
+   */
+  collateral_rounds: Data.Integer(),
 });
 
+/**
+ * Group protocol state stored in the CIP-68 (100) reference token datum.
+ *
+ * ⚠️ This type is wrapped in {@link GroupCip68Datum} on-chain — always decode with
+ * `Data.from(datum, GroupCip68Datum)` and access `.extra` for the `GroupDatum`.
+ * Decoding directly as `GroupDatum` will throw "Fields do not match".
+ */
 export type GroupDatum = Data.Static<typeof GroupDatumSchema>;
 export const GroupDatum = GroupDatumSchema as unknown as GroupDatum;
 
@@ -229,6 +280,7 @@ export const TreasuryRedeemerSchema = Data.Enum([
   }),
   Data.Object({
     Contribute: Data.Object({
+      group_ref_input_index: Data.Integer(),
       member_input_index: Data.Integer(),
       treasury_input_index: Data.Integer(),
       treasury_output_index: Data.Integer(),

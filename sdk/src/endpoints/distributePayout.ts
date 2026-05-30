@@ -4,6 +4,7 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   UTxO,
+  Assets,
   toUnit,
   credentialToAddress,
 } from "@lucid-evolution/lucid";
@@ -334,6 +335,15 @@ export const unsignedDistributePayoutTxProgram = (
 
     const isLastRound = roundNumber + 1n === groupDatum.num_rounds;
 
+    // The contribution asset may be ADA (lovelace) or any native token.
+    const isAdaContribution = groupDatum.contribution_fee_policyid === "";
+    const contributionUnit = isAdaContribution
+      ? "lovelace"
+      : toUnit(
+          groupDatum.contribution_fee_policyid,
+          groupDatum.contribution_fee_assetname,
+        );
+
     const withTreasuryOutputs = memberStates.reduce((tx, state) => {
       if (!("TreasuryState" in state.datum)) return tx;
       const ts = state.datum.TreasuryState;
@@ -341,10 +351,11 @@ export const unsignedDistributePayoutTxProgram = (
         treasuryPolicyId!,
         ts.member_reference_tokenname,
       );
-      const inputLovelace = state.utxo.assets.lovelace;
-      const outputLovelace = inputLovelace - groupDatum.contribution_fee;
+      // Balance is measured in the contribution asset (lovelace for ADA groups).
+      const inputBal = state.utxo.assets[contributionUnit] ?? 0n;
+      const outputBal = inputBal - groupDatum.contribution_fee;
       const transitionToIcs =
-        outputLovelace < groupDatum.contribution_fee && !isLastRound;
+        outputBal < groupDatum.contribution_fee && !isLastRound;
 
       const updatedDatum: TreasuryDatum = transitionToIcs
         ? {
@@ -365,15 +376,29 @@ export const unsignedDistributePayoutTxProgram = (
               is_deferred: false,
             },
           };
+      // ADA groups: deduct from lovelace. Token groups: keep min-UTxO lovelace
+      // unchanged and reduce the contribution token (omit if it reaches zero).
+      const outAssets: Assets = isAdaContribution
+        ? { lovelace: outputBal, [memberToken]: 1n }
+        : {
+            lovelace: state.utxo.assets.lovelace,
+            [memberToken]: 1n,
+            ...(outputBal > 0n ? { [contributionUnit]: outputBal } : {}),
+          };
       return tx.pay.ToContract(
         treasuryAddress,
         { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
-        { lovelace: outputLovelace, [memberToken]: 1n },
+        outAssets,
       );
     }, baseTxWithGroup);
 
+    // Borrower receives the pot in the contribution asset (+ min-UTxO ADA for token groups).
+    const borrowerAssets: Assets = isAdaContribution
+      ? { lovelace: payoutAmount }
+      : { lovelace: 2_000_000n, [contributionUnit]: payoutAmount };
+
     const tx = yield* withTreasuryOutputs.pay
-      .ToAddress(borrowerAddress, { lovelace: payoutAmount })
+      .ToAddress(borrowerAddress, borrowerAssets)
       .validFrom(Number(validFrom))
       .completeProgram(
         lucid.config().network === "Custom" ? { localUPLCEval: false } : {},

@@ -67,6 +67,12 @@ pub type GroupDatum {
   // token name (prefix_222 + account_suffix). Appended at Join, removed at
   // Exit. Invariant: list.length(member_token_names) == member_count.
   member_token_names: List<AssetName>,
+  // Number of rounds' worth of contribution_fee a member must lock at join.
+  // 1 = PerRound (traditional ROSCA, default); max_members = FullUpfront (trustless);
+  // any k in between = partial. The join floor is contribution_fee * collateral_rounds.
+  // Deposits are never capped — distribute deducts exactly contribution_fee per round.
+  // Frozen once any member has joined (critical field in validate_update_group).
+  collateral_rounds: Int,
 }
 
 /// Group Validator Mint Redeemer
@@ -249,6 +255,10 @@ pub fn validate_create_group(
     (datum.last_distributed_round == -1)?,
     // [spec CreateGroup 13]: creator_payment_credential must be a valid 28-byte PKH
     (bytearray.length(datum.creator_payment_credential) == 28)?,
+    // [spec CreateGroup 16]: collateral_rounds in [1, max_members]
+    // 1 = PerRound (default), max_members = FullUpfront, k = partial.
+    (datum.collateral_rounds >= 1)?,
+    (datum.collateral_rounds <= datum.max_members)?,
   }
 }
 
@@ -324,7 +334,7 @@ pub fn validate_update_group(
   // joins. creator_bond and grace_period_length affect member economics. All must be
   // frozen while any member is active.
   // metadata and version are also critical — group name cannot change once members join.
-  let is_critical_update = output_metadata != input_metadata || output_version != input_version || updated_datum.contribution_fee != current_datum.contribution_fee || updated_datum.contribution_fee_policyid != current_datum.contribution_fee_policyid || updated_datum.contribution_fee_assetname != current_datum.contribution_fee_assetname || updated_datum.joining_fee != current_datum.joining_fee || updated_datum.joining_fee_policyid != current_datum.joining_fee_policyid || updated_datum.joining_fee_assetname != current_datum.joining_fee_assetname || updated_datum.penalty_fee != current_datum.penalty_fee || updated_datum.penalty_fee_policyid != current_datum.penalty_fee_policyid || updated_datum.penalty_fee_assetname != current_datum.penalty_fee_assetname || updated_datum.creator_bond != current_datum.creator_bond || updated_datum.grace_period_length != current_datum.grace_period_length || updated_datum.interval_length != current_datum.interval_length || updated_datum.creator_payment_credential != current_datum.creator_payment_credential || updated_datum.start_time != current_datum.start_time || updated_datum.max_members != current_datum.max_members
+  let is_critical_update = output_metadata != input_metadata || output_version != input_version || updated_datum.contribution_fee != current_datum.contribution_fee || updated_datum.contribution_fee_policyid != current_datum.contribution_fee_policyid || updated_datum.contribution_fee_assetname != current_datum.contribution_fee_assetname || updated_datum.joining_fee != current_datum.joining_fee || updated_datum.joining_fee_policyid != current_datum.joining_fee_policyid || updated_datum.joining_fee_assetname != current_datum.joining_fee_assetname || updated_datum.penalty_fee != current_datum.penalty_fee || updated_datum.penalty_fee_policyid != current_datum.penalty_fee_policyid || updated_datum.penalty_fee_assetname != current_datum.penalty_fee_assetname || updated_datum.creator_bond != current_datum.creator_bond || updated_datum.grace_period_length != current_datum.grace_period_length || updated_datum.interval_length != current_datum.interval_length || updated_datum.creator_payment_credential != current_datum.creator_payment_credential || updated_datum.start_time != current_datum.start_time || updated_datum.max_members != current_datum.max_members || updated_datum.collateral_rounds != current_datum.collateral_rounds
 
   let is_safe_update = !is_critical_update || current_datum.member_count == 0
 

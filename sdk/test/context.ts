@@ -76,10 +76,13 @@ const loadConfigFromEnv = (): ContextConfig => {
 
 // --- Providers ---
 
-const makeEmulatorContext = () =>
+const makeEmulatorContext = (seedAssets?: Record<string, bigint>) =>
   Effect.gen(function* () {
     const generate = () =>
-      generateEmulatorAccount({ lovelace: BigInt(1_000_000_000) });
+      generateEmulatorAccount({
+        lovelace: BigInt(1_000_000_000),
+        ...(seedAssets ?? {}),
+      });
 
     const admin = yield* Effect.sync(generate);
     const user1 = yield* Effect.sync(generate);
@@ -87,7 +90,12 @@ const makeEmulatorContext = () =>
 
     const emulator = new Emulator([admin, user1, user2], {
       ...PROTOCOL_PARAMETERS_DEFAULT,
-      maxTxSize: 23000,
+      // Test-only allowance. These emulator tests INLINE the ~15 KB validator in every
+      // tx for simplicity; production uses reference scripts (deploy-scripts /
+      // distributePayout.scriptRefs), which keep real txs well under Cardano's 16,384-byte
+      // limit. This number only needs to fit the inline-script test txs, not mainnet.
+      // TODO: switch join/nextCycle/contribute tests to reference scripts and drop this.
+      maxTxSize: 26000,
     });
 
     const lucid = yield* Effect.promise(() => Lucid(emulator, "Custom"));
@@ -217,7 +225,10 @@ const ensureOnChain = (network: Network, provider: string) =>
 
 // --- Entry Point ---
 
-export const makeLucidContext = (overrideConfig?: Partial<ContextConfig>) =>
+export const makeLucidContext = (
+  overrideConfig?: Partial<ContextConfig>,
+  seedAssets?: Record<string, bigint>,
+) =>
   Effect.gen(function* () {
     const envConfig = loadConfigFromEnv();
     const config = { ...envConfig, ...overrideConfig };
@@ -243,7 +254,7 @@ export const makeLucidContext = (overrideConfig?: Partial<ContextConfig>) =>
         );
       case "Emulator":
       default:
-        return yield* makeEmulatorContext();
+        return yield* makeEmulatorContext(seedAssets);
     }
   });
 

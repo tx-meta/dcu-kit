@@ -156,6 +156,7 @@ validator treasury(account_policy_id: PolicyId) {
       }
 
       Contribute {
+        group_ref_input_index,
         member_input_index,
         treasury_input_index,
         treasury_output_index,
@@ -167,6 +168,7 @@ validator treasury(account_policy_id: PolicyId) {
         validate_contribute(
           policy_id_from_utxo(inputs, utxo),
           account_policy_id,
+          group_ref_input_index,
           member_input_index,
           treasury_output_index,
           treasury_datum,

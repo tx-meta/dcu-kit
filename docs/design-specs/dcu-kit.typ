@@ -209,6 +209,8 @@ The DCU-Toolkit implements a deterministic, round-based slot assignment system f
 
 7. *Round completion*: After each `DistributeRound`, every participating Treasury UTxO has `rounds_paid` incremented by 1 and `is_deferred` reset to `False`.
 
+8. *Collateral & pot size*: Each member locks `contribution_fee × collateral_rounds` at join — `collateral_rounds = 1` for the traditional per-round model (the default; low upfront capital, which is the core ROSCA use case), up to `max_members` for full pre-payment in trustless groups — and may deposit more. Each round deducts exactly `contribution_fee` from every contributing member. The pot paid to the borrower is `contribution_fee × active_members`, *pro-rata*: if some members have defaulted (insufficient collateral and unrecovered), the round still completes with a proportionally smaller pot rather than stalling the cycle.
+
 \
 ==== Parameters
 \
@@ -251,7 +253,7 @@ The DCU-Toolkit implements a deterministic, round-based slot assignment system f
 
   - Exactly one Membership Token is minted under the Treasury policy; the token name matches `member_reference_tokenname` in the datum.
 
-  - Sufficient fees are locked: `contribution_fee + joining_fee`. When both fees are the same asset, the combined sum is required (not two independent checks).
+  - The collateral floor is locked in the contribution asset: at least `contribution_fee × collateral_rounds` (one round for PerRound groups; up to `max_members` rounds for FullUpfront). Deposits above the floor are permitted. Separately, if `joining_fee > 0` it is routed to `admin_payment_credential`.
 
   - The Account NFT (member user token) must not go to a script address.
 
@@ -388,13 +390,15 @@ Transition state for members whose contribution balance falls below `contributio
 
   - *Borrower resolution*: `current_slot = round_number % num_intervals`. The borrower is the member with `assigned_slot == current_slot`. If that member's `is_deferred == True`, the payout routes to `(current_slot + 1) % num_intervals` instead. This ensures every interval ends with one recipient.
 
-  - *Payout amount*: Total payout = `contribution_fee × number_of_treasury_inputs` (the contribution asset moves out of each input and is aggregated to the borrower).
+  - *Complete member set (atomicity)*: The transaction must account for *every* member listed in `group.member_token_names`. Each member's Treasury UTxO is either consumed as a *contributing* input (in `TreasuryState`, contribution-asset balance ≥ `contribution_fee`) or demonstrably *skipped* because it is in `InsufficientCollateralState`/`PenaltyState` (a defaulter, not contributing this round). A caller may not silently exclude a healthy member to shrink the pot. _Without this check, a permissionless caller could submit a partial set — shortchanging the borrower and stranding the excluded members' round counters._
+
+  - *Pro-rata payout*: Let `active_members` be the number of *contributing* Treasuries (members in good standing this round). The borrower receives `contribution_fee × active_members`. When some members have defaulted, the pot is reduced pro-rata rather than blocking the round — the shortfall is shared by that round's borrower instead of stalling the entire cycle. The contribution asset moves out of each contributing input and is aggregated to the borrower.
 
   - *Ascending index requirement*: `treasury_input_indices` and `treasury_output_indices` must both be in strictly ascending order. This prevents duplicate-index attacks.
 
   - *Group output*: `last_distributed_round` incremented to `round_number`; all other group datum fields unchanged. The group UTxO must be a spending input (not a reference input) so its state is updated atomically.
 
-  - *Treasury outputs*: Each spent Treasury UTxO is returned to the script address with `rounds_paid` incremented by 1 and `is_deferred` reset to `False`. Output ADA equals input ADA minus `contribution_fee` (contribution asset balance decreases). Only ADA + the membership token may remain in the output (no value accumulation).
+  - *Treasury outputs*: Each contributing Treasury UTxO is returned to the script address with `rounds_paid` incremented by 1 and `is_deferred` reset to `False`. Its contribution-asset balance decreases by exactly `contribution_fee`. The output may hold only ADA, the membership token, and (for native-token groups) the contribution asset — no other value may accumulate.
 
   \
 + *ExitGroup*
@@ -510,6 +514,7 @@ Nothing
     - *`last_distributed_round`*: Must be `−1` at creation — no rounds have run yet.
     - *`start_time`*: Must be 0 at creation — `StartGroup` sets this to the transaction's validity range lower bound.
     - *`member_token_names`*: Must be an empty list `[]` at creation.
+    - *`collateral_rounds`*: Must be in `[1, max_members]` (`1` = PerRound default, `max_members` = FullUpfront, any `k` = partial).
     - *`admin_payment_credential`*: Must be exactly 28 bytes (a valid payment key hash).
     - The Group Reference NFT must be the only token under this policy in the script output (exact token check).
     - The Group User NFT must go to a VerificationKey address — if sent to a script, admin authority is permanently lost.
@@ -535,7 +540,7 @@ Nothing
 
 - *`contribution_fee_assetname: AssetName`* The AssetName of the contribution fee. Empty string for ADA.
 
-- *`contribution_fee: Int`* The contribution fee amount per round. Must be > 0. Each member locks `max_members × contribution_fee` (ADA) or `2 ADA` minimum (non-ADA) at join time to pre-pay all future rounds.
+- *`contribution_fee: Int`* The contribution fee amount per round, in the contribution asset. Must be > 0. The amount a member must lock at join is governed by `collateral_rounds` (see below) — the join floor is `contribution_fee × collateral_rounds`. `DistributeRound` deducts exactly `contribution_fee` from each participating Treasury each round.
 
 - *`joining_fee_policyid: PolicyId`* The PolicyId governing the asset used for the joining fee. Empty string for ADA.
 
@@ -573,7 +578,9 @@ Nothing
 
 - *`member_token_names: List<AssetName>`* On-chain membership registry: one entry per active member, containing their treasury membership token name (CIP-68 prefix_222 form). Appended at `MemberJoin`, removed at `MemberExit`. Invariant: `list.length(member_token_names) == member_count`.
 
-*Note:* All fee amounts, policy IDs, and asset names are *critical fields* — they cannot be changed via `UpdateGroup` while `member_count > 0`. Changing a fee's currency is as disruptive as changing its amount.
+- *`collateral_rounds: Int`* Number of rounds' worth of `contribution_fee` a member must lock at join. `1` = *PerRound* (the traditional ROSCA default — low upfront capital, members top up each round); `max_members` = *FullUpfront* (trustless/stranger groups — defaulting is made impossible); any `k` in `[1, max_members]` = partial. The join floor is `contribution_fee × collateral_rounds`. Deposits are *never capped* — a member may pre-load more and `DistributeRound` still deducts exactly `contribution_fee` per round. Validated `1 ≤ collateral_rounds ≤ max_members` at creation; frozen once any member is active.
+
+*Note:* All fee amounts, policy IDs, asset names, and `collateral_rounds` are *critical fields* — they cannot be changed via `UpdateGroup` while `member_count > 0`. Changing a fee's currency is as disruptive as changing its amount.
 
 \
 
@@ -651,7 +658,7 @@ Nothing
 
   - `is_active` is a one-way latch: only `true → false` is permitted. Reactivation (`false → true`) is permanently forbidden; deactivation is the admin's irrevocable signal to members to exit.
 
-  - The following fields are *critical* and may only be changed when `member_count == 0`: all fee amounts, all fee policy IDs, all fee asset names, `creator_bond`, `grace_period_length`, `interval_length`, `num_intervals`, `start_time`, `max_members`, and `admin_payment_credential`. Changing `start_time` while members are active would shift every member's payout window; changing fee currency is an economic rug-pull equivalent to raising the amount.
+  - The following fields are *critical* and may only be changed when `member_count == 0`: all fee amounts, all fee policy IDs, all fee asset names, `creator_bond`, `grace_period_length`, `interval_length`, `num_intervals`, `start_time`, `max_members`, `collateral_rounds`, and `admin_payment_credential`. Changing `start_time` while members are active would shift every member's payout window; changing fee currency is an economic rug-pull equivalent to raising the amount.
 
   \
 + *RemoveGroup*
@@ -728,6 +735,8 @@ Nothing
   - `is_active` must be `True`.
 
   - `round_number` must be < `num_intervals` (round must be within the current cycle).
+
+  - *Complete member set*: the transaction must account for every member in `member_token_names` — each appears either as a contributing Treasury input or as a skipped defaulter. Because the membership registry lives in the group datum, this completeness check is anchored here, so the pro-rata `active_members` count cannot be understated by excluding healthy members. _(The contributing/defaulter classification and the `contribution_fee × active_members` payout are enforced in the Treasury `DistributeRound` validation.)_
 
   - Group output: `last_distributed_round = round_number`; all other fields frozen.
 
@@ -1572,7 +1581,7 @@ This transaction permanently deletes a cooperative group. It is a hard-delete: b
 \
 === Mint :: JoinGroup
 \
-This transaction occurs when a member joins a cooperative group. It atomically mints one Membership Token, creates the member's Treasury UTxO with pre-paid contributions, and updates the Group UTxO to increment `member_count`. The Group UTxO is a *spending input* — not a reference — so the group state is updated in the same transaction.
+This transaction occurs when a member joins a cooperative group. It atomically mints one Membership Token, creates the member's Treasury UTxO with the configured collateral locked (`contribution_fee × collateral_rounds`), and updates the Group UTxO to increment `member_count`. The Group UTxO is a *spending input* — not a reference — so the group state is updated in the same transaction.
 
 \
 #transaction(
@@ -1615,7 +1624,7 @@ This transaction occurs when a member joins a cooperative group. It atomically m
       name: "Treasury Validator UTxO",
       address: "treasury_validator",
       value: (
-        ada: 60000000, // max_members × contribution_fee pre-paid
+        ada: 60000000, // contribution_fee × collateral_rounds (FullUpfront example)
         Member_Ref: 1, // Membership token locked here
       ),
       datum: (
@@ -1649,7 +1658,7 @@ This transaction occurs when a member joins a cooperative group. It atomically m
 
     - Value:
 
-      - `max_members × contribution_fee` ADA (pre-pays all future rounds) or minimum 2 ADA for non-ADA fees
+      - At least `contribution_fee × collateral_rounds` in the contribution asset (one round for PerRound groups, up to `max_members` rounds for FullUpfront — this example shows FullUpfront), plus minimum ADA for the UTxO
 
       - 1 Account User NFT (proves account ownership; stays in wallet)
 
@@ -1705,7 +1714,7 @@ This transaction occurs when a member joins a cooperative group. It atomically m
 
     - Value:
 
-      - `max_members × contribution_fee` ADA (pre-paid contributions)
+      - At least `contribution_fee × collateral_rounds` in the contribution asset (the locked collateral; FullUpfront in this example) plus minimum UTxO ADA
 
       - 1 Membership Reference Token (the (100) prefix, locked at script)
 
@@ -1979,7 +1988,7 @@ This transaction allows a member to exit a cooperative group by spending a Treas
 
 === Spend :: DistributeRound
 \
-This transaction distributes the group pot for one sequential round. All active members' Treasury UTxOs are consumed and updated atomically with the Group UTxO. The Group UTxO is a *spending input* so `last_distributed_round` is updated on-chain. The borrower (scheduled slot member) receives the full pot. If the borrower has `is_deferred = True`, the payout routes to the next slot.
+This transaction distributes the group pot for one sequential round. The *complete* member set is accounted for atomically with the Group UTxO: every member in `group.member_token_names` is either consumed as a contributing Treasury input or skipped as a defaulter (`InsufficientCollateralState`/`PenaltyState`) — a caller cannot exclude a healthy member to shrink the pot. The Group UTxO is a *spending input* so `last_distributed_round` is updated on-chain. The borrower (scheduled slot member) receives `contribution_fee × active_members` — the *pro-rata* pot, reduced when members have defaulted rather than stalling the cycle. If the borrower has `is_deferred = True`, the payout routes to the next slot.
 
 \
 #transaction(
@@ -2030,7 +2039,7 @@ This transaction distributes the group pot for one sequential round. All active 
       name: "Borrower Wallet UTxO",
       address: "member_wallet",
       value: (
-        ada: 4000000, // contribution_fee × num_members (2 × 2 ADA)
+        ada: 4000000, // contribution_fee × active_members (2 × 2 ADA — both contributing)
       ),
     ),
     (

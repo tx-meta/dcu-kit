@@ -113,6 +113,7 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     last_distributed_round: -1,
     creator_payment_credential: test_pkh(),
     member_token_names: [],
+    collateral_rounds: 1,
   }
 }
 

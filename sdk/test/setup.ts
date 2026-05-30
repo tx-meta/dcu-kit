@@ -60,9 +60,14 @@ export type MembershipSetupResult = {
 
 // --- Setup Functions ---
 
-export const setupBase = (): Effect.Effect<BaseSetup, Error, never> =>
+export const setupBase = (
+  seedAssets?: Record<string, bigint>,
+): Effect.Effect<BaseSetup, Error, never> =>
   Effect.gen(function* () {
-    const { lucid, users, emulator } = yield* makeLucidContext();
+    const { lucid, users, emulator } = yield* makeLucidContext(
+      undefined,
+      seedAssets,
+    );
     const network = lucid.config().network;
     if (!network)
       return yield* Effect.fail(

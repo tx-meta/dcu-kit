@@ -15,6 +15,7 @@ import {
   treasuryValidator,
   treasuryPolicyId,
   accountPolicyId,
+  groupPolicyId,
 } from "../core/validators/constants.js";
 import {
   DcuError,
@@ -25,6 +26,7 @@ import {
   getScriptAddress,
   getWalletAddress,
   parseSafeDatum,
+  parseGroupCip68Datum,
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
@@ -34,8 +36,10 @@ import {
  * Creates an unsigned transaction for contributing (topping up) a Treasury UTxO.
  *
  * **Functionality:**
- * - Member increases the lovelace balance of their treasury UTxO.
- * - Datum is structurally unchanged (only ADA changes).
+ * - Member increases the contribution-asset balance of their treasury UTxO.
+ * - The contribution asset may be ADA or any Cardano native token (read from the group datum).
+ * - Datum is structurally unchanged (TreasuryState top-up); the group UTxO is a read-only
+ *   reference input supplying the contribution asset.
  * - Requires the Account NFT in the wallet for authorization.
  *
  * @param lucid - Lucid instance with wallet selected.
@@ -43,8 +47,9 @@ import {
  * @returns Effect yielding TxSignBuilder.
  */
 export type ContributeConfig = {
+  groupTokenSuffix: string;
   accountTokenSuffix: string;
-  topUpAmount: bigint; // extra lovelace to add to the treasury UTxO
+  topUpAmount: bigint; // extra units of the contribution asset to add to the treasury UTxO
 };
 
 export const unsignedContributeTxProgram = (
@@ -52,16 +57,21 @@ export const unsignedContributeTxProgram = (
   config: ContributeConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { accountTokenSuffix, topUpAmount } = config;
+    const { groupTokenSuffix, accountTokenSuffix, topUpAmount } = config;
 
     const memberRefName = assetNameLabels.prefix222 + accountTokenSuffix;
     const accountUnit = accountPolicyId + memberRefName;
     const treasuryUnit = treasuryPolicyId! + memberRefName;
+    // Group reference token (read-only) — supplies the contribution asset + fee.
+    const groupRefUnit =
+      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
 
     const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUnit);
     const treasuryUtxoRaw = yield* resolveUtxoByUnit(lucid, treasuryUnit);
+    const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const accountUtxo = patchInlineDatum(accountUtxoRaw);
     const treasuryUtxo = patchInlineDatum(treasuryUtxoRaw);
+    const groupUtxo = patchInlineDatum(groupUtxoRaw);
 
     const treasuryDatum = (yield* parseSafeDatum(
       treasuryUtxo.datum,
@@ -76,6 +86,9 @@ export const unsignedContributeTxProgram = (
       );
     }
 
+    const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
+    const groupDatum = groupCip68.groupDatum;
+
     const address = yield* getWalletAddress(lucid);
     const treasuryAddress = yield* getScriptAddress(
       lucid,
@@ -83,8 +96,21 @@ export const unsignedContributeTxProgram = (
     );
     const memberToken = toUnit(treasuryPolicyId!, memberRefName);
 
-    const inputLovelace = treasuryUtxo.assets.lovelace;
-    const outputLovelace = inputLovelace + topUpAmount;
+    // The contribution asset may be ADA (empty policy id → "lovelace") or a native token.
+    const contributionUnit =
+      groupDatum.contribution_fee_policyid === ""
+        ? "lovelace"
+        : toUnit(
+            groupDatum.contribution_fee_policyid,
+            groupDatum.contribution_fee_assetname,
+          );
+
+    // Preserve all existing assets, increase the contribution asset by topUpAmount.
+    const outputAssets: Record<string, bigint> = { ...treasuryUtxo.assets };
+    outputAssets[contributionUnit] =
+      (outputAssets[contributionUnit] ?? 0n) + topUpAmount;
+    // Ensure the membership token is retained (it already exists in treasuryUtxo.assets).
+    outputAssets[memberToken] = 1n;
 
     const redeemer: RedeemerBuilder = {
       kind: "selected",
@@ -92,6 +118,7 @@ export const unsignedContributeTxProgram = (
         Data.to(
           {
             Contribute: {
+              group_ref_input_index: 0n, // first (only) reference input
               member_input_index: inputIndices[0],
               treasury_input_index: inputIndices[1],
               treasury_output_index: 0n,
@@ -106,14 +133,17 @@ export const unsignedContributeTxProgram = (
       .newTx()
       .collectFrom([accountUtxo])
       .collectFrom([treasuryUtxo], redeemer)
+      .readFrom([groupUtxo])
       .addSigner(address)
       .pay.ToContract(
         treasuryAddress,
         { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) },
-        { lovelace: outputLovelace, [memberToken]: 1n },
+        outputAssets,
       )
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
-      .completeProgram()
+      .completeProgram(
+        lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
+      )
       .pipe(
         Effect.mapError(
           (e) =>

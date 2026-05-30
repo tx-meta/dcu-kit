@@ -132,19 +132,28 @@ export const unsignedJoinGroupTxProgram = (
     const treasuryMemberToken = toUnit(treasuryPolicyId!, accountAssetName);
 
     const mintingAssets: Assets = { [treasuryMemberToken]: 1n };
-    // Lock max_members × contribution_fee for ADA contributions so the treasury UTxO
-    // remains solvent for the full rotation cycle (max_members rounds). For non-ADA
-    // contributions, just lock the minimum UTxO ADA (2 ADA).
+    // Lock max_members × contribution_fee in the contribution asset so the treasury UTxO
+    // remains solvent for the full rotation cycle (max_members rounds). For ADA groups
+    // that asset is lovelace; for native-token groups we lock the token plus 2 ADA min-UTxO.
+    const isAdaContribution = groupDatum.contribution_fee_policyid === "";
+    const fullCycleAmount = groupDatum.max_members * groupDatum.contribution_fee;
     const treasuryLovelace =
       overrideDepositLovelace !== undefined
         ? overrideDepositLovelace
-        : groupDatum.contribution_fee_policyid === ""
-          ? groupDatum.max_members * groupDatum.contribution_fee
+        : isAdaContribution
+          ? fullCycleAmount
           : 2_000_000n;
     const treasuryAssets: Assets = {
       lovelace: treasuryLovelace,
       [treasuryMemberToken]: 1n,
     };
+    if (!isAdaContribution) {
+      const contributionUnit = toUnit(
+        groupDatum.contribution_fee_policyid,
+        groupDatum.contribution_fee_assetname,
+      );
+      treasuryAssets[contributionUnit] = fullCycleAmount;
+    }
 
     const address = yield* getWalletAddress(lucid);
     const memberPaymentCredential = paymentCredentialOf(address).hash;
