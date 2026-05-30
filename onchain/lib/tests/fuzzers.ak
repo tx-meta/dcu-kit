@@ -1,6 +1,6 @@
 use aiken/fuzz
 use dcu/account.{AccountDatum}
-use dcu/group.{GroupDatum}
+use dcu/group.{GroupDatum, Push}
 
 // --- Group Datum Fuzzer ---
 
@@ -51,6 +51,7 @@ pub fn gen_group_datum() {
       creator_payment_credential,
       member_token_names: [],
       collateral_rounds,
+      payout_mode: Push,
     },
   )
 }
@@ -103,6 +104,7 @@ pub fn gen_valid_group_datum() {
       creator_payment_credential,
       member_token_names: [],
       collateral_rounds,
+      payout_mode: Push,
     },
   )
 }

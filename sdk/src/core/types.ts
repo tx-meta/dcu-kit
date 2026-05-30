@@ -43,6 +43,20 @@ export const AccountRedeemer =
 
 // --- Group Validator Types ---
 
+/**
+ * Payout delivery mode, fixed at group creation and frozen once members join.
+ * - `Push` — DistributeRound pays the borrower a direct wallet output (default, backwards compatible).
+ * - `Pull` — DistributeRound earmarks the pot into the borrower's own treasury
+ *   (`claimable_balance`); the borrower withdraws it to any address via ClaimPayout.
+ *   Solves the lost-wallet problem. Serialises as Constr(0, []) / Constr(1, []).
+ */
+export const PayoutModeSchema = Data.Enum([
+  Data.Literal("Push"),
+  Data.Literal("Pull"),
+]);
+export type PayoutMode = Data.Static<typeof PayoutModeSchema>;
+export const PayoutMode = PayoutModeSchema as unknown as PayoutMode;
+
 export const GroupDatumSchema = Data.Object({
   /** Policy ID of the contribution asset. Empty string (`""`) means ADA (lovelace). */
   contribution_fee_policyid: Data.Bytes(),
@@ -109,6 +123,11 @@ export const GroupDatumSchema = Data.Object({
    * Join floor = contribution_fee × collateral_rounds. Deposits are never capped.
    */
   collateral_rounds: Data.Integer(),
+  /**
+   * Payout delivery mode (`Push` | `Pull`). Fixed at creation, frozen once members join.
+   * See {@link PayoutModeSchema}.
+   */
+  payout_mode: PayoutModeSchema,
 });
 
 /**
@@ -220,6 +239,11 @@ export const TreasuryDatumSchema = Data.Enum([
       rounds_paid: Data.Integer(),
       is_deferred: Data.Boolean(),
       member_payment_credential: Data.Bytes(),
+      /**
+       * Pull mode: pot earmarked for this member to withdraw via ClaimPayout.
+       * 0 at join and under Push. Durable until claimed or returned at exit.
+       */
+      claimable_balance: Data.Integer(),
     }),
   }),
   Data.Object({

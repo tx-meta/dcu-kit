@@ -29,6 +29,12 @@ pub type TreasuryDatum {
     // Payment key hash of the member's wallet; used in DistributeRound
     // to route the payout to the correct borrower address.
     member_payment_credential: ByteArray,
+    // Pull mode only: pot amount (in the contribution asset) earmarked for this
+    // member to withdraw via ClaimPayout. 0 at join and under Push mode. On the
+    // member's payout round DistributeRound credits `+= total_payout` here (funds
+    // physically accumulate in this UTxO); ClaimPayout resets it to 0. Durable until
+    // claimed or returned at exit. See [[configurable-payout-mode]] / roadmap Phase 6.
+    claimable_balance: Int,
   }
   PenaltyState {
     group_reference_tokenname: AssetName,
@@ -178,6 +184,56 @@ fn only_allowed_policies(value: Value, allowed: List<PolicyId>) -> Bool {
   list.all(assets.policies(value), fn(p) { list.has(allowed, p) })
 }
 
+// count_active_members
+// Enforces the COMPLETE member set for a distribution round and returns the number of
+// contributors. Every name in `member_token_names` must be held by exactly one of:
+//   - a SPENDING input whose datum is TreasuryState           → contributing (counted)
+//   - a REFERENCE input whose datum is DefaultState/PenaltyState → defaulter (not counted)
+// Any member that is missing, or mis-classified (e.g. a healthy TreasuryState parked as a
+// reference input to dodge contributing), fails via `expect`/`fail`. This closes the
+// partial-set attack: a caller cannot advance a round while silently excluding healthy
+// members. The pro-rata pot for the round is `contribution_fee * active_members`.
+fn count_active_members(
+  member_token_names: List<AssetName>,
+  treasury_policy_id: PolicyId,
+  inputs: List<Input>,
+  reference_inputs: List<Input>,
+) -> Int {
+  list.foldl(
+    member_token_names,
+    0,
+    fn(name, acc) {
+      let holds =
+        fn(i: Input) {
+          assets.quantity_of(i.output.value, treasury_policy_id, name) == 1
+        }
+      when list.find(inputs, holds) is {
+        // Member is a spending input → must be TreasuryState (contributing this round).
+        Some(member_input) -> {
+          expect InlineDatum(d) = member_input.output.datum
+          expect member_datum: TreasuryDatum = d
+          when member_datum is {
+            TreasuryState { .. } -> acc + 1
+            _ -> fail @"spent member treasury must be TreasuryState in a round"
+          }
+        }
+        // Not spent → must be referenced as a genuine defaulter.
+        None -> {
+          expect Some(ref_input) = list.find(reference_inputs, holds)
+          expect InlineDatum(d) = ref_input.output.datum
+          expect ref_datum: TreasuryDatum = d
+          when ref_datum is {
+            DefaultState { .. } -> acc
+            PenaltyState { .. } -> acc
+            TreasuryState { .. } ->
+              fail @"healthy member must contribute, not be referenced"
+          }
+        }
+      }
+    },
+  )
+}
+
 // ─── Mint: JoinGroup ──────────────────────────────────────────────────────────
 
 // validate_join_group
@@ -238,6 +294,7 @@ pub fn validate_join_treasury(
         is_deferred,
         assigned_slot,
         member_payment_credential,
+        claimable_balance,
       }: TreasuryDatum
     = treasury_datum_data
 
@@ -259,6 +316,9 @@ pub fn validate_join_treasury(
 
   // [spec JoinGroup 6d]: is_deferred == False (cannot join already deferred)
   let not_deferred = !is_deferred
+
+  // [spec JoinGroup 6e]: claimable_balance == 0 (fresh member, nothing earmarked yet)
+  let no_claimable = claimable_balance == 0
 
   // [spec JoinGroup NEW]: group output at group_output_index has member_count + 1 —
   //   ensures the Group validator's MemberJoin redeemer atomically updates member_count
@@ -365,6 +425,7 @@ pub fn validate_join_treasury(
     slot_valid?,
     rounds_paid_valid?,
     not_deferred?,
+    no_claimable?,
     member_count_incremented?,
     group_output_at_correct_address?,
     group_output_has_ref_token?,
@@ -420,7 +481,7 @@ pub fn validate_distribute_treasury(
   utxo: OutputReference,
   tx: Transaction,
 ) -> Bool {
-  let Transaction { inputs, outputs, .. } = tx
+  let Transaction { inputs, outputs, reference_inputs, .. } = tx
 
   // [spec DistributeRound 1]: datum must be TreasuryState
   // Capture assigned_slot and member_payment_credential so they can be carried
@@ -432,6 +493,7 @@ pub fn validate_distribute_treasury(
         assigned_slot,
         member_payment_credential,
         rounds_paid,
+        claimable_balance,
         ..
       }
     = datum
@@ -532,8 +594,19 @@ pub fn validate_distribute_treasury(
     cred
   }
 
-  // [spec DistributeRound 6c]: total payout = contribution_fee × member count
-  let total_payout = list.length(treasury_input_indices) * group.contribution_fee
+  // [spec DistributeRound 6c]: PRO-RATA pot = contribution_fee × active_members.
+  // active_members is derived from the group's full membership registry (every member
+  // accounted for as a contributing spend or a defaulter reference) — NOT from the
+  // caller-supplied treasury_input_indices. This (a) closes the partial-set attack
+  // (round cannot advance while excluding healthy members) and (b) prevents under-paying
+  // the borrower: released fees (active × fee) must all reach the borrower, none can leak.
+  let active_members = count_active_members(
+    group.member_token_names,
+    own_policy_id,
+    inputs,
+    reference_inputs,
+  )
+  let total_payout = active_members * group.contribution_fee
 
   // [spec DistributeRound 7]: find own corresponding output (matched by own UTxO reference)
   expect Some(own_output_index) = list.find_map(
@@ -592,14 +665,21 @@ pub fn validate_distribute_treasury(
       member_payment_credential,
     }
   } else {
-    expect  
+    expect
         TreasuryState {
           rounds_paid: output_rounds_paid,
           is_deferred: output_is_deferred,
+          claimable_balance: output_claimable_balance,
           ..
         }
       = output_datum
-    output_rounds_paid == round_number + 1 && !output_is_deferred
+    // [security]: claimable_balance must be preserved exactly. Under Push it stays 0;
+    // the Pull credit path (slice 2) will relax this for the borrower's own treasury.
+    // Without this, a caller could inflate their own earmark and later drain it via
+    // ClaimPayout. NOTE (slice 2): a member carrying a nonzero claimable_balance who
+    // transitions to DefaultState would lose it — DefaultState has no such field; revisit
+    // when wiring Pull defaults.
+    output_rounds_paid == round_number + 1 && !output_is_deferred && output_claimable_balance == claimable_balance
   }
 
   // [spec DistributeRound 8]: own output at script address with membership token
@@ -953,6 +1033,11 @@ pub fn validate_contribute(
       ..
     } ->
       // Recovery: transition back to TreasuryState using the preserved fields
+      // NOTE (slice 2): DefaultState carries no claimable_balance, so recovery resets it
+      // to 0. Under Push this is always correct (claimable is always 0). For Pull, a member
+      // who defaulted while holding an unclaimed earmark loses it here — revisit when wiring
+      // Pull defaults (either carry claimable through DefaultState, or block default while
+      // claimable > 0).
       output_datum == TreasuryState {
         group_reference_tokenname,
         member_reference_tokenname,
@@ -960,6 +1045,7 @@ pub fn validate_contribute(
         rounds_paid,
         is_deferred: False,
         member_payment_credential,
+        claimable_balance: 0,
       }
 
     PenaltyState { .. } -> False
@@ -1023,6 +1109,7 @@ pub fn validate_defer_round(
         rounds_paid,
         is_deferred: currently_deferred,
         member_payment_credential: defer_pkh,
+        claimable_balance: defer_claimable,
       }
     = datum
 
@@ -1057,6 +1144,7 @@ pub fn validate_defer_round(
     rounds_paid,
     is_deferred: True,
     member_payment_credential: defer_pkh,
+    claimable_balance: defer_claimable,
   }
   let datum_correct = output_datum == expected_datum
 
@@ -1112,6 +1200,7 @@ pub fn validate_update_payout(
         assigned_slot: upd_slot,
         rounds_paid: upd_rounds,
         is_deferred: upd_deferred,
+        claimable_balance: upd_claimable,
         ..
       }
     = datum
@@ -1145,6 +1234,7 @@ pub fn validate_update_payout(
     rounds_paid: upd_rounds,
     is_deferred: upd_deferred,
     member_payment_credential: new_pkh,
+    claimable_balance: upd_claimable,
   }
   let datum_correct = output_datum == expected_datum
 
@@ -1298,6 +1388,7 @@ pub fn validate_next_cycle_treasury(
         assigned_slot,
         rounds_paid,
         member_payment_credential,
+        claimable_balance,
         ..
       }
     = datum
@@ -1341,7 +1432,9 @@ pub fn validate_next_cycle_treasury(
   expect InlineDatum(output_datum_data) = own_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
 
-  // [spec NextCycle 5]: reset rounds_paid and is_deferred; all other fields frozen
+  // [spec NextCycle 5]: reset rounds_paid and is_deferred; all other fields frozen.
+  // claimable_balance is preserved — an unclaimed earmark is durable across cycles
+  // (value_preserved below also keeps the funds physically in the treasury).
   let expected_datum = TreasuryState {
     group_reference_tokenname,
     member_reference_tokenname,
@@ -1349,6 +1442,7 @@ pub fn validate_next_cycle_treasury(
     rounds_paid: 0,
     is_deferred: False,
     member_payment_credential,
+    claimable_balance,
   }
   let datum_correct = output_datum == expected_datum
 

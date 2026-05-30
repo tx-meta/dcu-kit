@@ -85,5 +85,7 @@ export const createDefaultGroupDatum = (
   // 1 = PerRound (traditional ROSCA, default). Set to max_members for FullUpfront,
   // or any k in [1, max_members] for partial collateral.
   collateral_rounds: 1n,
+  // Push = current direct-wallet-payout behaviour (default). Pull groups override this.
+  payout_mode: "Push",
   ...overrides,
 });

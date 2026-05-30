@@ -129,6 +129,11 @@ export const unsignedDeferRoundTxProgram = (
         { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
         { lovelace: treasuryUtxo.assets.lovelace, [memberToken]: 1n },
       )
+      // Explicitly return the account token to the member rather than letting it
+      // dangle into change. The account UTxO carries only min-ADA, so relying on
+      // change leaves too little to satisfy the token output's min-ADA once fees are
+      // paid; an explicit output forces coin selection to fund it from the wallet.
+      .pay.ToAddress(address, { [accountUnit]: 1n })
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
       .completeProgram()
       .pipe(

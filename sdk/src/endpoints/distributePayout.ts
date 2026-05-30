@@ -167,6 +167,22 @@ export const unsignedDistributePayoutTxProgram = (
       }
     }
 
+    // Defaulters (DefaultState / PenaltyState) for this group must be presented as
+    // reference inputs so the validator's complete-member-set check passes. They do not
+    // contribute, so they are excluded from memberStates and the pro-rata payout.
+    const defaulterUtxos: UTxO[] = [];
+    for (const state of parsedStates) {
+      if (!state) continue;
+      const d = state.datum;
+      const grt =
+        "DefaultState" in d
+          ? d.DefaultState.group_reference_tokenname
+          : "PenaltyState" in d
+            ? d.PenaltyState.group_reference_tokenname
+            : undefined;
+      if (grt === groupRefName) defaulterUtxos.push(state.utxo);
+    }
+
     if (memberStates.length === 0) {
       return yield* Effect.fail(
         new TransactionBuildError({
@@ -397,7 +413,13 @@ export const unsignedDistributePayoutTxProgram = (
       ? { lovelace: payoutAmount }
       : { lovelace: 2_000_000n, [contributionUnit]: payoutAmount };
 
-    const tx = yield* withTreasuryOutputs.pay
+    // Present defaulters as reference inputs so the complete-member-set check is satisfied.
+    const withRefs =
+      defaulterUtxos.length > 0
+        ? withTreasuryOutputs.readFrom(defaulterUtxos)
+        : withTreasuryOutputs;
+
+    const tx = yield* withRefs.pay
       .ToAddress(borrowerAddress, borrowerAssets)
       .validFrom(Number(validFrom))
       .completeProgram(

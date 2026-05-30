@@ -24,6 +24,18 @@ pub type GroupCip68Datum {
   extra: GroupDatum,
 }
 
+/// Payout delivery mode, fixed at group creation and frozen once members join.
+///   Push = current behaviour: DistributeRound builds a wallet output paying the
+///          borrower the pro-rata pot directly. Backwards compatible default.
+///   Pull  = DistributeRound earmarks the pot into the borrower's OWN treasury UTxO
+///          (TreasuryState.claimable_balance); the borrower later withdraws it to any
+///          address via ClaimPayout (gated by possession of the member 222 token).
+///          Solves the lost-wallet problem; entitlement is durable until claimed or exit.
+pub type PayoutMode {
+  Push
+  Pull
+}
+
 /// Group Validator Datum — protocol state only, no display metadata.
 pub type GroupDatum {
   contribution_fee_policyid: PolicyId,
@@ -73,6 +85,9 @@ pub type GroupDatum {
   // Deposits are never capped — distribute deducts exactly contribution_fee per round.
   // Frozen once any member has joined (critical field in validate_update_group).
   collateral_rounds: Int,
+  // Payout delivery mode (Push = direct wallet output; Pull = earmark + ClaimPayout).
+  // Fixed at creation; frozen once any member has joined (critical field).
+  payout_mode: PayoutMode,
 }
 
 /// Group Validator Mint Redeemer
@@ -334,7 +349,7 @@ pub fn validate_update_group(
   // joins. creator_bond and grace_period_length affect member economics. All must be
   // frozen while any member is active.
   // metadata and version are also critical — group name cannot change once members join.
-  let is_critical_update = output_metadata != input_metadata || output_version != input_version || updated_datum.contribution_fee != current_datum.contribution_fee || updated_datum.contribution_fee_policyid != current_datum.contribution_fee_policyid || updated_datum.contribution_fee_assetname != current_datum.contribution_fee_assetname || updated_datum.joining_fee != current_datum.joining_fee || updated_datum.joining_fee_policyid != current_datum.joining_fee_policyid || updated_datum.joining_fee_assetname != current_datum.joining_fee_assetname || updated_datum.penalty_fee != current_datum.penalty_fee || updated_datum.penalty_fee_policyid != current_datum.penalty_fee_policyid || updated_datum.penalty_fee_assetname != current_datum.penalty_fee_assetname || updated_datum.creator_bond != current_datum.creator_bond || updated_datum.grace_period_length != current_datum.grace_period_length || updated_datum.interval_length != current_datum.interval_length || updated_datum.creator_payment_credential != current_datum.creator_payment_credential || updated_datum.start_time != current_datum.start_time || updated_datum.max_members != current_datum.max_members || updated_datum.collateral_rounds != current_datum.collateral_rounds
+  let is_critical_update = output_metadata != input_metadata || output_version != input_version || updated_datum.contribution_fee != current_datum.contribution_fee || updated_datum.contribution_fee_policyid != current_datum.contribution_fee_policyid || updated_datum.contribution_fee_assetname != current_datum.contribution_fee_assetname || updated_datum.joining_fee != current_datum.joining_fee || updated_datum.joining_fee_policyid != current_datum.joining_fee_policyid || updated_datum.joining_fee_assetname != current_datum.joining_fee_assetname || updated_datum.penalty_fee != current_datum.penalty_fee || updated_datum.penalty_fee_policyid != current_datum.penalty_fee_policyid || updated_datum.penalty_fee_assetname != current_datum.penalty_fee_assetname || updated_datum.creator_bond != current_datum.creator_bond || updated_datum.grace_period_length != current_datum.grace_period_length || updated_datum.interval_length != current_datum.interval_length || updated_datum.creator_payment_credential != current_datum.creator_payment_credential || updated_datum.start_time != current_datum.start_time || updated_datum.max_members != current_datum.max_members || updated_datum.collateral_rounds != current_datum.collateral_rounds || updated_datum.payout_mode != current_datum.payout_mode
 
   let is_safe_update = !is_critical_update || current_datum.member_count == 0
 

@@ -6,7 +6,7 @@ use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
 }
 use dcu/cip68
-use dcu/group.{GroupCip68Datum, GroupDatum}
+use dcu/group.{GroupCip68Datum, GroupDatum, Push}
 use dcu/treasury.{
   DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
   validate_claim_penalty, validate_claim_penalty_mint, validate_contribute,
@@ -67,6 +67,7 @@ fn test_group_datum() -> GroupDatum {
     creator_payment_credential: common.test_pkh(),
     member_token_names: [],
     collateral_rounds: 1,
+    payout_mode: Push,
   }
 }
 
@@ -162,6 +163,7 @@ fn build_treasury_state(
     rounds_paid,
     is_deferred,
     member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
   }
 }
 
@@ -1115,12 +1117,14 @@ fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
   let tp = treasury_policy()
   let gp = group_policy()
 
-  // Group as spending INPUT — last_distributed_round will be updated to 0
+  // Group as spending INPUT — last_distributed_round will be updated to 0.
+  // member_token_names lists the single member so active_members (pro-rata) = 1.
   let group_datum = GroupDatum {
     ..test_group_datum(),
     num_rounds: 3,
     is_started: True,
     last_distributed_round: -1,
+    member_token_names: [member_tn()],
   }
   let group_in_value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
@@ -1493,6 +1497,172 @@ test distribute_round__rejects_unchanged_group_round() {
   }
 
   !validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+}
+
+// --- Pro-rata distribution (complete member set) ---
+
+fn member_b_tn() -> assets.AssetName {
+  #"bbccddeebbccddeebbccddeebbccddeebbccddeebbccddeebbccddee"
+}
+
+// A 2-member round. Member A (slot 0) contributes and is the borrower. Member B holds
+// `member_b_tn()` and carries `b_datum`, placed as a reference input when `b_as_reference`
+// is True (defaulter path) or as a spending input otherwise.
+fn two_member_distribute(
+  b_datum: TreasuryDatum,
+  b_as_reference: Bool,
+) -> (Transaction, TreasuryDatum, OutputReference) {
+  let tp = treasury_policy()
+  let gp = group_policy()
+
+  let group_datum = GroupDatum {
+    ..test_group_datum(),
+    num_rounds: 3,
+    is_started: True,
+    last_distributed_round: -1,
+    member_token_names: [member_tn(), member_b_tn()],
+  }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: group_in_value,
+      datum: InlineDatum(cip68_with_group(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: group_in_value,
+    datum: InlineDatum(
+      cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 0 }),
+    ),
+    reference_script: None,
+  }
+
+  // Member A — contributing borrower at slot 0.
+  let a_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let utxo_ref = treasury_utxo_ref()
+  let a_in = test_treasury_input(
+    utxo_ref,
+    test_treasury_output(a_datum, treasury_value()),
+  )
+  let a_out = test_treasury_output(
+    build_treasury_state(0, group_ref_tn(), 1, False),
+    assets.from_lovelace(3_000_000)
+      |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+  )
+
+  // Member B — value holds member_b_tn(); classification is by datum constructor.
+  let b_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, member_b_tn(), 1))
+  let b_io = Input {
+    output_reference: OutputReference {
+      transaction_id: #"4444444444444444444444444444444444444444444444444444444444444444",
+      output_index: 0,
+    },
+    output: test_treasury_output(b_datum, b_value),
+  }
+
+  let tx = if b_as_reference {
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [group_input, a_in],
+      reference_inputs: [b_io],
+      outputs: [a_out, group_output, test_borrower_output()],
+      validity_range: interval.after(0),
+    }
+  } else {
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [group_input, a_in, b_io],
+      outputs: [a_out, group_output, test_borrower_output()],
+      validity_range: interval.after(0),
+    }
+  }
+  (tx, a_datum, utxo_ref)
+}
+
+// Pro-rata: B has defaulted (DefaultState) and is a reference input. active_members = 1,
+// so the borrower receives 1 × contribution_fee (2M) — the reduced pot — and the round
+// still completes rather than stalling.
+test distribute_round__accepts_prorata_with_defaulter() {
+  let (tx, datum, utxo) = two_member_distribute(
+    test_insufficient_collateral_state(),
+    True,
+  )
+  validate_distribute_treasury(treasury_policy(), 0, 0, 1, [1], [0], 2, datum, utxo, tx)
+}
+
+// Completeness: a member listed in member_token_names is neither spent nor referenced →
+// the round cannot advance (count_active_members fails to find member B anywhere).
+test distribute_round__rejects_excluded_member() fail {
+  let tp = treasury_policy()
+  let gp = group_policy()
+
+  let group_datum = GroupDatum {
+    ..test_group_datum(),
+    num_rounds: 3,
+    is_started: True,
+    last_distributed_round: -1,
+    member_token_names: [member_tn(), member_b_tn()],
+  }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: group_in_value,
+      datum: InlineDatum(cip68_with_group(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: group_in_value,
+    datum: InlineDatum(
+      cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 0 }),
+    ),
+    reference_script: None,
+  }
+  let a_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let utxo_ref = treasury_utxo_ref()
+  let a_in = test_treasury_input(
+    utxo_ref,
+    test_treasury_output(a_datum, treasury_value()),
+  )
+  let a_out = test_treasury_output(
+    build_treasury_state(0, group_ref_tn(), 1, False),
+    assets.from_lovelace(3_000_000)
+      |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+  )
+  // Member B is absent from both inputs and reference_inputs.
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, a_in],
+    outputs: [a_out, group_output, test_borrower_output()],
+    validity_range: interval.after(0),
+  }
+  validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, a_datum, utxo_ref, tx)
+}
+
+// Anti-dodge: a healthy member (TreasuryState) cannot be parked as a reference input to
+// avoid contributing — count_active_members rejects a TreasuryState found in references.
+test distribute_round__rejects_healthy_member_referenced() fail {
+  let (tx, datum, utxo) = two_member_distribute(
+    build_treasury_state(1, group_ref_tn(), 0, False),
+    True,
+  )
+  validate_distribute_treasury(treasury_policy(), 0, 0, 1, [1], [0], 2, datum, utxo, tx)
 }
 
 // ─── validate_exit_group ──────────────────────────────────────────────────────
@@ -2492,6 +2662,7 @@ test update_payout_credential__accepts_valid_update() {
     rounds_paid: 0,
     is_deferred: False,
     member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
   }
   let treasury_out = test_treasury_output(expected_datum, in_value)
 
@@ -2549,6 +2720,7 @@ test update_payout_credential__rejects_no_member_token() {
     rounds_paid: 0,
     is_deferred: False,
     member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
   }
   let treasury_out = test_treasury_output(expected_datum, in_value)
 
