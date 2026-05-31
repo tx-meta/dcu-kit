@@ -41,6 +41,7 @@ use dcu/utils.{find_own_input, get_lower_bound, only_allowed_policies}
 pub fn validate_join_treasury(
   own_policy_id: PolicyId,
   account_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
   group_ref_input_index: Int,
   group_output_index: Int,
   member_input_index: Int,
@@ -60,8 +61,11 @@ pub fn validate_join_treasury(
   // [spec JoinGroup 0]: group must not be started — startGroup seals membership
   let not_started = !group.is_started
 
-  // Extract group policy ID for output validation
-  expect Script(group_policy_id) = group_input.output.address.payment_credential
+  // [security C1/C2]: the group input MUST sit at the trusted group script (from the
+  // protocol settings UTxO) — not merely any script presenting a token with the right
+  // name. Defeats a fake always-succeeds "group" minted under an attacker policy.
+  expect group_input.output.address.payment_credential == Script(trusted_group_policy)
+  let group_policy_id = trusted_group_policy
 
   // [spec JoinGroup 4]: treasury output at script address
   expect Some(treasury_output) = list.at(outputs, treasury_output_index)
@@ -246,6 +250,7 @@ pub fn validate_claim_penalty_mint(own_policy_id: PolicyId, mint: Value) -> Bool
 // [security]: treasury_input_indices and treasury_output_indices strictly ascending
 pub fn validate_distribute_treasury(
   own_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
   round_number: Int,
   group_ref_input_index: Int,
   group_output_index: Int,
@@ -291,7 +296,9 @@ pub fn validate_distribute_treasury(
   let group_round_incremented = updated_group.last_distributed_round == round_number
 
   // [spec DistributeRound 5]: group output at correct address with ref token
-  expect Script(group_policy_id) = group_input.output.address.payment_credential
+  // [security C1/C2]: group input must sit at the trusted group script (settings UTxO).
+  expect group_input.output.address.payment_credential == Script(trusted_group_policy)
+  let group_policy_id = trusted_group_policy
   let expected_group_token_name = find_group_token_name(group_input)
   let group_output_valid = group_output.address == group_input.output.address && assets.quantity_of(
     group_output.value,
@@ -507,6 +514,7 @@ pub fn validate_distribute_treasury(
 pub fn validate_exit_treasury(
   own_policy_id: PolicyId,
   account_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
   group_ref_input_index: Int,
   group_output_index: Int,
   member_input_index: Int,
@@ -534,7 +542,9 @@ pub fn validate_exit_treasury(
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
 
   // Extract group policy ID
-  expect Script(group_policy_id) = group_input.output.address.payment_credential
+  // [security C1/C2]: group input must sit at the trusted group script (settings UTxO).
+  expect group_input.output.address.payment_credential == Script(trusted_group_policy)
+  let group_policy_id = trusted_group_policy
   let expected_group_token_name = find_group_token_name(group_input)
 
   // [spec ExitGroup 3]: treasury datum's group_reference_tokenname must match the actual group
@@ -712,6 +722,7 @@ pub fn validate_claim_penalty(
 pub fn validate_contribute(
   own_policy_id: PolicyId,
   account_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
   group_ref_input_index: Int,
   member_input_index: Int,
   treasury_output_index: Int,
@@ -747,6 +758,10 @@ pub fn validate_contribute(
   // Read the group reference input for the contribution asset + fee, and verify it
   // links to this treasury (defense-in-depth — see ISSUE A note above).
   expect Some(group_ref_input) = list.at(reference_inputs, group_ref_input_index)
+  // [security C1]: the group reference input must sit at the trusted group script.
+  expect group_ref_input.output.address.payment_credential == Script(
+    trusted_group_policy,
+  )
   expect InlineDatum(group_datum_data) = group_ref_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
   let group_link_valid = datum_group_tokenname == find_group_token_name(
@@ -1019,6 +1034,7 @@ pub fn validate_extend_grace(
 // [security]: treasury_input_indices and treasury_output_indices strictly ascending
 pub fn validate_next_cycle_treasury(
   own_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
   group_input_index: Int,
   group_output_index: Int,
   treasury_input_indices: List<Int>,
@@ -1043,6 +1059,8 @@ pub fn validate_next_cycle_treasury(
 
   // [spec NextCycle 3]: group spending input with GroupDatum
   expect Some(group_input) = list.at(inputs, group_input_index)
+  // [security C1]: group input must sit at the trusted group script (settings UTxO).
+  expect group_input.output.address.payment_credential == Script(trusted_group_policy)
   expect InlineDatum(group_datum_data) = group_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
 
@@ -1150,6 +1168,7 @@ pub fn validate_next_cycle_treasury(
 pub fn validate_claim_payout(
   own_policy_id: PolicyId,
   account_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
   group_ref_input_index: Int,
   member_input_index: Int,
   treasury_output_index: Int,
@@ -1183,6 +1202,10 @@ pub fn validate_claim_payout(
   // The group-link check ties it to this treasury so a forged group ref cannot misdirect
   // the balance measurement (e.g. claim ADA when the contribution asset is a token).
   expect Some(group_ref_input) = list.at(reference_inputs, group_ref_input_index)
+  // [security C1]: the group reference input must sit at the trusted group script.
+  expect group_ref_input.output.address.payment_credential == Script(
+    trusted_group_policy,
+  )
   expect InlineDatum(group_datum_data) = group_ref_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
   let group_link_valid = group_reference_tokenname == find_group_token_name(

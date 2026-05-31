@@ -106,6 +106,34 @@ fn test_group_input() -> Input {
   }
 }
 
+// [security C1/C2/C3] Attacker's FORGED group: a fake always-succeeds script holding a
+// token with the victim's PUBLIC group name (group_ref_tn) minted under the ATTACKER's
+// own policy, carrying a valid-looking datum. The token-name check alone would pass — the
+// trusted-binding assertion (group input must sit at Script(trusted_group_policy)) is what
+// rejects it. Used by the *__rejects_fake_group_script negatives.
+fn fake_group_policy() -> assets.PolicyId {
+  #"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+}
+
+fn fake_group_input() -> Input {
+  let fp = fake_group_policy()
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(fp, group_ref_tn(), 1))
+  let output = Output {
+    address: Address { payment_credential: Script(fp), stake_credential: None },
+    value,
+    datum: InlineDatum(test_group_cip68_datum()),
+    reference_script: None,
+  }
+  Input {
+    output_reference: OutputReference {
+      transaction_id: #"2222222222222222222222222222222222222222222222222222222222222222",
+      output_index: 0,
+    },
+    output,
+  }
+}
+
 // --- Native-token contribution group fixtures ---
 // A group whose contribution asset is a native token (not ADA), fee = 1000 units.
 fn token_policy() -> assets.PolicyId {
@@ -387,7 +415,35 @@ test join_group__accepts_valid_join() {
   }
 
   // group_ref_input_index=0, group_output_index=1, member_input_index=1, treasury_output_index=0
-  validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
+}
+
+// [security C2] Same as the valid join EXCEPT the group spending input is the attacker's
+// forged group at a fake script (token name matches, policy does not) → rejected by the
+// trusted-binding assertion before any membership state can change.
+test join_group__rejects_fake_group_script() fail {
+  let tp = treasury_policy()
+
+  let group_input = fake_group_input()
+  let member_input = test_member_input()
+
+  let datum = test_treasury_state(0)
+  let output_value = assets.from_lovelace(5_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_output = test_treasury_output(datum, output_value)
+  let group_out = test_group_output(1)
+
+  let mint = assets.from_asset(tp, member_tn(), 1)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, member_input],
+    outputs: [treasury_output, group_out],
+    mint,
+    validity_range: interval.after(0),
+  }
+
+  validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_wrong_member_count_slot() {
@@ -413,7 +469,7 @@ test join_group__rejects_wrong_member_count_slot() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // rounds_paid != 0 at join time — validator rejects (fresh member must have rounds_paid == 0)
@@ -440,7 +496,7 @@ test join_group__rejects_nonzero_rounds_paid() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group is already started — startGroup seals membership, late joins rejected
@@ -490,7 +546,7 @@ test join_group__rejects_started_group() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_extra_token_minted() {
@@ -517,7 +573,7 @@ test join_group__rejects_extra_token_minted() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_insufficient_fees() {
@@ -543,7 +599,7 @@ test join_group__rejects_insufficient_fees() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // FullUpfront / partial: with collateral_rounds = 3 the join floor is 3 × 2M = 6M.
@@ -570,7 +626,7 @@ test join_group__rejects_below_collateral_rounds() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // Same group (collateral_rounds = 3): a 6M deposit meets the full floor → accepted.
@@ -596,7 +652,7 @@ test join_group__accepts_full_collateral() {
     validity_range: interval.after(0),
   }
 
-  validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // joining_fee > 0 but no output at creator_payment_credential — joining_fee_routed fails
@@ -651,7 +707,7 @@ test join_group__rejects_joining_fee_not_routed_to_admin() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // joining_fee > 0 and admin output at creator_payment_credential — should pass
@@ -714,7 +770,7 @@ test join_group__accepts_joining_fee_routed_to_admin() {
     validity_range: interval.after(0),
   }
 
-  validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group is deactivated — group_active check fails
@@ -756,7 +812,7 @@ test join_group__rejects_inactive_group() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group is at max capacity (member_count == max_members) — join must be rejected
@@ -810,7 +866,7 @@ test join_group__rejects_group_at_capacity() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_token_stuffing_in_output() {
@@ -838,7 +894,7 @@ test join_group__rejects_token_stuffing_in_output() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_output_at_wallet() {
@@ -872,7 +928,7 @@ test join_group__rejects_output_at_wallet() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_member_input_without_account_nft() {
@@ -912,7 +968,7 @@ test join_group__rejects_member_input_without_account_nft() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 test join_group__rejects_wrong_group_link() {
@@ -938,7 +994,7 @@ test join_group__rejects_wrong_group_link() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group already has member_tn() in member_token_names — same account cannot join twice
@@ -985,7 +1041,7 @@ test join_group__rejects_duplicate_member() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // ─── member_count / cross-validator state transition tests ────────────────────
@@ -1015,7 +1071,7 @@ test join_group__second_member_gets_sequential_slot() {
     validity_range: interval.after(0),
   }
 
-  validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // Slot collision guard: a second joiner must NOT be able to claim slot 0
@@ -1042,7 +1098,7 @@ test join_group__rejects_slot_collision_with_existing_member() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group output with non-incremented member_count must be rejected.
@@ -1074,7 +1130,7 @@ test join_group__rejects_group_output_without_member_count_increment() {
     validity_range: interval.after(0),
   }
 
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // ─── validate_distribute ────────────────────────────────────────────────
@@ -1161,10 +1217,86 @@ fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
   (tx, treasury_datum, utxo_ref)
 }
 
+// [security C2/C4] The headline theft path: a permissionless caller presents a FORGED
+// group (fake always-succeeds script, the victim's group name minted under the attacker's
+// own policy) to drive a real treasury's round. Everything else is a valid distribute —
+// only the group input's script differs — and the trusted-binding assertion rejects it.
+test distribute_round__rejects_fake_group_script() fail {
+  let tp = treasury_policy()
+  let fp = fake_group_policy()
+
+  let group_datum =
+    GroupDatum {
+      ..test_group_datum(),
+      num_rounds: 3,
+      is_started: True,
+      last_distributed_round: -1,
+      member_token_names: [member_tn()],
+    }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(fp, group_ref_tn(), 1))
+  let group_input =
+    Input {
+      output_reference: OutputReference {
+        transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+        output_index: 0,
+      },
+      output: Output {
+        address: Address { payment_credential: Script(fp), stake_credential: None },
+        value: group_in_value,
+        datum: InlineDatum(cip68_with_group(group_datum)),
+        reference_script: None,
+      },
+    }
+  let group_output =
+    Output {
+      address: Address { payment_credential: Script(fp), stake_credential: None },
+      value: group_in_value,
+      datum: InlineDatum(
+        cip68_with_group(
+          GroupDatum { ..group_datum, last_distributed_round: 0 },
+        ),
+      ),
+      reference_script: None,
+    }
+  let treasury_datum = build_treasury_state(0, group_ref_tn(), 0)
+  let treasury_in =
+    test_treasury_input(
+      treasury_utxo_ref(),
+      test_treasury_output(treasury_datum, treasury_value()),
+    )
+  let updated = build_treasury_state(0, group_ref_tn(), 1)
+  let treasury_out_value = assets.from_lovelace(3_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_out = test_treasury_output(updated, treasury_out_value)
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [group_input, treasury_in],
+      outputs: [treasury_out, group_output, test_borrower_output()],
+      validity_range: interval.after(0),
+    }
+
+  validate_distribute_treasury(
+    tp,
+    group_policy(),
+    0,
+    0,
+    1,
+    [1],
+    [0],
+    2,
+    treasury_datum,
+    treasury_utxo_ref(),
+    tx,
+  )
+}
+
 test distribute_round__accepts_valid_round() {
   let (tx, datum, utxo) = setup_distribute_round()
   validate_distribute_treasury(
     treasury_policy(),
+    group_policy(),
     0,
     // group_ref_input_index
     0,
@@ -1191,6 +1323,7 @@ test distribute_round__rejects_penalty_state_datum() fail {
   }
   validate_distribute_treasury(
     treasury_policy(),
+    group_policy(),
     0,
     0,
     1,
@@ -1226,7 +1359,7 @@ test distribute_round__rejects_no_ada_reduction() {
     validity_range,
   }
 
-  !validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute_treasury(tp, group_policy(), 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // Treasury output datum has stale rounds_paid (0 instead of 1) — output_datum_correct fails
@@ -1251,7 +1384,7 @@ test distribute_round__rejects_wrong_datum_update() {
     validity_range,
   }
 
-  !validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute_treasury(tp, group_policy(), 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // Borrower output at a script address instead of a wallet — borrower_at_correct_wallet fails
@@ -1274,7 +1407,7 @@ test distribute_round__rejects_borrower_output_at_script() {
     validity_range,
   }
 
-  !validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute_treasury(tp, group_policy(), 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // current_slot = 0, but only treasury input has assigned_slot = 1
@@ -1338,6 +1471,7 @@ test distribute_round__rejects_when_borrower_absent() fail {
   // list.find_map returns None → expect Some(borrower_cred) crashes
   validate_distribute_treasury(
     tp,
+    group_policy(),
     0,
     0,
     1,
@@ -1355,6 +1489,7 @@ test distribute_round__rejects_duplicate_output_index() {
   let (tx, datum, utxo) = setup_distribute_round()
   !validate_distribute_treasury(
     treasury_policy(),
+    group_policy(),
     0,
     0,
     1,
@@ -1433,6 +1568,7 @@ test distribute_round__rejects_wrong_round_number() {
   // round_number=1 but rounds_paid=0 → member_at_correct_round = False → returns False
   !validate_distribute_treasury(
     tp,
+    group_policy(),
     1,
     0,
     1,
@@ -1471,7 +1607,7 @@ test distribute_round__rejects_unchanged_group_round() {
     validity_range,
   }
 
-  !validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
+  !validate_distribute_treasury(tp, group_policy(), 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
 // --- Pull payout mode (earmark into borrower's own treasury) ---
@@ -1551,14 +1687,14 @@ test distribute_round__pull_accepts_earmark() {
   let out = test_treasury_output(pull_earmark_datum(2_000_000), treasury_value())
   let (tx, datum, utxo) = pull_distribute_tx(out)
   // borrower_output_index is irrelevant under Pull (pass 0).
-  validate_distribute_treasury(treasury_policy(), 0, 0, 1, [1], [0], 0, datum, utxo, tx)
+  validate_distribute_treasury(treasury_policy(), group_policy(), 0, 0, 1, [1], [0], 0, datum, utxo, tx)
 }
 
 // Pull: rejected if the earmark is missing (claimable not credited).
 test distribute_round__pull_rejects_missing_earmark() {
   let out = test_treasury_output(pull_earmark_datum(0), treasury_value())
   let (tx, datum, utxo) = pull_distribute_tx(out)
-  !validate_distribute_treasury(treasury_policy(), 0, 0, 1, [1], [0], 0, datum, utxo, tx)
+  !validate_distribute_treasury(treasury_policy(), group_policy(), 0, 0, 1, [1], [0], 0, datum, utxo, tx)
 }
 
 // Pull: rejected if the pot value is not credited into the treasury (balance only -fee,
@@ -1568,7 +1704,7 @@ test distribute_round__pull_rejects_value_not_credited() {
     |> assets.merge(assets.from_asset(treasury_policy(), member_tn(), 1))
   let out = test_treasury_output(pull_earmark_datum(2_000_000), short_value)
   let (tx, datum, utxo) = pull_distribute_tx(out)
-  !validate_distribute_treasury(treasury_policy(), 0, 0, 1, [1], [0], 0, datum, utxo, tx)
+  !validate_distribute_treasury(treasury_policy(), group_policy(), 0, 0, 1, [1], [0], 0, datum, utxo, tx)
 }
 
 // --- Pro-rata distribution (complete member set) ---
@@ -1668,7 +1804,7 @@ test distribute_round__accepts_prorata_with_defaulter() {
     test_insufficient_collateral_state(),
     True,
   )
-  validate_distribute_treasury(treasury_policy(), 0, 0, 1, [1], [0], 2, datum, utxo, tx)
+  validate_distribute_treasury(treasury_policy(), group_policy(), 0, 0, 1, [1], [0], 2, datum, utxo, tx)
 }
 
 // Completeness: a member listed in member_token_names is neither spent nor referenced →
@@ -1724,7 +1860,7 @@ test distribute_round__rejects_excluded_member() fail {
     outputs: [a_out, group_output, test_borrower_output()],
     validity_range: interval.after(0),
   }
-  validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, a_datum, utxo_ref, tx)
+  validate_distribute_treasury(tp, group_policy(), 0, 0, 1, [1], [0], 2, a_datum, utxo_ref, tx)
 }
 
 // Anti-dodge: a healthy member (TreasuryState) cannot be parked as a reference input to
@@ -1734,7 +1870,7 @@ test distribute_round__rejects_healthy_member_referenced() fail {
     build_treasury_state(1, group_ref_tn(), 0),
     True,
   )
-  validate_distribute_treasury(treasury_policy(), 0, 0, 1, [1], [0], 2, datum, utxo, tx)
+  validate_distribute_treasury(treasury_policy(), group_policy(), 0, 0, 1, [1], [0], 2, datum, utxo, tx)
 }
 
 // ─── validate_exit_group ──────────────────────────────────────────────────────
@@ -1790,7 +1926,7 @@ test exit_group__accepts_early_exit_with_penalty() {
     validity_range: interval.after(current_time),
   }
 
-  validate_exit_treasury(tp, account_policy(), 0, 1, 1, 0, datum, tx)
+  validate_exit_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, datum, tx)
 }
 
 // Mature exit: group is_active=False → burn path
@@ -1835,7 +1971,7 @@ test exit_group__accepts_mature_exit_with_burn() {
     validity_range: interval.after(500),
   }
 
-  validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, datum, tx)
+  validate_exit_treasury(tp, account_policy(), group_policy(), 0, 0, 1, 0, datum, tx)
 }
 
 // fail: expect TreasuryState crashes when datum is PenaltyState
@@ -1860,7 +1996,7 @@ test exit_group__rejects_penalty_state_datum() fail {
     validity_range: interval.after(current_time),
   }
 
-  validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, penalty_datum, tx)
+  validate_exit_treasury(tp, account_policy(), group_policy(), 0, 0, 1, 0, penalty_datum, tx)
 }
 
 // Member input holds no token matching member_reference_tokenname → member_authorized fails
@@ -1910,7 +2046,7 @@ test exit_group__rejects_member_input_without_user_token() {
     validity_range: interval.after(current_time),
   }
 
-  !validate_exit_treasury(tp, account_policy(), 0, 1, 1, 0, datum, tx)
+  !validate_exit_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, datum, tx)
 }
 
 // Mature exit path: group inactive but no burn — token_burned fails
@@ -1953,7 +2089,7 @@ test exit_group__rejects_mature_exit_without_burn() {
     validity_range: interval.after(500),
   }
 
-  !validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, datum, tx)
+  !validate_exit_treasury(tp, account_policy(), group_policy(), 0, 0, 1, 0, datum, tx)
 }
 
 test exit_group__rejects_early_exit_missing_penalty_fee() {
@@ -1987,7 +2123,7 @@ test exit_group__rejects_early_exit_missing_penalty_fee() {
     validity_range: interval.after(current_time),
   }
 
-  !validate_exit_treasury(tp, account_policy(), 0, 1, 1, 0, datum, tx)
+  !validate_exit_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, datum, tx)
 }
 
 // Penalty output holds exactly penalty_fee — member reclaims the rest as change
@@ -2021,7 +2157,7 @@ test exit_group__accepts_member_reclaims_refund() {
     validity_range: interval.after(current_time),
   }
 
-  validate_exit_treasury(tp, account_policy(), 0, 1, 1, 0, datum, tx)
+  validate_exit_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, datum, tx)
 }
 
 // Pre-cycle exit: current_time < start_time → free exit (token burned, no penalty)
@@ -2076,7 +2212,7 @@ test exit_group__accepts_pre_cycle_exit_without_penalty() {
     validity_range: interval.after(1500),
   }
 
-  validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, datum, tx)
+  validate_exit_treasury(tp, account_policy(), group_policy(), 0, 0, 1, 0, datum, tx)
 }
 
 // In-cycle burn attempt: is_early_exit = True but no penalty output — expect PenaltyState crashes
@@ -2119,7 +2255,7 @@ test exit_group__rejects_in_cycle_burn_without_penalty() fail {
     validity_range: interval.after(current_time),
   }
 
-  validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, datum, tx)
+  validate_exit_treasury(tp, account_policy(), group_policy(), 0, 0, 1, 0, datum, tx)
 }
 
 // In-cycle early exit: group output member_count not decremented — group_count_decremented fails
@@ -2154,7 +2290,7 @@ test exit_group__rejects_early_exit_without_group_count_decrement() {
     validity_range: interval.after(current_time),
   }
 
-  !validate_exit_treasury(tp, account_policy(), 0, 1, 1, 0, datum, tx)
+  !validate_exit_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, datum, tx)
 }
 
 // ExitGroup: treasury datum's group_reference_tokenname mismatches actual group input
@@ -2204,7 +2340,7 @@ test exit_group__rejects_wrong_group_link() {
     validity_range: interval.after(500),
   }
 
-  !validate_exit_treasury(tp, account_policy(), 0, 0, 1, 0, wrong_datum, tx)
+  !validate_exit_treasury(tp, account_policy(), group_policy(), 0, 0, 1, 0, wrong_datum, tx)
 }
 
 // ─── validate_claim_penalty ──────────────────────────────────────────
@@ -2337,6 +2473,44 @@ test contribute__accepts_valid_top_up() {
   validate_contribute(
     tp,
     account_policy(),
+    group_policy(),
+    0,
+    0,
+    0,
+    datum,
+    treasury_utxo_ref(),
+    tx,
+  )
+}
+
+// [security C1] Identical to the accept above EXCEPT the group reference input is the
+// attacker's forged group at a fake script → the trusted-binding assertion rejects it.
+test contribute__rejects_fake_group_script() fail {
+  let tp = treasury_policy()
+
+  let datum = test_treasury_state(0)
+  let in_value = treasury_value()
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, in_value),
+  )
+  let member_input = test_member_input()
+
+  let out_value = assets.from_lovelace(7_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_out = test_treasury_output(datum, out_value)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [member_input, treasury_in],
+    reference_inputs: [fake_group_input()],
+    outputs: [treasury_out],
+  }
+
+  validate_contribute(
+    tp,
+    account_policy(),
+    group_policy(),
     0,
     0,
     0,
@@ -2374,6 +2548,7 @@ test contribute__rejects_penalty_state() fail {
   validate_contribute(
     tp,
     account_policy(),
+    group_policy(),
     0,
     0,
     0,
@@ -2409,6 +2584,7 @@ test contribute__rejects_no_ada_increase() {
   !validate_contribute(
     tp,
     account_policy(),
+    group_policy(),
     0,
     0,
     0,
@@ -2446,6 +2622,7 @@ test contribute__rejects_datum_changed() {
   !validate_contribute(
     tp,
     account_policy(),
+    group_policy(),
     0,
     0,
     0,
@@ -2482,6 +2659,7 @@ test contribute__accepts_native_token_top_up() {
   validate_contribute(
     tp,
     account_policy(),
+    group_policy(),
     0,
     0,
     0,
@@ -2518,6 +2696,7 @@ test contribute__rejects_default_recovery_below_fee() {
   !validate_contribute(
     tp,
     account_policy(),
+    group_policy(),
     0,
     0,
     0,
@@ -2554,6 +2733,7 @@ test contribute__accepts_default_recovery_at_fee() {
   validate_contribute(
     tp,
     account_policy(),
+    group_policy(),
     0,
     0,
     0,
@@ -2611,6 +2791,7 @@ test contribute__recovery_carries_claimable_balance() {
   validate_contribute(
     tp,
     account_policy(),
+    group_policy(),
     0,
     0,
     0,
@@ -2658,6 +2839,7 @@ test contribute__rejects_recovery_dropping_claimable() {
   !validate_contribute(
     tp,
     account_policy(),
+    group_policy(),
     0,
     0,
     0,
@@ -3004,6 +3186,7 @@ test claim_payout__accepts_valid_claim() {
   validate_claim_payout(
     treasury_policy(),
     account_policy(),
+    group_policy(),
     0,
     1,
     0,
@@ -3020,6 +3203,7 @@ test claim_payout__rejects_no_member_token() {
   !validate_claim_payout(
     treasury_policy(),
     account_policy(),
+    group_policy(),
     0,
     0,
     0,
@@ -3039,6 +3223,7 @@ test claim_payout__rejects_claimable_not_reset() {
   !validate_claim_payout(
     treasury_policy(),
     account_policy(),
+    group_policy(),
     0,
     1,
     0,
@@ -3055,6 +3240,7 @@ test claim_payout__rejects_over_withdrawal() {
   !validate_claim_payout(
     treasury_policy(),
     account_policy(),
+    group_policy(),
     0,
     1,
     0,
@@ -3134,6 +3320,7 @@ test next_cycle__accepts_refunded_member() {
   let (tx, datum, utxo) = next_cycle_setup(treasury_value())
   validate_next_cycle_treasury(
     treasury_policy(),
+    group_policy(),
     0,
     // group_input_index
     1,
@@ -3155,6 +3342,7 @@ test next_cycle__rejects_underfunded_restart() {
   let (tx, datum, utxo) = next_cycle_setup(thin_value)
   !validate_next_cycle_treasury(
     treasury_policy(),
+    group_policy(),
     0,
     1,
     [1],

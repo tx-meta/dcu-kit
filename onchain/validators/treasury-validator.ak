@@ -3,6 +3,7 @@ use cardano/address.{Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 use dcu/group.{GroupCip68Datum, GroupDatum}
+use dcu/settings.{read_settings}
 use dcu/treasury.{
   ClaimPayout, ClaimPenalty, Contribute, DistributeRound, ExitGroup, ExtendGrace,
   JoinGroup, NextCycle, TreasuryDatum, TreasuryRedeemer, UpdatePayout,
@@ -33,9 +34,9 @@ use dcu/treasury_validation.{
 //       — Contribute:              member tops up treasury balance
 //       — UpdatePayoutCredential:  member updates payout destination
 //       — ExtendGraceWindow:       admin extends a defaulting member's grace window
-validator treasury(account_policy_id: PolicyId) {
+validator treasury(settings_policy: PolicyId) {
   mint(redeemer: TreasuryRedeemer, policy_id: PolicyId, tx: Transaction) {
-    let Transaction { mint, .. } = tx
+    let Transaction { mint, reference_inputs, .. } = tx
 
     when redeemer is {
       JoinGroup {
@@ -43,16 +44,20 @@ validator treasury(account_policy_id: PolicyId) {
         group_output_index,
         member_input_index,
         treasury_output_index,
-      } ->
+      } -> {
+        // Trusted protocol policies from the settings UTxO (singleton settings NFT).
+        let settings = read_settings(reference_inputs, settings_policy)
         validate_join_treasury(
           policy_id,
-          account_policy_id,
+          settings.account_policy,
+          settings.group_policy,
           group_ref_input_index,
           group_output_index,
           member_input_index,
           treasury_output_index,
           tx,
         )
+      }
 
       // ClaimPenalty redeemer covers PenaltyWithdraw burn path.
       // ExitGroup redeemer covers mature (inactive/past-rotation) burn path.
@@ -75,6 +80,10 @@ validator treasury(account_policy_id: PolicyId) {
 
     // [security]: datum must be present — guards against datum-less UTxO injection
     expect Some(treasury_datum) = datum
+
+    // Trusted protocol policies from the settings UTxO (authenticated by the singleton
+    // settings NFT). Replaces deriving group_policy from an untrusted input address.
+    let settings = read_settings(reference_inputs, settings_policy)
 
     when redeemer is {
       DistributeRound {
@@ -101,6 +110,7 @@ validator treasury(account_policy_id: PolicyId) {
         validate_distribute_treasury(
           // [security]: own policy_id derived from UTxO's script credential
           policy_id_from_utxo(inputs, utxo),
+          settings.group_policy,
           round_number,
           group_ref_input_index,
           group_output_index,
@@ -126,7 +136,8 @@ validator treasury(account_policy_id: PolicyId) {
 
         validate_exit_treasury(
           policy_id_from_utxo(inputs, utxo),
-          account_policy_id,
+          settings.account_policy,
+          settings.group_policy,
           group_ref_input_index,
           group_output_index,
           member_input_index,
@@ -136,25 +147,19 @@ validator treasury(account_policy_id: PolicyId) {
         )
       }
 
-      ClaimPenalty { group_ref_input_index, admin_input_index } -> {
-        // Derive group_policy_id from the group input's script credential.
-        // ClaimPenalty does NOT update group state — the group is a read-only
-        // reference input, same pattern as ExtendGrace.
-        expect Some(group_ref_input) = list.at(
-          reference_inputs,
-          group_ref_input_index,
-        )
-        expect Script(group_policy_id) = group_ref_input.output.address.payment_credential
-
+      ClaimPenalty { admin_input_index, .. } ->
+        // [security C3]: the trusted group policy comes from the settings UTxO — NOT
+        // derived from the group input's address — so a forged "group" cannot supply a
+        // matching admin token under an attacker policy. group_ref_input_index is now
+        // unused (the trusted policy is read from settings).
         validate_claim_penalty(
           policy_id_from_utxo(inputs, utxo),
           treasury_datum,
-          group_policy_id,
+          settings.group_policy,
           admin_input_index,
           inputs,
           mint,
         )
-      }
 
       Contribute {
         group_ref_input_index,
@@ -168,7 +173,8 @@ validator treasury(account_policy_id: PolicyId) {
 
         validate_contribute(
           policy_id_from_utxo(inputs, utxo),
-          account_policy_id,
+          settings.account_policy,
+          settings.group_policy,
           group_ref_input_index,
           member_input_index,
           treasury_output_index,
@@ -189,7 +195,7 @@ validator treasury(account_policy_id: PolicyId) {
 
         validate_update_payout(
           policy_id_from_utxo(inputs, utxo),
-          account_policy_id,
+          settings.account_policy,
           member_input_index,
           treasury_output_index,
           treasury_datum,
@@ -208,19 +214,23 @@ validator treasury(account_policy_id: PolicyId) {
         expect Some(treasury_input) = list.at(inputs, treasury_input_index)
         expect treasury_input.output_reference == utxo
 
-        // Derive group_policy_id and grace_period_length from the group reference input.
-        // The group is NOT spent here — only read for admin token auth and grace window length.
+        // Read grace_period_length from the group reference input. The trusted group
+        // policy comes from the settings UTxO; [security m1] we ALSO assert the ref input
+        // sits at that trusted script, so a forged "group" cannot supply a bogus grace
+        // window length (or a matching admin token under an attacker policy).
         expect Some(group_ref_input) = list.at(
           reference_inputs,
           group_ref_input_index,
         )
-        expect Script(group_policy_id) = group_ref_input.output.address.payment_credential
+        expect group_ref_input.output.address.payment_credential == Script(
+          settings.group_policy,
+        )
         expect InlineDatum(gd) = group_ref_input.output.datum
         expect GroupCip68Datum { extra: gd_typed, .. } = gd
 
         validate_extend_grace(
           policy_id_from_utxo(inputs, utxo),
-          group_policy_id,
+          settings.group_policy,
           gd_typed.grace_period_length,
           admin_input_index,
           treasury_output_index,
@@ -250,6 +260,7 @@ validator treasury(account_policy_id: PolicyId) {
 
         validate_next_cycle_treasury(
           policy_id_from_utxo(inputs, utxo),
+          settings.group_policy,
           group_input_index,
           group_output_index,
           treasury_input_indices,
@@ -267,7 +278,8 @@ validator treasury(account_policy_id: PolicyId) {
       } ->
         validate_claim_payout(
           policy_id_from_utxo(inputs, utxo),
-          account_policy_id,
+          settings.account_policy,
+          settings.group_policy,
           group_ref_input_index,
           member_input_index,
           treasury_output_index,
