@@ -9,10 +9,11 @@ use dcu/cip68
 use dcu/group.{GroupCip68Datum, GroupDatum, Pull, Push}
 use dcu/treasury.{
   DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
+}
+use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
-  validate_contribute, validate_distribute_treasury,
-  validate_exit_treasury, validate_extend_grace, validate_join_treasury,
-  validate_next_cycle_treasury,
+  validate_contribute, validate_distribute_treasury, validate_exit_treasury,
+  validate_extend_grace, validate_join_treasury, validate_next_cycle_treasury,
   validate_update_payout,
 }
 use tests/common

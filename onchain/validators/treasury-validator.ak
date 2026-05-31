@@ -6,11 +6,13 @@ use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/treasury.{
   ClaimPayout, ClaimPenalty, Contribute, DistributeRound, ExitGroup, ExtendGrace,
   JoinGroup, NextCycle, TreasuryDatum, TreasuryRedeemer, UpdatePayout,
+} as treasury_types
+use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
   validate_contribute, validate_distribute_treasury, validate_exit_treasury,
   validate_extend_grace, validate_join_treasury, validate_next_cycle_treasury,
   validate_update_payout,
-} as treasury_types
+}
 
 // treasury(account_policy_id)
 // ─────────────────────────────────────────────────────────────────────────────

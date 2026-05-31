@@ -2,10 +2,10 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/primitive/bytearray
 use cardano/address.{Script, VerificationKey}
-use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
+use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use dcu/cip68
-use dcu/utils.{get_lower_bound}
+use dcu/utils.{get_lower_bound, output_holds_only_own}
 
 /// CIP-68 wrapper for the group (100) reference token datum.
 /// Wallets resolve the group name by reading metadata["name"] from this datum.
@@ -226,9 +226,7 @@ pub fn validate_create_group(
   ) == 1
 
   // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
-  let output_clean_value = assets.policies(output.value) == [
-    ada_policy_id, policy_id,
-  ]
+  let output_clean_value = output_holds_only_own(output.value, policy_id)
 
   // [spec CreateGroup 14]: metadata["name"] must be present and non-empty
   let name_valid = when
@@ -358,9 +356,7 @@ pub fn validate_update_group(
   let out_ada = assets.lovelace_of(group_output.value)
 
   // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
-  let output_clean_value = assets.policies(group_output.value) == [
-    ada_policy_id, policy_id,
-  ]
+  let output_clean_value = output_holds_only_own(group_output.value, policy_id)
 
   and {
     (group_output.address == group_input.output.address)?,
@@ -524,9 +520,7 @@ pub fn validate_join_group(
   let out_ada = assets.lovelace_of(group_output.value)
 
   // [security]: output holds only ADA + own policy
-  let output_clean_value = assets.policies(group_output.value) == [
-    ada_policy_id, policy_id,
-  ]
+  let output_clean_value = output_holds_only_own(group_output.value, policy_id)
 
   and {
     not_started?,
@@ -604,9 +598,7 @@ pub fn validate_exit_group(
   let out_ada = assets.lovelace_of(group_output.value)
 
   // [security]: output holds only ADA + own policy
-  let output_clean_value = assets.policies(group_output.value) == [
-    ada_policy_id, policy_id,
-  ]
+  let output_clean_value = output_holds_only_own(group_output.value, policy_id)
 
   // [security MemberExit 6]: authenticate member_token_name via treasury spending input
   let member_token_authenticated = list.any(
@@ -709,9 +701,7 @@ pub fn validate_start_group(
   let out_ada = assets.lovelace_of(group_output.value)
 
   // [security]: output holds only ADA + own policy
-  let output_clean_value = assets.policies(group_output.value) == [
-    ada_policy_id, policy_id,
-  ]
+  let output_clean_value = output_holds_only_own(group_output.value, policy_id)
 
   and {
     admin_authorized?,
@@ -794,9 +784,7 @@ pub fn validate_distribute_group(
   let out_ada = assets.lovelace_of(group_output.value)
 
   // [security]: output holds only ADA + own policy
-  let output_clean_value = assets.policies(group_output.value) == [
-    ada_policy_id, policy_id,
-  ]
+  let output_clean_value = output_holds_only_own(group_output.value, policy_id)
 
   and {
     group_started?,
@@ -887,9 +875,7 @@ pub fn validate_next_cycle_group(
   let in_ada = assets.lovelace_of(group_input.output.value)
   let out_ada = assets.lovelace_of(group_output.value)
 
-  let output_clean_value = assets.policies(group_output.value) == [
-    ada_policy_id, policy_id,
-  ]
+  let output_clean_value = output_holds_only_own(group_output.value, policy_id)
 
   and {
     admin_authorized?,
