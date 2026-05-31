@@ -7,7 +7,7 @@ use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
 use dcu/cip68
-use dcu/group.{GroupCip68Datum, GroupDatum}
+use dcu/group.{GroupCip68Datum, GroupDatum, Pull}
 use dcu/utils.{get_lower_bound}
 
 /// Maximum number of grace window extensions an admin can grant a defaulting member.
@@ -132,6 +132,15 @@ pub type TreasuryRedeemer {
     group_output_index: Int,
     treasury_input_indices: List<Int>,
     treasury_output_indices: List<Int>,
+  }
+  // Pull mode: member withdraws their earmarked payout (claimable_balance) to any
+  // address. Auth is possession of the member (222) token — bearer model, so a member
+  // who lost their original wallet can still claim from a new one holding the token.
+  ClaimPayout {
+    // Group UTxO as a reference input — read only for the contribution asset identity.
+    group_ref_input_index: Int,
+    member_input_index: Int,
+    treasury_output_index: Int,
   }
 }
 
@@ -563,10 +572,15 @@ pub fn validate_distribute_treasury(
     current_slot
   }
 
-  let borrower_cred = if !primary_is_deferred {
-    primary_cred
+  // Borrower = the contributing member at effective_slot. They must be present as a
+  // spending input in good standing — a defaulted/absent borrower blocks the round in
+  // BOTH payout modes (the pot has no legitimate recipient). Computed as an Option and
+  // guarded explicitly in the final conjunction (borrower_present?) so the check runs
+  // regardless of payout mode / evaluation order.
+  let borrower_cred_opt = if !primary_is_deferred {
+    Some(primary_cred)
   } else {
-    expect Some(cred) = list.find_map(
+    list.find_map(
       treasury_input_indices,
       fn(idx) {
         when list.at(inputs, idx) is {
@@ -591,8 +605,8 @@ pub fn validate_distribute_treasury(
         }
       },
     )
-    cred
   }
+  let borrower_present = borrower_cred_opt != None
 
   // [spec DistributeRound 6c]: PRO-RATA pot = contribution_fee × active_members.
   // active_members is derived from the group's full membership registry (every member
@@ -644,7 +658,24 @@ pub fn validate_distribute_treasury(
     group.contribution_fee_policyid,
     group.contribution_fee_assetname,
   )
-  let balance_deducted = output_bal == input_bal - group.contribution_fee
+
+  // Payout mode + borrower identity for THIS treasury. Under Pull the pot is earmarked
+  // into the borrower's OWN treasury (this UTxO, if it is the scheduled member) rather
+  // than paid to a wallet. is_borrower_treasury is decided purely from immutable datum
+  // (assigned_slot) vs the group-derived effective_slot, so it cannot be spoofed.
+  let is_pull = group.payout_mode == Pull
+  let is_borrower_treasury = assigned_slot == effective_slot
+
+  // [spec DistributeRound 7b]: balance change in the contribution asset.
+  //   - every member is debited contribution_fee (their own contribution this round)
+  //   - under Pull, the borrower's own treasury is ALSO credited total_payout (the pot
+  //     physically accumulates here; conservation pins all other treasuries to -fee, so
+  //     the released fees can only land here — no skim possible)
+  let balance_deducted = if is_pull && is_borrower_treasury {
+    output_bal == input_bal - group.contribution_fee + total_payout
+  } else {
+    output_bal == input_bal - group.contribution_fee
+  }
 
   // [spec DistributeRound 7a]: output datum transitions to DefaultState
   // only when post-round balance is below threshold AND there are future rounds remaining.
@@ -673,13 +704,19 @@ pub fn validate_distribute_treasury(
           ..
         }
       = output_datum
-    // [security]: claimable_balance must be preserved exactly. Under Push it stays 0;
-    // the Pull credit path (slice 2) will relax this for the borrower's own treasury.
-    // Without this, a caller could inflate their own earmark and later drain it via
-    // ClaimPayout. NOTE (slice 2): a member carrying a nonzero claimable_balance who
-    // transitions to DefaultState would lose it — DefaultState has no such field; revisit
-    // when wiring Pull defaults.
-    output_rounds_paid == round_number + 1 && !output_is_deferred && output_claimable_balance == claimable_balance
+    // [security]: claimable_balance is pinned. Under Push (and every non-borrower under
+    // Pull) it is preserved exactly — without this a caller could inflate their own earmark
+    // and later drain it via ClaimPayout. Under Pull the borrower's OWN treasury accrues
+    // exactly total_payout (matching the value credited in balance_deducted above).
+    // NOTE (carry-forward): a member carrying a nonzero claimable_balance who transitions to
+    // DefaultState loses it — DefaultState has no such field; harmless under Push (always 0),
+    // revisit for Pull defaults (carry claimable through DefaultState, or block default while >0).
+    let expected_claimable = if is_pull && is_borrower_treasury {
+      claimable_balance + total_payout
+    } else {
+      claimable_balance
+    }
+    output_rounds_paid == round_number + 1 && !output_is_deferred && output_claimable_balance == expected_claimable
   }
 
   // [spec DistributeRound 8]: own output at script address with membership token
@@ -696,20 +733,31 @@ pub fn validate_distribute_treasury(
     [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
   )
 
-  // [spec DistributeRound 6c]: borrower output at scheduled member's wallet,
-  //   receiving at least total_payout in the contribution asset
-  expect Some(borrower_output) = list.at(outputs, borrower_output_index)
-  let borrower_at_correct_wallet = borrower_output.address.payment_credential == VerificationKey(
-    borrower_cred,
-  )
-  let borrower_receives_total = assets.quantity_of(
-    borrower_output.value,
-    group.contribution_fee_policyid,
-    group.contribution_fee_assetname,
-  ) >= total_payout
+  // [spec DistributeRound 6c]: PUSH only — borrower output at scheduled member's wallet,
+  //   receiving at least total_payout in the contribution asset. Under PULL there is no
+  //   wallet output; the pot is earmarked into the borrower's own treasury (enforced via
+  //   balance_deducted + output_datum_correct above when this UTxO is the borrower's), so
+  //   these checks are skipped. borrower_cred is still computed above, which also guards
+  //   that the scheduled borrower is present among the contributing inputs.
+  let borrower_payout_valid = if is_pull {
+    True
+  } else {
+    expect Some(borrower_cred) = borrower_cred_opt
+    expect Some(borrower_output) = list.at(outputs, borrower_output_index)
+    let borrower_at_correct_wallet = borrower_output.address.payment_credential == VerificationKey(
+      borrower_cred,
+    )
+    let borrower_receives_total = assets.quantity_of(
+      borrower_output.value,
+      group.contribution_fee_policyid,
+      group.contribution_fee_assetname,
+    ) >= total_payout
+    borrower_at_correct_wallet? && borrower_receives_total?
+  }
 
   and {
     member_at_correct_round?,
+    borrower_present?,
     indices_valid?,
     output_indices_valid?,
     group_round_incremented?,
@@ -719,8 +767,7 @@ pub fn validate_distribute_treasury(
     token_retained?,
     clean_output_value?,
     balance_deducted?,
-    borrower_at_correct_wallet?,
-    borrower_receives_total?,
+    borrower_payout_valid?,
   }
 }
 
@@ -1468,5 +1515,126 @@ pub fn validate_next_cycle_treasury(
     datum_correct?,
     value_preserved?,
     output_at_script?,
+  }
+}
+
+// ─── Spend: ClaimPayout ───────────────────────────────────────────────────────
+
+// validate_claim_payout
+// ─────────────────────────────────────────────────────────────────────────────
+// Pull mode: a member withdraws their earmarked payout. The pot accumulated in this
+// treasury's value during DistributeRound and is tracked by claimable_balance. The
+// member pulls EXACTLY that amount (in the contribution asset) to any address they
+// choose at claim time; the collateral and membership token stay locked. Auth is by
+// possession of the member (222) token — whoever holds the membership owns the payout,
+// which is what makes lost-wallet recovery work without a pre-step.
+//
+// [spec ClaimPayout 1]: datum must be TreasuryState
+// [spec ClaimPayout 2]: member input holds the Account NFT (222 token)
+// [spec ClaimPayout 3]: group reference input supplies the contribution asset identity
+//                       and links to this treasury (defense-in-depth — see ISSUE A note)
+// [spec ClaimPayout 4]: output datum == input with claimable_balance reset to 0; all else frozen
+// [spec ClaimPayout 5]: exactly claimable_balance leaves in the contribution asset
+//                       (collateral is untouched)
+// [spec ClaimPayout 6]: output at script address with membership token; clean value
+pub fn validate_claim_payout(
+  own_policy_id: PolicyId,
+  account_policy_id: PolicyId,
+  group_ref_input_index: Int,
+  member_input_index: Int,
+  treasury_output_index: Int,
+  datum: TreasuryDatum,
+  utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, outputs, reference_inputs, .. } = tx
+
+  // [spec ClaimPayout 1]: datum must be TreasuryState
+  expect
+      TreasuryState {
+        group_reference_tokenname,
+        member_reference_tokenname,
+        assigned_slot,
+        rounds_paid,
+        is_deferred,
+        member_payment_credential,
+        claimable_balance,
+      }
+    = datum
+
+  // [spec ClaimPayout 2]: member auth via 222 token possession (bearer model)
+  let member_authorized = member_has_user_token(
+    inputs,
+    member_input_index,
+    member_reference_tokenname,
+    account_policy_id,
+  )
+
+  // [spec ClaimPayout 3]: group reference input for the contribution asset identity.
+  // The group-link check ties it to this treasury so a forged group ref cannot misdirect
+  // the balance measurement (e.g. claim ADA when the contribution asset is a token).
+  expect Some(group_ref_input) = list.at(reference_inputs, group_ref_input_index)
+  expect InlineDatum(group_datum_data) = group_ref_input.output.datum
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
+  let group_link_valid = group_reference_tokenname == find_group_token_name(
+    group_ref_input,
+  )
+
+  expect Some(own_input) = list.find(
+    inputs,
+    fn(i) { i.output_reference == utxo },
+  )
+  expect Some(own_output) = list.at(outputs, treasury_output_index)
+  expect InlineDatum(output_datum_data) = own_output.datum
+  expect output_datum: TreasuryDatum = output_datum_data
+
+  // [spec ClaimPayout 4]: output datum identical except claimable_balance reset to 0.
+  // Pins every other field (slot, rounds, credential, group/member refs, is_deferred) and
+  // prevents a double-claim (the earmark cannot remain set after withdrawal).
+  let expected_datum = TreasuryState {
+    group_reference_tokenname,
+    member_reference_tokenname,
+    assigned_slot,
+    rounds_paid,
+    is_deferred,
+    member_payment_credential,
+    claimable_balance: 0,
+  }
+  let datum_correct = output_datum == expected_datum
+
+  // [spec ClaimPayout 5]: exactly claimable_balance leaves in the contribution asset.
+  // Pinned both ways: the member cannot withdraw more (would drain collateral) or less.
+  let input_bal = assets.quantity_of(
+    own_input.output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
+  let output_bal = assets.quantity_of(
+    own_output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
+  let correct_withdrawal = output_bal == input_bal - claimable_balance
+
+  // [spec ClaimPayout 6]: output at script with the membership token and a clean value.
+  let output_at_script = own_output.address.payment_credential == Script(
+    own_policy_id,
+  )
+  let token_retained = dict.to_pairs(
+    assets.tokens(own_output.value, own_policy_id),
+  ) == [Pair(member_reference_tokenname, 1)]
+  let clean_output_value = only_allowed_policies(
+    own_output.value,
+    [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
+  )
+
+  and {
+    member_authorized?,
+    group_link_valid?,
+    datum_correct?,
+    correct_withdrawal?,
+    output_at_script?,
+    token_retained?,
+    clean_output_value?,
   }
 }

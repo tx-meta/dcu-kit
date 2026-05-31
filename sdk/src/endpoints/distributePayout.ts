@@ -351,6 +351,10 @@ export const unsignedDistributePayoutTxProgram = (
 
     const isLastRound = roundNumber + 1n === groupDatum.num_rounds;
 
+    // Pull mode: the pot is earmarked into the borrower's OWN treasury (claimable_balance)
+    // instead of paid to a wallet. Push mode keeps the direct wallet output.
+    const isPull = groupDatum.payout_mode === "Pull";
+
     // The contribution asset may be ADA (lovelace) or any native token.
     const isAdaContribution = groupDatum.contribution_fee_policyid === "";
     const contributionUnit = isAdaContribution
@@ -367,11 +371,20 @@ export const unsignedDistributePayoutTxProgram = (
         treasuryPolicyId!,
         ts.member_reference_tokenname,
       );
-      // Balance is measured in the contribution asset (lovelace for ADA groups).
+      // Under Pull, the borrower's own treasury (slot == effectiveSlot) is credited the pot.
+      const isBorrowerTreasury =
+        isPull && Number(ts.assigned_slot) === effectiveSlot;
+      // Balance is measured in the contribution asset (lovelace for ADA groups). Every
+      // member is debited the fee; the Pull borrower is also credited the pot, so its
+      // balance rises and it never transitions to ICS.
       const inputBal = state.utxo.assets[contributionUnit] ?? 0n;
-      const outputBal = inputBal - groupDatum.contribution_fee;
+      const outputBal = isBorrowerTreasury
+        ? inputBal - groupDatum.contribution_fee + payoutAmount
+        : inputBal - groupDatum.contribution_fee;
       const transitionToIcs =
-        outputBal < groupDatum.contribution_fee && !isLastRound;
+        !isBorrowerTreasury &&
+        outputBal < groupDatum.contribution_fee &&
+        !isLastRound;
 
       const updatedDatum: TreasuryDatum = transitionToIcs
         ? {
@@ -390,6 +403,10 @@ export const unsignedDistributePayoutTxProgram = (
               ...ts,
               rounds_paid: roundNumber + 1n,
               is_deferred: false,
+              // Pull: earmark the pot into the borrower's own treasury. Others preserve it.
+              ...(isBorrowerTreasury
+                ? { claimable_balance: ts.claimable_balance + payoutAmount }
+                : {}),
             },
           };
       // ADA groups: deduct from lovelace. Token groups: keep min-UTxO lovelace
@@ -419,8 +436,13 @@ export const unsignedDistributePayoutTxProgram = (
         ? withTreasuryOutputs.readFrom(defaulterUtxos)
         : withTreasuryOutputs;
 
-    const tx = yield* withRefs.pay
-      .ToAddress(borrowerAddress, borrowerAssets)
+    // Push: pay the pot to the borrower's wallet. Pull: the pot was earmarked into the
+    // borrower's own treasury above, so there is no wallet output.
+    const withBorrower = isPull
+      ? withRefs
+      : withRefs.pay.ToAddress(borrowerAddress, borrowerAssets);
+
+    const tx = yield* withBorrower
       .validFrom(Number(validFrom))
       .completeProgram(
         lucid.config().network === "Custom" ? { localUPLCEval: false } : {},

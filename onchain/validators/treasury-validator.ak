@@ -4,12 +4,12 @@ use cardano/assets.{PolicyId}
 use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/treasury.{
-  ClaimPenalty, Contribute, DeferRound, DistributeRound, ExitGroup, ExtendGrace,
-  JoinGroup, NextCycle, TreasuryDatum, TreasuryRedeemer, UpdatePayout,
-  validate_claim_penalty, validate_claim_penalty_mint, validate_contribute,
-  validate_defer_round, validate_distribute_treasury, validate_exit_treasury,
-  validate_extend_grace, validate_join_treasury, validate_next_cycle_treasury,
-  validate_update_payout,
+  ClaimPayout, ClaimPenalty, Contribute, DeferRound, DistributeRound, ExitGroup,
+  ExtendGrace, JoinGroup, NextCycle, TreasuryDatum, TreasuryRedeemer, UpdatePayout,
+  validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
+  validate_contribute, validate_defer_round, validate_distribute_treasury,
+  validate_exit_treasury, validate_extend_grace, validate_join_treasury,
+  validate_next_cycle_treasury, validate_update_payout,
 } as treasury_types
 
 // treasury(account_policy_id)
@@ -280,6 +280,22 @@ validator treasury(account_policy_id: PolicyId) {
           self,
         )
       }
+
+      ClaimPayout {
+        group_ref_input_index,
+        member_input_index,
+        treasury_output_index,
+      } ->
+        validate_claim_payout(
+          policy_id_from_utxo(inputs, utxo),
+          account_policy_id,
+          group_ref_input_index,
+          member_input_index,
+          treasury_output_index,
+          treasury_datum,
+          utxo,
+          self,
+        )
 
       // JoinGroup is a mint redeemer — reject at spend
       _ -> fail

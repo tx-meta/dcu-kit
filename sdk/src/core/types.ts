@@ -341,6 +341,14 @@ export const TreasuryRedeemerSchema = Data.Enum([
       treasury_output_indices: Data.Array(Data.Integer()),
     }),
   }),
+  Data.Object({
+    // Pull mode: member withdraws their earmarked payout (claimable_balance).
+    ClaimPayout: Data.Object({
+      group_ref_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
 ]);
 
 export type TreasuryRedeemer = Data.Static<typeof TreasuryRedeemerSchema>;

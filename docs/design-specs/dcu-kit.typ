@@ -289,7 +289,9 @@ The active-member state. Created at JoinGroup; updated by DistributeRound, Defer
 
 - *`is_deferred`: ```rs Bool```* – Set to `True` by DeferRound when the member wishes to skip their scheduled borrower turn. Reset to `False` by every DistributeRound regardless of which member received the payout. When `True` at payout time, the pot routes to `(assigned_slot + 1) % num_intervals` instead.
 
-- *`member_payment_credential`: ```rs ByteArray```* – 28-byte payment key hash of the member's wallet. Used by DistributeRound to route the payout to the correct address. Updatable via `UpdatePayoutCredential`.
+- *`member_payment_credential`: ```rs ByteArray```* – 28-byte payment key hash of the member's wallet. Used by DistributeRound (in `Push` mode) to route the payout to the correct address. Updatable via `UpdatePayoutCredential`.
+
+- *`claimable_balance`: ```rs Int```* – Payout earmarked for this member to withdraw, in the contribution asset. `0` at join and always `0` under `Push` mode. Under `Pull` mode (see `payout_mode` on the Group datum), `DistributeRound` credits the pot here — into the borrower's *own* Treasury UTxO — instead of paying a wallet; the member later withdraws exactly this amount via `ClaimPayout`, which resets it to `0`. The funds physically accumulate in this UTxO, so the earmark is durable until claimed or returned at exit. Preserved across cycles by `NextCycle`.
 
 \
 ===== PenaltyState <penalty-datum>
@@ -374,6 +376,14 @@ Transition state for members whose contribution balance falls below `contributio
   }
   ```*
 
+- *```rust
+  ClaimPayout {
+    group_ref_input_index: Int,
+    member_input_index: Int,
+    treasury_output_index: Int,
+  }
+  ```*
+
 \
 ==== Validation
 
@@ -392,7 +402,12 @@ Transition state for members whose contribution balance falls below `contributio
 
   - *Complete member set (atomicity)*: The transaction must account for *every* member listed in `group.member_token_names`. Each member's Treasury UTxO is either consumed as a *contributing* input (in `TreasuryState`, contribution-asset balance ≥ `contribution_fee`) or demonstrably *skipped* because it is in `InsufficientCollateralState`/`PenaltyState` (a defaulter, not contributing this round). A caller may not silently exclude a healthy member to shrink the pot. _Without this check, a permissionless caller could submit a partial set — shortchanging the borrower and stranding the excluded members' round counters._
 
-  - *Pro-rata payout*: Let `active_members` be the number of *contributing* Treasuries (members in good standing this round). The borrower receives `contribution_fee × active_members`. When some members have defaulted, the pot is reduced pro-rata rather than blocking the round — the shortfall is shared by that round's borrower instead of stalling the entire cycle. The contribution asset moves out of each contributing input and is aggregated to the borrower.
+  - *Pro-rata payout*: Let `active_members` be the number of *contributing* Treasuries (members in good standing this round). The pot is `contribution_fee × active_members`. When some members have defaulted, the pot is reduced pro-rata rather than blocking the round — the shortfall is shared by that round's borrower instead of stalling the entire cycle.
+
+  - *Payout mode (`Push` / `Pull`)*: how the pot reaches the borrower is governed by `group.payout_mode`, fixed at group creation. The debit side is identical in both modes — every contributing Treasury is debited exactly `contribution_fee`.
+    - *`Push`* (default): the borrower receives `contribution_fee × active_members` directly to their wallet (`member_payment_credential`), validated at `borrower_output_index`.
+    - *`Pull`*: there is no wallet output. The pot is earmarked into the borrower's *own* Treasury UTxO — that output's `claimable_balance` increases by the pot and its contribution-asset balance rises by the same amount (`out = in − contribution_fee + pot`). The borrower (the Treasury whose `assigned_slot == effective_slot`) is identified solely from immutable datum, so it cannot be spoofed; every other Treasury is pinned to `out = in − contribution_fee` with `claimable_balance` preserved. By conservation, the released fees can only accumulate in the borrower's Treasury — no value can be skimmed. The borrower later withdraws via `ClaimPayout`.
+    - In *both* modes the scheduled borrower must be present as a contributing input; a defaulted/absent borrower blocks the round (the pot has no legitimate recipient).
 
   - *Ascending index requirement*: `treasury_input_indices` and `treasury_output_indices` must both be in strictly ascending order. This prevents duplicate-index attacks.
 
@@ -464,6 +479,21 @@ Transition state for members whose contribution balance falls below `contributio
   - `grace_extensions_used` must be < `max_grace_extensions` (= 2). After two extensions, only `TerminateGroup` is available.
 
   - Output: `grace_expires_at` extended by `group.grace_period_length`; `grace_extensions_used` incremented by 1; all other datum fields frozen. ADA and membership token unchanged.
+
+  \
++ *ClaimPayout*
+
+  Allows a member to withdraw their earmarked payout (`Pull` mode only — under `Push` there is never anything to claim). Authorization is by *possession of the membership (222) token*, not the stored credential: whoever holds the membership owns the payout. This is what makes lost-wallet recovery work — a member who lost their original wallet can claim from a new one holding the token, to any destination, with no pre-step.
+
+  - The member input (at `member_input_index`) must hold the Account User NFT (the 222 token).
+
+  - The group UTxO is provided as a reference input (at `group_ref_input_index`) for the contribution-asset identity; its ref token name must match the Treasury datum's `group_reference_tokenname` (prevents a forged group from misdirecting the balance measurement).
+
+  - *Exact withdrawal*: the Treasury output's contribution-asset balance must equal `input − claimable_balance` — pinned both ways, so the member can withdraw neither more (draining collateral) nor less than the earmark.
+
+  - Output datum: identical to input with `claimable_balance` reset to `0`; every other field (slot, rounds, credential, refs, `is_deferred`) frozen. This prevents a double-claim.
+
+  - Output at the script address retaining the membership token; only ADA, the membership token, and the contribution asset may be present.
 
 #pagebreak()
 
@@ -580,7 +610,9 @@ Nothing
 
 - *`collateral_rounds: Int`* Number of rounds' worth of `contribution_fee` a member must lock at join. `1` = *PerRound* (the traditional ROSCA default — low upfront capital, members top up each round); `max_members` = *FullUpfront* (trustless/stranger groups — defaulting is made impossible); any `k` in `[1, max_members]` = partial. The join floor is `contribution_fee × collateral_rounds`. Deposits are *never capped* — a member may pre-load more and `DistributeRound` still deducts exactly `contribution_fee` per round. Validated `1 ≤ collateral_rounds ≤ max_members` at creation; frozen once any member is active.
 
-*Note:* All fee amounts, policy IDs, asset names, and `collateral_rounds` are *critical fields* — they cannot be changed via `UpdateGroup` while `member_count > 0`. Changing a fee's currency is as disruptive as changing its amount.
+- *`payout_mode: PayoutMode`* How the pot is delivered to each round's borrower — `Push` or `Pull`. `Push` (the default) pays the borrower's wallet directly. `Pull` earmarks the pot into the borrower's own Treasury UTxO (`claimable_balance`) for later withdrawal via `ClaimPayout`, which solves the lost-wallet problem (the recipient proves control at claim time and may redirect to any address). Only the *credit* side differs; the per-round debit is identical. Fixed at creation; a critical field frozen once any member is active. See the Treasury `DistributeRound` and `ClaimPayout` validation.
+
+*Note:* All fee amounts, policy IDs, asset names, `collateral_rounds`, and `payout_mode` are *critical fields* — they cannot be changed via `UpdateGroup` while `member_count > 0`. Changing a fee's currency is as disruptive as changing its amount.
 
 \
 

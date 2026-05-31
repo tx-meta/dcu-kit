@@ -6,12 +6,13 @@ use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
 }
 use dcu/cip68
-use dcu/group.{GroupCip68Datum, GroupDatum, Push}
+use dcu/group.{GroupCip68Datum, GroupDatum, Pull, Push}
 use dcu/treasury.{
   DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
-  validate_claim_penalty, validate_claim_penalty_mint, validate_contribute,
-  validate_defer_round, validate_distribute_treasury, validate_exit_treasury,
-  validate_extend_grace, validate_join_treasury, validate_update_payout,
+  validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
+  validate_contribute, validate_defer_round, validate_distribute_treasury,
+  validate_exit_treasury, validate_extend_grace, validate_join_treasury,
+  validate_update_payout,
 }
 use tests/common
 
@@ -1499,6 +1500,104 @@ test distribute_round__rejects_unchanged_group_round() {
   !validate_distribute_treasury(tp, 0, 0, 1, [1], [0], 2, datum, utxo, bad_tx)
 }
 
+// --- Pull payout mode (earmark into borrower's own treasury) ---
+
+// Single-member Pull round. The lone member (slot 0) is the borrower for round 0, so the
+// pot (total_payout = 1 × 2M) is earmarked into their OWN treasury output via
+// claimable_balance, NOT paid to a wallet. Caller supplies the treasury output so negative
+// tests can perturb it. There is deliberately no borrower wallet output.
+fn pull_distribute_tx(
+  treasury_out: Output,
+) -> (Transaction, TreasuryDatum, OutputReference) {
+  let gp = group_policy()
+
+  let group_datum = GroupDatum {
+    ..test_group_datum(),
+    num_rounds: 3,
+    is_started: True,
+    last_distributed_round: -1,
+    member_token_names: [member_tn()],
+    payout_mode: Pull,
+  }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: group_in_value,
+      datum: InlineDatum(cip68_with_group(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: group_in_value,
+    datum: InlineDatum(
+      cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 0 }),
+    ),
+    reference_script: None,
+  }
+
+  // Treasury input: slot 0, round 0, claimable 0, holding 5M ADA + membership token.
+  let treasury_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let utxo_ref = treasury_utxo_ref()
+  let treasury_in = test_treasury_input(
+    utxo_ref,
+    test_treasury_output(treasury_datum, treasury_value()),
+  )
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, treasury_in],
+    outputs: [treasury_out, group_output],
+    validity_range: interval.after(0),
+  }
+
+  (tx, treasury_datum, utxo_ref)
+}
+
+// Correct Pull output: balance net unchanged (5M − 2M fee + 2M payout) and claimable += 2M.
+fn pull_earmark_datum(claimable: Int) -> TreasuryDatum {
+  TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: member_tn(),
+    assigned_slot: 0,
+    rounds_paid: 1,
+    is_deferred: False,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: claimable,
+  }
+}
+
+// Pull: borrower's own treasury accrues the pot (claimable += total_payout); no wallet output.
+test distribute_round__pull_accepts_earmark() {
+  let out = test_treasury_output(pull_earmark_datum(2_000_000), treasury_value())
+  let (tx, datum, utxo) = pull_distribute_tx(out)
+  // borrower_output_index is irrelevant under Pull (pass 0).
+  validate_distribute_treasury(treasury_policy(), 0, 0, 1, [1], [0], 0, datum, utxo, tx)
+}
+
+// Pull: rejected if the earmark is missing (claimable not credited).
+test distribute_round__pull_rejects_missing_earmark() {
+  let out = test_treasury_output(pull_earmark_datum(0), treasury_value())
+  let (tx, datum, utxo) = pull_distribute_tx(out)
+  !validate_distribute_treasury(treasury_policy(), 0, 0, 1, [1], [0], 0, datum, utxo, tx)
+}
+
+// Pull: rejected if the pot value is not credited into the treasury (balance only -fee,
+// Push-style 3M instead of the net-unchanged 5M the earmark requires).
+test distribute_round__pull_rejects_value_not_credited() {
+  let short_value = assets.from_lovelace(3_000_000)
+    |> assets.merge(assets.from_asset(treasury_policy(), member_tn(), 1))
+  let out = test_treasury_output(pull_earmark_datum(2_000_000), short_value)
+  let (tx, datum, utxo) = pull_distribute_tx(out)
+  !validate_distribute_treasury(treasury_policy(), 0, 0, 1, [1], [0], 0, datum, utxo, tx)
+}
+
 // --- Pro-rata distribution (complete member set) ---
 
 fn member_b_tn() -> assets.AssetName {
@@ -2893,6 +2992,143 @@ test extend_grace_window__rejects_no_admin_token() {
     0,
     datum,
     treasury_utxo_ref(),
+    tx,
+  )
+}
+
+// ─── ClaimPayout (Pull withdrawal) ────────────────────────────────────────────
+
+// Treasury holding 5M collateral + a 2M earmark (claimable_balance) + membership token.
+// The group is a reference input (contribution asset identity + link). Caller supplies the
+// continuation output so negative tests can perturb the datum / value.
+fn claim_payout_setup(
+  out_datum: TreasuryDatum,
+  out_value: assets.Value,
+) -> (Transaction, TreasuryDatum, OutputReference) {
+  let tp = treasury_policy()
+  let gp = group_policy()
+
+  let group_ref = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(cip68_with_group(test_group_datum())),
+      reference_script: None,
+    },
+  }
+
+  // 7M lovelace = 5M collateral + 2M earmark; claimable_balance = 2M.
+  let in_datum = TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: member_tn(),
+    assigned_slot: 0,
+    rounds_paid: 1,
+    is_deferred: False,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: 2_000_000,
+  }
+  let in_value = assets.from_lovelace(7_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let utxo_ref = treasury_utxo_ref()
+  let treasury_in = test_treasury_input(
+    utxo_ref,
+    test_treasury_output(in_datum, in_value),
+  )
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [treasury_in, test_member_input()],
+    reference_inputs: [group_ref],
+    outputs: [test_treasury_output(out_datum, out_value)],
+  }
+  (tx, in_datum, utxo_ref)
+}
+
+fn claim_payout_out_datum(claimable: Int) -> TreasuryDatum {
+  TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: member_tn(),
+    assigned_slot: 0,
+    rounds_paid: 1,
+    is_deferred: False,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: claimable,
+  }
+}
+
+fn claim_payout_value(lovelace: Int) -> assets.Value {
+  assets.from_lovelace(lovelace)
+    |> assets.merge(assets.from_asset(treasury_policy(), member_tn(), 1))
+}
+
+// Member pulls exactly the earmark to their wallet; collateral (5M) stays, claimable -> 0.
+test claim_payout__accepts_valid_claim() {
+  let out = claim_payout_value(5_000_000)
+  let (tx, datum, utxo) = claim_payout_setup(claim_payout_out_datum(0), out)
+  validate_claim_payout(
+    treasury_policy(),
+    account_policy(),
+    0,
+    1,
+    0,
+    datum,
+    utxo,
+    tx,
+  )
+}
+
+// Rejected without the member (222) token -- member_input points at the treasury input.
+test claim_payout__rejects_no_member_token() {
+  let out = claim_payout_value(5_000_000)
+  let (tx, datum, utxo) = claim_payout_setup(claim_payout_out_datum(0), out)
+  !validate_claim_payout(
+    treasury_policy(),
+    account_policy(),
+    0,
+    0,
+    0,
+    datum,
+    utxo,
+    tx,
+  )
+}
+
+// Rejected if claimable_balance is not reset to 0 (would allow a double-claim).
+test claim_payout__rejects_claimable_not_reset() {
+  let out = claim_payout_value(5_000_000)
+  let (tx, datum, utxo) = claim_payout_setup(
+    claim_payout_out_datum(2_000_000),
+    out,
+  )
+  !validate_claim_payout(
+    treasury_policy(),
+    account_policy(),
+    0,
+    1,
+    0,
+    datum,
+    utxo,
+    tx,
+  )
+}
+
+// Rejected if more than the earmark leaves (collateral drained: output 4M, not 5M).
+test claim_payout__rejects_over_withdrawal() {
+  let out = claim_payout_value(4_000_000)
+  let (tx, datum, utxo) = claim_payout_setup(claim_payout_out_datum(0), out)
+  !validate_claim_payout(
+    treasury_policy(),
+    account_policy(),
+    0,
+    1,
+    0,
+    datum,
+    utxo,
     tx,
   )
 }

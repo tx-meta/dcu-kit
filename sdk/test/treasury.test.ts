@@ -25,6 +25,7 @@ import { unsignedContributeTxProgram } from "../src/endpoints/contribute.js";
 import { unsignedDeferRoundTxProgram } from "../src/endpoints/deferRound.js";
 import { unsignedUpdatePayoutCredentialTxProgram } from "../src/endpoints/updatePayoutCredential.js";
 import { unsignedExtendGraceWindowTxProgram } from "../src/endpoints/extendGraceWindow.js";
+import { unsignedClaimPayoutTxProgram } from "../src/endpoints/claimPayout.js";
 import {
   signAndSubmit,
   selectWalletFromSeed,
@@ -38,6 +39,7 @@ import { SetupError } from "../src/core/errors.js";
 import {
   groupPolicyId,
   accountPolicyId,
+  treasuryPolicyId,
 } from "../src/core/validators/constants.js";
 import { TreasuryDatum, TreasuryDatumSchema } from "../src/core/types.js";
 import { extractTokenSuffix } from "./utils.js";
@@ -213,6 +215,100 @@ describe("Treasury Endpoints", () => {
           if ("TreasuryState" in datum) {
             expect(datum.TreasuryState.rounds_paid).toBe(1n);
           }
+        }
+      }),
+  );
+
+  // --- Pull payout mode: distribute earmarks into the borrower's treasury, then claim ---
+  // Full round-trip: a Pull group distributes round 0 → the borrower's own treasury accrues
+  // claimable_balance (no wallet payout) → the member claims it to their wallet → balance 0.
+  it.effect(
+    "should earmark the pot under Pull mode and let the borrower claim it (ClaimPayout)",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        // Pull mode is fixed at group creation.
+        const { context, groupUtxo } = yield* setupGroup(base, {
+          payout_mode: "Pull",
+        });
+        const { lucid, users } = context;
+
+        const {
+          outputs: { userUtxo: user1AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user1.seedPhrase,
+        });
+        const {
+          outputs: { userUtxo: user2AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user2.seedPhrase,
+        });
+
+        // user1 → slot 0 (borrower for round 0); user2 → slot 1.
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: user1AccountUtxo,
+          userSeed: users.user1.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: user2AccountUtxo,
+          userSeed: users.user2.seedPhrase,
+        });
+        yield* startGroupTestCase(context, { groupUtxo });
+
+        // Distribute round 0 under Pull: the pot (2 members × 2 ADA = 4 ADA) is earmarked
+        // into user1's own treasury, NOT paid to a wallet.
+        const result = yield* distributePayoutTestCase(context, {
+          groupUtxo,
+          callerSeed: users.user1.seedPhrase,
+        });
+
+        const suffix1 = extractTokenSuffix(
+          user1AccountUtxo,
+          accountPolicyId,
+          assetNameLabels.prefix222,
+        );
+        const treasuryUnit1 =
+          treasuryPolicyId! + assetNameLabels.prefix222 + suffix1;
+
+        // The borrower's treasury output carries the earmark; nobody else does.
+        const borrowerTreasury = result.treasuryOutputs.find(
+          (u) => u.assets[treasuryUnit1] === 1n,
+        );
+        expect(borrowerTreasury).toBeDefined();
+        const earmarkDatum = (yield* parseSafeDatum(
+          patchInlineDatum(borrowerTreasury!).datum,
+          TreasuryDatumSchema,
+        )) as unknown as TreasuryDatum;
+        expect("TreasuryState" in earmarkDatum).toBe(true);
+        if ("TreasuryState" in earmarkDatum) {
+          expect(earmarkDatum.TreasuryState.claimable_balance).toBe(
+            4_000_000n,
+          );
+          expect(earmarkDatum.TreasuryState.rounds_paid).toBe(1n);
+        }
+
+        // user1 claims their earmarked payout (auth by holding the 222 token).
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const claimTx = yield* unsignedClaimPayoutTxProgram(lucid, {
+          accountTokenSuffix: suffix1,
+        });
+        const claimHash = yield* signAndSubmit(claimTx);
+        yield* advanceBlock(context.emulator);
+        expect(claimHash).toHaveLength(64);
+
+        // After claiming, the treasury's claimable_balance is reset to 0.
+        const claimedTreasury = yield* Effect.promise(() =>
+          lucid.utxoByUnit(treasuryUnit1),
+        );
+        const claimedDatum = (yield* parseSafeDatum(
+          patchInlineDatum(claimedTreasury).datum,
+          TreasuryDatumSchema,
+        )) as unknown as TreasuryDatum;
+        expect("TreasuryState" in claimedDatum).toBe(true);
+        if ("TreasuryState" in claimedDatum) {
+          expect(claimedDatum.TreasuryState.claimable_balance).toBe(0n);
         }
       }),
   );
