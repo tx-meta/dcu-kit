@@ -18,7 +18,6 @@
     "exit-group": "pnpm run build && node dist/exit-group.js",
     "terminate-group": "pnpm run build && node dist/terminate-group.js",
     "contribute": "pnpm run build && node dist/contribute.js",
-    "defer-round": "pnpm run build && node dist/defer-round.js",
     "update-payout-credential": "pnpm run build && node dist/update-payout-credential.js",
     "extend-grace-window": "pnpm run build && node dist/extend-grace-window.js",
     "next-cycle": "pnpm run build && node dist/next-cycle.js",

@@ -72,7 +72,6 @@ const txHash = await signed.submit();
 | ------------------------ | --------------------------------- |
 | `distributePayout`       | Pay out current round's borrower  |
 | `contribute`             | Top up treasury balance           |
-| `deferRound`             | Mark member as deferred for round |
 | `updatePayoutCredential` | Update payout destination         |
 | `extendGraceWindow`      | Admin: extend grace period        |
 

@@ -4,12 +4,12 @@ use cardano/assets.{PolicyId}
 use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/treasury.{
-  ClaimPayout, ClaimPenalty, Contribute, DeferRound, DistributeRound, ExitGroup,
-  ExtendGrace, JoinGroup, NextCycle, TreasuryDatum, TreasuryRedeemer, UpdatePayout,
+  ClaimPayout, ClaimPenalty, Contribute, DistributeRound, ExitGroup, ExtendGrace,
+  JoinGroup, NextCycle, TreasuryDatum, TreasuryRedeemer, UpdatePayout,
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
-  validate_contribute, validate_defer_round, validate_distribute_treasury,
-  validate_exit_treasury, validate_extend_grace, validate_join_treasury,
-  validate_next_cycle_treasury, validate_update_payout,
+  validate_contribute, validate_distribute_treasury, validate_exit_treasury,
+  validate_extend_grace, validate_join_treasury, validate_next_cycle_treasury,
+  validate_update_payout,
 } as treasury_types
 
 // treasury(account_policy_id)
@@ -29,7 +29,6 @@ use dcu/treasury.{
 //       — ExitGroup:               pre/post-cycle free exit; in-cycle → penalty UTxO
 //       — TerminateGroup:          admin withdraws a penalty UTxO (PenaltyState)
 //       — Contribute:              member tops up treasury balance
-//       — DeferRound:              member defers their payout round
 //       — UpdatePayoutCredential:  member updates payout destination
 //       — ExtendGraceWindow:       admin extends a defaulting member's grace window
 validator treasury(account_policy_id: PolicyId) {
@@ -169,28 +168,6 @@ validator treasury(account_policy_id: PolicyId) {
           policy_id_from_utxo(inputs, utxo),
           account_policy_id,
           group_ref_input_index,
-          member_input_index,
-          treasury_output_index,
-          treasury_datum,
-          utxo,
-          self,
-        )
-      }
-
-      DeferRound {
-        round_number,
-        member_input_index,
-        treasury_input_index,
-        treasury_output_index,
-      } -> {
-        // [security]: self-reference check
-        expect Some(treasury_input) = list.at(inputs, treasury_input_index)
-        expect treasury_input.output_reference == utxo
-
-        validate_defer_round(
-          policy_id_from_utxo(inputs, utxo),
-          account_policy_id,
-          round_number,
           member_input_index,
           treasury_output_index,
           treasury_datum,

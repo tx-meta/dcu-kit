@@ -23,10 +23,7 @@ pub type TreasuryDatum {
     // Starts at 0; incremented by DistributeRound. Used to enforce sequential
     // round processing: each treasury instance must be at rounds_paid == round_number.
     rounds_paid: Int,
-    // True when the member has voluntarily signalled they wish to defer their
-    // scheduled payout round. Reset to False by DistributeRound regardless of path.
-    is_deferred: Bool,
-    // Payment key hash of the member's wallet; used in DistributeRound
+    // Payment key hash of the member's wallet; used in DistributeRound (Push mode)
     // to route the payout to the correct borrower address.
     member_payment_credential: ByteArray,
     // Pull mode only: pot amount (in the contribution asset) earmarked for this
@@ -98,14 +95,6 @@ pub type TreasuryRedeemer {
   Contribute {
     // Group UTxO as a reference input — read for the contribution asset + fee.
     group_ref_input_index: Int,
-    member_input_index: Int,
-    treasury_input_index: Int,
-    treasury_output_index: Int,
-  }
-  // Member signals they wish to defer their scheduled payout round.
-  // The is_deferred flag is set True here and reset by DistributeRound.
-  DeferRound {
-    round_number: Int,
     member_input_index: Int,
     treasury_input_index: Int,
     treasury_output_index: Int,
@@ -300,7 +289,6 @@ pub fn validate_join_treasury(
         member_reference_tokenname,
         group_reference_tokenname,
         rounds_paid,
-        is_deferred,
         assigned_slot,
         member_payment_credential,
         claimable_balance,
@@ -323,10 +311,7 @@ pub fn validate_join_treasury(
   // [spec JoinGroup 6c]: rounds_paid == 0 (fresh member, no rounds completed yet)
   let rounds_paid_valid = rounds_paid == 0
 
-  // [spec JoinGroup 6d]: is_deferred == False (cannot join already deferred)
-  let not_deferred = !is_deferred
-
-  // [spec JoinGroup 6e]: claimable_balance == 0 (fresh member, nothing earmarked yet)
+  // [spec JoinGroup 6d]: claimable_balance == 0 (fresh member, nothing earmarked yet)
   let no_claimable = claimable_balance == 0
 
   // [spec JoinGroup NEW]: group output at group_output_index has member_count + 1 —
@@ -433,7 +418,6 @@ pub fn validate_join_treasury(
     group_link_valid?,
     slot_valid?,
     rounds_paid_valid?,
-    not_deferred?,
     no_claimable?,
     member_count_incremented?,
     group_output_at_correct_address?,
@@ -503,7 +487,6 @@ pub fn validate_distribute_treasury(
         member_payment_credential,
         rounds_paid,
         claimable_balance,
-        ..
       }
     = datum
 
@@ -534,10 +517,16 @@ pub fn validate_distribute_treasury(
     expected_group_token_name,
   ) == 1
 
-  // [spec DistributeRound 6a]: find the primary member (assigned_slot == current_slot)
-  // and check whether they have deferred their payout.
-  let current_slot = round_number % group.num_rounds
-  expect Some((primary_cred, primary_is_deferred)) = list.find_map(
+  // [spec DistributeRound 6a]: borrower = the contributing member at this round's slot.
+  // Deferral was retired: the rotation is fixed and a member's turn is never reordered.
+  // "Collect later" is handled by Pull mode (the pot earmarks into the borrower's own
+  // treasury via claimable_balance), not by skipping turns — so there is no deferred path.
+  let effective_slot = round_number % group.num_rounds
+
+  // The borrower must be present as a contributing spending input in good standing — a
+  // defaulted/absent borrower blocks the round in BOTH payout modes (the pot has no
+  // legitimate recipient). Computed as an Option and guarded by borrower_present? below.
+  let borrower_cred_opt = list.find_map(
     treasury_input_indices,
     fn(idx) {
       when list.at(inputs, idx) is {
@@ -547,12 +536,11 @@ pub fn validate_distribute_treasury(
           when td is {
             TreasuryState {
               assigned_slot: slot,
-              member_payment_credential: cred,
-              is_deferred: deferred,
+              member_payment_credential: c,
               ..
             } ->
-              if slot == current_slot {
-                Some((cred, deferred))
+              if slot == effective_slot {
+                Some(c)
               } else {
                 None
               }
@@ -563,49 +551,6 @@ pub fn validate_distribute_treasury(
       }
     },
   )
-
-  // [spec DistributeRound 6b]: if the primary member is deferred, route payout to
-  // (current_slot + 1) % num_rounds instead; always reset is_deferred after distribute.
-  let effective_slot = if primary_is_deferred {
-    ( current_slot + 1 ) % group.num_rounds
-  } else {
-    current_slot
-  }
-
-  // Borrower = the contributing member at effective_slot. They must be present as a
-  // spending input in good standing — a defaulted/absent borrower blocks the round in
-  // BOTH payout modes (the pot has no legitimate recipient). Computed as an Option and
-  // guarded explicitly in the final conjunction (borrower_present?) so the check runs
-  // regardless of payout mode / evaluation order.
-  let borrower_cred_opt = if !primary_is_deferred {
-    Some(primary_cred)
-  } else {
-    list.find_map(
-      treasury_input_indices,
-      fn(idx) {
-        when list.at(inputs, idx) is {
-          Some(ti) -> {
-            expect InlineDatum(d) = ti.output.datum
-            expect td: TreasuryDatum = d
-            when td is {
-              TreasuryState {
-                assigned_slot: slot,
-                member_payment_credential: c,
-                ..
-              } ->
-                if slot == effective_slot {
-                  Some(c)
-                } else {
-                  None
-                }
-              _ -> None
-            }
-          }
-          None -> None
-        }
-      },
-    )
-  }
   let borrower_present = borrower_cred_opt != None
 
   // [spec DistributeRound 6c]: PRO-RATA pot = contribution_fee × active_members.
@@ -699,7 +644,6 @@ pub fn validate_distribute_treasury(
     expect
         TreasuryState {
           rounds_paid: output_rounds_paid,
-          is_deferred: output_is_deferred,
           claimable_balance: output_claimable_balance,
           ..
         }
@@ -716,7 +660,7 @@ pub fn validate_distribute_treasury(
     } else {
       claimable_balance
     }
-    output_rounds_paid == round_number + 1 && !output_is_deferred && output_claimable_balance == expected_claimable
+    output_rounds_paid == round_number + 1 && output_claimable_balance == expected_claimable
   }
 
   // [spec DistributeRound 8]: own output at script address with membership token
@@ -1090,7 +1034,6 @@ pub fn validate_contribute(
         member_reference_tokenname,
         assigned_slot,
         rounds_paid,
-        is_deferred: False,
         member_payment_credential,
         claimable_balance: 0,
       }
@@ -1120,99 +1063,6 @@ pub fn validate_contribute(
     clean_output_value?,
     balance_increased?,
     recovery_funded?,
-  }
-}
-
-// ─── Spend: DeferRound ────────────────────────────────────────────────────────
-
-// validate_defer_round
-// ─────────────────────────────────────────────────────────────────────────────
-// Member signals they wish to defer their scheduled payout round.
-// The is_deferred flag is set True here; DistributeRound resets it to False.
-//
-// [spec DeferRound 1]: datum must be TreasuryState
-// [spec DeferRound 2]: round_number == datum.rounds_paid (deferring the next round)
-// [spec DeferRound 3]: member input holds the Account NFT
-// [spec DeferRound 4]: output datum: same but is_deferred = True
-// [spec DeferRound 5]: output ADA unchanged; output at script with membership token
-pub fn validate_defer_round(
-  own_policy_id: PolicyId,
-  account_policy_id: PolicyId,
-  round_number: Int,
-  member_input_index: Int,
-  treasury_output_index: Int,
-  datum: TreasuryDatum,
-  utxo: OutputReference,
-  tx: Transaction,
-) -> Bool {
-  let Transaction { inputs, outputs, .. } = tx
-
-  // [spec DeferRound 1]: datum must be TreasuryState — destructure all fields for reconstruction
-  expect  
-      TreasuryState {
-        group_reference_tokenname: defer_group_tn,
-        member_reference_tokenname,
-        assigned_slot: defer_slot,
-        rounds_paid,
-        is_deferred: currently_deferred,
-        member_payment_credential: defer_pkh,
-        claimable_balance: defer_claimable,
-      }
-    = datum
-
-  // [spec DeferRound 2]: deferring the next un-processed round
-  let correct_round = round_number == rounds_paid
-
-  // Cannot defer if already deferred (idempotent guard)
-  let not_already_deferred = !currently_deferred
-
-  // [spec DeferRound 3]: member auth
-  let member_authorized = member_has_user_token(
-    inputs,
-    member_input_index,
-    member_reference_tokenname,
-    account_policy_id,
-  )
-
-  expect Some(own_input) = list.find(
-    inputs,
-    fn(i) { i.output_reference == utxo },
-  )
-
-  expect Some(own_output) = list.at(outputs, treasury_output_index)
-  expect InlineDatum(output_datum_data) = own_output.datum
-  expect output_datum: TreasuryDatum = output_datum_data
-
-  // [spec DeferRound 4]: output datum: same but is_deferred = True
-  let expected_datum = TreasuryState {
-    group_reference_tokenname: defer_group_tn,
-    member_reference_tokenname,
-    assigned_slot: defer_slot,
-    rounds_paid,
-    is_deferred: True,
-    member_payment_credential: defer_pkh,
-    claimable_balance: defer_claimable,
-  }
-  let datum_correct = output_datum == expected_datum
-
-  // [spec DeferRound 5]: full value preserved — DeferRound only flips a datum flag and
-  // must not move ANY asset (ADA or the contribution token). Stronger than the old
-  // ADA-only check and native-token-correct.
-  let value_preserved = own_output.value == own_input.output.value
-
-  // Output at script address with membership token
-  let output_at_script = own_output.address.payment_credential == Script(
-    own_policy_id,
-  )
-  // token retention is implied by value_preserved (output value == input value).
-
-  and {
-    correct_round?,
-    not_already_deferred?,
-    member_authorized?,
-    datum_correct?,
-    value_preserved?,
-    output_at_script?,
   }
 }
 
@@ -1246,7 +1096,6 @@ pub fn validate_update_payout(
         member_reference_tokenname,
         assigned_slot: upd_slot,
         rounds_paid: upd_rounds,
-        is_deferred: upd_deferred,
         claimable_balance: upd_claimable,
         ..
       }
@@ -1279,7 +1128,6 @@ pub fn validate_update_payout(
     member_reference_tokenname,
     assigned_slot: upd_slot,
     rounds_paid: upd_rounds,
-    is_deferred: upd_deferred,
     member_payment_credential: new_pkh,
     claimable_balance: upd_claimable,
   }
@@ -1436,7 +1284,6 @@ pub fn validate_next_cycle_treasury(
         rounds_paid,
         member_payment_credential,
         claimable_balance,
-        ..
       }
     = datum
 
@@ -1479,7 +1326,7 @@ pub fn validate_next_cycle_treasury(
   expect InlineDatum(output_datum_data) = own_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
 
-  // [spec NextCycle 5]: reset rounds_paid and is_deferred; all other fields frozen.
+  // [spec NextCycle 5]: reset rounds_paid; all other fields frozen.
   // claimable_balance is preserved — an unclaimed earmark is durable across cycles
   // (value_preserved below also keeps the funds physically in the treasury).
   let expected_datum = TreasuryState {
@@ -1487,7 +1334,6 @@ pub fn validate_next_cycle_treasury(
     member_reference_tokenname,
     assigned_slot,
     rounds_paid: 0,
-    is_deferred: False,
     member_payment_credential,
     claimable_balance,
   }
@@ -1569,7 +1415,6 @@ pub fn validate_claim_payout(
         member_reference_tokenname,
         assigned_slot,
         rounds_paid,
-        is_deferred,
         member_payment_credential,
         claimable_balance,
       }
@@ -1602,14 +1447,13 @@ pub fn validate_claim_payout(
   expect output_datum: TreasuryDatum = output_datum_data
 
   // [spec ClaimPayout 4]: output datum identical except claimable_balance reset to 0.
-  // Pins every other field (slot, rounds, credential, group/member refs, is_deferred) and
-  // prevents a double-claim (the earmark cannot remain set after withdrawal).
+  // Pins every other field (slot, rounds, credential, group/member refs) and prevents a
+  // double-claim (the earmark cannot remain set after withdrawal).
   let expected_datum = TreasuryState {
     group_reference_tokenname,
     member_reference_tokenname,
     assigned_slot,
     rounds_paid,
-    is_deferred,
     member_payment_credential,
     claimable_balance: 0,
   }

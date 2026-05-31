@@ -25,7 +25,6 @@ import { unsignedDistributePayoutTxProgram } from "../src/endpoints/distributePa
 import { unsignedJoinGroupTxProgram } from "../src/endpoints/joinGroup.js";
 import { unsignedExitGroupTxProgram } from "../src/endpoints/exitGroup.js";
 import { unsignedContributeTxProgram } from "../src/endpoints/contribute.js";
-import { unsignedDeferRoundTxProgram } from "../src/endpoints/deferRound.js";
 import { unsignedUpdatePayoutCredentialTxProgram } from "../src/endpoints/updatePayoutCredential.js";
 import { unsignedExtendGraceWindowTxProgram } from "../src/endpoints/extendGraceWindow.js";
 import { unsignedClaimPayoutTxProgram } from "../src/endpoints/claimPayout.js";
@@ -832,31 +831,6 @@ describe("Treasury Endpoints", () => {
       }),
   );
 
-  // --- DeferRound ---
-  // Member defers their scheduled payout round (is_deferred flips to true).
-  it.effect(
-    "should allow a member to defer their scheduled round (DeferRound)",
-    () =>
-      Effect.gen(function* () {
-        const base = yield* setupBase();
-        const { context, userUtxo } = yield* setupMembership(base);
-        const { lucid, users } = context;
-
-        const accountTokenSuffix = extractTokenSuffix(
-          userUtxo,
-          accountPolicyId,
-          assetNameLabels.prefix222,
-        );
-
-        selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const txBuilder = yield* unsignedDeferRoundTxProgram(lucid, {
-          accountTokenSuffix,
-        });
-        const txHash = yield* signAndSubmit(txBuilder);
-        expect(txHash).toHaveLength(64);
-      }),
-  );
-
   // --- UpdatePayout ---
   // Member updates their payout destination to their current wallet address.
   it.effect(
@@ -967,7 +941,7 @@ describe("Treasury Endpoints", () => {
 
   // --- NextCycle ---
   // After all rounds are distributed, admin resets the group for a new rotation.
-  // Members keep their slots; rounds_paid and is_deferred reset to 0/false.
+  // Members keep their slots; rounds_paid resets to 0.
   it.effect("should reset a mature group for a new cycle (NextCycle)", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();

@@ -237,7 +237,6 @@ export const TreasuryDatumSchema = Data.Enum([
       member_reference_tokenname: Data.Bytes(),
       assigned_slot: Data.Integer(),
       rounds_paid: Data.Integer(),
-      is_deferred: Data.Boolean(),
       member_payment_credential: Data.Bytes(),
       /**
        * Pull mode: pot earmarked for this member to withdraw via ClaimPayout.
@@ -305,14 +304,6 @@ export const TreasuryRedeemerSchema = Data.Enum([
   Data.Object({
     Contribute: Data.Object({
       group_ref_input_index: Data.Integer(),
-      member_input_index: Data.Integer(),
-      treasury_input_index: Data.Integer(),
-      treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    DeferRound: Data.Object({
-      round_number: Data.Integer(),
       member_input_index: Data.Integer(),
       treasury_input_index: Data.Integer(),
       treasury_output_index: Data.Integer(),

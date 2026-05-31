@@ -178,7 +178,6 @@ export const unsignedJoinGroupTxProgram = (
         member_reference_tokenname: accountAssetName,
         assigned_slot: assignedSlot,
         rounds_paid: 0n,
-        is_deferred: false,
         member_payment_credential: memberPaymentCredential,
         // Fresh member — nothing earmarked yet (0 under both Push and Pull).
         claimable_balance: 0n,

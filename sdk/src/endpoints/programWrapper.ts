@@ -38,7 +38,6 @@ import {
   TerminateGroupConfig,
 } from "./terminateGroup.js";
 import { unsignedContributeTxProgram, ContributeConfig } from "./contribute.js";
-import { unsignedDeferRoundTxProgram, DeferRoundConfig } from "./deferRound.js";
 import {
   unsignedUpdatePayoutCredentialTxProgram,
   UpdatePayoutCredentialConfig,
@@ -134,12 +133,6 @@ export const terminateGroup = (
  */
 export const contribute = (lucid: LucidEvolution, config: ContributeConfig) =>
   makeReturn(unsignedContributeTxProgram(lucid, config));
-
-/**
- * Defers the member's scheduled payout round (sets is_deferred = true).
- */
-export const deferRound = (lucid: LucidEvolution, config: DeferRoundConfig) =>
-  makeReturn(unsignedDeferRoundTxProgram(lucid, config));
 
 /**
  * Updates the member's payout destination credential.

@@ -37,7 +37,7 @@ import { DcuError, TransactionBuildError } from "../core/errors.js";
  * **Functionality:**
  * - Requires all rounds to have been distributed (last_distributed_round + 1 == num_rounds).
  * - Resets GroupDatum: is_started=false, last_distributed_round=-1, num_rounds=0, start_time=0.
- * - Resets all active TreasuryState UTxOs: rounds_paid=0, is_deferred=false.
+ * - Resets all active TreasuryState UTxOs: rounds_paid=0.
  * - Members remain in the group at their existing slots.
  * - After nextCycle: members re-deposit via contribute, then admin calls startGroup.
  *
@@ -183,14 +183,14 @@ export const unsignedNextCycleTxProgram = (
       start_time: 0n,
     };
 
-    // Reset each treasury datum: clear rounds_paid and is_deferred, preserve everything else.
+    // Reset each treasury datum: clear rounds_paid, preserve everything else.
     // Build alongside the member token unit so both are available in the output loop.
     const resetEntries = memberStates.map((state) => {
       if (!("TreasuryState" in state.datum))
         throw new Error("invariant: non-TreasuryState after filter");
       const ts = state.datum.TreasuryState;
       const updatedDatum: TreasuryDatum = {
-        TreasuryState: { ...ts, rounds_paid: 0n, is_deferred: false },
+        TreasuryState: { ...ts, rounds_paid: 0n },
       };
       const memberToken = treasuryPolicyId! + ts.member_reference_tokenname;
       return { utxo: state.utxo, updatedDatum, memberToken };

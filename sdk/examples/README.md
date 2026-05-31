@@ -190,7 +190,6 @@ pnpm run delete-group
 | `distribute-payout`        | ADMIN          | Collects contributions and pays the current round's borrower. Permissionless.                                     |
 | `exit-group`               | USER1          | Exits the group (mature = full refund; early = PenaltyState created).                                             |
 | `terminate-group`          | ADMIN          | Claims the PenaltyState UTxO after an early exit.                                                                 |
-| `defer-round`              | USER1          | Sets `is_deferred=true` — borrower skips their slot; payout routes to next slot.                                  |
 | `contribute`               | USER1          | Tops up a treasury UTxO balance. `TOP_UP_AMOUNT=<lovelace>` (default 5 ADA).                                      |
 | `update-payout-credential` | USER1          | Redirects future payouts to the current signing wallet's address.                                                 |
 | `extend-grace-window`      | ADMIN          | Extends grace period for `MEMBER_WALLET` (default USER1) in ICS.                                                  |
@@ -433,20 +432,6 @@ MEMBER_WALLET=USER1 pnpm run terminate-group
 ---
 
 ## Tier 2 flows
-
-### Defer-round test
-
-A borrower skips their slot — payout routes to the next member.
-
-```bash
-# After start-group, before distribute-payout for round 0:
-ACTIVE_WALLET=ADMIN pnpm run defer-round
-# → ADMIN's treasury UTxO: is_deferred=true
-
-pnpm run distribute-payout
-# → round 0: ADMIN is deferred → payout goes to USER1 (slot 1) instead
-# → ADMIN's is_deferred resets to false automatically
-```
 
 ### Update payout credential test
 

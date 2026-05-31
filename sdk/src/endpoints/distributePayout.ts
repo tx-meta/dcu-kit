@@ -41,7 +41,7 @@ import { DcuError, TransactionBuildError } from "../core/errors.js";
  * - Spends the group UTxO to atomically increment last_distributed_round.
  * - Each member treasury contributes contribution_fee; the assigned borrower receives
  *   the full pot (contribution_fee × member_count).
- * - Updates all treasury datums (rounds_paid + 1, is_deferred reset to false).
+ * - Updates all treasury datums (rounds_paid + 1).
  *
  * @param lucid - Lucid instance with wallet selected.
  * @param config - Distribute Round Configuration.
@@ -147,12 +147,11 @@ export const unsignedDistributePayoutTxProgram = (
     );
 
     // Filter to TreasuryState UTxOs belonging to this group that are ready for this round.
-    // Also capture is_deferred for the primary slot holder — mirrors the Aiken routing:
-    //   if primary is deferred → effectiveSlot = (currentSlot + 1) % num_rounds
+    // The borrower is the member at this round's slot. Deferral was retired — the rotation
+    // is fixed and turns are never reordered; "collect later" is handled by Pull mode
+    // (the pot earmarks into the borrower's own treasury via claimable_balance).
     const memberStates: { utxo: UTxO; datum: TreasuryDatum }[] = [];
-    let primaryPaymentCred: string | undefined;
-    let primaryIsDeferred = false;
-    const credBySlot = new Map<number, string>();
+    let borrowerPaymentCred: string | undefined;
 
     for (const state of parsedStates) {
       if (!state || !("TreasuryState" in state.datum)) continue;
@@ -160,10 +159,8 @@ export const unsignedDistributePayoutTxProgram = (
       if (ts.group_reference_tokenname !== groupRefName) continue;
       if (ts.rounds_paid !== roundNumber) continue;
       memberStates.push(state);
-      credBySlot.set(Number(ts.assigned_slot), ts.member_payment_credential);
       if (Number(ts.assigned_slot) === currentSlot) {
-        primaryPaymentCred = ts.member_payment_credential;
-        primaryIsDeferred = ts.is_deferred;
+        borrowerPaymentCred = ts.member_payment_credential;
       }
     }
 
@@ -191,7 +188,7 @@ export const unsignedDistributePayoutTxProgram = (
         }),
       );
     }
-    if (!primaryPaymentCred) {
+    if (!borrowerPaymentCred) {
       return yield* Effect.fail(
         new TransactionBuildError({
           operation: "distributeRound",
@@ -200,23 +197,7 @@ export const unsignedDistributePayoutTxProgram = (
       );
     }
 
-    // Mirror Aiken spec DistributeRound 6b: deferred primary → next slot receives the payout.
-    const numIntervals = Number(groupDatum.num_rounds);
-    const effectiveSlot = primaryIsDeferred
-      ? (currentSlot + 1) % numIntervals
-      : currentSlot;
-    const borrowerPaymentCred = primaryIsDeferred
-      ? credBySlot.get(effectiveSlot)
-      : primaryPaymentCred;
-
-    if (!borrowerPaymentCred) {
-      return yield* Effect.fail(
-        new TransactionBuildError({
-          operation: "distributeRound",
-          error: `Primary slot ${currentSlot} is deferred but no member found at effective slot ${effectiveSlot}`,
-        }),
-      );
-    }
+    const effectiveSlot = currentSlot;
 
     // Sort inputs lexicographically (same order Cardano uses for tx.inputs)
     memberStates.sort((a, b) => {
@@ -402,7 +383,6 @@ export const unsignedDistributePayoutTxProgram = (
             TreasuryState: {
               ...ts,
               rounds_paid: roundNumber + 1n,
-              is_deferred: false,
               // Pull: earmark the pot into the borrower's own treasury. Others preserve it.
               ...(isBorrowerTreasury
                 ? { claimable_balance: ts.claimable_balance + payoutAmount }

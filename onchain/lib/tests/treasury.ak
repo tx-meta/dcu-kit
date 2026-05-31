@@ -10,7 +10,7 @@ use dcu/group.{GroupCip68Datum, GroupDatum, Pull, Push}
 use dcu/treasury.{
   DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
-  validate_contribute, validate_defer_round, validate_distribute_treasury,
+  validate_contribute, validate_distribute_treasury,
   validate_exit_treasury, validate_extend_grace, validate_join_treasury,
   validate_next_cycle_treasury,
   validate_update_payout,
@@ -156,22 +156,20 @@ fn build_treasury_state(
   assigned_slot: Int,
   group_ref_token: assets.AssetName,
   rounds_paid: Int,
-  is_deferred: Bool,
 ) -> TreasuryDatum {
   TreasuryState {
     group_reference_tokenname: group_ref_token,
     member_reference_tokenname: member_tn(),
     assigned_slot,
     rounds_paid,
-    is_deferred,
     member_payment_credential: common.test_pkh(),
     claimable_balance: 0,
   }
 }
 
-// Convenience wrapper: standard group token, zero rounds, not deferred
+// Convenience wrapper: standard group token, zero rounds
 fn test_treasury_state(assigned_slot: Int) -> TreasuryDatum {
-  build_treasury_state(assigned_slot, group_ref_tn(), 0, False)
+  build_treasury_state(assigned_slot, group_ref_tn(), 0)
 }
 
 // DefaultState datum for extend_grace_window and contribute recovery tests
@@ -424,34 +422,7 @@ test join_group__rejects_nonzero_rounds_paid() {
   let member_input = test_member_input()
 
   // rounds_paid = 1 — must be 0 at join
-  let bad_datum = build_treasury_state(0, group_ref_tn(), 1, False)
-  let output_value = assets.from_lovelace(5_000_000)
-    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
-  let treasury_output = test_treasury_output(bad_datum, output_value)
-  let group_out = test_group_output(1)
-
-  let mint = assets.from_asset(tp, member_tn(), 1)
-
-  let tx = Transaction {
-    ..transaction.placeholder,
-    inputs: [group_input, member_input],
-    outputs: [treasury_output, group_out],
-    mint,
-    validity_range: interval.after(0),
-  }
-
-  !validate_join_treasury(tp, account_policy(), 0, 1, 1, 0, tx)
-}
-
-// is_deferred = True at join time — validator rejects (fresh member cannot be pre-deferred)
-test join_group__rejects_is_deferred_at_join() {
-  let tp = treasury_policy()
-
-  let group_input = test_group_input()
-  let member_input = test_member_input()
-
-  // is_deferred = True — must be False at join
-  let bad_datum = build_treasury_state(0, group_ref_tn(), 0, True)
+  let bad_datum = build_treasury_state(0, group_ref_tn(), 1)
   let output_value = assets.from_lovelace(5_000_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let treasury_output = test_treasury_output(bad_datum, output_value)
@@ -950,7 +921,7 @@ test join_group__rejects_wrong_group_link() {
 
   // datum group_reference_tokenname doesn't match the actual group token
   let wrong_group_tn = #"ffff00ffff00ffff00ffff00ffff00ffff00ffff00ffff00ffff00"
-  let datum = build_treasury_state(0, wrong_group_tn, 0, False)
+  let datum = build_treasury_state(0, wrong_group_tn, 0)
   let output_value = assets.from_lovelace(5_000_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let treasury_output = test_treasury_output(datum, output_value)
@@ -1157,7 +1128,7 @@ fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
   }
 
   // Treasury input: assigned_slot = 0 (borrower for round 0), rounds_paid = 0
-  let treasury_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let treasury_datum = build_treasury_state(0, group_ref_tn(), 0)
   let treasury_in_value = treasury_value()
   let treasury_in_output = test_treasury_output(
     treasury_datum,
@@ -1167,7 +1138,7 @@ fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
   let treasury_in = test_treasury_input(utxo_ref, treasury_in_output)
 
   // Treasury output: rounds_paid = 1, is_deferred = False, ADA reduced by contribution_fee (2M)
-  let updated_treasury_datum = build_treasury_state(0, group_ref_tn(), 1, False)
+  let updated_treasury_datum = build_treasury_state(0, group_ref_tn(), 1)
   let treasury_out_value = assets.from_lovelace(3_000_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let treasury_out = test_treasury_output(
@@ -1264,7 +1235,7 @@ test distribute_round__rejects_wrong_datum_update() {
   let Transaction { inputs, outputs, validity_range, .. } = tx
   expect Some(old_treasury_out) = list.at(outputs, 0)
   // Datum with rounds_paid still 0 — not incremented
-  let stale_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let stale_datum = build_treasury_state(0, group_ref_tn(), 0)
   let bad_treasury_out = Output {
     ..old_treasury_out,
     datum: InlineDatum(stale_datum),
@@ -1343,12 +1314,12 @@ test distribute_round__rejects_when_borrower_absent() fail {
   }
 
   // assigned_slot = 1 — NOT the borrower for current_slot = 0
-  let wrong_slot_datum = build_treasury_state(1, group_ref_tn(), 0, False)
+  let wrong_slot_datum = build_treasury_state(1, group_ref_tn(), 0)
   let treasury_in = test_treasury_input(
     treasury_utxo_ref(),
     test_treasury_output(wrong_slot_datum, treasury_value()),
   )
-  let updated_datum = build_treasury_state(1, group_ref_tn(), 1, False)
+  let updated_datum = build_treasury_state(1, group_ref_tn(), 1)
   let treasury_out = test_treasury_output(
     updated_datum,
     assets.from_lovelace(3_000_000)
@@ -1435,7 +1406,7 @@ test distribute_round__rejects_wrong_round_number() {
   }
 
   // Treasury input: assigned_slot=1 (matches current_slot=1%3=1), rounds_paid=0 (wrong for round_number=1)
-  let datum = build_treasury_state(1, group_ref_tn(), 0, False)
+  let datum = build_treasury_state(1, group_ref_tn(), 0)
   let treasury_in_value = treasury_value()
   let treasury_in = test_treasury_input(
     treasury_utxo_ref(),
@@ -1443,7 +1414,7 @@ test distribute_round__rejects_wrong_round_number() {
   )
 
   // Treasury output: rounds_paid=2, ADA reduced (validator will return False before checking this)
-  let updated_datum = build_treasury_state(1, group_ref_tn(), 2, False)
+  let updated_datum = build_treasury_state(1, group_ref_tn(), 2)
   let treasury_out = test_treasury_output(
     updated_datum,
     assets.from_lovelace(3_000_000)
@@ -1544,7 +1515,7 @@ fn pull_distribute_tx(
   }
 
   // Treasury input: slot 0, round 0, claimable 0, holding 5M ADA + membership token.
-  let treasury_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let treasury_datum = build_treasury_state(0, group_ref_tn(), 0)
   let utxo_ref = treasury_utxo_ref()
   let treasury_in = test_treasury_input(
     utxo_ref,
@@ -1568,7 +1539,6 @@ fn pull_earmark_datum(claimable: Int) -> TreasuryDatum {
     member_reference_tokenname: member_tn(),
     assigned_slot: 0,
     rounds_paid: 1,
-    is_deferred: False,
     member_payment_credential: common.test_pkh(),
     claimable_balance: claimable,
   }
@@ -1646,14 +1616,14 @@ fn two_member_distribute(
   }
 
   // Member A — contributing borrower at slot 0.
-  let a_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let a_datum = build_treasury_state(0, group_ref_tn(), 0)
   let utxo_ref = treasury_utxo_ref()
   let a_in = test_treasury_input(
     utxo_ref,
     test_treasury_output(a_datum, treasury_value()),
   )
   let a_out = test_treasury_output(
-    build_treasury_state(0, group_ref_tn(), 1, False),
+    build_treasury_state(0, group_ref_tn(), 1),
     assets.from_lovelace(3_000_000)
       |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
   )
@@ -1734,14 +1704,14 @@ test distribute_round__rejects_excluded_member() fail {
     ),
     reference_script: None,
   }
-  let a_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let a_datum = build_treasury_state(0, group_ref_tn(), 0)
   let utxo_ref = treasury_utxo_ref()
   let a_in = test_treasury_input(
     utxo_ref,
     test_treasury_output(a_datum, treasury_value()),
   )
   let a_out = test_treasury_output(
-    build_treasury_state(0, group_ref_tn(), 1, False),
+    build_treasury_state(0, group_ref_tn(), 1),
     assets.from_lovelace(3_000_000)
       |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
   )
@@ -1759,7 +1729,7 @@ test distribute_round__rejects_excluded_member() fail {
 // avoid contributing — count_active_members rejects a TreasuryState found in references.
 test distribute_round__rejects_healthy_member_referenced() fail {
   let (tx, datum, utxo) = two_member_distribute(
-    build_treasury_state(1, group_ref_tn(), 0, False),
+    build_treasury_state(1, group_ref_tn(), 0),
     True,
   )
   validate_distribute_treasury(treasury_policy(), 0, 0, 1, [1], [0], 2, datum, utxo, tx)
@@ -2219,7 +2189,6 @@ test exit_group__rejects_wrong_group_link() {
     0,
     #"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
     0,
-    False,
   )
 
   let mint = assets.from_asset(tp, member_tn(), -1)
@@ -2462,7 +2431,7 @@ test contribute__rejects_datum_changed() {
   let out_value = assets.from_lovelace(7_000_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   // Changed assigned_slot: 0 → 1
-  let modified_datum = build_treasury_state(1, group_ref_tn(), 0, False)
+  let modified_datum = build_treasury_state(1, group_ref_tn(), 0)
   let treasury_out = test_treasury_output(modified_datum, out_value)
 
   let tx = Transaction {
@@ -2534,7 +2503,7 @@ test contribute__rejects_default_recovery_below_fee() {
   let member_input = test_member_input()
 
   let out_value = token_treasury_value(500)
-  let out_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let out_datum = build_treasury_state(0, group_ref_tn(), 0)
   let treasury_out = test_treasury_output(out_datum, out_value)
 
   let tx = Transaction {
@@ -2570,7 +2539,7 @@ test contribute__accepts_default_recovery_at_fee() {
   let member_input = test_member_input()
 
   let out_value = token_treasury_value(1000)
-  let out_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let out_datum = build_treasury_state(0, group_ref_tn(), 0)
   let treasury_out = test_treasury_output(out_datum, out_value)
 
   let tx = Transaction {
@@ -2581,151 +2550,6 @@ test contribute__accepts_default_recovery_at_fee() {
   }
 
   validate_contribute(
-    tp,
-    account_policy(),
-    0,
-    0,
-    0,
-    datum,
-    treasury_utxo_ref(),
-    tx,
-  )
-}
-
-// DeferRound must NOT let a tx siphon the contribution token while keeping ADA:
-// output preserves ADA + membership token but drops the 1000 native tokens → rejected
-// by the full value-preservation check.
-test defer_round__rejects_token_siphon() {
-  let tp = treasury_policy()
-
-  let datum = test_treasury_state(0)
-  let in_value = token_treasury_value(1000)
-  let treasury_in = test_treasury_input(
-    treasury_utxo_ref(),
-    test_treasury_output(datum, in_value),
-  )
-  let member_input = test_member_input()
-
-  // Correct deferred datum, but the contribution tokens are gone from the output.
-  let out_datum = build_treasury_state(0, group_ref_tn(), 0, True)
-  let out_value = assets.from_lovelace(2_000_000)
-    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
-  let treasury_out = test_treasury_output(out_datum, out_value)
-
-  let tx = Transaction {
-    ..transaction.placeholder,
-    inputs: [member_input, treasury_in],
-    outputs: [treasury_out],
-  }
-
-  !validate_defer_round(
-    tp,
-    account_policy(),
-    0,
-    0,
-    0,
-    datum,
-    treasury_utxo_ref(),
-    tx,
-  )
-}
-
-// ─── validate_defer_round ─────────────────────────────────────────────────────
-
-// Member defers round 0 — output datum has is_deferred: True, ADA unchanged
-test defer_round__accepts_valid_deferral() {
-  let tp = treasury_policy()
-
-  // datum: rounds_paid=0, is_deferred=False — member is about to defer round 0
-  let datum = build_treasury_state(0, group_ref_tn(), 0, False)
-  let in_value = treasury_value()
-  let treasury_in = test_treasury_input(
-    treasury_utxo_ref(),
-    test_treasury_output(datum, in_value),
-  )
-  let member_input = test_member_input()
-
-  // Output: is_deferred set to True, everything else unchanged
-  let deferred_datum = build_treasury_state(0, group_ref_tn(), 0, True)
-  let treasury_out = test_treasury_output(deferred_datum, in_value)
-
-  let tx = Transaction {
-    ..transaction.placeholder,
-    inputs: [member_input, treasury_in],
-    outputs: [treasury_out],
-  }
-
-  validate_defer_round(
-    tp,
-    account_policy(),
-    0,
-    // round_number = rounds_paid
-    0,
-    // member_input_index
-    0,
-    // treasury_output_index
-    datum,
-    treasury_utxo_ref(),
-    tx,
-  )
-}
-
-// round_number != rounds_paid — correct_round fails
-test defer_round__rejects_wrong_round() {
-  let tp = treasury_policy()
-
-  let datum = build_treasury_state(0, group_ref_tn(), 0, False)
-  let in_value = treasury_value()
-  let treasury_in = test_treasury_input(
-    treasury_utxo_ref(),
-    test_treasury_output(datum, in_value),
-  )
-  let member_input = test_member_input()
-
-  let deferred_datum = build_treasury_state(0, group_ref_tn(), 0, True)
-  let treasury_out = test_treasury_output(deferred_datum, in_value)
-
-  let tx = Transaction {
-    ..transaction.placeholder,
-    inputs: [member_input, treasury_in],
-    outputs: [treasury_out],
-  }
-
-  // round_number = 1 but rounds_paid = 0 → correct_round fails
-  !validate_defer_round(
-    tp,
-    account_policy(),
-    1,
-    0,
-    0,
-    datum,
-    treasury_utxo_ref(),
-    tx,
-  )
-}
-
-// Member already deferred — not_already_deferred fails
-test defer_round__rejects_already_deferred() {
-  let tp = treasury_policy()
-
-  // datum already has is_deferred: True
-  let datum = build_treasury_state(0, group_ref_tn(), 0, True)
-  let in_value = treasury_value()
-  let treasury_in = test_treasury_input(
-    treasury_utxo_ref(),
-    test_treasury_output(datum, in_value),
-  )
-  let member_input = test_member_input()
-
-  let treasury_out = test_treasury_output(datum, in_value)
-
-  let tx = Transaction {
-    ..transaction.placeholder,
-    inputs: [member_input, treasury_in],
-    outputs: [treasury_out],
-  }
-
-  !validate_defer_round(
     tp,
     account_policy(),
     0,
@@ -2760,7 +2584,6 @@ test update_payout_credential__accepts_valid_update() {
     member_reference_tokenname: member_tn(),
     assigned_slot: 0,
     rounds_paid: 0,
-    is_deferred: False,
     member_payment_credential: common.test_pkh(),
     claimable_balance: 0,
   }
@@ -2818,7 +2641,6 @@ test update_payout_credential__rejects_no_member_token() {
     member_reference_tokenname: member_tn(),
     assigned_slot: 0,
     rounds_paid: 0,
-    is_deferred: False,
     member_payment_credential: common.test_pkh(),
     claimable_balance: 0,
   }
@@ -3029,7 +2851,6 @@ fn claim_payout_setup(
     member_reference_tokenname: member_tn(),
     assigned_slot: 0,
     rounds_paid: 1,
-    is_deferred: False,
     member_payment_credential: common.test_pkh(),
     claimable_balance: 2_000_000,
   }
@@ -3056,7 +2877,6 @@ fn claim_payout_out_datum(claimable: Int) -> TreasuryDatum {
     member_reference_tokenname: member_tn(),
     assigned_slot: 0,
     rounds_paid: 1,
-    is_deferred: False,
     member_payment_credential: common.test_pkh(),
     claimable_balance: claimable,
   }
@@ -3181,14 +3001,14 @@ fn next_cycle_setup(
   }
 
   // Treasury input: cycle complete (rounds_paid == num_rounds == 2).
-  let in_datum = build_treasury_state(0, group_ref_tn(), 2, False)
+  let in_datum = build_treasury_state(0, group_ref_tn(), 2)
   let utxo_ref = treasury_utxo_ref()
   let treasury_in = test_treasury_input(
     utxo_ref,
     test_treasury_output(in_datum, treasury_val),
   )
   // Output: counters reset; value preserved.
-  let out_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let out_datum = build_treasury_state(0, group_ref_tn(), 0)
   let treasury_out = test_treasury_output(out_datum, treasury_val)
 
   let tx = Transaction {
