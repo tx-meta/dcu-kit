@@ -116,6 +116,41 @@
       "hash": "24f046d5b86ff58b0e317661144240aedb87858ae111577a336c1a18"
     },
     {
+      "title": "settings_validator.settings_nft.mint",
+      "redeemer": {
+        "title": "_redeemer",
+        "schema": {
+          "$ref": "#/definitions/Data"
+        }
+      },
+      "parameters": [
+        {
+          "title": "seed",
+          "schema": {
+            "$ref": "#/definitions/cardano~1transaction~1OutputReference"
+          }
+        }
+      ],
+      "compiledCode": "58fc010100229800aba2aba1aab9faab9eaab9dab9a48888896600264653001300700198039804000cc01c0092225980099b8748000c01cdd500144c96600264660020026eb0c030c028dd5001912cc00400629422b30013375e601a60166ea8c0340040422946266004004601c002804900c44cdd7a610ba14873657474696e67730100374c6464660020026eacc034c038c038c038c038c02cdd5002112cc00400600713233225980099b910070028acc004cdc78038014400600c806a26600a00a60240088068dd718060009bab300d001300e0014034297adef6c608a50401c6eb8c028c020dd50014590060c01c004c00cdd5003c52689b2b200201",
+      "hash": "0dd2c77a083ca729ebb904c28ec101b5745c90345340a8b6b35a1132"
+    },
+    {
+      "title": "settings_validator.settings_nft.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "parameters": [
+        {
+          "title": "seed",
+          "schema": {
+            "$ref": "#/definitions/cardano~1transaction~1OutputReference"
+          }
+        }
+      ],
+      "compiledCode": "58fc010100229800aba2aba1aab9faab9eaab9dab9a48888896600264653001300700198039804000cc01c0092225980099b8748000c01cdd500144c96600264660020026eb0c030c028dd5001912cc00400629422b30013375e601a60166ea8c0340040422946266004004601c002804900c44cdd7a610ba14873657474696e67730100374c6464660020026eacc034c038c038c038c038c02cdd5002112cc00400600713233225980099b910070028acc004cdc78038014400600c806a26600a00a60240088068dd718060009bab300d001300e0014034297adef6c608a50401c6eb8c028c020dd50014590060c01c004c00cdd5003c52689b2b200201",
+      "hash": "0dd2c77a083ca729ebb904c28ec101b5745c90345340a8b6b35a1132"
+    },
+    {
       "title": "treasury_validator.treasury.mint",
       "redeemer": {
         "title": "redeemer",
@@ -197,6 +232,10 @@
     "ByteArray": {
       "dataType": "bytes"
     },
+    "Data": {
+      "title": "Data",
+      "description": "Any Plutus data."
+    },
     "Int": {
       "dataType": "integer"
     },
@@ -229,6 +268,27 @@
     "cardano/assets/PolicyId": {
       "title": "PolicyId",
       "dataType": "bytes"
+    },
+    "cardano/transaction/OutputReference": {
+      "title": "OutputReference",
+      "description": "An `OutputReference` is a unique reference to an output on-chain. The `output_index`\n corresponds to the position in the output list of the transaction (identified by its id)\n that produced that output",
+      "anyOf": [
+        {
+          "title": "OutputReference",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "transaction_id",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
     },
     "dcu/account/AccountDatum": {
       "title": "AccountDatum",
