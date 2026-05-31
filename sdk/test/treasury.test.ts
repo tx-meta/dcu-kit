@@ -1,7 +1,10 @@
 import { describe, expect } from "vitest";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { paymentCredentialOf } from "@lucid-evolution/lucid";
+import {
+  paymentCredentialOf,
+  generateEmulatorAccount,
+} from "@lucid-evolution/lucid";
 import {
   createAccountTestCase,
   joinGroupTestCase,
@@ -44,6 +47,52 @@ import {
 import { TreasuryDatum, TreasuryDatumSchema } from "../src/core/types.js";
 import { extractTokenSuffix } from "./utils.js";
 import { advanceBlock } from "./effects.js";
+
+// Shared Pull-mode fixture: a 2-member Pull group, started, with round 0 distributed so the
+// borrower (user1, slot 0) holds a 4 ADA earmark (claimable_balance) in their own treasury.
+const setupPullDistributed = (base: Parameters<typeof setupGroup>[0]) =>
+  Effect.gen(function* () {
+    const { context, groupUtxo } = yield* setupGroup(base, {
+      payout_mode: "Pull",
+    });
+    const { users } = context;
+
+    const {
+      outputs: { userUtxo: user1AccountUtxo },
+    } = yield* createAccountTestCase(context, {
+      userSeed: users.user1.seedPhrase,
+    });
+    const {
+      outputs: { userUtxo: user2AccountUtxo },
+    } = yield* createAccountTestCase(context, {
+      userSeed: users.user2.seedPhrase,
+    });
+
+    yield* joinGroupTestCase(context, {
+      groupUtxo,
+      accountUtxo: user1AccountUtxo,
+      userSeed: users.user1.seedPhrase,
+    });
+    yield* joinGroupTestCase(context, {
+      groupUtxo,
+      accountUtxo: user2AccountUtxo,
+      userSeed: users.user2.seedPhrase,
+    });
+    yield* startGroupTestCase(context, { groupUtxo });
+
+    const result = yield* distributePayoutTestCase(context, {
+      groupUtxo,
+      callerSeed: users.user1.seedPhrase,
+    });
+
+    const suffix1 = extractTokenSuffix(
+      user1AccountUtxo,
+      accountPolicyId,
+      assetNameLabels.prefix222,
+    );
+
+    return { context, groupUtxo, user1AccountUtxo, suffix1, result };
+  });
 
 describe("Treasury Endpoints", () => {
   // --- Join Group ---
@@ -310,6 +359,97 @@ describe("Treasury Endpoints", () => {
         if ("TreasuryState" in claimedDatum) {
           expect(claimedDatum.TreasuryState.claimable_balance).toBe(0n);
         }
+      }),
+  );
+
+  // --- Pull: claim to a fresh address (lost-wallet recovery) ---
+  // Auth is by membership-token possession, and the destination is chosen at claim time, so
+  // a member can direct the payout to a brand-new address that has never held funds.
+  it.effect(
+    "should let a member claim their Pull payout to a fresh address (lost-wallet recovery)",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context, suffix1 } = yield* setupPullDistributed(base);
+        const { lucid, users } = context;
+
+        // A fresh address with no prior UTxOs.
+        const fresh = generateEmulatorAccount({ lovelace: 0n });
+
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const claimTx = yield* unsignedClaimPayoutTxProgram(lucid, {
+          accountTokenSuffix: suffix1,
+          destinationAddress: fresh.address,
+        });
+        const claimHash = yield* signAndSubmit(claimTx);
+        yield* advanceBlock(context.emulator);
+        expect(claimHash).toHaveLength(64);
+
+        // The previously-empty fresh address now holds exactly the 4 ADA pot.
+        const freshUtxos = yield* Effect.promise(() =>
+          lucid.utxosAt(fresh.address),
+        );
+        const total = freshUtxos.reduce((s, u) => s + u.assets.lovelace, 0n);
+        expect(total).toBe(4_000_000n);
+      }),
+  );
+
+  // --- Pull: an unclaimed earmark is returned to the member at exit ---
+  // A Pull member who never claims doesn't lose the earmark — it is physically in their
+  // treasury value, so a mature exit returns it along with the collateral.
+  it.effect(
+    "should return an unclaimed Pull earmark to the member at exit",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context, groupUtxo, user1AccountUtxo } =
+          yield* setupPullDistributed(base);
+        const { lucid, users } = context;
+
+        // Deactivate the group so exit takes the mature burn path (full refund), regardless
+        // of timing. UpdateGroup must preserve every field except is_active, so read the
+        // current on-chain datum (post-join / start / distribute).
+        const groupSuffix = extractTokenSuffix(
+          groupUtxo,
+          groupPolicyId!,
+          assetNameLabels.prefix100,
+        );
+        const groupRefUnit =
+          groupPolicyId! + assetNameLabels.prefix100 + groupSuffix;
+        const currentGroupUtxo = yield* Effect.promise(() =>
+          lucid.utxoByUnit(groupRefUnit),
+        );
+        const currentCip68 = yield* parseGroupCip68Datum(
+          patchInlineDatum(currentGroupUtxo).datum,
+        );
+
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+        yield* updateGroupTestCase(context, {
+          groupUtxo: currentGroupUtxo,
+          updatedDatum: { ...currentCip68.groupDatum, is_active: false },
+        });
+
+        // Measure user1's wallet before and after the exit. The treasury holds 62 ADA
+        // (60 collateral − 2 fee + 4 earmark); a full refund returns > 60 ADA.
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const before = yield* Effect.promise(() => lucid.wallet().getUtxos());
+        const beforeLovelace = before.reduce(
+          (s, u) => s + u.assets.lovelace,
+          0n,
+        );
+
+        const exitResult = yield* exitGroupTestCase(context, {
+          groupUtxo: currentGroupUtxo,
+          accountUtxo: user1AccountUtxo,
+          userSeed: users.user1.seedPhrase,
+        });
+        expect(exitResult.txHash).toHaveLength(64);
+
+        const after = yield* Effect.promise(() => lucid.wallet().getUtxos());
+        const afterLovelace = after.reduce((s, u) => s + u.assets.lovelace, 0n);
+        // > 60 ADA recovered ⇒ the 4 ADA earmark came back with the collateral (a stranded
+        // earmark would have refunded only ~58 ADA).
+        expect(afterLovelace - beforeLovelace).toBeGreaterThan(60_000_000n);
       }),
   );
 
