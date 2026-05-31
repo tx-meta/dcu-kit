@@ -12,6 +12,7 @@ use dcu/treasury.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
   validate_contribute, validate_defer_round, validate_distribute_treasury,
   validate_exit_treasury, validate_extend_grace, validate_join_treasury,
+  validate_next_cycle_treasury,
   validate_update_payout,
 }
 use tests/common
@@ -3127,6 +3128,107 @@ test claim_payout__rejects_over_withdrawal() {
     0,
     1,
     0,
+    datum,
+    utxo,
+    tx,
+  )
+}
+
+// ─── NextCycle (cycle reset + M2 re-funding guard) ────────────────────────────
+
+// A completed 2-round cycle being reset. The member's treasury (rounds_paid == num_rounds)
+// resets to rounds_paid 0; the group flips is_started -> False, last_distributed_round -> -1.
+// Caller supplies the treasury value so the re-funding guard can be exercised.
+fn next_cycle_setup(
+  treasury_val: assets.Value,
+) -> (Transaction, TreasuryDatum, OutputReference) {
+  let gp = group_policy()
+
+  let group_datum = GroupDatum {
+    ..test_group_datum(),
+    num_rounds: 2,
+    is_started: True,
+    last_distributed_round: 1,
+    member_token_names: [member_tn()],
+  }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: group_in_value,
+      datum: InlineDatum(cip68_with_group(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: group_in_value,
+    datum: InlineDatum(
+      cip68_with_group(
+        GroupDatum {
+          ..group_datum,
+          is_started: False,
+          last_distributed_round: -1,
+        },
+      ),
+    ),
+    reference_script: None,
+  }
+
+  // Treasury input: cycle complete (rounds_paid == num_rounds == 2).
+  let in_datum = build_treasury_state(0, group_ref_tn(), 2, False)
+  let utxo_ref = treasury_utxo_ref()
+  let treasury_in = test_treasury_input(
+    utxo_ref,
+    test_treasury_output(in_datum, treasury_val),
+  )
+  // Output: counters reset; value preserved.
+  let out_datum = build_treasury_state(0, group_ref_tn(), 0, False)
+  let treasury_out = test_treasury_output(out_datum, treasury_val)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, treasury_in],
+    outputs: [treasury_out, group_output],
+  }
+  (tx, in_datum, utxo_ref)
+}
+
+// Re-funded member (5M >= floor 2M) resets into the new cycle.
+test next_cycle__accepts_refunded_member() {
+  let (tx, datum, utxo) = next_cycle_setup(treasury_value())
+  validate_next_cycle_treasury(
+    treasury_policy(),
+    0,
+    // group_input_index
+    1,
+    // group_output_index
+    [1],
+    // treasury_input_indices
+    [0],
+    // treasury_output_indices
+    datum,
+    utxo,
+    tx,
+  )
+}
+
+// [M2] Under-funded member (1M < floor 2M) cannot enter the next cycle.
+test next_cycle__rejects_underfunded_restart() {
+  let thin_value = assets.from_lovelace(1_000_000)
+    |> assets.merge(assets.from_asset(treasury_policy(), member_tn(), 1))
+  let (tx, datum, utxo) = next_cycle_setup(thin_value)
+  !validate_next_cycle_treasury(
+    treasury_policy(),
+    0,
+    1,
+    [1],
+    [0],
     datum,
     utxo,
     tx,

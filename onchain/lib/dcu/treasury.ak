@@ -1501,6 +1501,18 @@ pub fn validate_next_cycle_treasury(
   )
   let value_preserved = own_output.value == own_input.output.value
 
+  // [spec NextCycle 7 / M2]: re-funding guard — a member cannot enter a new cycle
+  // under-collateralized. The treasury must hold at least the same collateral floor that
+  // JoinGroup enforces (contribution_fee × collateral_rounds) in the contribution asset.
+  // Because value is preserved here, a depleted member must top up via Contribute BEFORE
+  // NextCycle. NextCycle is atomic over all members, so one underfunded member blocks the
+  // restart until everyone is re-funded — the cycle never begins under-collateralized.
+  let refunded = assets.quantity_of(
+    own_output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  ) >= group.contribution_fee * group.collateral_rounds
+
   // Output at script address with membership token
   let output_at_script = own_output.address.payment_credential == Script(
     own_policy_id,
@@ -1514,6 +1526,7 @@ pub fn validate_next_cycle_treasury(
     output_indices_valid?,
     datum_correct?,
     value_preserved?,
+    refunded?,
     output_at_script?,
   }
 }

@@ -1017,6 +1017,32 @@ describe("Treasury Endpoints", () => {
         callerSeed: users.user2.seedPhrase,
       });
 
+      // M2 re-funding guard: after a full cycle each member is drained to ~min-UTxO, which is
+      // below the collateral floor (contribution_fee × collateral_rounds = 4 ADA). NextCycle now
+      // rejects an under-collateralized restart, so each member must top up to the floor first.
+      const groupTokenSuffix0 = extractTokenSuffix(
+        groupUtxo,
+        groupPolicyId!,
+        assetNameLabels.prefix100,
+      );
+      for (const m of [
+        { seed: users.user1.seedPhrase, acct: user1AccountUtxo },
+        { seed: users.user2.seedPhrase, acct: user2AccountUtxo },
+      ]) {
+        selectWalletFromSeed(lucid, m.seed);
+        const topUp = yield* unsignedContributeTxProgram(lucid, {
+          groupTokenSuffix: groupTokenSuffix0,
+          accountTokenSuffix: extractTokenSuffix(
+            m.acct,
+            accountPolicyId,
+            assetNameLabels.prefix222,
+          ),
+          topUpAmount: 4_000_000n,
+        });
+        yield* signAndSubmit(topUp);
+        yield* advanceBlock(context.emulator);
+      }
+
       // Reset the group for the next cycle. Admin must sign.
       selectWalletFromSeed(lucid, users.admin.seedPhrase);
       const { txHash } = yield* nextCycleTestCase(context, {
