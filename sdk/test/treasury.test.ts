@@ -52,8 +52,11 @@ import { advanceBlock } from "./effects.js";
 // borrower (user1, slot 0) holds a 4 ADA earmark (claimable_balance) in their own treasury.
 const setupPullDistributed = (base: Parameters<typeof setupGroup>[0]) =>
   Effect.gen(function* () {
+    // collateral_rounds: 2 prefunds both rounds for this 2-member group, so the non-borrower
+    // stays solvent (no ICS) after round 0 and the borrower keeps collateral alongside the earmark.
     const { context, groupUtxo } = yield* setupGroup(base, {
       payout_mode: "Pull",
+      collateral_rounds: 2n,
     });
     const { users } = context;
 
@@ -429,8 +432,9 @@ describe("Treasury Endpoints", () => {
           updatedDatum: { ...currentCip68.groupDatum, is_active: false },
         });
 
-        // Measure user1's wallet before and after the exit. The treasury holds 62 ADA
-        // (60 collateral − 2 fee + 4 earmark); a full refund returns > 60 ADA.
+        // Measure user1's wallet before and after the exit. Treasury holds 6 ADA after round 0
+        // (4 deposit − 2 fee + 4 earmark); a full refund returns > 4 ADA. A stranded earmark
+        // would refund only ~2 ADA (the leftover collateral).
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
         const before = yield* Effect.promise(() => lucid.wallet().getUtxos());
         const beforeLovelace = before.reduce(
@@ -447,9 +451,9 @@ describe("Treasury Endpoints", () => {
 
         const after = yield* Effect.promise(() => lucid.wallet().getUtxos());
         const afterLovelace = after.reduce((s, u) => s + u.assets.lovelace, 0n);
-        // > 60 ADA recovered ⇒ the 4 ADA earmark came back with the collateral (a stranded
-        // earmark would have refunded only ~58 ADA).
-        expect(afterLovelace - beforeLovelace).toBeGreaterThan(60_000_000n);
+        // > 4 ADA recovered ⇒ the 4 ADA earmark came home on top of the 2 ADA collateral
+        // (a stranded earmark would refund only the ~2 ADA leftover collateral).
+        expect(afterLovelace - beforeLovelace).toBeGreaterThan(4_000_000n);
       }),
   );
 
@@ -689,8 +693,11 @@ describe("Treasury Endpoints", () => {
       // interval_length = 20_000ms (20 slots). Each awaitBlock(1) advances 20 slots,
       // so one block = one full interval. Round 1 distribute fires at slot 220,
       // maturity is slot 240, and exit with emulator.now() is exactly at maturity.
+      // collateral_rounds: 2 → each member prefunds both rounds (deposit = 2 × fee), so
+      // neither defaults mid-cycle. (The default PerRound deposit covers only round 0.)
       const { context, groupUtxo } = yield* setupGroup(base, {
         interval_length: 20_000n,
+        collateral_rounds: 2n,
       });
       const { users } = context;
 
@@ -799,8 +806,9 @@ describe("Treasury Endpoints", () => {
           });
         const { lucid, users } = context;
 
-        // Join locks max_members (30) × contribution_fee (5) = 150 tokens in the treasury.
-        expect(memberUtxo.assets[tokenUnit]).toBe(150n);
+        // Join locks the collateral floor: collateral_rounds (1, PerRound default) ×
+        // contribution_fee (5) = 5 tokens in the treasury.
+        expect(memberUtxo.assets[tokenUnit]).toBe(5n);
 
         const groupTokenSuffix = extractTokenSuffix(
           groupUtxo,
@@ -964,8 +972,11 @@ describe("Treasury Endpoints", () => {
     Effect.gen(function* () {
       const base = yield* setupBase();
       // interval_length=20_000ms so each awaitBlock(1) = one interval.
+      // collateral_rounds: 2 prefunds both rounds so members stay solvent through the full cycle
+      // (the PerRound default covers only round 0).
       const { context, groupUtxo } = yield* setupGroup(base, {
         interval_length: 20_000n,
+        collateral_rounds: 2n,
       });
       const { lucid, users } = context;
 

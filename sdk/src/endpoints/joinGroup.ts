@@ -61,9 +61,13 @@ export type JoinGroupConfig = {
   accountTokenSuffix: string;
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, Date.now() for live
   fundingUtxos?: UTxO[]; // plain ADA UTxOs to pre-supply for coin selection (live network)
-  // Override the lovelace locked in the treasury UTxO. Defaults to max_members ×
-  // contribution_fee for ADA groups. Only for testing ICS transitions — use with care.
+  // Override the lovelace locked in the treasury UTxO (ADA-contribution groups). Defaults to
+  // contribution_fee × collateral_rounds (the validator floor). Prefund more rounds by setting
+  // a larger value; deposits are never capped.
   overrideDepositLovelace?: bigint;
+  // Override the contribution-token amount locked in the treasury UTxO (native-token groups).
+  // Defaults to contribution_fee × collateral_rounds. Prefund more rounds by setting a larger value.
+  depositContributionAmount?: bigint;
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO rather than included inline,
   // keeping the transaction well under the 16KB Cardano size limit.
@@ -132,16 +136,21 @@ export const unsignedJoinGroupTxProgram = (
     const treasuryMemberToken = toUnit(treasuryPolicyId!, accountAssetName);
 
     const mintingAssets: Assets = { [treasuryMemberToken]: 1n };
-    // Lock max_members × contribution_fee in the contribution asset so the treasury UTxO
-    // remains solvent for the full rotation cycle (max_members rounds). For ADA groups
-    // that asset is lovelace; for native-token groups we lock the token plus 2 ADA min-UTxO.
+    // Lock the configured collateral floor — contribution_fee × collateral_rounds — in the
+    // contribution asset. collateral_rounds = 1 is PerRound (lock just the first round and top up
+    // each cycle); max_members is FullUpfront. This matches the validator's `fees_locked` floor and
+    // honours the member's chosen mode rather than always forcing the full cycle. Deposits are never
+    // capped — a member may prefund more by overriding (overrideDepositLovelace for ADA, or
+    // depositContributionAmount for native-token groups). For ADA the asset is lovelace; for
+    // native-token groups we lock the token plus 2 ADA min-UTxO.
     const isAdaContribution = groupDatum.contribution_fee_policyid === "";
-    const fullCycleAmount = groupDatum.max_members * groupDatum.contribution_fee;
+    const collateralFloor =
+      groupDatum.collateral_rounds * groupDatum.contribution_fee;
     const treasuryLovelace =
       overrideDepositLovelace !== undefined
         ? overrideDepositLovelace
         : isAdaContribution
-          ? fullCycleAmount
+          ? collateralFloor
           : 2_000_000n;
     const treasuryAssets: Assets = {
       lovelace: treasuryLovelace,
@@ -152,7 +161,8 @@ export const unsignedJoinGroupTxProgram = (
         groupDatum.contribution_fee_policyid,
         groupDatum.contribution_fee_assetname,
       );
-      treasuryAssets[contributionUnit] = fullCycleAmount;
+      treasuryAssets[contributionUnit] =
+        config.depositContributionAmount ?? collateralFloor;
     }
 
     const address = yield* getWalletAddress(lucid);
