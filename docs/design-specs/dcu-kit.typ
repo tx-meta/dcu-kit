@@ -311,6 +311,12 @@ Transition state for members whose contribution balance falls below `contributio
 
 - *`rounds_paid`: ```rs Int```* – The `rounds_paid` value at the time of transition — carried for record keeping.
 
+- *`assigned_slot`: ```rs Int```* – Rotation slot, preserved so `TreasuryState` can be fully reconstructed when the member recovers via `Contribute`.
+
+- *`member_payment_credential`: ```rs ByteArray```* – Payment key hash, preserved for payout routing on recovery.
+
+- *`claimable_balance`: ```rs Int```* – Any unclaimed `Pull`-mode earmark carried in from `TreasuryState` when the member defaulted. Preserved through the grace window (and across `ExtendGraceWindow`) and reconstructed faithfully on recovery, so a recovered member can still `ClaimPayout` it. `0` under `Push`. The earmarked funds themselves remain in this UTxO's value regardless.
+
 \
 ==== Redeemer
 

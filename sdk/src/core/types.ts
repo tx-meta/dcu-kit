@@ -260,6 +260,12 @@ export const TreasuryDatumSchema = Data.Enum([
       rounds_paid: Data.Integer(),
       assigned_slot: Data.Integer(),
       member_payment_credential: Data.Bytes(),
+      /**
+       * Pull mode: unclaimed earmark carried in from TreasuryState when the member
+       * defaulted. Preserved through the grace window and reconstructed on recovery so
+       * the member can still ClaimPayout it. 0 under Push.
+       */
+      claimable_balance: Data.Integer(),
     }),
   }),
 ]);

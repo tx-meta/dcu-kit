@@ -182,6 +182,7 @@ fn test_insufficient_collateral_state() -> TreasuryDatum {
     rounds_paid: 0,
     assigned_slot: 0,
     member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
   }
 }
 
@@ -2561,6 +2562,110 @@ test contribute__accepts_default_recovery_at_fee() {
   )
 }
 
+// [P4] DefaultState recovery carries the Pull earmark (claimable_balance) back into
+// TreasuryState. A member who defaulted while holding an unclaimed earmark keeps it on
+// recovery and can still ClaimPayout it. (The earmarked funds were always in the UTxO
+// value; this preserves the claim marker too.)
+test contribute__recovery_carries_claimable_balance() {
+  let tp = treasury_policy()
+
+  let datum =
+    DefaultState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: member_tn(),
+      grace_expires_at: 5000,
+      grace_extensions_used: 0,
+      rounds_paid: 0,
+      assigned_slot: 0,
+      member_payment_credential: common.test_pkh(),
+      claimable_balance: 2000,
+    }
+  let in_value = token_treasury_value(0)
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, in_value),
+  )
+  let member_input = test_member_input()
+
+  // Output: recovered TreasuryState reconstructing the carried earmark (2000).
+  let out_value = token_treasury_value(3000)
+  let out_datum =
+    TreasuryState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: member_tn(),
+      assigned_slot: 0,
+      rounds_paid: 0,
+      member_payment_credential: common.test_pkh(),
+      claimable_balance: 2000,
+    }
+  let treasury_out = test_treasury_output(out_datum, out_value)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [member_input, treasury_in],
+    reference_inputs: [token_group_input()],
+    outputs: [treasury_out],
+  }
+
+  validate_contribute(
+    tp,
+    account_policy(),
+    0,
+    0,
+    0,
+    datum,
+    treasury_utxo_ref(),
+    tx,
+  )
+}
+
+// [P4] Recovery that DROPS the carried earmark (claimable 2000 → 0) is REJECTED — the
+// output TreasuryState must reconstruct claimable_balance faithfully (no silent forfeit).
+test contribute__rejects_recovery_dropping_claimable() {
+  let tp = treasury_policy()
+
+  let datum =
+    DefaultState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: member_tn(),
+      grace_expires_at: 5000,
+      grace_extensions_used: 0,
+      rounds_paid: 0,
+      assigned_slot: 0,
+      member_payment_credential: common.test_pkh(),
+      claimable_balance: 2000,
+    }
+  let in_value = token_treasury_value(0)
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, in_value),
+  )
+  let member_input = test_member_input()
+
+  // Output zeroes the earmark — the old buggy behavior; must be rejected.
+  let out_value = token_treasury_value(3000)
+  let out_datum = build_treasury_state(0, group_ref_tn(), 0)
+  let treasury_out = test_treasury_output(out_datum, out_value)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [member_input, treasury_in],
+    reference_inputs: [token_group_input()],
+    outputs: [treasury_out],
+  }
+
+  !validate_contribute(
+    tp,
+    account_policy(),
+    0,
+    0,
+    0,
+    datum,
+    treasury_utxo_ref(),
+    tx,
+  )
+}
+
 // ─── validate_update_payout_credential ───────────────────────────────────────
 
 // Member updates payout credential — output datum has new member_payment_credential
@@ -2687,6 +2792,7 @@ test extend_grace_window__accepts_valid_extension() {
     rounds_paid: 0,
     assigned_slot: 0,
     member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
   }
   let treasury_out = test_treasury_output(expected_datum, in_value)
 
@@ -2725,6 +2831,7 @@ test extend_grace_window__rejects_max_extensions_reached() {
     rounds_paid: 0,
     assigned_slot: 0,
     member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
   }
   let in_value = treasury_value()
   let treasury_in = test_treasury_input(
@@ -2741,6 +2848,7 @@ test extend_grace_window__rejects_max_extensions_reached() {
     rounds_paid: 0,
     assigned_slot: 0,
     member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
   }
   let treasury_out = test_treasury_output(expected_datum, in_value)
 
@@ -2798,6 +2906,7 @@ test extend_grace_window__rejects_no_admin_token() {
     rounds_paid: 0,
     assigned_slot: 0,
     member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
   }
   let treasury_out = test_treasury_output(expected_datum, in_value)
 

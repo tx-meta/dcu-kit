@@ -55,6 +55,11 @@ pub type TreasuryDatum {
     assigned_slot: Int,
     // Payment key hash — preserved for payout routing on recovery.
     member_payment_credential: ByteArray,
+    // Pull mode only: any unclaimed earmark carried in from TreasuryState when the
+    // member defaulted. Preserved through the grace window so a recovered member can
+    // still ClaimPayout it (and so it is reconstructed faithfully on recovery). 0 under
+    // Push. The earmarked funds themselves stay in this UTxO's value either way.
+    claimable_balance: Int,
   }
 }
 
@@ -639,6 +644,10 @@ pub fn validate_distribute_treasury(
       rounds_paid: round_number + 1,
       assigned_slot,
       member_payment_credential,
+      // [carry-forward]: a defaulting member is always a non-borrower (the borrower's
+      // balance rises by total_payout, so it can never fall below the fee), so the
+      // earmark carries through unchanged. The funds remain in this UTxO's value.
+      claimable_balance,
     }
   } else {
     expect
@@ -652,9 +661,8 @@ pub fn validate_distribute_treasury(
     // Pull) it is preserved exactly — without this a caller could inflate their own earmark
     // and later drain it via ClaimPayout. Under Pull the borrower's OWN treasury accrues
     // exactly total_payout (matching the value credited in balance_deducted above).
-    // NOTE (carry-forward): a member carrying a nonzero claimable_balance who transitions to
-    // DefaultState loses it — DefaultState has no such field; harmless under Push (always 0),
-    // revisit for Pull defaults (carry claimable through DefaultState, or block default while >0).
+    // (A nonzero claimable on a member who instead transitions to DefaultState is carried
+    // into that state's claimable_balance field — see the transition branch above.)
     let expected_claimable = if is_pull && is_borrower_treasury {
       claimable_balance + total_payout
     } else {
@@ -1021,21 +1029,19 @@ pub fn validate_contribute(
       assigned_slot,
       rounds_paid,
       member_payment_credential,
+      claimable_balance,
       ..
     } ->
-      // Recovery: transition back to TreasuryState using the preserved fields
-      // NOTE (slice 2): DefaultState carries no claimable_balance, so recovery resets it
-      // to 0. Under Push this is always correct (claimable is always 0). For Pull, a member
-      // who defaulted while holding an unclaimed earmark loses it here — revisit when wiring
-      // Pull defaults (either carry claimable through DefaultState, or block default while
-      // claimable > 0).
+      // Recovery: transition back to TreasuryState reconstructing the preserved fields,
+      // including any earmark (claimable_balance) carried through the default — so a
+      // recovered member can still ClaimPayout it. Under Push this is always 0.
       output_datum == TreasuryState {
         group_reference_tokenname,
         member_reference_tokenname,
         assigned_slot,
         rounds_paid,
         member_payment_credential,
-        claimable_balance: 0,
+        claimable_balance,
       }
 
     PenaltyState { .. } -> False
@@ -1186,6 +1192,7 @@ pub fn validate_extend_grace(
         rounds_paid,
         assigned_slot,
         member_payment_credential,
+        claimable_balance,
       }
     = datum
 
@@ -1223,6 +1230,7 @@ pub fn validate_extend_grace(
     rounds_paid,
     assigned_slot,
     member_payment_credential,
+    claimable_balance,
   }
   let datum_correct = output_datum == expected_datum
 

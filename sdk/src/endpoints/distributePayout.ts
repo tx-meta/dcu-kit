@@ -377,6 +377,9 @@ export const unsignedDistributePayoutTxProgram = (
               rounds_paid: roundNumber + 1n,
               assigned_slot: ts.assigned_slot,
               member_payment_credential: ts.member_payment_credential,
+              // A defaulting member is always a non-borrower, so the earmark carries
+              // through unchanged (the funds stay in the UTxO value either way).
+              claimable_balance: ts.claimable_balance,
             },
           }
         : {
