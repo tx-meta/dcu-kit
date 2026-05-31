@@ -1,6 +1,5 @@
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/primitive/bytearray
 use cardano/address.{Script, VerificationKey}
 use cardano/assets.{PolicyId, Value, ada_policy_id}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference, Transaction}
@@ -11,7 +10,7 @@ use dcu/treasury.{
 }
 use dcu/treasury_utils.{
   count_active_members, find_group_token_name, indices_in_ascending_order,
-  member_has_user_token,
+  member_has_user_token, treasury_output_clean,
 }
 use dcu/utils.{find_own_input, get_lower_bound, only_allowed_policies}
 
@@ -447,17 +446,13 @@ pub fn validate_distribute_treasury(
   }
 
   // [spec DistributeRound 8]: own output at script address with membership token
-  let output_at_script = own_output.address.payment_credential == Script(
+  // [security]: output at treasury script, holds exactly the membership token, and
+  // carries only ADA + own policy + the group's contribution asset (no merge/skim).
+  let treasury_output_ok = treasury_output_clean(
+    own_output,
     own_policy_id,
-  )
-  // [security]: exact token check — prevents account-merge attacks
-  let token_retained = dict.to_pairs(
-    assets.tokens(own_output.value, own_policy_id),
-  ) == [Pair(member_reference_tokenname, 1)]
-  // [security]: only ADA, own policy, and the group's contribution token
-  let clean_output_value = only_allowed_policies(
-    own_output.value,
-    [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
+    member_reference_tokenname,
+    group.contribution_fee_policyid,
   )
 
   // [spec DistributeRound 6c]: PUSH only — borrower output at scheduled member's wallet,
@@ -490,9 +485,7 @@ pub fn validate_distribute_treasury(
     group_round_incremented?,
     group_output_valid?,
     output_datum_correct?,
-    output_at_script?,
-    token_retained?,
-    clean_output_value?,
+    treasury_output_ok?,
     balance_deducted?,
     borrower_payout_valid?,
   }
@@ -666,10 +659,7 @@ pub fn validate_claim_penalty(
     = datum
 
   // [spec PenaltyWithdraw 3]: admin (222) user token derived from group reference token name
-  let admin_token_name = cip68.prefix_222
-    |> bytearray.concat(
-        bytearray.drop(group_reference_tokenname, cip68.prefix_length),
-      )
+  let admin_token_name = cip68.convert_ref_to_user_token(group_reference_tokenname)
 
   expect Some(admin_input) = list.at(inputs, admin_input_index)
   let admin_authorized = assets.quantity_of(
@@ -819,26 +809,19 @@ pub fn validate_contribute(
     PenaltyState { .. } -> False
   }
 
-  // [spec Contribute 5]: output at script address with membership token
-  let output_at_script = own_output.address.payment_credential == Script(
+  // [spec Contribute 5]: output at treasury script, exact membership token, clean value
+  let treasury_output_ok = treasury_output_clean(
+    own_output,
     own_policy_id,
-  )
-  let token_retained = dict.to_pairs(
-    assets.tokens(own_output.value, own_policy_id),
-  ) == [Pair(member_reference_tokenname, 1)]
-  // [security]: only ADA, own policy, and the group's contribution token may be held
-  let clean_output_value = only_allowed_policies(
-    own_output.value,
-    [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
+    member_reference_tokenname,
+    group.contribution_fee_policyid,
   )
 
   and {
     member_authorized?,
     group_link_valid?,
     datum_correct?,
-    output_at_script?,
-    token_retained?,
-    clean_output_value?,
+    treasury_output_ok?,
     balance_increased?,
     recovery_funded?,
   }
@@ -969,10 +952,7 @@ pub fn validate_extend_grace(
   let extensions_available = grace_extensions_used < max_grace_extensions
 
   // [spec ExtendGrace 3]: admin auth via group (222) user token
-  let admin_token_name = cip68.prefix_222
-    |> bytearray.concat(
-        bytearray.drop(group_reference_tokenname, cip68.prefix_length),
-      )
+  let admin_token_name = cip68.convert_ref_to_user_token(group_reference_tokenname)
   expect Some(admin_input) = list.at(inputs, admin_input_index)
   let admin_authorized = assets.quantity_of(
     admin_input.output.value,

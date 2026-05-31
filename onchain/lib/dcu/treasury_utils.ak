@@ -1,11 +1,35 @@
 use aiken/collection/dict
 use aiken/collection/list
 use cardano/address.{Script}
-use cardano/assets.{AssetName, PolicyId}
-use cardano/transaction.{InlineDatum, Input}
+use cardano/assets.{AssetName, PolicyId, ada_policy_id}
+use cardano/transaction.{InlineDatum, Input, Output}
 use dcu/treasury.{DefaultState, PenaltyState, TreasuryDatum, TreasuryState}
+use dcu/utils.{only_allowed_policies}
 
 // ─── Treasury Helpers ─────────────────────────────────────────────────────────
+
+// treasury_output_clean
+// The standard treasury-output guard, shared by handlers that produce a treasury
+// UTxO: it sits at the treasury script address, holds EXACTLY the one membership
+// token (exact check — blocks account-merge attacks), and carries no value beyond
+// ADA + own policy + the group's contribution asset.
+pub fn treasury_output_clean(
+  own_output: Output,
+  own_policy_id: PolicyId,
+  member_reference_tokenname: AssetName,
+  contribution_fee_policyid: PolicyId,
+) -> Bool {
+  and {
+    own_output.address.payment_credential == Script(own_policy_id),
+    dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
+      Pair(member_reference_tokenname, 1),
+    ],
+    only_allowed_policies(
+      own_output.value,
+      [ada_policy_id, own_policy_id, contribution_fee_policyid],
+    ),
+  }
+}
 
 // member_has_user_token
 // Verifies the input at member_input_index holds exactly 1 token of
