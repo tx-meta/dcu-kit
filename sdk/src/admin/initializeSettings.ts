@@ -1,0 +1,122 @@
+import {
+  Data,
+  LucidEvolution,
+  TxSignBuilder,
+  validatorToAddress,
+} from "@lucid-evolution/lucid";
+import { Effect } from "effect";
+import {
+  buildSettingsNft,
+  buildProtocol,
+  settingsTokenName,
+  alwaysFailsValidator,
+} from "../core/validators/constants.js";
+import { ProtocolSettings } from "../core/types.js";
+import { DcuError, TransactionBuildError, SetupError } from "../core/errors.js";
+import { getWalletAddress, makeReturn } from "../core/utils/index.js";
+
+export type InitializeSettingsResult = {
+  settingsPolicy: string;
+  settingsUnit: string;
+  accountPolicy: string;
+  groupPolicy: string;
+  treasuryPolicy: string;
+};
+
+/**
+ * Initialize the protocol settings (P5 trusted binding) — a ONE-TIME deploy step.
+ *
+ * Picks a seed UTxO from the admin wallet, derives the one-shot settings-NFT policy
+ * from it, computes the deployment's account/group/treasury policy IDs (treasury is
+ * parameterized by the settings policy), then mints the singleton settings NFT and
+ * locks it — together with a ProtocolSettings datum recording those three policy IDs —
+ * in an immutable UTxO at the always-fails address. Every later treasury transaction
+ * references this UTxO to authenticate the trusted group policy.
+ *
+ * Must be run once before deploy-scripts / any treasury operation on a fresh deployment.
+ */
+export const unsignedInitializeSettingsProgram = (
+  lucid: LucidEvolution,
+): Effect.Effect<TxSignBuilder, DcuError, never> =>
+  Effect.gen(function* () {
+    const address = yield* getWalletAddress(lucid);
+    const network = lucid.config().network!;
+
+    const walletUtxos = yield* Effect.tryPromise({
+      try: () => lucid.wallet().getUtxos(),
+      catch: (e) => new SetupError({ message: String(e) }),
+    });
+    if (walletUtxos.length === 0)
+      return yield* Effect.fail(
+        new SetupError({ message: "No wallet UTxOs available to seed the settings NFT" }),
+      );
+
+    // Any wallet UTxO works as the one-shot seed — it is consumed by this tx.
+    const seed = walletUtxos[0];
+    const { validator, policyId: settingsPolicy } = buildSettingsNft({
+      txHash: seed.txHash,
+      outputIndex: seed.outputIndex,
+    });
+    const protocol = buildProtocol(settingsPolicy);
+    const settingsUnit = settingsPolicy + settingsTokenName;
+    const settingsAddress = validatorToAddress(
+      network,
+      alwaysFailsValidator.elseAlwaysFails,
+    );
+
+    const settingsDatum = Data.to(
+      {
+        account_policy: protocol.accountPolicyId,
+        group_policy: protocol.groupPolicyId,
+        treasury_policy: protocol.treasuryPolicyId,
+      },
+      ProtocolSettings,
+    );
+
+    const tx = yield* lucid
+      .newTx()
+      .collectFrom([seed])
+      .mintAssets({ [settingsUnit]: 1n }, Data.void())
+      .attach.MintingPolicy(validator)
+      .pay.ToContract(
+        settingsAddress,
+        { kind: "inline", value: settingsDatum },
+        { [settingsUnit]: 1n },
+      )
+      .addSigner(address)
+      .completeProgram()
+      .pipe(
+        Effect.mapError(
+          (e) =>
+            new TransactionBuildError({
+              operation: "initializeSettings",
+              error: String(e),
+            }),
+        ),
+      );
+
+    return tx;
+  });
+
+export const initializeSettings = (lucid: LucidEvolution) =>
+  makeReturn(unsignedInitializeSettingsProgram(lucid));
+
+/**
+ * Pure helper: derive the settings policy + the deployment's policy IDs from a seed
+ * OutRef, WITHOUT building a transaction. Useful for configuring buildProtocol once the
+ * settings NFT has been deployed (the seed OutRef is recorded at deploy time).
+ */
+export const deriveSettings = (seed: {
+  txHash: string;
+  outputIndex: number;
+}): InitializeSettingsResult => {
+  const { policyId: settingsPolicy } = buildSettingsNft(seed);
+  const protocol = buildProtocol(settingsPolicy);
+  return {
+    settingsPolicy,
+    settingsUnit: settingsPolicy + settingsTokenName,
+    accountPolicy: protocol.accountPolicyId,
+    groupPolicy: protocol.groupPolicyId,
+    treasuryPolicy: protocol.treasuryPolicyId,
+  };
+};

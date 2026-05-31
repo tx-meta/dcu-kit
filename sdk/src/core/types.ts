@@ -57,6 +57,20 @@ export const PayoutModeSchema = Data.Enum([
 export type PayoutMode = Data.Static<typeof PayoutModeSchema>;
 export const PayoutMode = PayoutModeSchema as unknown as PayoutMode;
 
+// --- Protocol Settings (P5 trusted binding) ---
+// Datum of the immutable settings UTxO. Holds the trusted policy IDs of the three
+// DCU validators, read by the treasury validator (via the singleton settings NFT)
+// to authenticate cross-validator inputs. Field order MUST mirror the Aiken
+// ProtocolSettings type (account, group, treasury).
+export const ProtocolSettingsSchema = Data.Object({
+  account_policy: Data.Bytes(),
+  group_policy: Data.Bytes(),
+  treasury_policy: Data.Bytes(),
+});
+export type ProtocolSettings = Data.Static<typeof ProtocolSettingsSchema>;
+export const ProtocolSettings =
+  ProtocolSettingsSchema as unknown as ProtocolSettings;
+
 export const GroupDatumSchema = Data.Object({
   /** Policy ID of the contribution asset. Empty string (`""`) means ADA (lovelace). */
   contribution_fee_policyid: Data.Bytes(),
