@@ -6,6 +6,7 @@
   "scripts": {
     "clean": "rimraf dist",
     "build": "tsup *.ts --format esm --clean",
+    "initialize-settings": "pnpm run build && node dist/initialize-settings.js",
     "create-account": "pnpm run build && node dist/create-account.js",
     "update-account": "pnpm run build && node dist/update-account.js",
     "delete-account": "pnpm run build && node dist/delete-account.js",
