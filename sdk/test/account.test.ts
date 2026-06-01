@@ -94,7 +94,9 @@ describe("Account Endpoints", () => {
         );
 
         const err = yield* Effect.flip(
-          unsignedDeleteAccountTxProgram(lucid, { accountTokenSuffix }),
+          unsignedDeleteAccountTxProgram(context.protocol!, lucid, {
+            accountTokenSuffix,
+          }),
         );
 
         expect(err._tag).toBe("TransactionBuildError");

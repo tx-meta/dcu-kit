@@ -17,7 +17,7 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
 } from "../core/utils/index.js";
-import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 
 /**
  * Creates an unsigned transaction for deleting a DCU Group.
@@ -40,23 +40,25 @@ export type DeleteGroupConfig = {
 };
 
 export const unsignedDeleteGroupTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: DeleteGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { groupValidator, groupPolicyId } = protocol;
     const { groupTokenSuffix } = config;
 
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
     const adminUnit =
-      groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix222 + groupTokenSuffix;
 
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const adminUtxo = yield* resolveUtxoByUnit(lucid, adminUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
 
     const groupRefAsset = Object.keys(groupUtxo.assets).find((k) =>
-      k.startsWith(groupPolicyId!),
+      k.startsWith(groupPolicyId),
     );
     if (!groupRefAsset)
       return yield* Effect.fail(
@@ -65,13 +67,13 @@ export const unsignedDeleteGroupTxProgram = (
           address: groupUtxo.address,
         }),
       );
-    const groupRefName = groupRefAsset.slice(groupPolicyId!.length);
+    const groupRefName = groupRefAsset.slice(groupPolicyId.length);
 
     // Burn both tokens (ref + user, qty -1 each).
     // BurnGroup is variant index 1 in GroupMintRedeemer — no fields, Constr(1, []).
     const burnAssets: Assets = {
-      [groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix]: -1n,
-      [groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix]: -1n,
+      [groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix]: -1n,
+      [groupPolicyId + assetNameLabels.prefix222 + groupTokenSuffix]: -1n,
     };
     const burnRedeemer = Data.to(new Constr(1, []));
 

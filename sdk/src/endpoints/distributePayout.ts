@@ -16,12 +16,7 @@ import {
   TreasuryDatumSchema,
   TreasuryRedeemer,
 } from "../core/types.js";
-import {
-  treasuryValidator,
-  treasuryPolicyId,
-  groupPolicyId,
-  groupValidator,
-} from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 import {
   getScriptAddress,
   parseGroupCip68Datum,
@@ -60,14 +55,17 @@ export type DistributePayoutConfig = {
 };
 
 export const unsignedDistributePayoutTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: DistributePayoutConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { treasuryValidator, treasuryPolicyId, groupPolicyId, groupValidator, settingsUnit } = protocol;
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix } = config;
 
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
 
@@ -75,7 +73,7 @@ export const unsignedDistributePayoutTxProgram = (
     const groupDatum = groupCip68.groupDatum;
 
     const groupRefAsset = Object.keys(groupUtxo.assets).find((k) =>
-      k.startsWith(groupPolicyId!),
+      k.startsWith(groupPolicyId),
     );
     if (!groupRefAsset)
       return yield* Effect.fail(
@@ -84,7 +82,7 @@ export const unsignedDistributePayoutTxProgram = (
           error: "Group reference token not found in group UTxO",
         }),
       );
-    const groupRefName = groupRefAsset.slice(groupPolicyId!.length);
+    const groupRefName = groupRefAsset.slice(groupPolicyId.length);
 
     if (!groupDatum.is_started) {
       return yield* Effect.fail(
@@ -349,7 +347,7 @@ export const unsignedDistributePayoutTxProgram = (
       if (!("TreasuryState" in state.datum)) return tx;
       const ts = state.datum.TreasuryState;
       const memberToken = toUnit(
-        treasuryPolicyId!,
+        treasuryPolicyId,
         ts.member_reference_tokenname,
       );
       // Under Pull, the borrower's own treasury (slot == effectiveSlot) is credited the pot.
@@ -427,6 +425,7 @@ export const unsignedDistributePayoutTxProgram = (
 
     const tx = yield* withBorrower
       .validFrom(Number(validFrom))
+      .readFrom([settingsUtxo])
       .completeProgram(
         lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
       )

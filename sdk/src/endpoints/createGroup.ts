@@ -23,7 +23,7 @@ import {
   TransactionBuildError,
   ValidatorNotFoundError,
 } from "../core/errors.js";
-import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 
 /**
  * Creates an unsigned transaction for creating a new DCU Group.
@@ -45,10 +45,12 @@ export type CreateGroupConfig = {
 };
 
 export const unsignedCreateGroupTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: CreateGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { groupValidator, groupPolicyId } = protocol;
     const { groupName, groupDatum, utxoToSpend } = config;
 
     if (!groupPolicyId)
@@ -77,8 +79,8 @@ export const unsignedCreateGroupTxProgram = (
     //   user_token_name = blake2b_256(cbor(utxoToSpend.outputRef)) with prefix_222
     const { refTokenName, userTokenName } = yield* createCip68TokenNames(utxo);
 
-    const refToken = toUnit(groupPolicyId!, refTokenName);
-    const userToken = toUnit(groupPolicyId!, userTokenName);
+    const refToken = toUnit(groupPolicyId, refTokenName);
+    const userToken = toUnit(groupPolicyId, userTokenName);
 
     const mintingAssets: Assets = { [refToken]: 1n, [userToken]: 1n };
     // Lock creator_bond lovelace alongside the ref token so it is held for

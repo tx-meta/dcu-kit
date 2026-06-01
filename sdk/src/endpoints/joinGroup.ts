@@ -16,12 +16,7 @@ import {
   TreasuryRedeemer,
   GroupSpendRedeemer,
 } from "../core/types.js";
-import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
-import { accountPolicyId } from "../core/validators/constants.js";
-import {
-  treasuryValidator,
-  treasuryPolicyId,
-} from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 import {
   getScriptAddress,
   parseGroupCip68Datum,
@@ -78,10 +73,19 @@ export type JoinGroupConfig = {
 };
 
 export const unsignedJoinGroupTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: JoinGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const {
+      groupValidator,
+      groupPolicyId,
+      accountPolicyId,
+      treasuryValidator,
+      treasuryPolicyId,
+      settingsUnit,
+    } = protocol;
     const {
       groupTokenSuffix,
       accountTokenSuffix,
@@ -91,7 +95,7 @@ export const unsignedJoinGroupTxProgram = (
     } = config;
 
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
     const accountUserUnit =
       accountPolicyId + assetNameLabels.prefix222 + accountTokenSuffix;
 
@@ -99,13 +103,16 @@ export const unsignedJoinGroupTxProgram = (
     const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUserUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
     const accountUtxo = patchInlineDatum(accountUtxoRaw);
+    // The treasury validator reads the trusted policies from the settings UTxO, so it
+    // must be present as a reference input on every treasury transaction.
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
     const groupDatum = groupCip68.groupDatum;
 
     const assignedSlot = groupDatum.member_count;
 
     const groupRefAssetEntry = Object.keys(groupUtxo.assets).find((k) =>
-      k.startsWith(groupPolicyId!),
+      k.startsWith(groupPolicyId),
     );
     if (!groupRefAssetEntry)
       return yield* Effect.fail(
@@ -114,10 +121,10 @@ export const unsignedJoinGroupTxProgram = (
           address: groupUtxo.address,
         }),
       );
-    const groupRefName = groupRefAssetEntry.slice(groupPolicyId!.length);
+    const groupRefName = groupRefAssetEntry.slice(groupPolicyId.length);
 
     const accountAssetEntry = Object.keys(accountUtxo.assets).find((k) =>
-      k.startsWith(accountPolicyId!),
+      k.startsWith(accountPolicyId),
     );
     if (!accountAssetEntry)
       return yield* Effect.fail(
@@ -126,14 +133,14 @@ export const unsignedJoinGroupTxProgram = (
           address: accountUtxo.address,
         }),
       );
-    const accountAssetName = accountAssetEntry.slice(accountPolicyId!.length);
+    const accountAssetName = accountAssetEntry.slice(accountPolicyId.length);
 
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       member_count: groupDatum.member_count + 1n,
       member_token_names: [accountAssetName, ...groupDatum.member_token_names],
     };
-    const treasuryMemberToken = toUnit(treasuryPolicyId!, accountAssetName);
+    const treasuryMemberToken = toUnit(treasuryPolicyId, accountAssetName);
 
     const mintingAssets: Assets = { [treasuryMemberToken]: 1n };
     // Lock the configured collateral floor — contribution_fee × collateral_rounds — in the
@@ -307,6 +314,7 @@ export const unsignedJoinGroupTxProgram = (
             .attach.SpendingValidator(groupValidator.spendGroup);
 
     const tx = yield* withValidators
+      .readFrom([settingsUtxo])
       .addSigner(address)
       .validFrom(Number(now))
       .completeProgram()

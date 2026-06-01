@@ -13,12 +13,7 @@ import {
   TreasuryDatumSchema,
   TreasuryRedeemer,
 } from "../core/types.js";
-import {
-  treasuryValidator,
-  treasuryPolicyId,
-  groupPolicyId,
-  groupValidator,
-} from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 import {
   getScriptAddress,
   parseGroupCip68Datum,
@@ -55,16 +50,19 @@ export type NextCycleConfig = {
 };
 
 export const unsignedNextCycleTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: NextCycleConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { treasuryValidator, treasuryPolicyId, groupPolicyId, groupValidator, settingsUnit } = protocol;
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix } = config;
 
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
     const groupUserUnit =
-      groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix222 + groupTokenSuffix;
 
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const adminUtxoRaw = yield* resolveUtxoByUnit(lucid, groupUserUnit);
@@ -102,7 +100,7 @@ export const unsignedNextCycleTxProgram = (
     }
 
     const groupRefAsset = Object.keys(groupUtxo.assets).find((k) =>
-      k.startsWith(groupPolicyId!),
+      k.startsWith(groupPolicyId),
     );
     if (!groupRefAsset)
       return yield* Effect.fail(
@@ -111,7 +109,7 @@ export const unsignedNextCycleTxProgram = (
           error: "Group reference token not found",
         }),
       );
-    const groupRefName = groupRefAsset.slice(groupPolicyId!.length);
+    const groupRefName = groupRefAsset.slice(groupPolicyId.length);
 
     // Query all treasury UTxOs and filter to active members of this group at end-of-cycle.
     const treasuryAddress = yield* getScriptAddress(
@@ -192,7 +190,7 @@ export const unsignedNextCycleTxProgram = (
       const updatedDatum: TreasuryDatum = {
         TreasuryState: { ...ts, rounds_paid: 0n },
       };
-      const memberToken = treasuryPolicyId! + ts.member_reference_tokenname;
+      const memberToken = treasuryPolicyId + ts.member_reference_tokenname;
       return { utxo: state.utxo, updatedDatum, memberToken };
     });
 
@@ -288,6 +286,7 @@ export const unsignedNextCycleTxProgram = (
     const tx = yield* withAllOutputs.pay
       .ToAddress(adminAddress, { [groupUserUnit]: 1n })
       .addSigner(adminAddress)
+      .readFrom([settingsUtxo])
       .completeProgram(
         lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
       )

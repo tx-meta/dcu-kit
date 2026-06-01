@@ -17,10 +17,6 @@ import {
   patchInlineDatum,
 } from "../src/core/utils/index.js";
 import { createDefaultGroupDatum, extractTokenSuffix } from "./utils.js";
-import {
-  groupPolicyId,
-  groupValidator,
-} from "../src/core/validators/constants.js";
 import { toText } from "@lucid-evolution/lucid";
 
 describe("Group Endpoints", () => {
@@ -51,7 +47,7 @@ describe("Group Endpoints", () => {
 
       const groupAddress = yield* getScriptAddress(
         context.lucid,
-        groupValidator.spendGroup,
+        context.protocol!.groupValidator.spendGroup,
       );
       const utxos = yield* Effect.tryPromise(() =>
         context.lucid.utxosAt(groupAddress),
@@ -162,7 +158,7 @@ describe("Group Endpoints", () => {
         const fakeSuffix = "00".repeat(28);
 
         const err = yield* Effect.flip(
-          unsignedUpdateGroupTxProgram(lucid, {
+          unsignedUpdateGroupTxProgram(context.protocol!,lucid, {
             groupTokenSuffix: fakeSuffix,
             updatedDatum: createDefaultGroupDatum(),
           }),
@@ -185,7 +181,7 @@ describe("Group Endpoints", () => {
         const fakeSuffix = "00".repeat(28);
 
         const err = yield* Effect.flip(
-          unsignedDeleteGroupTxProgram(lucid, { groupTokenSuffix: fakeSuffix }),
+          unsignedDeleteGroupTxProgram(context.protocol!,lucid, { groupTokenSuffix: fakeSuffix }),
         );
 
         expect(err._tag).toBe("UtxoNotFoundError");
@@ -209,7 +205,7 @@ describe("Group Endpoints", () => {
 
         const groupTokenSuffix = extractTokenSuffix(
           groupUtxo,
-          groupPolicyId!,
+          context.protocol!.groupPolicyId,
           assetNameLabels.prefix100,
         );
         const badDatum = {
@@ -218,7 +214,7 @@ describe("Group Endpoints", () => {
         };
 
         const err = yield* Effect.flip(
-          unsignedUpdateGroupTxProgram(lucid, {
+          unsignedUpdateGroupTxProgram(context.protocol!,lucid, {
             groupTokenSuffix,
             updatedDatum: badDatum,
           }),
@@ -242,12 +238,12 @@ describe("Group Endpoints", () => {
 
       const groupTokenSuffix = extractTokenSuffix(
         groupUtxo,
-        groupPolicyId!,
+        context.protocol!.groupPolicyId,
         assetNameLabels.prefix100,
       );
 
       const err = yield* Effect.flip(
-        unsignedDeleteGroupTxProgram(lucid, { groupTokenSuffix }),
+        unsignedDeleteGroupTxProgram(context.protocol!,lucid, { groupTokenSuffix }),
       );
 
       expect(err._tag).toBe("TransactionBuildError");

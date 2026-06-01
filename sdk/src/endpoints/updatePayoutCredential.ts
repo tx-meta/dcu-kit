@@ -12,11 +12,7 @@ import {
   TreasuryDatumSchema,
   TreasuryRedeemer,
 } from "../core/types.js";
-import {
-  treasuryValidator,
-  treasuryPolicyId,
-  accountPolicyId,
-} from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 import {
   DcuError,
   InvalidDatumError,
@@ -50,15 +46,18 @@ export type UpdatePayoutCredentialConfig = {
 };
 
 export const unsignedUpdatePayoutCredentialTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: UpdatePayoutCredentialConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { treasuryValidator, treasuryPolicyId, accountPolicyId, settingsUnit } = protocol;
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { accountTokenSuffix } = config;
 
     const memberRefName = assetNameLabels.prefix222 + accountTokenSuffix;
     const accountUnit = accountPolicyId + memberRefName;
-    const treasuryUnit = treasuryPolicyId! + memberRefName;
+    const treasuryUnit = treasuryPolicyId + memberRefName;
 
     const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUnit);
     const treasuryUtxoRaw = yield* resolveUtxoByUnit(lucid, treasuryUnit);
@@ -90,7 +89,7 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
       lucid,
       treasuryValidator.spendTreasury,
     );
-    const memberToken = toUnit(treasuryPolicyId!, memberRefName);
+    const memberToken = toUnit(treasuryPolicyId, memberRefName);
 
     const updatedDatum: TreasuryDatum = {
       TreasuryState: { ...ts, member_payment_credential: newPkh },
@@ -128,6 +127,7 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
       // paid; an explicit output forces coin selection to fund it from the wallet.
       .pay.ToAddress(address, { [accountUnit]: 1n })
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
+      .readFrom([settingsUtxo])
       .completeProgram()
       .pipe(
         Effect.mapError(

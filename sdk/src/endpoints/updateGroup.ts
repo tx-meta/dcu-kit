@@ -20,7 +20,7 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
 } from "../core/utils/index.js";
-import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 
 /**
  * Creates an unsigned transaction for updating a DCU Group's configuration.
@@ -49,16 +49,18 @@ export type UpdateGroupConfig = {
 };
 
 export const unsignedUpdateGroupTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: UpdateGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { groupValidator, groupPolicyId } = protocol;
     const { groupTokenSuffix, updatedDatum } = config;
 
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
     const adminUnit =
-      groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix222 + groupTokenSuffix;
 
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const adminUtxo = yield* resolveUtxoByUnit(lucid, adminUnit);
@@ -68,7 +70,7 @@ export const unsignedUpdateGroupTxProgram = (
     const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
 
     const groupRefAsset = Object.keys(groupUtxo.assets).find((k) =>
-      k.startsWith(groupPolicyId!),
+      k.startsWith(groupPolicyId),
     );
     if (!groupRefAsset)
       return yield* Effect.fail(
@@ -77,7 +79,7 @@ export const unsignedUpdateGroupTxProgram = (
           address: groupUtxo.address,
         }),
       );
-    const groupRefName = groupRefAsset.slice(groupPolicyId!.length);
+    const groupRefName = groupRefAsset.slice(groupPolicyId.length);
 
     const groupAssets: Assets = { ...groupUtxo.assets };
 

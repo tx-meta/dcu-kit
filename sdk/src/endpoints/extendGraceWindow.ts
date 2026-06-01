@@ -11,11 +11,7 @@ import {
   TreasuryDatumSchema,
   TreasuryRedeemer,
 } from "../core/types.js";
-import {
-  treasuryValidator,
-  treasuryPolicyId,
-  groupPolicyId,
-} from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 import {
   DcuError,
   InvalidDatumError,
@@ -51,21 +47,24 @@ export type ExtendGraceWindowConfig = {
 };
 
 export const unsignedExtendGraceWindowTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: ExtendGraceWindowConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { treasuryValidator, treasuryPolicyId, groupPolicyId, settingsUnit } = protocol;
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix, memberAccountTokenSuffix } = config;
 
     // Group reference token (read-only, not spent)
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
     // Admin holds the group (222) user token — proves admin identity
     const adminUnit =
-      groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix222 + groupTokenSuffix;
     // Member's treasury UTxO (must be DefaultState)
     const memberRefName = assetNameLabels.prefix222 + memberAccountTokenSuffix;
-    const treasuryUnit = treasuryPolicyId! + memberRefName;
+    const treasuryUnit = treasuryPolicyId + memberRefName;
 
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const adminUtxoRaw = yield* resolveUtxoByUnit(lucid, adminUnit);
@@ -93,7 +92,7 @@ export const unsignedExtendGraceWindowTxProgram = (
 
     const ics = treasuryDatum.DefaultState;
 
-    const memberToken = toUnit(treasuryPolicyId!, memberRefName);
+    const memberToken = toUnit(treasuryPolicyId, memberRefName);
     const address = yield* getWalletAddress(lucid);
     const treasuryAddress = yield* getScriptAddress(
       lucid,
@@ -141,6 +140,7 @@ export const unsignedExtendGraceWindowTxProgram = (
         { lovelace: treasuryUtxo.assets.lovelace, [memberToken]: 1n },
       )
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
+      .readFrom([settingsUtxo])
       .completeProgram(
         lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
       )

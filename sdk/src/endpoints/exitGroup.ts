@@ -15,13 +15,7 @@ import {
   TreasuryDatumSchema,
   TreasuryRedeemer,
 } from "../core/types.js";
-import {
-  treasuryValidator,
-  treasuryPolicyId,
-  groupValidator,
-  groupPolicyId,
-  accountPolicyId,
-} from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 import {
   DcuError,
   InvalidDatumError,
@@ -76,14 +70,17 @@ export type ExitGroupConfig = {
 };
 
 export const unsignedExitGroupTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: ExitGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { treasuryValidator, treasuryPolicyId, groupValidator, groupPolicyId, accountPolicyId, settingsUnit } = protocol;
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix, currentTime } = config;
 
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
 
@@ -179,7 +176,7 @@ export const unsignedExitGroupTxProgram = (
     const groupDatum = groupCip68.groupDatum;
 
     const groupRefAssetEntry = Object.keys(groupUtxo.assets).find((k) =>
-      k.startsWith(groupPolicyId!),
+      k.startsWith(groupPolicyId),
     );
     if (!groupRefAssetEntry)
       return yield* Effect.fail(
@@ -188,9 +185,9 @@ export const unsignedExitGroupTxProgram = (
           address: groupUtxo.address,
         }),
       );
-    const groupRefName = groupRefAssetEntry.slice(groupPolicyId!.length);
+    const groupRefName = groupRefAssetEntry.slice(groupPolicyId.length);
 
-    const memberToken = toUnit(treasuryPolicyId!, memberRefName);
+    const memberToken = toUnit(treasuryPolicyId, memberRefName);
     const penaltyAssets: Assets = {
       lovelace: 2_000_000n + groupDatum.penalty_fee,
       [memberToken]: 1n,
@@ -338,7 +335,10 @@ export const unsignedExitGroupTxProgram = (
             .attach.SpendingValidator(treasuryValidator.spendTreasury)
             .attach.SpendingValidator(groupValidator.spendGroup);
 
-    const tx = yield* withValidators.completeProgram().pipe(
+    const tx = yield* withValidators
+      .readFrom([settingsUtxo])
+      .completeProgram()
+      .pipe(
       Effect.mapError(
         (e) =>
           new TransactionBuildError({

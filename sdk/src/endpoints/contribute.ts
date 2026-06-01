@@ -11,12 +11,7 @@ import {
   TreasuryDatumSchema,
   TreasuryRedeemer,
 } from "../core/types.js";
-import {
-  treasuryValidator,
-  treasuryPolicyId,
-  accountPolicyId,
-  groupPolicyId,
-} from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 import {
   DcuError,
   InvalidDatumError,
@@ -53,18 +48,21 @@ export type ContributeConfig = {
 };
 
 export const unsignedContributeTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: ContributeConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { treasuryValidator, treasuryPolicyId, accountPolicyId, groupPolicyId, settingsUnit } = protocol;
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix, accountTokenSuffix, topUpAmount } = config;
 
     const memberRefName = assetNameLabels.prefix222 + accountTokenSuffix;
     const accountUnit = accountPolicyId + memberRefName;
-    const treasuryUnit = treasuryPolicyId! + memberRefName;
+    const treasuryUnit = treasuryPolicyId + memberRefName;
     // Group reference token (read-only) — supplies the contribution asset + fee.
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
 
     const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUnit);
     const treasuryUtxoRaw = yield* resolveUtxoByUnit(lucid, treasuryUnit);
@@ -94,7 +92,7 @@ export const unsignedContributeTxProgram = (
       lucid,
       treasuryValidator.spendTreasury,
     );
-    const memberToken = toUnit(treasuryPolicyId!, memberRefName);
+    const memberToken = toUnit(treasuryPolicyId, memberRefName);
 
     // The contribution asset may be ADA (empty policy id → "lovelace") or a native token.
     const contributionUnit =
@@ -141,6 +139,7 @@ export const unsignedContributeTxProgram = (
         outputAssets,
       )
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
+      .readFrom([settingsUtxo])
       .completeProgram(
         lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
       )
