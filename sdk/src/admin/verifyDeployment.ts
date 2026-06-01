@@ -4,11 +4,7 @@ import {
   validatorToAddress,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import {
-  treasuryValidator,
-  groupValidator,
-  alwaysFailsValidator,
-} from "../core/validators/constants.js";
+import { alwaysFailsValidator, Protocol } from "../core/validators/constants.js";
 import { DcuError, SetupError } from "../core/errors.js";
 import { ScriptRefOutRef } from "./deployScripts.js";
 
@@ -38,15 +34,19 @@ export type VerifyDeploymentResult = {
  * A failed check means `ok: false` with a descriptive `issues` array.
  * This does NOT throw — callers can inspect the result and decide.
  *
+ * @param protocol - The deployment's protocol context (treasury/group validators
+ *                   derived from its settings policy). Build with `buildProtocol`.
  * @param lucid  - Lucid instance (any wallet, read-only query).
  * @param config - The OutRefs returned by `deployScripts`.
  * @returns Effect yielding `VerifyDeploymentResult`.
  */
 export const verifyDeployment = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: VerifyDeploymentConfig,
 ): Effect.Effect<VerifyDeploymentResult, DcuError, never> =>
   Effect.gen(function* () {
+    const { treasuryValidator, groupValidator } = protocol;
     const { treasuryRef, groupRef } = config;
 
     const network = lucid.config().network!;

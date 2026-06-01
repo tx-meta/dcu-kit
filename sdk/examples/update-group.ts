@@ -10,14 +10,13 @@
  */
 
 import {
-  updateGroup,
   UpdateGroupConfig,
   GroupDatum,
   GroupCip68Datum,
-  groupPolicyId,
   assetNameLabels,
 } from "@tx-meta/dcu-sdk";
 import { Data } from "@lucid-evolution/lucid";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -42,7 +41,10 @@ async function main() {
   lucid.selectWallet.fromSeed(adminSeed);
   await logWalletInfo(lucid, "ADMIN");
 
-  checkValidatorStaleness({ groupPolicyId: groupPolicyId! });
+  const sdk = loadSdk();
+  const { groupPolicyId } = sdk.protocol;
+
+  checkValidatorStaleness({ groupPolicyId });
 
   let { groupTokenSuffix } = loadState();
 
@@ -113,7 +115,7 @@ async function main() {
   };
 
   console.log("Building transaction...");
-  const tx = await updateGroup(lucid, config).unsafeRun();
+  const tx = await sdk.updateGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

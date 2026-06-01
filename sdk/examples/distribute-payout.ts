@@ -19,17 +19,13 @@
  */
 
 import {
-  distributePayout,
   DistributePayoutConfig,
   accountPolicyId,
-  groupPolicyId,
   GroupCip68Datum,
-  TreasuryDatum,
-  TreasuryDatumSchema,
-  treasuryValidator,
   assetNameLabels,
 } from "@tx-meta/dcu-sdk";
-import { Data, UTxO, validatorToAddress } from "@lucid-evolution/lucid";
+import { Data, UTxO } from "@lucid-evolution/lucid";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -66,7 +62,10 @@ async function main() {
     `Submitting as: ${activeWallet} (payout goes to the current slot holder regardless)`,
   );
 
-  checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
+  const sdk = loadSdk();
+  const { groupPolicyId } = sdk.protocol;
+
+  checkValidatorStaleness({ accountPolicyId, groupPolicyId });
 
   const state = loadState();
   const { groupTokenSuffix } = state;
@@ -156,7 +155,7 @@ async function main() {
   };
 
   console.log("Building payout transaction...");
-  const tx = await distributePayout(lucid, config).unsafeRun();
+  const tx = await sdk.distributePayout(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

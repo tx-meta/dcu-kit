@@ -10,11 +10,11 @@
  */
 
 import {
-  deleteAccount,
   DeleteAccountConfig,
   accountPolicyId,
   assetNameLabels,
 } from "@tx-meta/dcu-sdk";
+import { loadSdk } from "./sdk.js";
 import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
 import {
   loadState,
@@ -33,6 +33,8 @@ async function main() {
     );
     process.exit(0);
   }
+
+  const sdk = loadSdk();
 
   checkValidatorStaleness({ accountPolicyId });
 
@@ -72,7 +74,7 @@ async function main() {
   };
 
   console.log("Building transaction...");
-  const tx = await deleteAccount(lucid, config).unsafeRun();
+  const tx = await sdk.deleteAccount(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

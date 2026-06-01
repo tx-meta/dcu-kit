@@ -36,42 +36,11 @@ export const accountScript = {
   minting: accountValidator.mintAccount.script,
 };
 
-// --- Treasury (parameterized with accountPolicyId) ---
-// Must be computed before group so groupValidator can reference treasuryPolicyId.
-export const treasuryValidator = {
-  spendTreasury: withPolicyParam(
-    raw("treasury_validator.treasury.spend"),
-    accountPolicyId,
-  ),
-  mintTreasury: withPolicyParam(
-    raw("treasury_validator.treasury.mint"),
-    accountPolicyId,
-  ),
-};
-export const treasuryPolicyId = mintingPolicyToId(
-  treasuryValidator.mintTreasury,
-);
-export const treasuryScript = {
-  spending: treasuryValidator.spendTreasury.script,
-  minting: treasuryValidator.mintTreasury.script,
-};
-
-// --- Group (parameterized with treasuryPolicyId) ---
-export const groupValidator = {
-  spendGroup: withPolicyParam(
-    raw("group_validator.group_validator.spend"),
-    treasuryPolicyId,
-  ),
-  mintGroup: withPolicyParam(
-    raw("group_validator.group_validator.mint"),
-    treasuryPolicyId,
-  ),
-};
-export const groupPolicyId = mintingPolicyToId(groupValidator.mintGroup);
-export const groupScript = {
-  spending: groupValidator.spendGroup.script,
-  minting: groupValidator.mintGroup.script,
-};
+// --- Treasury + Group are NOT static ---
+// Under P5 the treasury validator is parameterized by the deployment's settings
+// policy (not accountPolicyId), and the group validator by the resulting treasury
+// policy. Those hashes are deploy-specific, so there are no static treasury/group
+// exports — derive them per deployment with `buildProtocol(settingsPolicy)` below.
 
 // --- AlwaysFails (no parameters) ---
 // Used as the deployment address for reference scripts. UTxOs sent here can

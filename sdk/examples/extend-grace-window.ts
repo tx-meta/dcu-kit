@@ -21,11 +21,10 @@
  */
 
 import {
-  extendGraceWindow,
   ExtendGraceWindowConfig,
   accountPolicyId,
-  groupPolicyId,
 } from "@tx-meta/dcu-sdk";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -54,7 +53,10 @@ async function main() {
   lucid.selectWallet.fromSeed(adminSeed);
   await logWalletInfo(lucid, "ADMIN");
 
-  checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
+  const sdk = loadSdk();
+  const { groupPolicyId } = sdk.protocol;
+
+  checkValidatorStaleness({ accountPolicyId, groupPolicyId });
 
   const memberWallet = (process.env.MEMBER_WALLET ?? "USER1").toUpperCase();
   const state = loadState();
@@ -84,7 +86,7 @@ async function main() {
   };
 
   console.log("Building extend-grace-window transaction...");
-  const tx = await extendGraceWindow(lucid, config).unsafeRun();
+  const tx = await sdk.extendGraceWindow(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

@@ -18,12 +18,8 @@
  * Requires the Account NFT to be in the active wallet.
  */
 
-import {
-  contribute,
-  ContributeConfig,
-  accountPolicyId,
-  groupPolicyId,
-} from "@tx-meta/dcu-sdk";
+import { ContributeConfig, accountPolicyId } from "@tx-meta/dcu-sdk";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -56,7 +52,10 @@ async function main() {
   lucid.selectWallet.fromSeed(walletSeed);
   await logWalletInfo(lucid, activeWallet);
 
-  checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
+  const sdk = loadSdk();
+  const { groupPolicyId } = sdk.protocol;
+
+  checkValidatorStaleness({ accountPolicyId, groupPolicyId });
 
   const topUpAmount = process.env.TOP_UP_AMOUNT
     ? BigInt(process.env.TOP_UP_AMOUNT)
@@ -70,6 +69,12 @@ async function main() {
         `Run: ACTIVE_WALLET=${activeWallet} pnpm run create-account`,
     );
 
+  const { groupTokenSuffix } = state;
+  if (!groupTokenSuffix)
+    throw new Error(
+      "groupTokenSuffix not found in state.json. Run create-group.ts first.",
+    );
+
   console.log(
     `Topping up ${activeWallet}'s treasury UTxO by ${topUpAmount / 1_000_000n} ADA...`,
   );
@@ -78,12 +83,13 @@ async function main() {
   );
 
   const config: ContributeConfig = {
+    groupTokenSuffix,
     accountTokenSuffix,
     topUpAmount,
   };
 
   console.log("Building contribute transaction...");
-  const tx = await contribute(lucid, config).unsafeRun();
+  const tx = await sdk.contribute(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

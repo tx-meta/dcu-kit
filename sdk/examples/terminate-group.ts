@@ -8,12 +8,8 @@
  * Requires a PenaltyState treasury UTxO to exist — run exit-group.ts (early exit) first.
  */
 
-import {
-  terminateGroup,
-  TerminateGroupConfig,
-  accountPolicyId,
-  groupPolicyId,
-} from "@tx-meta/dcu-sdk";
+import { TerminateGroupConfig, accountPolicyId } from "@tx-meta/dcu-sdk";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -44,7 +40,10 @@ async function main() {
   lucid.selectWallet.fromSeed(adminSeed);
   await logWalletInfo(lucid, "ADMIN");
 
-  checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
+  const sdk = loadSdk();
+  const { groupPolicyId } = sdk.protocol;
+
+  checkValidatorStaleness({ accountPolicyId, groupPolicyId });
 
   // MEMBER_WALLET identifies whose PenaltyState UTxO to claim (default: USER1).
   // Set MEMBER_WALLET=USER2 if USER2 exited early and you want to claim their penalty.
@@ -68,7 +67,7 @@ async function main() {
   };
 
   console.log("Building terminate transaction...");
-  const tx = await terminateGroup(lucid, config).unsafeRun();
+  const tx = await sdk.terminateGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

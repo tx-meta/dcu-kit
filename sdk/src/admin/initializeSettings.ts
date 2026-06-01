@@ -2,6 +2,7 @@ import {
   Data,
   LucidEvolution,
   TxSignBuilder,
+  UTxO,
   validatorToAddress,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
@@ -34,9 +35,14 @@ export type InitializeSettingsResult = {
  * references this UTxO to authenticate the trusted group policy.
  *
  * Must be run once before deploy-scripts / any treasury operation on a fresh deployment.
+ *
+ * Pass an explicit `seed` UTxO to make the resulting settings policy deterministic —
+ * the caller can `deriveSettings(seed)` up front to learn the policy before submitting.
+ * When omitted, the first wallet UTxO is used.
  */
 export const unsignedInitializeSettingsProgram = (
   lucid: LucidEvolution,
+  seedUtxo?: UTxO,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     const address = yield* getWalletAddress(lucid);
@@ -52,7 +58,7 @@ export const unsignedInitializeSettingsProgram = (
       );
 
     // Any wallet UTxO works as the one-shot seed — it is consumed by this tx.
-    const seed = walletUtxos[0];
+    const seed = seedUtxo ?? walletUtxos[0];
     const { validator, policyId: settingsPolicy } = buildSettingsNft({
       txHash: seed.txHash,
       outputIndex: seed.outputIndex,
@@ -98,8 +104,8 @@ export const unsignedInitializeSettingsProgram = (
     return tx;
   });
 
-export const initializeSettings = (lucid: LucidEvolution) =>
-  makeReturn(unsignedInitializeSettingsProgram(lucid));
+export const initializeSettings = (lucid: LucidEvolution, seedUtxo?: UTxO) =>
+  makeReturn(unsignedInitializeSettingsProgram(lucid, seedUtxo));
 
 /**
  * Pure helper: derive the settings policy + the deployment's policy IDs from a seed

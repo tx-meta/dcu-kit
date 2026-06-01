@@ -63,8 +63,8 @@ async function main() {
 
   const config: UpdateAccountConfig = {
     accountTokenSuffix,
-    email: "updated@dcu.io",
-    phone: "555-9999",
+    display_name: "updated_alice",
+    contact: "updated@dcu.io",
   };
 
   console.log("Building transaction...");

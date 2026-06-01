@@ -4,11 +4,7 @@ import {
   validatorToAddress,
 } from "@lucid-evolution/lucid";
 import { Effect, Schedule } from "effect";
-import {
-  treasuryValidator,
-  groupValidator,
-  alwaysFailsValidator,
-} from "../core/validators/constants.js";
+import { alwaysFailsValidator, Protocol } from "../core/validators/constants.js";
 import { DcuError, TransactionBuildError, SetupError } from "../core/errors.js";
 import { getWalletAddress } from "../core/utils/index.js";
 
@@ -85,13 +81,17 @@ const awaitWalletIndexed = (
  *
  * **Cost**: ~56 ADA total (30 + 26) permanently locked. Cannot be reclaimed.
  *
+ * @param protocol - The deployment's protocol context (treasury/group validators
+ *                   derived from its settings policy). Build with `buildProtocol`.
  * @param lucid - Lucid instance with admin wallet selected (live network only).
  * @returns Effect yielding `DeployScriptsResult` with the two on-chain OutRefs.
  */
 export const deployScripts = (
+  protocol: Protocol,
   lucid: LucidEvolution,
 ): Effect.Effect<DeployScriptsResult, DcuError, never> =>
   Effect.gen(function* () {
+    const { treasuryValidator, groupValidator } = protocol;
     const address = yield* getWalletAddress(lucid);
     const network = lucid.config().network!;
     const deployAddress = validatorToAddress(

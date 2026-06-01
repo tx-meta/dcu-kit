@@ -181,7 +181,7 @@ async function main(): Promise<void> {
     `  Block   : ${commas(tx.block_height)}  Slot: ${commas(tx.slot)}`,
   );
   console.log(
-    `  Fee     : ${BLD}${ada(BigInt(tx.fees))}${RST}  ${DIM}(${commas(tx.fees)} lovelace)${RST}`,
+    `  Fee     : ${BLD}${ada(BigInt(tx.fees))}${RST}  ${DIM}(${commas(BigInt(tx.fees))} lovelace)${RST}`,
   );
   console.log(
     `  Size    : ${commas(tx.size)} / ${commas(PROTOCOL.TX_SIZE_MAX)} bytes  ${bar(sizePct, 20)} ${pctStr(sizePct)}`,
