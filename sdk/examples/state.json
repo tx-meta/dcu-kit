@@ -1,19 +1,20 @@
 {
+  "settingsPolicy": "aaf621fca07b5550ab47fcd852172a9231c64333a56b2b1243f70cd5",
+  "settingsSeed": {
+    "txHash": "d6b12d49a35570656a8f97e1b1f838edd3bfdde5d51965246d3d921dbf246841",
+    "outputIndex": 2
+  },
   "scriptRefTreasury": {
-    "txHash": "729f6063360948b9407d660e185d03cb40af6882186043b7f09751bc8c4e470f",
+    "txHash": "186c7305b9c03454774964573bbff6ef880eca7b7ad83e1bca9a0e9fdb7fb44d",
     "outputIndex": 0
   },
   "scriptRefGroup": {
-    "txHash": "23f74a73aae73bfbd9e1d13af1c130401f66feed3c17a7e53b737ceb2616dc6a",
+    "txHash": "d49bef331c4e63e7ed381d110fcbf2507d8a19d75042935fb75221587d0df4e7",
     "outputIndex": 0
   },
-  "adminAccountTokenSuffix": "1bad50066455c2cb37592a5692f7cba8faae5621edd3b2e0283a5f3d",
-  "accountPolicyId": "394027d4084e26f5beb74518cd25a6e5bcee316a9cad7ee8e54a6c02",
-  "accountTokenSuffix": "5f90cddef19fa5d9de98ac01503615fd6e12dbd299023b112e2db922",
-  "user2AccountTokenSuffix": "16d692dbcfbf89c071f79a1faf0ab0536c362d5d124ca65692da65c8",
-  "groupTokenSuffix": "134f79cea7e59913e4a96f7a8a063612980c47838b3f39f63b5bf4bc",
-  "groupPolicyId": "36c85c77027636fe29f6961907876ec549f6005bb0cc14aaa5f9a85e",
+  "accountPolicyId": "e32328b8dd296c533acbe8d0ef3f9975513aa350d8c37d44217a5c60",
+  "groupPolicyId": "baf4af179a495f9fd4f1ec40cfd9a9969d61a777e1f15f9b8e9f9627",
   "groupIntervalLength": 300000,
-  "groupStartTime": 1780013358000,
-  "groupNumRounds": 3
+  "groupStartTime": 1780667299000,
+  "groupNumRounds": 2
 }
