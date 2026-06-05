@@ -18,11 +18,10 @@
  */
 
 import {
-  updatePayoutCredential,
   UpdatePayoutCredentialConfig,
   accountPolicyId,
-  groupPolicyId,
 } from "@tx-meta/dcu-sdk";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -53,7 +52,10 @@ async function main() {
   lucid.selectWallet.fromSeed(walletSeed);
   await logWalletInfo(lucid, activeWallet);
 
-  checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
+  const sdk = loadSdk();
+  const { groupPolicyId } = sdk.protocol;
+
+  checkValidatorStaleness({ accountPolicyId, groupPolicyId });
 
   const state = loadState();
   const accountTokenSuffix = state[accountSuffixKey(activeWallet)];
@@ -73,7 +75,7 @@ async function main() {
   const config: UpdatePayoutCredentialConfig = { accountTokenSuffix };
 
   console.log("Building update-payout-credential transaction...");
-  const tx = await updatePayoutCredential(lucid, config).unsafeRun();
+  const tx = await sdk.updatePayoutCredential(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

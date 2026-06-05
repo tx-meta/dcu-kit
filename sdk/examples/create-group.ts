@@ -1,11 +1,10 @@
 import {
-  createGroup,
   CreateGroupConfig,
   GroupDatum,
-  groupPolicyId,
   assetNameLabels,
 } from "@tx-meta/dcu-sdk";
 import { getAddressDetails } from "@lucid-evolution/lucid";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -26,7 +25,10 @@ async function main() {
   lucid.selectWallet.fromSeed(adminSeed);
   await logWalletInfo(lucid, activeWallet);
 
-  checkValidatorStaleness({ groupPolicyId: groupPolicyId! });
+  const sdk = loadSdk();
+  const { groupPolicyId } = sdk.protocol;
+
+  checkValidatorStaleness({ groupPolicyId });
 
   const utxos = await lucid.wallet().getUtxos();
   if (utxos.length === 0)
@@ -100,6 +102,18 @@ async function main() {
     num_rounds: 0n,
     max_members: MAX_MEMBERS,
 
+    // Collateral the join floor requires, expressed in rounds of contribution_fee:
+    //   1n            = PerRound (default) — members top up each round via Contribute
+    //   MAX_MEMBERS   = FullUpfront — entire obligation locked at join
+    //   k             = partial — k rounds locked up front
+    collateral_rounds: 1n,
+
+    // Push (default): the round's pot is paid straight to the borrower's wallet.
+    // Pull: the pot is earmarked in the borrower's own treasury (claimable_balance)
+    //       and withdrawn later via ClaimPayout — the lost-wallet-safe mode.
+    // Set PAYOUT_MODE=Pull to create a Pull-mode group.
+    payout_mode: process.env.PAYOUT_MODE === "Pull" ? "Pull" : "Push",
+
     member_count: 0n,
     is_active: true,
     is_started: false,
@@ -115,12 +129,16 @@ async function main() {
     // groupName goes into the CIP-68 metadata map (metadata["name"]) on the group
     // reference token. Wallets display this name when showing the group NFT.
     groupName: process.env.GROUP_NAME ?? "My DCU Group",
+    // groupDescription is the chama's stated purpose — e.g. "Kiambu land-buying chama".
+    // Stored on-chain in metadata["description"] and frozen once a member joins. Optional.
+    groupDescription:
+      process.env.GROUP_DESCRIPTION ?? "A rotating savings group (chama).",
     groupDatum,
     utxoToSpend: utxos[0],
   };
 
   console.log("Building transaction...");
-  const tx = await createGroup(lucid, config).unsafeRun();
+  const tx = await sdk.createGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

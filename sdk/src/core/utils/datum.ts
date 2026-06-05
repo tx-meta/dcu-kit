@@ -1,4 +1,4 @@
-import { Constr, Data } from "@lucid-evolution/lucid";
+import { Constr, Data, fromText, toText } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum } from "../types.js";
 import { InvalidDatumError } from "../errors.js";
@@ -62,6 +62,29 @@ export const parseGroupCip68Datum = (
         reason: `invalid GroupCip68Datum: ${error}`,
       }),
   });
+
+/**
+ * Decodes the CIP-68 display metadata of a group into plain text fields.
+ *
+ * The metadata is an on-chain `Pairs<ByteArray, ByteArray>` (UTF-8 key → UTF-8 value),
+ * which Lucid deserialises to a `Map` of hex→hex. This reads the standard `name` and
+ * optional `description` keys back as UTF-8 strings. Unknown keys are ignored.
+ */
+export const decodeGroupMetadata = (
+  metadata: Data,
+): { name?: string; description?: string } => {
+  const result: { name?: string; description?: string } = {};
+  if (!(metadata instanceof Map)) return result;
+  const read = (key: string): string | undefined => {
+    const value = (metadata as Map<unknown, unknown>).get(fromText(key));
+    return typeof value === "string" ? toText(value) : undefined;
+  };
+  const name = read("name");
+  const description = read("description");
+  if (name !== undefined) result.name = name;
+  if (description !== undefined) result.description = description;
+  return result;
+};
 
 /**
  * Builds a GroupCip68Datum hex string from its component parts.

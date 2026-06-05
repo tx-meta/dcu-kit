@@ -1,55 +1,48 @@
 ---
 title: updateAccount
-description: Modify the encrypted Identity Metadata stored inside your Account Reference NFT.
+description: Update the display name and contact stored in your account.
 ---
 
-The `updateAccount` endpoint allows a user to cycle or refresh the `AccountDatum` held directly inside the `Account Validator`. It guarantees that any metadata attached to the user (such as an encrypted email hash or phone number) stays up to date.
+The `updateAccount` endpoint refreshes the `AccountDatum` (`display_name`, `contact`) held at the Account Validator. Authorization requires the matching User Auth NFT in your wallet.
+
+<Callout title="Standalone endpoint" type="info">
+`updateAccount` does not depend on a deployment's settings, so it is imported and called directly (not via `createDcuSdk`).
+</Callout>
+
+### What it does
+- Updates `display_name` and `contact` (raw UTF-8) on the account's reference datum; both default to the wallet address when omitted.
+- Requires the User Auth NFT in the wallet for authorization (the contract validates the CIP-68 pair).
+- Returns the auth token to your wallet and re-locks the updated datum at the validator.
 
 ## Configuration
 
-To authorize this update, the smart contract demands cryptographic proof. You must prove you hold the exact `User Auth NFT` that corresponds to the `Reference NFT` being modified.
-
 ```ts
-import { UTxO } from "@lucid-evolution/lucid";
-import { AccountDatum } from "@dcu/sdk";
-
 export type UpdateAccountConfig = {
-    /** The on-chain Reference UTxO sitting at the Account Validator */
-    account_utxo: UTxO;
-    
-    /** The Auth UTxO residing securely in your local wallet */
-    user_utxo: UTxO;
-    
-    /** The newly constructed AccountDatum payload containing your updated hashes */
-    account_datum: AccountDatum;
+  /** 28-byte token suffix of the account to update. */
+  accountTokenSuffix: string;
+
+  /** Optional new UTF-8 display name. Defaults to wallet address when omitted. */
+  display_name?: string;
+
+  /** Optional new UTF-8 secondary contact. Defaults to wallet address when omitted. */
+  contact?: string;
 };
 ```
-
-## Security Constraints
-
-Underneath the hood, this transaction:
-1. Validates that the `account_utxo` and `user_utxo` form a cryptographically valid CIP-68 pair.
-2. Sweeps the wallet's `user_utxo` as an input to enforce transaction authorization.
-3. Reposits the new `account_datum` as an inline datum securely back into the Account Validator script while paying the original Auth NFT safely back into your wallet.
 
 ## Usage
 
 ```ts
-import { updateAccount } from "@dcu/sdk";
-
-const config = {
-  account_utxo, // Reference UTxO sitting at the Account Validator
-  user_utxo,    // Auth UTxO in the user's wallet
-  account_datum: {
-    email_hash: "newEmailHash999...",
-    phone_hash: "newPhoneHash888..."
-  }
-};
+import { updateAccount } from "@tx-meta/dcu-sdk";
 
 try {
-  const txBuilder = await updateAccount(lucid, config).unsafeRun();
-  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
-  console.log("Account metadata updated! TxHash:", txHash);
+  const txBuilder = await updateAccount(lucid, {
+    accountTokenSuffix,
+    display_name: "alice.ada",
+    contact: "alice@example.com",
+  }).unsafeRun();
+
+  const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
+  console.log("Account updated! TxHash:", txHash);
 } catch (error) {
   console.error("Failed to update account:", error);
 }

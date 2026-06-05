@@ -8,7 +8,7 @@ use dcu/group.{
   validate_exit_group, validate_join_group, validate_update_group,
 }
 use tests/common
-use tests/fuzzers.{gen_group_datum}
+use tests/fuzzers.{gen_group_datum, gen_valid_group_datum}
 
 fn cip68_with(policy_id: assets.PolicyId, extra: GroupDatum) -> GroupCip68Datum {
   GroupCip68Datum { ..common.test_group_cip68_datum(policy_id), extra }
@@ -891,6 +891,61 @@ test create_group_invalid_creator_bond() {
   !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
+// --- collateral_rounds Tests ---
+
+// collateral_rounds must be in [1, max_members]. 0 is rejected.
+test create_group__rejects_collateral_rounds_below_one() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  let datum = GroupDatum { ..base_datum, collateral_rounds: 0 }
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// collateral_rounds greater than max_members is rejected.
+test create_group__rejects_collateral_rounds_above_max_members() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  // max_members is 30 in test_group_datum; 31 exceeds it.
+  let datum = GroupDatum { ..base_datum, collateral_rounds: 31 }
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
 // --- Property Tests ---
 
 test prop_create_group_integrity(datum via gen_group_datum()) {
@@ -916,8 +971,11 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
     cip68_with(policy_id, datum),
   )
 
-  // Define what makes a datum "Invalid"
-  let is_invalid = datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.creator_bond < 0 || datum.interval_length <= 0 || datum.num_rounds != 0 || datum.max_members <= 0 || datum.member_count != 0 || !datum.is_active || bytearray.length(
+  // Define what makes a datum "Invalid" — must mirror EVERY datum-level rule in
+  // validate_create_group, otherwise the "valid" branch below can assert True on a datum
+  // the validator actually rejects. (member_token_names, version and name are pinned valid
+  // by the harness — gen_group_datum sets member_token_names: [], cip68_with sets version/name.)
+  let is_invalid = datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.creator_bond < 0 || datum.grace_period_length < 0 || datum.interval_length <= 0 || datum.num_rounds != 0 || datum.max_members <= 0 || datum.member_count != 0 || !datum.is_active || datum.is_started || datum.start_time != 0 || datum.last_distributed_round != -1 || datum.collateral_rounds < 1 || datum.collateral_rounds > datum.max_members || bytearray.length(
     datum.creator_payment_credential,
   ) != 28
 
@@ -936,6 +994,34 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
   } else {
     validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
   }
+}
+
+// Accept-path property: a datum that satisfies every creation rule MUST be accepted.
+// gen_group_datum is random, so the `else` branch above is almost never reached with a
+// genuinely valid datum; this test uses a constrained generator so the accept path is
+// exercised on every run.
+test prop_create_group_accepts_valid(datum via gen_valid_group_datum()) {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
 // --- Security: num_rounds must be 0 at creation (set by startGroup) ---

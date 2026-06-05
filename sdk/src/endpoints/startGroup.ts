@@ -6,7 +6,7 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
-import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 import {
   getScriptAddress,
   parseGroupCip68Datum,
@@ -41,16 +41,18 @@ export type StartGroupConfig = {
 };
 
 export const unsignedStartGroupTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: StartGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { groupValidator, groupPolicyId } = protocol;
     const { groupTokenSuffix } = config;
 
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
     const groupUserUnit =
-      groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix222 + groupTokenSuffix;
 
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const adminUtxoRaw = yield* resolveUtxoByUnit(lucid, groupUserUnit);
@@ -61,7 +63,7 @@ export const unsignedStartGroupTxProgram = (
     const groupDatum = groupCip68.groupDatum;
 
     const groupRefAsset = Object.keys(groupUtxo.assets).find((k) =>
-      k.startsWith(groupPolicyId!),
+      k.startsWith(groupPolicyId),
     );
     if (!groupRefAsset)
       return yield* Effect.fail(
@@ -70,7 +72,7 @@ export const unsignedStartGroupTxProgram = (
           address: groupUtxo.address,
         }),
       );
-    const groupRefName = groupRefAsset.slice(groupPolicyId!.length);
+    const groupRefName = groupRefAsset.slice(groupPolicyId.length);
 
     // validFrom = start_time; Aiken reads it via get_lower_bound(tx)
     const rawNow =

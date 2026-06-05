@@ -15,13 +15,7 @@ import {
   TreasuryDatumSchema,
   TreasuryRedeemer,
 } from "../core/types.js";
-import {
-  treasuryValidator,
-  treasuryPolicyId,
-  groupValidator,
-  groupPolicyId,
-  accountPolicyId,
-} from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 import {
   DcuError,
   InvalidDatumError,
@@ -37,6 +31,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  MIN_ADA_RESERVE,
 } from "../core/utils/index.js";
 
 /**
@@ -76,14 +71,24 @@ export type ExitGroupConfig = {
 };
 
 export const unsignedExitGroupTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: ExitGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const {
+      treasuryValidator,
+      treasuryPolicyId,
+      groupValidator,
+      groupPolicyId,
+      accountPolicyId,
+      settingsUnit,
+    } = protocol;
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix, currentTime } = config;
 
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
 
@@ -179,7 +184,7 @@ export const unsignedExitGroupTxProgram = (
     const groupDatum = groupCip68.groupDatum;
 
     const groupRefAssetEntry = Object.keys(groupUtxo.assets).find((k) =>
-      k.startsWith(groupPolicyId!),
+      k.startsWith(groupPolicyId),
     );
     if (!groupRefAssetEntry)
       return yield* Effect.fail(
@@ -188,11 +193,15 @@ export const unsignedExitGroupTxProgram = (
           address: groupUtxo.address,
         }),
       );
-    const groupRefName = groupRefAssetEntry.slice(groupPolicyId!.length);
+    const groupRefName = groupRefAssetEntry.slice(groupPolicyId.length);
 
-    const memberToken = toUnit(treasuryPolicyId!, memberRefName);
+    const memberToken = toUnit(treasuryPolicyId, memberRefName);
+    // ADA-penalty groups: the PenaltyState UTxO must hold penalty_fee of *contributable*
+    // lovelace on top of the min-ADA reserve that carries the membership token, matching
+    // the validator's `contributable_in(...) >= penalty_fee` floor. (Token-penalty groups
+    // would additionally carry penalty_fee of the token; that path is not yet exercised.)
     const penaltyAssets: Assets = {
-      lovelace: 2_000_000n + groupDatum.penalty_fee,
+      lovelace: MIN_ADA_RESERVE + groupDatum.penalty_fee,
       [memberToken]: 1n,
     };
     const burnAssets: Assets = { [memberToken]: -1n };
@@ -315,15 +324,26 @@ export const unsignedExitGroupTxProgram = (
         groupUtxo.assets,
       );
 
-    const afterPath = (
-      isEarlyExit
-        ? baseTx.pay.ToContract(
-            treasuryAddress,
-            { kind: "inline", value: Data.to(penaltyDatum, TreasuryDatum) },
-            penaltyAssets,
-          )
-        : baseTx.mintAssets(burnAssets, mintBurnRedeemer)
-    ).validFrom(Number(now));
+    // Group output is index 0; the penalty output (early exit) must stay at index 1 to
+    // match penalty_output_index in the redeemer. The account-token return is therefore
+    // appended AFTER the penalty/burn so it never shifts those indices.
+    const withPenaltyOrBurn = isEarlyExit
+      ? baseTx.pay.ToContract(
+          treasuryAddress,
+          { kind: "inline", value: Data.to(penaltyDatum, TreasuryDatum) },
+          penaltyAssets,
+        )
+      : baseTx.mintAssets(burnAssets, mintBurnRedeemer);
+
+    // Explicitly return the member's account (222) token to their wallet. Without this the
+    // token dangles into the change output, and when the spent treasury already covers the
+    // penalty/burn outputs (e.g. under the larger min-ADA-reserve deposits) coin selection
+    // won't pull an extra wallet UTxO — leaving too little ADA to satisfy the token's
+    // min-UTxO ("not enough ADA leftover for non-ADA change"). The explicit output forces
+    // selection to fund it. Mirrors the value-neutral endpoints' pattern.
+    const afterPath = withPenaltyOrBurn.pay
+      .ToAddress(address, { [accountUserUnit]: 1n })
+      .validFrom(Number(now));
 
     // Use reference scripts when provided — avoids ~12KB of inline script bytes.
     const withValidators =
@@ -338,14 +358,17 @@ export const unsignedExitGroupTxProgram = (
             .attach.SpendingValidator(treasuryValidator.spendTreasury)
             .attach.SpendingValidator(groupValidator.spendGroup);
 
-    const tx = yield* withValidators.completeProgram().pipe(
-      Effect.mapError(
-        (e) =>
-          new TransactionBuildError({
-            operation: "exitGroup",
-            error: String(e),
-          }),
-      ),
-    );
+    const tx = yield* withValidators
+      .readFrom([settingsUtxo])
+      .completeProgram()
+      .pipe(
+        Effect.mapError(
+          (e) =>
+            new TransactionBuildError({
+              operation: "exitGroup",
+              error: String(e),
+            }),
+        ),
+      );
     return tx;
   });

@@ -1,46 +1,49 @@
 ---
 title: terminateGroup
-description: Burn a Treasury Membership token and return all locked capital to the transaction signer.
+description: Admin claims a PenaltyState treasury left by a member's early exit.
 ---
 
-The `terminateGroup` endpoint burns a Treasury Membership token and recovers all locked ADA from a Treasury UTxO outside the standard `exitGroup` flow. It is designed for Treasury UTxOs that are stuck in a broken or `PenaltyState`.
+The `terminateGroup` endpoint lets the admin claim a `PenaltyState` treasury UTxO — the position a member leaves behind when they exit early. It burns the membership token and releases the locked funds to the admin.
 
-<Callout title="No Admin Authorization Enforced" type="warn">
-The SDK does not require an `adminUtxo` or any admin credential for this endpoint. The signer is simply whoever submits the transaction. Restrict access to this operation at the application layer.
+<Callout title="Bound endpoint" type="info">
+Obtained from `createDcuSdk(settingsPolicy)`. See [Getting Started](/docs/getting-started).
 </Callout>
+
+<Callout title="Admin-gated" type="info">
+This endpoint is authorized by the group admin (222) token. The group UTxO is consumed as a **read-only reference input** (not spent) — used only to derive the group policy ID for admin-token authorization; the group validator does not run.
+</Callout>
+
+### What it does
+- Spends a member's `PenaltyState` treasury UTxO via the `TerminateGroup` redeemer.
+- Burns the treasury membership token.
+- Releases the locked funds to the admin.
 
 ## Configuration
 
 ```ts
-import { UTxO } from "@lucid-evolution/lucid";
-
 export type TerminateGroupConfig = {
-    /** The master Group UTxO */
-    groupUtxo: UTxO;
-    /** The Treasury UTxO to terminate */
-    treasuryUtxo: UTxO;
+  /** 28-byte token suffix of the group. */
+  groupTokenSuffix: string;
+
+  /** 28-byte account token suffix of the member whose PenaltyState is being claimed. */
+  memberAccountTokenSuffix: string;
 };
 ```
-
-## Mechanics
-This transaction bypasses the standard `exitGroup` flow:
-1. It asserts the `treasuryUtxo` is in a valid `TreasuryState` or `PenaltyState`.
-2. It submits a `TerminateGroup` Redeemer directly to the `TreasuryValidator`.
-3. It burns the Treasury Membership token (`-1n`) and returns all locked ADA to the transaction signer.
 
 ## Usage
 
 ```ts
-import { terminateGroup } from "@dcu/sdk";
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
 
 try {
-  const txBuilder = await terminateGroup(lucid, {
-    groupUtxo,
-    treasuryUtxo,
+  const txBuilder = await sdk.terminateGroup(lucid, {
+    groupTokenSuffix,
+    memberAccountTokenSuffix,
   }).unsafeRun();
-
-  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
-  console.log("Treasury terminated! TxHash:", txHash);
+  const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
+  console.log("Penalty claimed! TxHash:", txHash);
 } catch (error) {
   console.error("Failed to terminate:", error);
 }

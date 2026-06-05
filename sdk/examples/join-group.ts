@@ -15,15 +15,13 @@
  */
 
 import {
-  joinGroup,
   JoinGroupConfig,
-  groupPolicyId,
   accountPolicyId,
-  treasuryPolicyId,
   assetNameLabels,
   GroupCip68Datum,
 } from "@tx-meta/dcu-sdk";
 import { Data, UTxO } from "@lucid-evolution/lucid";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -57,6 +55,9 @@ async function main() {
   lucid.selectWallet.fromSeed(walletSeed);
   await logWalletInfo(lucid, activeWallet);
 
+  const sdk = loadSdk();
+  const { groupPolicyId, treasuryPolicyId } = sdk.protocol;
+
   const suffixKey = accountSuffixKey(activeWallet);
   const state = loadState();
 
@@ -66,7 +67,7 @@ async function main() {
   let { groupTokenSuffix } = state;
   let accountTokenSuffix = state[suffixKey];
 
-  checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
+  checkValidatorStaleness({ accountPolicyId, groupPolicyId });
 
   // Auto-discover groupTokenSuffix from the group admin (222) token in wallet
   if (!groupTokenSuffix) {
@@ -279,7 +280,7 @@ async function main() {
   };
 
   console.log("Building join transaction...");
-  const tx = await joinGroup(lucid, config).unsafeRun();
+  const tx = await sdk.joinGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

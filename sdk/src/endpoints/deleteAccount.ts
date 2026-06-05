@@ -25,7 +25,7 @@ import {
 import {
   accountValidator,
   accountPolicyId,
-  treasuryValidator,
+  Protocol,
 } from "../core/validators/constants.js";
 
 // --- Configuration ---
@@ -48,10 +48,12 @@ export type DeleteAccountConfig = {
  * @returns Effect yielding TxSignBuilder.
  */
 export const unsignedDeleteAccountTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: DeleteAccountConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { treasuryValidator } = protocol;
     const { accountTokenSuffix } = config;
 
     const refUnit =

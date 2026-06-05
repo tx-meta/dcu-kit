@@ -1,60 +1,80 @@
 ---
 title: joinGroup
-description: Formally enter a DCU Group and commit to its core logic parameters.
+description: Formally enter a DCU Group and lock the collateral floor into your treasury.
 ---
 
-The `joinGroup` endpoint allows a user who has minted a User Auth NFT (via `createAccount`) to officially lock their commitment into a specific Decentralized Credit Union.
+The `joinGroup` endpoint allows a user who has minted a User Auth NFT (via `createAccount`) to officially enter a specific group before it starts.
 
 ### Context within the DCU Protocol
-In a standard Rotating Savings and Credit Association (ROSCA), groups have a defined capacity of members who mutually agree to pool funds. By calling `joinGroup`, the user's wallet is cryptographically bound to the rules set by the Group Administrator during `createGroup` (such as the `contribution_fee`, `interval_length`, and `num_intervals`).
+In a Rotating Savings and Credit Association (ROSCA), a group has a defined capacity (`max_members`) of members who pool funds. By calling `joinGroup`, the member is bound to the rules set by the administrator during `createGroup` (such as `contribution_fee`, `interval_length`, and `max_members`). A member may only join while the group is **not yet started** — `startGroup` seals membership.
+
+<Callout title="Bound endpoint" type="info">
+`joinGroup` is obtained from `createDcuSdk(settingsPolicy)`, not imported standalone. See [Getting Started](/docs/getting-started) for the one-time settings setup.
+</Callout>
 
 ## Configuration
 
-To join a group, a user must provide proof of their identity and prove the existence of the group.
+Endpoint configs identify on-chain positions by their **permanent CIP-68 token suffix**, not by UTxO references (UTxO refs go stale on every spend).
 
 ```ts
 import { UTxO } from "@lucid-evolution/lucid";
 
 export type JoinGroupConfig = {
-    /** The master Group UTxO containing the rules and current member count */
-    groupUtxo: UTxO;
-    
-    /** The Auth UTxO representing your identity (created via createAccount) */
-    accountUtxo: UTxO;
-    
-    /** 
-     * The Admin Auth UTxO required to securely update the group's 
-     * state by incrementing the `member_count` on-chain.
-     */
-    adminUtxo: UTxO;
-    
-    /** The exact lovelace amount locked in the Treasury as your cyclic fee */
-    contributionAmount: bigint;
+  /** 28-byte token suffix of the group to join. */
+  groupTokenSuffix: string;
+
+  /** 28-byte token suffix of the caller's account (from createAccount). */
+  accountTokenSuffix: string;
+
+  /** POSIX ms. Use the emulator clock for tests; defaults to now on live networks. */
+  currentTime?: bigint;
+
+  /** Optional plain-ADA UTxOs to pre-supply for coin selection (live networks). */
+  fundingUtxos?: UTxO[];
+
+  /**
+   * Override the lovelace locked in the treasury (ADA-contribution groups).
+   * Defaults to `contribution_fee × collateral_rounds` (the validator floor).
+   * Deposits are never capped — set higher to prefund more rounds.
+   */
+  overrideDepositLovelace?: bigint;
+
+  /** Override the locked token amount (native-token groups). Defaults to the same floor. */
+  depositContributionAmount?: bigint;
+
+  /** Reference scripts (from deploy-scripts) to keep the tx under the 16 KB limit. */
+  scriptRefs?: { treasury?: UTxO; group?: UTxO };
 };
 ```
 
 ## What Happens On-Chain
 
 The SDK builds a single atomic transaction that:
-1. **Spends** the `groupUtxo` and returns it with an updated datum. The `member_count` is incremented and the next available rotation slot is assigned to this member.
-2. **Mints** 1 Treasury Membership NFT under the Treasury policy, uniquely identified by the member's Account token name.
-3. **Locks** the `contributionAmount` (lovelace) together with the new membership token into the Treasury Validator. The datum is pre-populated with the full `contribution_list` vesting schedule for all intervals.
-4. **Returns** the `accountUtxo` unmodified to the user's wallet. The identity credential is not consumed.
+
+1. **Spends** the group UTxO and returns it with `member_count` incremented and the new member appended to `member_token_names`. The member's `assigned_slot` is the pre-increment `member_count` (sequential slot assignment).
+2. **Mints** 1 Treasury Membership NFT under the treasury policy, named by the member's account token suffix.
+3. **Locks** the collateral floor — `contribution_fee × collateral_rounds` in the contribution asset — together with the membership token into the Treasury Validator, with a fresh `TreasuryState` datum (`rounds_paid = 0`, `claimable_balance = 0`).
+4. **Pays** the one-time `joining_fee` to the admin's payment credential.
+5. **Returns** the account token to the caller's wallet — the identity credential is not consumed.
+
+<Callout title="No vesting schedule" type="info">
+There is no pre-populated contribution list or vesting schedule. A member locks only the collateral floor at join (PerRound by default = one round) and tops up later via [`contribute`](/docs/api-reference/contribute). The pot for each round is assembled live during `distributePayout`.
+</Callout>
 
 ## Example Execution
 
 ```ts
-import { joinGroup } from "@dcu/sdk";
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
 
 try {
-  const txBuilder = await joinGroup(lucid, {
-    groupUtxo,
-    accountUtxo,
-    adminUtxo,
-    contributionAmount: 50_000_000n // 50 ADA
+  const txBuilder = await sdk.joinGroup(lucid, {
+    groupTokenSuffix,
+    accountTokenSuffix,
   }).unsafeRun();
 
-  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+  const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
   console.log("Joined group:", txHash);
 } catch (error) {
   console.error("Failed to join:", error);

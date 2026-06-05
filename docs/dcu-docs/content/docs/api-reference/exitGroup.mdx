@@ -7,22 +7,31 @@ The `exitGroup` endpoint handles one of the most critical flows in a Rotating Sa
 
 Depending on when a user chooses to exit relative to the `start_time` and maturity interval of the Group, the smart contracts enforce completely different financial branching logic.
 
-## Configuration
+<Callout title="Bound endpoint" type="info">
+Obtained from `createDcuSdk(settingsPolicy)`. See [Getting Started](/docs/getting-started).
+</Callout>
 
-Because exiting alters the total configuration of the pool, you must provide three core pieces of state:
+## Configuration
 
 ```ts
 import { UTxO } from "@lucid-evolution/lucid";
 
 export type ExitGroupConfig = {
-    /** The master UTxO holding the global Group Parameters */
-    groupUtxo: UTxO;
-    
-    /** The user's secure CIP-68 identity proof */
-    accountUtxo: UTxO;
-    
-    /** The specific Treasury UTxO tracking this user's participation state */
-    treasuryUtxo: UTxO;
+    /** 28-byte token suffix of the group to exit. */
+    groupTokenSuffix: string;
+
+    /**
+     * Optional 28-byte account token suffix used when joining. If omitted, the
+     * endpoint auto-detects it by scanning the wallet's account tokens against
+     * treasury UTxOs (handles wallets holding multiple account tokens).
+     */
+    accountTokenSuffix?: string;
+
+    /** POSIX ms. Use the emulator clock for tests; omit on live networks. */
+    currentTime?: bigint;
+
+    /** Reference scripts (from deploy-scripts) to keep the tx under the 16 KB limit. */
+    scriptRefs?: { treasury?: UTxO; group?: UTxO };
 };
 ```
 
@@ -31,10 +40,10 @@ export type ExitGroupConfig = {
 The **maturity threshold** is the point at which the group has completed all its rotation cycles:
 
 ```
-maturity_threshold = start_time + (num_intervals × interval_length)
+maturity_threshold = start_time + (num_rounds × interval_length)
 ```
 
-Both values come directly from the `GroupDatum` locked in the `groupUtxo`.
+Both values come directly from the group's `GroupDatum`.
 
 ### 1. Early Exit (Penalty State)
 If the absolute transaction time (enforced by the Cardano slot) is earlier than the Group's maturity threshold, the SDK handles this as an **Early Exit**.
@@ -51,16 +60,14 @@ If the Group's rotation has successfully run its course and elapsed past the mat
 ## Usage
 
 ```ts
-import { exitGroup } from "@dcu/sdk";
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
 
 try {
-  const txBuilder = await exitGroup(lucid, {
-    groupUtxo,
-    accountUtxo,
-    treasuryUtxo,
-  }).unsafeRun();
+  const txBuilder = await sdk.exitGroup(lucid, { groupTokenSuffix }).unsafeRun();
 
-  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+  const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
   console.log("Exited group successfully! TxHash:", txHash);
 } catch (error) {
   console.error("Exit failed:", error);

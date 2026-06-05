@@ -152,7 +152,7 @@ if (group)
 
 if (treasury)
   rows.push({
-    op: "contribute / deferRound / updatePayout / extendGrace / claimPenalty",
+    op: "contribute / updatePayout / extendGrace / claimPenalty",
     bytes: treasury.bytes,
     note: "treasury only  (group is reference input — not spent)",
   });
