@@ -76,11 +76,14 @@ export const unsignedContributeTxProgram = (
       treasuryUtxo.datum,
       TreasuryDatumSchema,
     )) as unknown as TreasuryDatum;
-    if (!("TreasuryState" in treasuryDatum)) {
+    // Contribute supports two input states: a TreasuryState top-up (datum unchanged) and a
+    // DefaultState (ICS) recovery (transition back to TreasuryState). A PenaltyState treasury
+    // cannot receive contributions.
+    if ("PenaltyState" in treasuryDatum) {
       return yield* Effect.fail(
         new InvalidDatumError({
           field: "treasuryDatum",
-          reason: "Expected TreasuryState for Contribute",
+          reason: "Cannot contribute to a PenaltyState treasury",
         }),
       );
     }
@@ -110,6 +113,34 @@ export const unsignedContributeTxProgram = (
       (outputAssets[contributionUnit] ?? 0n) + topUpAmount;
     // Ensure the membership token is retained (it already exists in treasuryUtxo.assets).
     outputAssets[memberToken] = 1n;
+
+    // Output datum. TreasuryState top-up keeps its datum unchanged. DefaultState (ICS)
+    // recovery transitions back to TreasuryState, preserving the carried fields (slot,
+    // rounds_paid, payout credential, earmark) exactly as the validator's recovery branch
+    // reconstructs them — and requires the post-top-up balance to reach contribution_fee.
+    const recoveredBalance = outputAssets[contributionUnit] ?? 0n;
+    let outputDatum: TreasuryDatum = treasuryDatum;
+    if ("DefaultState" in treasuryDatum) {
+      if (recoveredBalance < groupDatum.contribution_fee) {
+        return yield* Effect.fail(
+          new InvalidDatumError({
+            field: "topUpAmount",
+            reason: `DefaultState recovery requires the treasury to reach at least contribution_fee (${groupDatum.contribution_fee}); after top-up it would be ${recoveredBalance}.`,
+          }),
+        );
+      }
+      const ds = treasuryDatum.DefaultState;
+      outputDatum = {
+        TreasuryState: {
+          group_reference_tokenname: ds.group_reference_tokenname,
+          member_reference_tokenname: ds.member_reference_tokenname,
+          assigned_slot: ds.assigned_slot,
+          rounds_paid: ds.rounds_paid,
+          member_payment_credential: ds.member_payment_credential,
+          claimable_balance: ds.claimable_balance,
+        },
+      };
+    }
 
     // Reference inputs are canonically ordered (by txHash, then output index) in the
     // final transaction. Since P5 added the settings UTxO as a second reference input,
@@ -144,7 +175,7 @@ export const unsignedContributeTxProgram = (
       .addSigner(address)
       .pay.ToContract(
         treasuryAddress,
-        { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) },
+        { kind: "inline", value: Data.to(outputDatum, TreasuryDatum) },
         outputAssets,
       )
       .attach.SpendingValidator(treasuryValidator.spendTreasury)

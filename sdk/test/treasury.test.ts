@@ -939,6 +939,116 @@ describe("Treasury Endpoints", () => {
       }),
   );
 
+  // --- Contribute: DefaultState recovery ---
+  // A defaulted (DefaultState/ICS) member tops up via Contribute to recover back to
+  // TreasuryState. Mirrors the validator's recovery branch (recovery_funded): the
+  // post-top-up balance must reach contribution_fee, and the preserved fields
+  // (slot, rounds_paid, payout credential, earmark) carry through unchanged.
+  it.effect(
+    "should recover a DefaultState member to TreasuryState via Contribute",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context, groupUtxo } = yield* setupGroup(base, {
+          interval_length: 20_000n,
+        });
+        const { lucid, users } = context;
+
+        const {
+          outputs: { userUtxo: user1AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user1.seedPhrase,
+        });
+        const {
+          outputs: { userUtxo: user2AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user2.seedPhrase,
+        });
+
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix100,
+        );
+        const user1TokenSuffix = extractTokenSuffix(
+          user1AccountUtxo,
+          accountPolicyId,
+          assetNameLabels.prefix222,
+        );
+
+        // user1 joins thin (1.5× fee) so round 0 drops them to 1M < 2M → DefaultState.
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const joinUser1Tx = yield* unsignedJoinGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix: user1TokenSuffix,
+            currentTime: BigInt(context.emulator!.now()),
+            overrideDepositLovelace: 3_000_000n,
+          },
+        );
+        yield* signAndSubmit(joinUser1Tx);
+        yield* advanceBlock(context.emulator);
+
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: user2AccountUtxo,
+          userSeed: users.user2.seedPhrase,
+        });
+        yield* startGroupTestCase(context, { groupUtxo });
+
+        // Distribute round 0: user1 has 3M - 2M = 1M < 2M → DefaultState.
+        yield* distributePayoutTestCase(context, {
+          groupUtxo,
+          callerSeed: users.user1.seedPhrase,
+        });
+
+        const treasuryUnit1 =
+          context.protocol!.treasuryPolicyId +
+          assetNameLabels.prefix222 +
+          user1TokenSuffix;
+
+        const defaultedTreasury = yield* Effect.promise(() =>
+          lucid.utxoByUnit(treasuryUnit1),
+        );
+        const defaultedDatum = (yield* parseSafeDatum(
+          patchInlineDatum(defaultedTreasury).datum,
+          TreasuryDatumSchema,
+        )) as unknown as TreasuryDatum;
+        expect("DefaultState" in defaultedDatum).toBe(true);
+
+        // user1 contributes enough to reach contribution_fee → recovers to TreasuryState.
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const recoverTx = yield* unsignedContributeTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix: user1TokenSuffix,
+            topUpAmount: 2_000_000n, // 1M + 2M = 3M ≥ 2M fee
+          },
+        );
+        const recoverHash = yield* signAndSubmit(recoverTx);
+        yield* advanceBlock(context.emulator);
+        expect(recoverHash).toHaveLength(64);
+
+        // Output transitions back to TreasuryState, preserving slot 0 and rounds_paid = 1.
+        const recoveredTreasury = yield* Effect.promise(() =>
+          lucid.utxoByUnit(treasuryUnit1),
+        );
+        const recoveredDatum = (yield* parseSafeDatum(
+          patchInlineDatum(recoveredTreasury).datum,
+          TreasuryDatumSchema,
+        )) as unknown as TreasuryDatum;
+        expect("TreasuryState" in recoveredDatum).toBe(true);
+        if ("TreasuryState" in recoveredDatum) {
+          expect(recoveredDatum.TreasuryState.assigned_slot).toBe(0n);
+          expect(recoveredDatum.TreasuryState.rounds_paid).toBe(1n);
+        }
+      }),
+  );
+
   // --- NextCycle ---
   // After all rounds are distributed, admin resets the group for a new rotation.
   // Members keep their slots; rounds_paid resets to 0.
