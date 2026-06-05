@@ -235,7 +235,17 @@ export const unsignedDistributePayoutTxProgram = (
       }
     }
 
-    const validFrom = currentTime > minValidFrom ? currentTime : minValidFrom;
+    const rawValidFrom = currentTime > minValidFrom ? currentTime : minValidFrom;
+
+    // Align the lower bound to the slot grid (1000 ms), same pattern as exitGroup. The
+    // DefaultState transition pins grace_expires_at == get_lower_bound + grace_period_length,
+    // so the same slot-aligned timestamp must feed both .validFrom and grace_expires_at — a
+    // raw Date.now()-based value is sub-slot off and the ICS output datum is rejected. The
+    // emulator passes an already-aligned currentTime.
+    const validFrom =
+      config.currentTime !== undefined
+        ? rawValidFrom
+        : rawValidFrom - (rawValidFrom % 1000n);
 
     const network = lucid.config().network!;
     const borrowerAddress = credentialToAddress(network, {
