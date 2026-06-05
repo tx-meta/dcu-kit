@@ -1419,6 +1419,86 @@ test distribute_round__accepts_final_round_drains_to_reserve() {
   validate_distribute_treasury(tp, group_policy(), 0, 0, 1, [1], [0], 2, treasury_datum, utxo_ref, tx)
 }
 
+// [B3 + B2] Mid-cycle DefaultState transition: a non-final round (0 of 3) debits the fee,
+// dropping the member's *contributable* balance to 0 < fee, so the output datum must be
+// DefaultState (not TreasuryState). This exercises the reserve-sensitive ICS threshold
+// AND pins the grace_expires_at = get_lower_bound(tx) + grace_period_length that the B2
+// terminate-default gate later depends on. (Distinct from the final-round case above,
+// where is_last_round suppresses the transition and the member stays TreasuryState.)
+test distribute_round__accepts_transition_to_default() {
+  let tp = treasury_policy()
+  let gp = group_policy()
+
+  // Round 0 of 3 → NOT the last round, so an under-fee member transitions to DefaultState.
+  let group_datum = GroupDatum {
+    ..test_group_datum(),
+    num_rounds: 3,
+    is_started: True,
+    last_distributed_round: -1,
+    member_token_names: [member_tn()],
+  }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: group_in_value,
+      datum: InlineDatum(cip68_with_group(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: group_in_value,
+    datum: InlineDatum(
+      cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 0 }),
+    ),
+    reference_script: None,
+  }
+
+  // Input: contributable == fee (2M) on top of the reserve; output drains contributable to 0.
+  let treasury_datum = build_treasury_state(0, group_ref_tn(), 0)
+  let utxo_ref = treasury_utxo_ref()
+  let treasury_in = test_treasury_input(
+    utxo_ref,
+    test_treasury_output(
+      treasury_datum,
+      assets.from_lovelace(min_ada_reserve + 2_000_000)
+        |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+    ),
+  )
+  // Output datum must be DefaultState: grace_expires_at = lower_bound (0) + grace_period (0),
+  // rounds_paid = round_number + 1, slot/credential/claimable carried forward.
+  let default_out_datum = DefaultState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: member_tn(),
+    grace_expires_at: 0,
+    grace_extensions_used: 0,
+    rounds_paid: 1,
+    assigned_slot: 0,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
+  }
+  let treasury_out = test_treasury_output(
+    default_out_datum,
+    assets.from_lovelace(min_ada_reserve)
+      |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+  )
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, treasury_in],
+    outputs: [treasury_out, group_output, test_borrower_output()],
+    validity_range: interval.after(0),
+  }
+
+  validate_distribute_treasury(tp, group_policy(), 0, 0, 1, [1], [0], 2, treasury_datum, utxo_ref, tx)
+}
+
 // fail: expect TreasuryState crashes when datum is PenaltyState
 test distribute_round__rejects_penalty_state_datum() fail {
   let (tx, _, utxo) = setup_distribute_round()
@@ -3574,6 +3654,47 @@ test terminate_default__rejects_at_grace_boundary() {
     test_admin_input(),
     terminate_burn(),
     5000,
+  )
+  !validate_terminate_default(treasury_policy(), group_policy(), 0, 0, 1, datum, tx)
+}
+
+// [security] The group spending input's token name does not match the defaulter's
+// group_reference_tokenname → group_link_valid fails, isolating the treasury↔group binding
+// from admin auth. The datum's link still derives the correct admin token (held by the
+// admin input), so ONLY group_link_valid is violated — proving an admin of one group cannot
+// drive a terminate against a treasury bound to a different group.
+test terminate_default__rejects_group_link_mismatch() {
+  let gp = group_policy()
+  let datum = test_insufficient_collateral_state()
+  // Group input carries member_b_tn() under the group policy instead of group_ref_tn().
+  let mismatched_group_in = Input {
+    output_reference: OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, member_b_tn(), 1)),
+      datum: InlineDatum(
+        cip68_with_group(
+          GroupDatum {
+            ..test_group_datum(),
+            member_count: 1,
+            member_token_names: [member_tn()],
+          },
+        ),
+      ),
+      reference_script: None,
+    },
+  }
+  let tx = terminate_default_tx(
+    datum,
+    mismatched_group_in,
+    terminate_group_output(0, []),
+    test_admin_input(),
+    terminate_burn(),
+    6000,
   )
   !validate_terminate_default(treasury_policy(), group_policy(), 0, 0, 1, datum, tx)
 }
