@@ -17,13 +17,9 @@
  * join-group, start-group, and all distribute-payout rounds first.
  */
 
-import {
-  nextCycle,
-  NextCycleConfig,
-  groupPolicyId,
-  accountPolicyId,
-} from "@tx-meta/dcu-sdk";
+import { NextCycleConfig, accountPolicyId } from "@tx-meta/dcu-sdk";
 import { UTxO } from "@lucid-evolution/lucid";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -50,7 +46,10 @@ async function main() {
   lucid.selectWallet.fromSeed(walletSeed);
   await logWalletInfo(lucid, "ADMIN");
 
-  checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
+  const sdk = loadSdk();
+  const { groupPolicyId } = sdk.protocol;
+
+  checkValidatorStaleness({ accountPolicyId, groupPolicyId });
 
   const state = loadState();
   const { groupTokenSuffix } = state;
@@ -90,7 +89,7 @@ async function main() {
   const config: NextCycleConfig = { groupTokenSuffix, scriptRefs };
 
   console.log("Building next-cycle transaction...");
-  const tx = await nextCycle(lucid, config).unsafeRun();
+  const tx = await sdk.nextCycle(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

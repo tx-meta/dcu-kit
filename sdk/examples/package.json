@@ -6,6 +6,7 @@
   "scripts": {
     "clean": "rimraf dist",
     "build": "tsup *.ts --format esm --clean",
+    "initialize-settings": "pnpm run build && node dist/initialize-settings.js",
     "create-account": "pnpm run build && node dist/create-account.js",
     "update-account": "pnpm run build && node dist/update-account.js",
     "delete-account": "pnpm run build && node dist/delete-account.js",
@@ -15,10 +16,11 @@
     "join-group": "pnpm run build && node dist/join-group.js",
     "start-group": "pnpm run build && node dist/start-group.js",
     "distribute-payout": "pnpm run build && node dist/distribute-payout.js",
+    "claim-payout": "pnpm run build && node dist/claim-payout.js",
     "exit-group": "pnpm run build && node dist/exit-group.js",
     "terminate-group": "pnpm run build && node dist/terminate-group.js",
+    "terminate-default": "pnpm run build && node dist/terminate-default.js",
     "contribute": "pnpm run build && node dist/contribute.js",
-    "defer-round": "pnpm run build && node dist/defer-round.js",
     "update-payout-credential": "pnpm run build && node dist/update-payout-credential.js",
     "extend-grace-window": "pnpm run build && node dist/extend-grace-window.js",
     "next-cycle": "pnpm run build && node dist/next-cycle.js",
@@ -33,7 +35,7 @@
     "inspect-tx": "pnpm run build && node dist/inspect-tx.js"
   },
   "dependencies": {
-    "@tx-meta/dcu-sdk": "file:../dcu-sdk-0.2.5.tgz",
+    "@tx-meta/dcu-sdk": "file:../dcu-sdk-0.2.6.tgz",
     "@lucid-evolution/lucid": "0.4.31",
     "dotenv": "^16.4.7",
     "effect": "3.21.2"

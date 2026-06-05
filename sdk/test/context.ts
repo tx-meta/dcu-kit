@@ -1,5 +1,6 @@
 import {
   Blockfrost,
+  Data,
   Emulator,
   generateEmulatorAccount,
   Kupmios,
@@ -8,9 +9,18 @@ import {
   Maestro,
   Network,
   PROTOCOL_PARAMETERS_DEFAULT,
+  validatorToAddress,
 } from "@lucid-evolution/lucid";
 import { ConfigurationError } from "../src/core/errors.js";
 import { Effect } from "effect";
+import {
+  alwaysFailsValidator,
+  buildProtocol,
+  buildSettingsNft,
+  Protocol,
+  settingsTokenName,
+} from "../src/core/validators/constants.js";
+import { ProtocolSettings } from "../src/core/types.js";
 
 export type OnChainNetwork = Extract<
   Network,
@@ -32,6 +42,12 @@ export type LucidContext = {
     user2: TestUser;
   };
   emulator?: Emulator;
+  // The deployment's protocol context (validators/policies derived from the settings
+  // policy). Deployed once in the emulator setup; required by all group/treasury ops.
+  // Optional only because live-network contexts derive it from a pre-deployed settings
+  // policy (env) rather than minting one; the emulator path always sets it.
+  protocol?: Protocol;
+  settingsUnit?: string;
 };
 
 export type Provider = "Emulator" | "Maestro" | "Blockfrost" | "Kupmios";
@@ -76,10 +92,62 @@ const loadConfigFromEnv = (): ContextConfig => {
 
 // --- Providers ---
 
-const makeEmulatorContext = () =>
+// Deploy the protocol settings once for an emulator run: mint the singleton settings
+// NFT (seeded by an admin UTxO) and lock it + the ProtocolSettings datum at the
+// always-fails address. Returns the deployment's protocol context.
+const deployEmulatorSettings = (
+  lucid: LucidEvolution,
+  emulator: Emulator,
+  adminSeed: string,
+) =>
+  Effect.gen(function* () {
+    lucid.selectWallet.fromSeed(adminSeed);
+    const utxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
+    const seed = utxos[0];
+    const { validator, policyId: settingsPolicy } = buildSettingsNft({
+      txHash: seed.txHash,
+      outputIndex: seed.outputIndex,
+    });
+    const protocol = buildProtocol(settingsPolicy);
+    const settingsUnit = settingsPolicy + settingsTokenName;
+    const settingsAddress = validatorToAddress(
+      "Custom",
+      alwaysFailsValidator.elseAlwaysFails,
+    );
+    const datum = Data.to(
+      {
+        account_policy: protocol.accountPolicyId,
+        group_policy: protocol.groupPolicyId,
+        treasury_policy: protocol.treasuryPolicyId,
+      },
+      ProtocolSettings,
+    );
+    const tx = yield* Effect.promise(() =>
+      lucid
+        .newTx()
+        .collectFrom([seed])
+        .mintAssets({ [settingsUnit]: 1n }, Data.void())
+        .attach.MintingPolicy(validator)
+        .pay.ToContract(
+          settingsAddress,
+          { kind: "inline", value: datum },
+          { [settingsUnit]: 1n },
+        )
+        .complete(),
+    );
+    const signed = yield* Effect.promise(() => tx.sign.withWallet().complete());
+    yield* Effect.promise(() => signed.submit());
+    emulator.awaitBlock(1);
+    return { protocol, settingsUnit };
+  });
+
+const makeEmulatorContext = (seedAssets?: Record<string, bigint>) =>
   Effect.gen(function* () {
     const generate = () =>
-      generateEmulatorAccount({ lovelace: BigInt(1_000_000_000) });
+      generateEmulatorAccount({
+        lovelace: BigInt(1_000_000_000),
+        ...(seedAssets ?? {}),
+      });
 
     const admin = yield* Effect.sync(generate);
     const user1 = yield* Effect.sync(generate);
@@ -87,10 +155,22 @@ const makeEmulatorContext = () =>
 
     const emulator = new Emulator([admin, user1, user2], {
       ...PROTOCOL_PARAMETERS_DEFAULT,
-      maxTxSize: 23000,
+      // Test-only allowance. These emulator tests INLINE the ~15 KB validator in every
+      // tx for simplicity; production uses reference scripts (deploy-scripts /
+      // distributePayout.scriptRefs), which keep real txs well under Cardano's 16,384-byte
+      // limit. This number only needs to fit the inline-script test txs, not mainnet.
+      // TODO: switch join/nextCycle/contribute tests to reference scripts and drop this.
+      maxTxSize: 26000,
     });
 
     const lucid = yield* Effect.promise(() => Lucid(emulator, "Custom"));
+
+    // Deploy protocol settings once before any group/treasury operation.
+    const { protocol, settingsUnit } = yield* deployEmulatorSettings(
+      lucid,
+      emulator,
+      admin.seedPhrase,
+    );
 
     return {
       lucid,
@@ -100,6 +180,8 @@ const makeEmulatorContext = () =>
         user2: { seedPhrase: user2.seedPhrase, address: user2.address },
       },
       emulator,
+      protocol,
+      settingsUnit,
     } as LucidContext;
   });
 
@@ -217,7 +299,10 @@ const ensureOnChain = (network: Network, provider: string) =>
 
 // --- Entry Point ---
 
-export const makeLucidContext = (overrideConfig?: Partial<ContextConfig>) =>
+export const makeLucidContext = (
+  overrideConfig?: Partial<ContextConfig>,
+  seedAssets?: Record<string, bigint>,
+) =>
   Effect.gen(function* () {
     const envConfig = loadConfigFromEnv();
     const config = { ...envConfig, ...overrideConfig };
@@ -243,7 +328,7 @@ export const makeLucidContext = (overrideConfig?: Partial<ContextConfig>) =>
         );
       case "Emulator":
       default:
-        return yield* makeEmulatorContext();
+        return yield* makeEmulatorContext(seedAssets);
     }
   });
 

@@ -10,13 +10,12 @@
  */
 
 import {
-  exitGroup,
   ExitGroupConfig,
   accountPolicyId,
-  groupPolicyId,
   assetNameLabels,
 } from "@tx-meta/dcu-sdk";
 import { UTxO } from "@lucid-evolution/lucid";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -43,7 +42,10 @@ async function main() {
   lucid.selectWallet.fromSeed(walletSeed);
   await logWalletInfo(lucid, activeWallet);
 
-  checkValidatorStaleness({ accountPolicyId, groupPolicyId: groupPolicyId! });
+  const sdk = loadSdk();
+  const { groupPolicyId } = sdk.protocol;
+
+  checkValidatorStaleness({ accountPolicyId, groupPolicyId });
 
   const state = loadState();
   const { groupTokenSuffix } = state;
@@ -99,7 +101,7 @@ async function main() {
   };
 
   console.log(`Building exit transaction for ${activeWallet}...`);
-  const tx = await exitGroup(lucid, config).unsafeRun();
+  const tx = await sdk.exitGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

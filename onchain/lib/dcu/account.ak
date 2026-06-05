@@ -2,9 +2,10 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/primitive/bytearray
 use cardano/address.{Script, VerificationKey}
-use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
+use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output}
 use dcu/cip68
+use dcu/utils.{output_holds_only_own}
 
 /// Account Validator Datum
 pub type AccountDatum {
@@ -108,9 +109,7 @@ pub fn validate_create_account(
   ) == 1
 
   // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
-  let output_clean_value = assets.policies(output.value) == [
-    ada_policy_id, policy_id,
-  ]
+  let output_clean_value = output_holds_only_own(output.value, policy_id)
 
   and {
     exact_mint_quantity?,
@@ -206,7 +205,7 @@ pub fn validate_update_account(
       Pair(reference_token_name, 1),
     ])?,
     // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
-    (assets.policies(output.value) == [ada_policy_id, policy_id])?,
+    output_holds_only_own(output.value, policy_id)?,
     is_account_datum_valid(datum)?,
   }
 }

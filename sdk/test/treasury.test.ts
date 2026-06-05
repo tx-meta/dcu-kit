@@ -1,7 +1,10 @@
 import { describe, expect } from "vitest";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { paymentCredentialOf } from "@lucid-evolution/lucid";
+import {
+  paymentCredentialOf,
+  generateEmulatorAccount,
+} from "@lucid-evolution/lucid";
 import {
   createAccountTestCase,
   joinGroupTestCase,
@@ -18,13 +21,14 @@ import {
   setupMembership,
 } from "./setup.js";
 import { unsignedTerminateGroupTxProgram } from "../src/endpoints/terminateGroup.js";
+import { unsignedTerminateDefaultTxProgram } from "../src/endpoints/terminateDefault.js";
 import { unsignedDistributePayoutTxProgram } from "../src/endpoints/distributePayout.js";
 import { unsignedJoinGroupTxProgram } from "../src/endpoints/joinGroup.js";
 import { unsignedExitGroupTxProgram } from "../src/endpoints/exitGroup.js";
 import { unsignedContributeTxProgram } from "../src/endpoints/contribute.js";
-import { unsignedDeferRoundTxProgram } from "../src/endpoints/deferRound.js";
 import { unsignedUpdatePayoutCredentialTxProgram } from "../src/endpoints/updatePayoutCredential.js";
 import { unsignedExtendGraceWindowTxProgram } from "../src/endpoints/extendGraceWindow.js";
+import { unsignedClaimPayoutTxProgram } from "../src/endpoints/claimPayout.js";
 import {
   signAndSubmit,
   selectWalletFromSeed,
@@ -35,13 +39,59 @@ import {
   parseGroupCip68Datum,
 } from "../src/core/utils/index.js";
 import { SetupError } from "../src/core/errors.js";
-import {
-  groupPolicyId,
-  accountPolicyId,
-} from "../src/core/validators/constants.js";
+import { accountPolicyId } from "../src/core/validators/constants.js";
 import { TreasuryDatum, TreasuryDatumSchema } from "../src/core/types.js";
 import { extractTokenSuffix } from "./utils.js";
 import { advanceBlock } from "./effects.js";
+
+// Shared Pull-mode fixture: a 2-member Pull group, started, with round 0 distributed so the
+// borrower (user1, slot 0) holds a 4 ADA earmark (claimable_balance) in their own treasury.
+const setupPullDistributed = (base: Parameters<typeof setupGroup>[0]) =>
+  Effect.gen(function* () {
+    // collateral_rounds: 2 prefunds both rounds for this 2-member group, so the non-borrower
+    // stays solvent (no ICS) after round 0 and the borrower keeps collateral alongside the earmark.
+    const { context, groupUtxo } = yield* setupGroup(base, {
+      payout_mode: "Pull",
+      collateral_rounds: 2n,
+    });
+    const { users } = context;
+
+    const {
+      outputs: { userUtxo: user1AccountUtxo },
+    } = yield* createAccountTestCase(context, {
+      userSeed: users.user1.seedPhrase,
+    });
+    const {
+      outputs: { userUtxo: user2AccountUtxo },
+    } = yield* createAccountTestCase(context, {
+      userSeed: users.user2.seedPhrase,
+    });
+
+    yield* joinGroupTestCase(context, {
+      groupUtxo,
+      accountUtxo: user1AccountUtxo,
+      userSeed: users.user1.seedPhrase,
+    });
+    yield* joinGroupTestCase(context, {
+      groupUtxo,
+      accountUtxo: user2AccountUtxo,
+      userSeed: users.user2.seedPhrase,
+    });
+    yield* startGroupTestCase(context, { groupUtxo });
+
+    const result = yield* distributePayoutTestCase(context, {
+      groupUtxo,
+      callerSeed: users.user1.seedPhrase,
+    });
+
+    const suffix1 = extractTokenSuffix(
+      user1AccountUtxo,
+      accountPolicyId,
+      assetNameLabels.prefix222,
+    );
+
+    return { context, groupUtxo, user1AccountUtxo, suffix1, result };
+  });
 
 describe("Treasury Endpoints", () => {
   // --- Join Group ---
@@ -64,6 +114,63 @@ describe("Treasury Endpoints", () => {
         userSeed: users.user1.seedPhrase,
       });
       expect(result.txHash).toHaveLength(64);
+    }),
+  );
+
+  // --- Start Group ---
+  // Seals membership and anchors the rotation schedule: is_started flips true,
+  // num_rounds is fixed to member_count, and start_time is set to the tx lower bound.
+  // Exercised indirectly by every multi-round test; this asserts the sealed datum directly.
+  it.effect("should seal membership and anchor the schedule (StartGroup)", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const { context, groupUtxo } = yield* setupGroup(base);
+      const { lucid, users } = context;
+
+      const {
+        outputs: { userUtxo: user1AccountUtxo },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const {
+        outputs: { userUtxo: user2AccountUtxo },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
+
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: user1AccountUtxo,
+        userSeed: users.user1.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: user2AccountUtxo,
+        userSeed: users.user2.seedPhrase,
+      });
+
+      yield* startGroupTestCase(context, { groupUtxo });
+
+      // Read the sealed group datum back from chain.
+      const groupTokenSuffix = extractTokenSuffix(
+        groupUtxo,
+        context.protocol!.groupPolicyId,
+        assetNameLabels.prefix100,
+      );
+      const groupRefUnit =
+        context.protocol!.groupPolicyId +
+        assetNameLabels.prefix100 +
+        groupTokenSuffix;
+      const sealed = yield* Effect.promise(() =>
+        lucid.utxoByUnit(groupRefUnit),
+      );
+      const cip = yield* parseGroupCip68Datum(patchInlineDatum(sealed).datum);
+      expect(cip.groupDatum.is_started).toBe(true);
+      expect(cip.groupDatum.member_count).toBe(2n);
+      // num_rounds is sealed to member_count.
+      expect(cip.groupDatum.num_rounds).toBe(2n);
+      // start_time is anchored to the tx lower bound (a positive emulator timestamp).
+      expect(cip.groupDatum.start_time > 0n).toBe(true);
     }),
   );
 
@@ -136,7 +243,7 @@ describe("Treasury Endpoints", () => {
       // Admin terminates the PenaltyState UTxO via permanent token suffixes.
       const groupTokenSuffix = extractTokenSuffix(
         groupUtxo,
-        groupPolicyId!,
+        context.protocol!.groupPolicyId,
         assetNameLabels.prefix100,
       );
       const memberAccountTokenSuffix = extractTokenSuffix(
@@ -146,10 +253,14 @@ describe("Treasury Endpoints", () => {
       );
 
       selectWalletFromSeed(lucid, users.admin.seedPhrase);
-      const unsignedTx = yield* unsignedTerminateGroupTxProgram(lucid, {
-        groupTokenSuffix,
-        memberAccountTokenSuffix,
-      });
+      const unsignedTx = yield* unsignedTerminateGroupTxProgram(
+        context.protocol!,
+        lucid,
+        {
+          groupTokenSuffix,
+          memberAccountTokenSuffix,
+        },
+      );
       const txHash = yield* signAndSubmit(unsignedTx);
       expect(txHash).toHaveLength(64);
     }),
@@ -217,6 +328,202 @@ describe("Treasury Endpoints", () => {
       }),
   );
 
+  // --- Pull payout mode: distribute earmarks into the borrower's treasury, then claim ---
+  // Full round-trip: a Pull group distributes round 0 → the borrower's own treasury accrues
+  // claimable_balance (no wallet payout) → the member claims it to their wallet → balance 0.
+  it.effect(
+    "should earmark the pot under Pull mode and let the borrower claim it (ClaimPayout)",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        // Pull mode is fixed at group creation.
+        const { context, groupUtxo } = yield* setupGroup(base, {
+          payout_mode: "Pull",
+        });
+        const { lucid, users } = context;
+
+        const {
+          outputs: { userUtxo: user1AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user1.seedPhrase,
+        });
+        const {
+          outputs: { userUtxo: user2AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user2.seedPhrase,
+        });
+
+        // user1 → slot 0 (borrower for round 0); user2 → slot 1.
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: user1AccountUtxo,
+          userSeed: users.user1.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: user2AccountUtxo,
+          userSeed: users.user2.seedPhrase,
+        });
+        yield* startGroupTestCase(context, { groupUtxo });
+
+        // Distribute round 0 under Pull: the pot (2 members × 2 ADA = 4 ADA) is earmarked
+        // into user1's own treasury, NOT paid to a wallet.
+        const result = yield* distributePayoutTestCase(context, {
+          groupUtxo,
+          callerSeed: users.user1.seedPhrase,
+        });
+
+        const suffix1 = extractTokenSuffix(
+          user1AccountUtxo,
+          accountPolicyId,
+          assetNameLabels.prefix222,
+        );
+        const treasuryUnit1 =
+          context.protocol!.treasuryPolicyId +
+          assetNameLabels.prefix222 +
+          suffix1;
+
+        // The borrower's treasury output carries the earmark; nobody else does.
+        const borrowerTreasury = result.treasuryOutputs.find(
+          (u) => u.assets[treasuryUnit1] === 1n,
+        );
+        expect(borrowerTreasury).toBeDefined();
+        const earmarkDatum = (yield* parseSafeDatum(
+          patchInlineDatum(borrowerTreasury!).datum,
+          TreasuryDatumSchema,
+        )) as unknown as TreasuryDatum;
+        expect("TreasuryState" in earmarkDatum).toBe(true);
+        if ("TreasuryState" in earmarkDatum) {
+          expect(earmarkDatum.TreasuryState.claimable_balance).toBe(4_000_000n);
+          expect(earmarkDatum.TreasuryState.rounds_paid).toBe(1n);
+        }
+
+        // user1 claims their earmarked payout (auth by holding the 222 token).
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const claimTx = yield* unsignedClaimPayoutTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            accountTokenSuffix: suffix1,
+          },
+        );
+        const claimHash = yield* signAndSubmit(claimTx);
+        yield* advanceBlock(context.emulator);
+        expect(claimHash).toHaveLength(64);
+
+        // After claiming, the treasury's claimable_balance is reset to 0.
+        const claimedTreasury = yield* Effect.promise(() =>
+          lucid.utxoByUnit(treasuryUnit1),
+        );
+        const claimedDatum = (yield* parseSafeDatum(
+          patchInlineDatum(claimedTreasury).datum,
+          TreasuryDatumSchema,
+        )) as unknown as TreasuryDatum;
+        expect("TreasuryState" in claimedDatum).toBe(true);
+        if ("TreasuryState" in claimedDatum) {
+          expect(claimedDatum.TreasuryState.claimable_balance).toBe(0n);
+        }
+      }),
+  );
+
+  // --- Pull: claim to a fresh address (lost-wallet recovery) ---
+  // Auth is by membership-token possession, and the destination is chosen at claim time, so
+  // a member can direct the payout to a brand-new address that has never held funds.
+  it.effect(
+    "should let a member claim their Pull payout to a fresh address (lost-wallet recovery)",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context, suffix1 } = yield* setupPullDistributed(base);
+        const { lucid, users } = context;
+
+        // A fresh address with no prior UTxOs.
+        const fresh = generateEmulatorAccount({ lovelace: 0n });
+
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const claimTx = yield* unsignedClaimPayoutTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            accountTokenSuffix: suffix1,
+            destinationAddress: fresh.address,
+          },
+        );
+        const claimHash = yield* signAndSubmit(claimTx);
+        yield* advanceBlock(context.emulator);
+        expect(claimHash).toHaveLength(64);
+
+        // The previously-empty fresh address now holds exactly the 4 ADA pot.
+        const freshUtxos = yield* Effect.promise(() =>
+          lucid.utxosAt(fresh.address),
+        );
+        const total = freshUtxos.reduce((s, u) => s + u.assets.lovelace, 0n);
+        expect(total).toBe(4_000_000n);
+      }),
+  );
+
+  // --- Pull: an unclaimed earmark is returned to the member at exit ---
+  // A Pull member who never claims doesn't lose the earmark — it is physically in their
+  // treasury value, so a mature exit returns it along with the collateral.
+  it.effect(
+    "should return an unclaimed Pull earmark to the member at exit",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context, groupUtxo, user1AccountUtxo } =
+          yield* setupPullDistributed(base);
+        const { lucid, users } = context;
+
+        // Deactivate the group so exit takes the mature burn path (full refund), regardless
+        // of timing. UpdateGroup must preserve every field except is_active, so read the
+        // current on-chain datum (post-join / start / distribute).
+        const groupSuffix = extractTokenSuffix(
+          groupUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix100,
+        );
+        const groupRefUnit =
+          context.protocol!.groupPolicyId +
+          assetNameLabels.prefix100 +
+          groupSuffix;
+        const currentGroupUtxo = yield* Effect.promise(() =>
+          lucid.utxoByUnit(groupRefUnit),
+        );
+        const currentCip68 = yield* parseGroupCip68Datum(
+          patchInlineDatum(currentGroupUtxo).datum,
+        );
+
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+        yield* updateGroupTestCase(context, {
+          groupUtxo: currentGroupUtxo,
+          updatedDatum: { ...currentCip68.groupDatum, is_active: false },
+        });
+
+        // Measure user1's wallet before and after the exit. Treasury holds 6 ADA after round 0
+        // (4 deposit − 2 fee + 4 earmark); a full refund returns > 4 ADA. A stranded earmark
+        // would refund only ~2 ADA (the leftover collateral).
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const before = yield* Effect.promise(() => lucid.wallet().getUtxos());
+        const beforeLovelace = before.reduce(
+          (s, u) => s + u.assets.lovelace,
+          0n,
+        );
+
+        const exitResult = yield* exitGroupTestCase(context, {
+          groupUtxo: currentGroupUtxo,
+          accountUtxo: user1AccountUtxo,
+          userSeed: users.user1.seedPhrase,
+        });
+        expect(exitResult.txHash).toHaveLength(64);
+
+        const after = yield* Effect.promise(() => lucid.wallet().getUtxos());
+        const afterLovelace = after.reduce((s, u) => s + u.assets.lovelace, 0n);
+        // > 4 ADA recovered ⇒ the 4 ADA earmark came home on top of the 2 ADA collateral
+        // (a stranded earmark would refund only the ~2 ADA leftover collateral).
+        expect(afterLovelace - beforeLovelace).toBeGreaterThan(4_000_000n);
+      }),
+  );
+
   // --- Negative: distributePayout when group has not been started ---
   it.effect("should reject payout when the group has not been started", () =>
     Effect.gen(function* () {
@@ -230,11 +537,13 @@ describe("Treasury Endpoints", () => {
 
       const groupTokenSuffix = extractTokenSuffix(
         groupUtxo,
-        groupPolicyId!,
+        context.protocol!.groupPolicyId,
         assetNameLabels.prefix100,
       );
       const err = yield* Effect.flip(
-        unsignedDistributePayoutTxProgram(lucid, { groupTokenSuffix }),
+        unsignedDistributePayoutTxProgram(context.protocol!, lucid, {
+          groupTokenSuffix,
+        }),
       );
 
       expect(err._tag).toBe("TransactionBuildError");
@@ -257,13 +566,13 @@ describe("Treasury Endpoints", () => {
 
         const groupTokenSuffix = extractTokenSuffix(
           groupUtxo,
-          groupPolicyId!,
+          context.protocol!.groupPolicyId,
           assetNameLabels.prefix100,
         );
         const fakeAccountSuffix = "00".repeat(28);
 
         const err = yield* Effect.flip(
-          unsignedJoinGroupTxProgram(lucid, {
+          unsignedJoinGroupTxProgram(context.protocol!, lucid, {
             groupTokenSuffix,
             accountTokenSuffix: fakeAccountSuffix,
           }),
@@ -293,7 +602,7 @@ describe("Treasury Endpoints", () => {
       // Step 2: second exit attempt — no TreasuryState found → UtxoNotFoundError.
       const groupTokenSuffix = extractTokenSuffix(
         groupUtxo,
-        groupPolicyId!,
+        context.protocol!.groupPolicyId,
         assetNameLabels.prefix100,
       );
       const accountTokenSuffix = extractTokenSuffix(
@@ -304,7 +613,7 @@ describe("Treasury Endpoints", () => {
 
       selectWalletFromSeed(lucid, users.user1.seedPhrase);
       const err = yield* Effect.flip(
-        unsignedExitGroupTxProgram(lucid, {
+        unsignedExitGroupTxProgram(context.protocol!, lucid, {
           groupTokenSuffix,
           accountTokenSuffix,
         }),
@@ -342,7 +651,7 @@ describe("Treasury Endpoints", () => {
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
         const groupTokenSuffix = extractTokenSuffix(
           groupUtxo,
-          groupPolicyId!,
+          base.context.protocol!.groupPolicyId,
           assetNameLabels.prefix100,
         );
         const accountTokenSuffix = extractTokenSuffix(
@@ -354,11 +663,15 @@ describe("Treasury Endpoints", () => {
         const currentTime = base.context.emulator
           ? BigInt(base.context.emulator.now())
           : BigInt(Date.now()) - 120_000n;
-        const txBuilder = yield* unsignedJoinGroupTxProgram(lucid, {
-          groupTokenSuffix,
-          accountTokenSuffix,
-          currentTime,
-        });
+        const txBuilder = yield* unsignedJoinGroupTxProgram(
+          base.context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix,
+            currentTime,
+          },
+        );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
       }),
@@ -380,7 +693,7 @@ describe("Treasury Endpoints", () => {
 
       const groupTokenSuffix = extractTokenSuffix(
         groupUtxo,
-        groupPolicyId!,
+        context.protocol!.groupPolicyId,
         assetNameLabels.prefix100,
       );
       const accountTokenSuffix = extractTokenSuffix(
@@ -390,7 +703,7 @@ describe("Treasury Endpoints", () => {
       );
 
       const err = yield* Effect.flip(
-        unsignedJoinGroupTxProgram(lucid, {
+        unsignedJoinGroupTxProgram(context.protocol!, lucid, {
           groupTokenSuffix,
           accountTokenSuffix,
         }),
@@ -453,8 +766,11 @@ describe("Treasury Endpoints", () => {
       // interval_length = 20_000ms (20 slots). Each awaitBlock(1) advances 20 slots,
       // so one block = one full interval. Round 1 distribute fires at slot 220,
       // maturity is slot 240, and exit with emulator.now() is exactly at maturity.
+      // collateral_rounds: 2 → each member prefunds both rounds (deposit = 2 × fee), so
+      // neither defaults mid-cycle. (The default PerRound deposit covers only round 0.)
       const { context, groupUtxo } = yield* setupGroup(base, {
         interval_length: 20_000n,
+        collateral_rounds: 2n,
       });
       const { users } = context;
 
@@ -516,9 +832,14 @@ describe("Treasury Endpoints", () => {
     () =>
       Effect.gen(function* () {
         const base = yield* setupBase();
-        const { context, userUtxo } = yield* setupMembership(base);
+        const { context, groupUtxo, userUtxo } = yield* setupMembership(base);
         const { lucid, users } = context;
 
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix100,
+        );
         const accountTokenSuffix = extractTokenSuffix(
           userUtxo,
           accountPolicyId,
@@ -526,25 +847,51 @@ describe("Treasury Endpoints", () => {
         );
 
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const txBuilder = yield* unsignedContributeTxProgram(lucid, {
-          accountTokenSuffix,
-          topUpAmount: 2_000_000n,
-        });
+        const txBuilder = yield* unsignedContributeTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix,
+            topUpAmount: 2_000_000n,
+          },
+        );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
       }),
   );
 
-  // --- DeferRound ---
-  // Member defers their scheduled payout round (is_deferred flips to true).
+  // --- Native-token group (end-to-end) ---
+  // A group whose contribution asset is a native token (not ADA): Join must lock the
+  // token in the treasury, and Contribute must top up the token balance.
   it.effect(
-    "should allow a member to defer their scheduled round (DeferRound)",
+    "should support a native-token contribution group (Join locks token, Contribute tops up)",
     () =>
       Effect.gen(function* () {
-        const base = yield* setupBase();
-        const { context, userUtxo } = yield* setupMembership(base);
+        const tokenPolicy =
+          "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0";
+        const tokenName = "55534454"; // "USDT"
+        const tokenUnit = tokenPolicy + tokenName;
+
+        // Seed every emulator wallet with the native token so members can deposit it.
+        const base = yield* setupBase({ [tokenUnit]: 1_000_000n });
+        const { context, groupUtxo, userUtxo, memberUtxo } =
+          yield* setupMembership(base, {
+            contribution_fee_policyid: tokenPolicy,
+            contribution_fee_assetname: tokenName,
+            contribution_fee: 5n,
+          });
         const { lucid, users } = context;
 
+        // Join locks the collateral floor: collateral_rounds (1, PerRound default) ×
+        // contribution_fee (5) = 5 tokens in the treasury.
+        expect(memberUtxo.assets[tokenUnit]).toBe(5n);
+
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix100,
+        );
         const accountTokenSuffix = extractTokenSuffix(
           userUtxo,
           accountPolicyId,
@@ -552,9 +899,15 @@ describe("Treasury Endpoints", () => {
         );
 
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const txBuilder = yield* unsignedDeferRoundTxProgram(lucid, {
-          accountTokenSuffix,
-        });
+        const txBuilder = yield* unsignedContributeTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix,
+            topUpAmount: 5n,
+          },
+        );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
       }),
@@ -578,6 +931,7 @@ describe("Treasury Endpoints", () => {
 
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
         const txBuilder = yield* unsignedUpdatePayoutCredentialTxProgram(
+          context.protocol!,
           lucid,
           { accountTokenSuffix },
         );
@@ -587,14 +941,13 @@ describe("Treasury Endpoints", () => {
   );
 
   // --- ExtendGrace ---
-  // User1 joins with an intentionally low deposit (3 ADA = 1.5 × contribution_fee).
-  // After distribute round 0, user1's balance = 3M - 2M = 1M < 2M → DefaultState.
-  // Admin then extends the grace window (grace_extensions_used 0 → 1).
-  //
-  // Why overrideDepositLovelace = 3_000_000?
-  //   Standard deposit is max_members × contribution_fee = 2 × 2M = 4M.
-  //   After one round: 4M - 2M = 2M which is NOT < 2M (no ICS trigger).
-  //   With 3M: 3M - 2M = 1M < 2M → ICS triggered on round 0.
+  // User1 joins as a PerRound member (collateral_rounds = 1): the default deposit is
+  // contribution_fee + MIN_ADA_RESERVE = 2M + 2M = 4M, i.e. exactly one round of
+  // *contributable* collateral. After distribute round 0 debits the fee, user1's
+  // contributable balance is 0 < 2M (and round 0 is not the last of 2) → DefaultState.
+  // Admin then extends the grace window (grace_extensions_used 0 → 1). No deposit override
+  // is needed — a single-round member naturally defaults after one round under B3, and a
+  // thinner deposit would (correctly) be rejected by the join floor.
   it.effect(
     "should allow admin to extend a member's grace window (ExtendGrace)",
     () =>
@@ -620,7 +973,7 @@ describe("Treasury Endpoints", () => {
         // User1 joins with a reduced deposit so round 0 triggers ICS for them.
         const groupTokenSuffix = extractTokenSuffix(
           groupUtxo,
-          groupPolicyId!,
+          context.protocol!.groupPolicyId,
           assetNameLabels.prefix100,
         );
         const user1TokenSuffix = extractTokenSuffix(
@@ -629,12 +982,15 @@ describe("Treasury Endpoints", () => {
           assetNameLabels.prefix222,
         );
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const joinUser1Tx = yield* unsignedJoinGroupTxProgram(lucid, {
-          groupTokenSuffix,
-          accountTokenSuffix: user1TokenSuffix,
-          currentTime: BigInt(context.emulator!.now()),
-          overrideDepositLovelace: 3_000_000n, // 1.5× fee — triggers ICS after round 0
-        });
+        const joinUser1Tx = yield* unsignedJoinGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix: user1TokenSuffix,
+            currentTime: BigInt(context.emulator!.now()),
+          },
+        );
         yield* signAndSubmit(joinUser1Tx);
         yield* advanceBlock(context.emulator);
 
@@ -646,7 +1002,7 @@ describe("Treasury Endpoints", () => {
 
         yield* startGroupTestCase(context, { groupUtxo });
 
-        // Distribute round 0: user1 has 3M - 2M = 1M < 2M → DefaultState.
+        // Distribute round 0: user1's contributable 2M − 2M fee = 0 < 2M → DefaultState.
         yield* distributePayoutTestCase(context, {
           groupUtxo,
           callerSeed: users.user1.seedPhrase,
@@ -659,24 +1015,237 @@ describe("Treasury Endpoints", () => {
           assetNameLabels.prefix222,
         );
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const txBuilder = yield* unsignedExtendGraceWindowTxProgram(lucid, {
-          groupTokenSuffix,
-          memberAccountTokenSuffix,
-        });
+        const txBuilder = yield* unsignedExtendGraceWindowTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            memberAccountTokenSuffix,
+          },
+        );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
       }),
   );
 
+  // --- TerminateDefault (B2) ---
+  // A member who defaults (DefaultState) and never recovers can be removed by the admin
+  // once their grace window has fully expired: the membership token is burned, member_count
+  // decrements, and the collateral is forfeited to the admin. grace_period_length = 0 (the
+  // default), so grace expires at the distribute round's timestamp; advancing the emulator
+  // past it makes `now > grace_expires_at` hold.
+  it.effect(
+    "should let the admin terminate a defaulter after grace expires (TerminateDefault)",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context, groupUtxo } = yield* setupGroup(base, {
+          interval_length: 20_000n,
+        });
+        const { lucid, users } = context;
+
+        const {
+          outputs: { userUtxo: user1AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user1.seedPhrase,
+        });
+        const {
+          outputs: { userUtxo: user2AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user2.seedPhrase,
+        });
+
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix100,
+        );
+        const user1TokenSuffix = extractTokenSuffix(
+          user1AccountUtxo,
+          accountPolicyId,
+          assetNameLabels.prefix222,
+        );
+
+        // user1 joins PerRound (default deposit) → defaults to DefaultState after round 0.
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: user1AccountUtxo,
+          userSeed: users.user1.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: user2AccountUtxo,
+          userSeed: users.user2.seedPhrase,
+        });
+        yield* startGroupTestCase(context, { groupUtxo });
+
+        // Distribute round 0: user1 (slot 0) is debited the fee → contributable 0 → DefaultState.
+        yield* distributePayoutTestCase(context, {
+          groupUtxo,
+          callerSeed: users.user1.seedPhrase,
+        });
+
+        // Advance past grace_expires_at so the termination time-gate opens.
+        yield* advanceBlock(context.emulator, 2);
+
+        // Admin terminates the defaulter.
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+        const terminateTx = yield* unsignedTerminateDefaultTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            memberAccountTokenSuffix: user1TokenSuffix,
+            currentTime: BigInt(context.emulator!.now()),
+          },
+        );
+        const terminateHash = yield* signAndSubmit(terminateTx);
+        yield* advanceBlock(context.emulator);
+        expect(terminateHash).toHaveLength(64);
+
+        // Group member_count decremented 2 → 1, and user1 removed from the registry —
+        // this is the definitive on-chain proof: the count only drops via the group Exit
+        // handler, which requires the burned membership token to be spent at the treasury.
+        const groupRefUnit =
+          context.protocol!.groupPolicyId +
+          assetNameLabels.prefix100 +
+          groupTokenSuffix;
+        const currentGroup = yield* Effect.promise(() =>
+          lucid.utxoByUnit(groupRefUnit),
+        );
+        const groupCip68 = yield* parseGroupCip68Datum(
+          patchInlineDatum(currentGroup).datum,
+        );
+        expect(groupCip68.groupDatum.member_count).toBe(1n);
+        const memberRefName = assetNameLabels.prefix222 + user1TokenSuffix;
+        expect(
+          groupCip68.groupDatum.member_token_names.includes(memberRefName),
+        ).toBe(false);
+      }),
+  );
+
+  // --- Contribute: DefaultState recovery ---
+  // A defaulted (DefaultState/ICS) member tops up via Contribute to recover back to
+  // TreasuryState. Mirrors the validator's recovery branch (recovery_funded): the
+  // post-top-up balance must reach contribution_fee, and the preserved fields
+  // (slot, rounds_paid, payout credential, earmark) carry through unchanged.
+  it.effect(
+    "should recover a DefaultState member to TreasuryState via Contribute",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context, groupUtxo } = yield* setupGroup(base, {
+          interval_length: 20_000n,
+        });
+        const { lucid, users } = context;
+
+        const {
+          outputs: { userUtxo: user1AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user1.seedPhrase,
+        });
+        const {
+          outputs: { userUtxo: user2AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user2.seedPhrase,
+        });
+
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix100,
+        );
+        const user1TokenSuffix = extractTokenSuffix(
+          user1AccountUtxo,
+          accountPolicyId,
+          assetNameLabels.prefix222,
+        );
+
+        // user1 joins PerRound (default deposit = fee + reserve = 4M, contributable 2M),
+        // so round 0 debits the fee and drops them to contributable 0 < 2M → DefaultState.
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const joinUser1Tx = yield* unsignedJoinGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix: user1TokenSuffix,
+            currentTime: BigInt(context.emulator!.now()),
+          },
+        );
+        yield* signAndSubmit(joinUser1Tx);
+        yield* advanceBlock(context.emulator);
+
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: user2AccountUtxo,
+          userSeed: users.user2.seedPhrase,
+        });
+        yield* startGroupTestCase(context, { groupUtxo });
+
+        // Distribute round 0: user1's contributable 2M − 2M fee = 0 < 2M → DefaultState.
+        yield* distributePayoutTestCase(context, {
+          groupUtxo,
+          callerSeed: users.user1.seedPhrase,
+        });
+
+        const treasuryUnit1 =
+          context.protocol!.treasuryPolicyId +
+          assetNameLabels.prefix222 +
+          user1TokenSuffix;
+
+        const defaultedTreasury = yield* Effect.promise(() =>
+          lucid.utxoByUnit(treasuryUnit1),
+        );
+        const defaultedDatum = (yield* parseSafeDatum(
+          patchInlineDatum(defaultedTreasury).datum,
+          TreasuryDatumSchema,
+        )) as unknown as TreasuryDatum;
+        expect("DefaultState" in defaultedDatum).toBe(true);
+
+        // user1 contributes enough to reach contribution_fee → recovers to TreasuryState.
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const recoverTx = yield* unsignedContributeTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix: user1TokenSuffix,
+            topUpAmount: 2_000_000n, // raw 2M + 2M = 4M → contributable 2M ≥ 2M fee
+          },
+        );
+        const recoverHash = yield* signAndSubmit(recoverTx);
+        yield* advanceBlock(context.emulator);
+        expect(recoverHash).toHaveLength(64);
+
+        // Output transitions back to TreasuryState, preserving slot 0 and rounds_paid = 1.
+        const recoveredTreasury = yield* Effect.promise(() =>
+          lucid.utxoByUnit(treasuryUnit1),
+        );
+        const recoveredDatum = (yield* parseSafeDatum(
+          patchInlineDatum(recoveredTreasury).datum,
+          TreasuryDatumSchema,
+        )) as unknown as TreasuryDatum;
+        expect("TreasuryState" in recoveredDatum).toBe(true);
+        if ("TreasuryState" in recoveredDatum) {
+          expect(recoveredDatum.TreasuryState.assigned_slot).toBe(0n);
+          expect(recoveredDatum.TreasuryState.rounds_paid).toBe(1n);
+        }
+      }),
+  );
+
   // --- NextCycle ---
   // After all rounds are distributed, admin resets the group for a new rotation.
-  // Members keep their slots; rounds_paid and is_deferred reset to 0/false.
+  // Members keep their slots; rounds_paid resets to 0.
   it.effect("should reset a mature group for a new cycle (NextCycle)", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
       // interval_length=20_000ms so each awaitBlock(1) = one interval.
+      // collateral_rounds: 2 prefunds both rounds so members stay solvent through the full cycle
+      // (the PerRound default covers only round 0).
       const { context, groupUtxo } = yield* setupGroup(base, {
         interval_length: 20_000n,
+        collateral_rounds: 2n,
       });
       const { lucid, users } = context;
 
@@ -717,6 +1286,36 @@ describe("Treasury Endpoints", () => {
         callerSeed: users.user2.seedPhrase,
       });
 
+      // M2 re-funding guard: after a full cycle each member is drained to ~min-UTxO, which is
+      // below the collateral floor (contribution_fee × collateral_rounds = 4 ADA). NextCycle now
+      // rejects an under-collateralized restart, so each member must top up to the floor first.
+      const groupTokenSuffix0 = extractTokenSuffix(
+        groupUtxo,
+        context.protocol!.groupPolicyId,
+        assetNameLabels.prefix100,
+      );
+      for (const m of [
+        { seed: users.user1.seedPhrase, acct: user1AccountUtxo },
+        { seed: users.user2.seedPhrase, acct: user2AccountUtxo },
+      ]) {
+        selectWalletFromSeed(lucid, m.seed);
+        const topUp = yield* unsignedContributeTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix: groupTokenSuffix0,
+            accountTokenSuffix: extractTokenSuffix(
+              m.acct,
+              accountPolicyId,
+              assetNameLabels.prefix222,
+            ),
+            topUpAmount: 4_000_000n,
+          },
+        );
+        yield* signAndSubmit(topUp);
+        yield* advanceBlock(context.emulator);
+      }
+
       // Reset the group for the next cycle. Admin must sign.
       selectWalletFromSeed(lucid, users.admin.seedPhrase);
       const { txHash } = yield* nextCycleTestCase(context, {
@@ -728,11 +1327,13 @@ describe("Treasury Endpoints", () => {
       // Verify group datum is reset.
       const groupTokenSuffix = extractTokenSuffix(
         groupUtxo,
-        groupPolicyId!,
+        context.protocol!.groupPolicyId,
         assetNameLabels.prefix100,
       );
       const groupUnit =
-        groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+        context.protocol!.groupPolicyId +
+        assetNameLabels.prefix100 +
+        groupTokenSuffix;
       const updatedGroupUtxo = yield* Effect.tryPromise(() =>
         lucid.utxoByUnit(groupUnit),
       );

@@ -28,6 +28,12 @@ const STATE_FILE = path.join(__dirname, "..", "state.json");
 export type ScriptRefOutRef = { txHash: string; outputIndex: number };
 
 export type ExampleState = {
+  // Protocol settings (P5). Written once by initialize-settings; every group/treasury
+  // script derives from this settings policy. The seed OutRef is kept so the policy can
+  // be re-derived deterministically (deriveSettings) on any later run.
+  settingsPolicy?: string;
+  settingsSeed?: ScriptRefOutRef;
+
   // Validator fingerprints — written at first mint, compared on every subsequent run.
   // If these change it means the on-chain contracts were upgraded and stored token
   // suffixes now point to UTxOs locked under the old (unreachable) validator.

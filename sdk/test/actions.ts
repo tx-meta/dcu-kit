@@ -49,8 +49,6 @@ import { LucidContext } from "./context.js";
 import {
   accountPolicyId,
   accountValidator,
-  groupPolicyId,
-  treasuryValidator,
 } from "../src/core/validators/constants.js";
 import {
   assetNameLabels,
@@ -254,6 +252,7 @@ export const deleteAccountTestCase = (
     const deleteConfig: DeleteAccountConfig = { accountTokenSuffix };
 
     const deleteAccountTx = yield* unsignedDeleteAccountTxProgram(
+      context.protocol!,
       lucid,
       deleteConfig,
     );
@@ -268,6 +267,8 @@ export const deleteAccountTestCase = (
 export type CreateGroupTestParams = {
   datumOverride?: Partial<GroupDatum>;
   creatorSeed?: string;
+  groupName?: string;
+  groupDescription?: string;
 };
 
 export const createGroupTestCase = (
@@ -276,7 +277,7 @@ export const createGroupTestCase = (
 ): Effect.Effect<CreateGroupResult, Error, never> =>
   Effect.gen(function* () {
     const { lucid, users } = context;
-    const { datumOverride, creatorSeed } = params;
+    const { datumOverride, creatorSeed, groupName, groupDescription } = params;
 
     selectWalletFromSeed(lucid, creatorSeed ?? users.admin.seedPhrase);
 
@@ -289,12 +290,14 @@ export const createGroupTestCase = (
 
     const groupDatum = createDefaultGroupDatum(datumOverride);
     const groupConfig: CreateGroupConfig = {
-      groupName: "Test Group",
+      groupName: groupName ?? "Test Group",
+      ...(groupDescription !== undefined ? { groupDescription } : {}),
       groupDatum,
       utxoToSpend: selectedUTxO,
     };
 
     const createGroupTx = yield* unsignedCreateGroupTxProgram(
+      context.protocol!,
       lucid,
       groupConfig,
     );
@@ -319,12 +322,13 @@ export const updateGroupTestCase = (
 
     const groupTokenSuffix = extractTokenSuffix(
       groupUtxo,
-      groupPolicyId!,
+      context.protocol!.groupPolicyId,
       assetNameLabels.prefix100,
     );
     const updateConfig: UpdateGroupConfig = { groupTokenSuffix, updatedDatum };
 
     const updateGroupTx = yield* unsignedUpdateGroupTxProgram(
+      context.protocol!,
       lucid,
       updateConfig,
     );
@@ -346,12 +350,13 @@ export const deleteGroupTestCase = (
 
     const groupTokenSuffix = extractTokenSuffix(
       groupUtxo,
-      groupPolicyId!,
+      context.protocol!.groupPolicyId,
       assetNameLabels.prefix100,
     );
     const deleteConfig: DeleteGroupConfig = { groupTokenSuffix };
 
     const deleteGroupTx = yield* unsignedDeleteGroupTxProgram(
+      context.protocol!,
       lucid,
       deleteConfig,
     );
@@ -385,7 +390,7 @@ export const joinGroupTestCase = (
 
     const groupTokenSuffix = extractTokenSuffix(
       groupUtxo,
-      groupPolicyId!,
+      context.protocol!.groupPolicyId,
       assetNameLabels.prefix100,
     );
     const accountTokenSuffix = extractTokenSuffix(
@@ -400,7 +405,11 @@ export const joinGroupTestCase = (
       currentTime,
     };
 
-    const joinTx = yield* unsignedJoinGroupTxProgram(lucid, joinConfig);
+    const joinTx = yield* unsignedJoinGroupTxProgram(
+      context.protocol!,
+      lucid,
+      joinConfig,
+    );
     const txHash = yield* signAndSubmit(joinTx);
     yield* advanceBlock(context.emulator);
 
@@ -428,7 +437,7 @@ export const startGroupTestCase = (
       BigInt(context.emulator ? context.emulator.now() : Date.now());
     const groupTokenSuffix = extractTokenSuffix(
       groupUtxo,
-      groupPolicyId!,
+      context.protocol!.groupPolicyId,
       assetNameLabels.prefix100,
     );
     const startConfig: StartGroupConfig = {
@@ -436,7 +445,11 @@ export const startGroupTestCase = (
       currentTime: currentTimeFinal,
     };
 
-    const startTx = yield* unsignedStartGroupTxProgram(lucid, startConfig);
+    const startTx = yield* unsignedStartGroupTxProgram(
+      context.protocol!,
+      lucid,
+      startConfig,
+    );
     const txHash = yield* signAndSubmit(startTx);
     yield* advanceBlock(context.emulator);
 
@@ -460,12 +473,13 @@ export const distributePayoutTestCase = (
 
     const groupTokenSuffix = extractTokenSuffix(
       groupUtxo,
-      groupPolicyId!,
+      context.protocol!.groupPolicyId,
       assetNameLabels.prefix100,
     );
     const payoutConfig: DistributePayoutConfig = { groupTokenSuffix };
 
     const payoutTx = yield* unsignedDistributePayoutTxProgram(
+      context.protocol!,
       lucid,
       payoutConfig,
     );
@@ -474,7 +488,7 @@ export const distributePayoutTestCase = (
 
     const treasuryAddress = yield* getScriptAddress(
       lucid,
-      treasuryValidator.spendTreasury,
+      context.protocol!.treasuryValidator.spendTreasury,
     );
     const treasuryOutputs = yield* fetchScriptUtxosByTxHash(
       lucid,
@@ -507,7 +521,7 @@ export const exitGroupTestCase = (
     );
     const groupTokenSuffix = extractTokenSuffix(
       groupUtxo,
-      groupPolicyId!,
+      context.protocol!.groupPolicyId,
       assetNameLabels.prefix100,
     );
     const accountTokenSuffix = extractTokenSuffix(
@@ -522,7 +536,11 @@ export const exitGroupTestCase = (
       currentTime,
     };
 
-    const exitTx = yield* unsignedExitGroupTxProgram(lucid, exitConfig);
+    const exitTx = yield* unsignedExitGroupTxProgram(
+      context.protocol!,
+      lucid,
+      exitConfig,
+    );
     const txHash = yield* signAndSubmit(exitTx);
     yield* advanceBlock(context.emulator);
 
@@ -543,12 +561,16 @@ export const nextCycleTestCase = (
 
     const groupTokenSuffix = extractTokenSuffix(
       groupUtxo,
-      groupPolicyId!,
+      context.protocol!.groupPolicyId,
       assetNameLabels.prefix100,
     );
     const nextCycleConfig: NextCycleConfig = { groupTokenSuffix };
 
-    const tx = yield* unsignedNextCycleTxProgram(lucid, nextCycleConfig);
+    const tx = yield* unsignedNextCycleTxProgram(
+      context.protocol!,
+      lucid,
+      nextCycleConfig,
+    );
     const txHash = yield* signAndSubmit(tx);
     yield* advanceBlock(context.emulator);
 

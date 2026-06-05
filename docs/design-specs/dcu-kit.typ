@@ -201,13 +201,11 @@ The DCU-Toolkit implements a deterministic, round-based slot assignment system f
    current_time >= start_time + round_number × interval_length
    ```
 
-6. *Deferred payout*: A member may voluntarily defer their scheduled borrower turn by calling `DeferRound`, which sets `is_deferred = True` on their Treasury UTxO. During `DistributeRound`, if the scheduled borrower has `is_deferred = True`, the payout routes to the *next* slot instead:
-   ```
-   effective_borrower_slot = (current_slot + 1) % num_intervals
-   ```
-   The deferred member still contributes their `contribution_fee` for the round and their `is_deferred` flag is reset to `False`. This ensures the interval ends with exactly one member receiving the pot — no round is ever left empty.
+6. *Collect-later (Pull mode)*: The rotation order is fixed — a member's turn is never reordered or skipped. A member who does not wish to collect their payout immediately uses a *Pull* group (see `payout_mode`): on their scheduled round the pot is earmarked into their own Treasury UTxO (`claimable_balance`) instead of being pushed to their wallet, and they withdraw it whenever they like via `ClaimPayout` — or recover it at exit. This replaces the earlier turn-skipping "defer" mechanism, which could stall a round and is no longer part of the protocol.
 
-7. *Round completion*: After each `DistributeRound`, every participating Treasury UTxO has `rounds_paid` incremented by 1 and `is_deferred` reset to `False`.
+7. *Round completion*: After each `DistributeRound`, every participating Treasury UTxO has `rounds_paid` incremented by 1.
+
+8. *Collateral & pot size*: Each member locks `contribution_fee × collateral_rounds` at join — `collateral_rounds = 1` for the traditional per-round model (the default; low upfront capital, which is the core ROSCA use case), up to `max_members` for full pre-payment in trustless groups — and may deposit more. Each round deducts exactly `contribution_fee` from every contributing member. The pot paid to the borrower is `contribution_fee × active_members`, *pro-rata*: if some members have defaulted (insufficient collateral and unrecovered), the round still completes with a proportionally smaller pot rather than stalling the cycle.
 
 \
 ==== Parameters
@@ -247,11 +245,11 @@ The DCU-Toolkit implements a deterministic, round-based slot assignment system f
 
   - A Group Input must be provided from the Group Validator (as a spending input) to update the member count; the group output must have `member_count + 1`.
 
-  - The treasury output must be sent to the Treasury Script's address and contain a `TreasuryState` datum consistent with the Group datum: `assigned_slot == group.member_count`, `rounds_paid == 0`, `is_deferred == False`, `group_reference_tokenname` linking to the group, and `member_payment_credential` recording the member's wallet PKH.
+  - The treasury output must be sent to the Treasury Script's address and contain a `TreasuryState` datum consistent with the Group datum: `assigned_slot == group.member_count`, `rounds_paid == 0`, `claimable_balance == 0`, `group_reference_tokenname` linking to the group, and `member_payment_credential` recording the member's wallet PKH.
 
   - Exactly one Membership Token is minted under the Treasury policy; the token name matches `member_reference_tokenname` in the datum.
 
-  - Sufficient fees are locked: `contribution_fee + joining_fee`. When both fees are the same asset, the combined sum is required (not two independent checks).
+  - The collateral floor is locked in the contribution asset: at least `contribution_fee × collateral_rounds` (one round for PerRound groups; up to `max_members` rounds for FullUpfront). Deposits above the floor are permitted. Separately, if `joining_fee > 0` it is routed to `admin_payment_credential`.
 
   - The Account NFT (member user token) must not go to a script address.
 
@@ -275,7 +273,7 @@ The Treasury datum is a sum type with three variants representing the different 
 \
 ===== TreasuryState <treasury-datum>
 \
-The active-member state. Created at JoinGroup; updated by DistributeRound, DeferRound, Contribute, and UpdatePayoutCredential; consumed by ExitGroup.
+The active-member state. Created at JoinGroup; updated by DistributeRound, Contribute, and UpdatePayoutCredential; consumed by ExitGroup.
 
 - *`group_reference_tokenname`: ```rs AssetName```* – Links to the Group Validator. Matches the (100) ref token name on the Group UTxO.
 
@@ -285,9 +283,9 @@ The active-member state. Created at JoinGroup; updated by DistributeRound, Defer
 
 - *`rounds_paid`: ```rs Int```* – Number of distribution rounds this member has contributed to. Starts at 0 at join time; incremented by DistributeRound. A treasury instance is eligible for round N only when `rounds_paid == N`.
 
-- *`is_deferred`: ```rs Bool```* – Set to `True` by DeferRound when the member wishes to skip their scheduled borrower turn. Reset to `False` by every DistributeRound regardless of which member received the payout. When `True` at payout time, the pot routes to `(assigned_slot + 1) % num_intervals` instead.
+- *`member_payment_credential`: ```rs ByteArray```* – 28-byte payment key hash of the member's wallet. Used by DistributeRound (in `Push` mode) to route the payout to the correct address. Updatable via `UpdatePayoutCredential`.
 
-- *`member_payment_credential`: ```rs ByteArray```* – 28-byte payment key hash of the member's wallet. Used by DistributeRound to route the payout to the correct address. Updatable via `UpdatePayoutCredential`.
+- *`claimable_balance`: ```rs Int```* – Payout earmarked for this member to withdraw, in the contribution asset. `0` at join and always `0` under `Push` mode. Under `Pull` mode (see `payout_mode` on the Group datum), `DistributeRound` credits the pot here — into the borrower's *own* Treasury UTxO — instead of paying a wallet; the member later withdraws exactly this amount via `ClaimPayout`, which resets it to `0`. The funds physically accumulate in this UTxO, so the earmark is durable until claimed or returned at exit. Preserved across cycles by `NextCycle`.
 
 \
 ===== PenaltyState <penalty-datum>
@@ -312,6 +310,12 @@ Transition state for members whose contribution balance falls below `contributio
 - *`grace_extensions_used`: ```rs Int```* – Number of grace extensions already granted (max = 2).
 
 - *`rounds_paid`: ```rs Int```* – The `rounds_paid` value at the time of transition — carried for record keeping.
+
+- *`assigned_slot`: ```rs Int```* – Rotation slot, preserved so `TreasuryState` can be fully reconstructed when the member recovers via `Contribute`.
+
+- *`member_payment_credential`: ```rs ByteArray```* – Payment key hash, preserved for payout routing on recovery.
+
+- *`claimable_balance`: ```rs Int```* – Any unclaimed `Pull`-mode earmark carried in from `TreasuryState` when the member defaulted. Preserved through the grace window (and across `ExtendGraceWindow`) and reconstructed faithfully on recovery, so a recovered member can still `ClaimPayout` it. `0` under `Push`. The earmarked funds themselves remain in this UTxO's value regardless.
 
 \
 ==== Redeemer
@@ -346,14 +350,6 @@ Transition state for members whose contribution balance falls below `contributio
   }
   ```*
 
-- *```rust
-  DeferRound {
-    round_number: Int,
-    member_input_index: Int,
-    treasury_input_index: Int,
-    treasury_output_index: Int,
-  }
-  ```*
 
 - *```rust
   UpdatePayoutCredential {
@@ -372,6 +368,14 @@ Transition state for members whose contribution balance falls below `contributio
   }
   ```*
 
+- *```rust
+  ClaimPayout {
+    group_ref_input_index: Int,
+    member_input_index: Int,
+    treasury_output_index: Int,
+  }
+  ```*
+
 \
 ==== Validation
 
@@ -386,15 +390,22 @@ Transition state for members whose contribution balance falls below `contributio
 
   - *Round eligibility*: Every Treasury UTxO spent must be in `TreasuryState` with `rounds_paid == round_number`. Members that have already paid this round (stale UTxO) are excluded automatically.
 
-  - *Borrower resolution*: `current_slot = round_number % num_intervals`. The borrower is the member with `assigned_slot == current_slot`. If that member's `is_deferred == True`, the payout routes to `(current_slot + 1) % num_intervals` instead. This ensures every interval ends with one recipient.
+  - *Borrower resolution*: `current_slot = round_number % num_intervals`. The borrower is the member with `assigned_slot == current_slot`. The rotation is fixed — the turn is never reordered. The borrower must be present as a contributing input; a defaulted/absent borrower has no valid recipient and the round does not validate.
 
-  - *Payout amount*: Total payout = `contribution_fee × number_of_treasury_inputs` (the contribution asset moves out of each input and is aggregated to the borrower).
+  - *Complete member set (atomicity)*: The transaction must account for *every* member listed in `group.member_token_names`. Each member's Treasury UTxO is either consumed as a *contributing* input (in `TreasuryState`, contribution-asset balance ≥ `contribution_fee`) or demonstrably *skipped* because it is in `InsufficientCollateralState`/`PenaltyState` (a defaulter, not contributing this round). A caller may not silently exclude a healthy member to shrink the pot. _Without this check, a permissionless caller could submit a partial set — shortchanging the borrower and stranding the excluded members' round counters._
+
+  - *Pro-rata payout*: Let `active_members` be the number of *contributing* Treasuries (members in good standing this round). The pot is `contribution_fee × active_members`. When some members have defaulted, the pot is reduced pro-rata rather than blocking the round — the shortfall is shared by that round's borrower instead of stalling the entire cycle.
+
+  - *Payout mode (`Push` / `Pull`)*: how the pot reaches the borrower is governed by `group.payout_mode`, fixed at group creation. The debit side is identical in both modes — every contributing Treasury is debited exactly `contribution_fee`.
+    - *`Push`* (default): the borrower receives `contribution_fee × active_members` directly to their wallet (`member_payment_credential`), validated at `borrower_output_index`.
+    - *`Pull`*: there is no wallet output. The pot is earmarked into the borrower's *own* Treasury UTxO — that output's `claimable_balance` increases by the pot and its contribution-asset balance rises by the same amount (`out = in − contribution_fee + pot`). The borrower (the Treasury whose `assigned_slot == effective_slot`) is identified solely from immutable datum, so it cannot be spoofed; every other Treasury is pinned to `out = in − contribution_fee` with `claimable_balance` preserved. By conservation, the released fees can only accumulate in the borrower's Treasury — no value can be skimmed. The borrower later withdraws via `ClaimPayout`.
+    - In *both* modes the scheduled borrower must be present as a contributing input; a defaulted/absent borrower blocks the round (the pot has no legitimate recipient).
 
   - *Ascending index requirement*: `treasury_input_indices` and `treasury_output_indices` must both be in strictly ascending order. This prevents duplicate-index attacks.
 
   - *Group output*: `last_distributed_round` incremented to `round_number`; all other group datum fields unchanged. The group UTxO must be a spending input (not a reference input) so its state is updated atomically.
 
-  - *Treasury outputs*: Each spent Treasury UTxO is returned to the script address with `rounds_paid` incremented by 1 and `is_deferred` reset to `False`. Output ADA equals input ADA minus `contribution_fee` (contribution asset balance decreases). Only ADA + the membership token may remain in the output (no value accumulation).
+  - *Treasury outputs*: Each contributing Treasury UTxO is returned to the script address with `rounds_paid` incremented by 1. Its contribution-asset balance decreases by exactly `contribution_fee` (under Pull, the borrower's own treasury instead rises by `total_payout − contribution_fee` as the pot is earmarked). The output may hold only ADA, the membership token, and (for native-token groups) the contribution asset — no other value may accumulate.
 
   \
 + *ExitGroup*
@@ -412,19 +423,6 @@ Transition state for members whose contribution balance falls below `contributio
     - *Mature / inactive exit* (now >= maturity_time OR group is inactive): The membership token is burned. All locked ADA returns to the member.
 
     - *Early exit* (group active AND now < maturity_time): A `PenaltyState` UTxO is produced at `penalty_output_index` retaining the membership token and at least `penalty_fee`. The remaining ADA (minus penalty) returns to the member.
-
-  \
-+ *DeferRound*
-
-  Allows a member to voluntarily defer their scheduled borrower turn for the next round. The deferred member still contributes their `contribution_fee` that round; the payout routes to the next slot instead.
-
-  - `round_number` must equal `datum.rounds_paid` — the member is deferring the round they are next due for, not a future one.
-
-  - The member input (at `member_input_index`) must hold the Account User NFT.
-
-  - Output datum: identical to input with `is_deferred = True`. All other fields frozen.
-
-  - Output ADA and membership token preserved unchanged at the script address.
 
   \
 + *Contribute*
@@ -460,6 +458,21 @@ Transition state for members whose contribution balance falls below `contributio
   - `grace_extensions_used` must be < `max_grace_extensions` (= 2). After two extensions, only `TerminateGroup` is available.
 
   - Output: `grace_expires_at` extended by `group.grace_period_length`; `grace_extensions_used` incremented by 1; all other datum fields frozen. ADA and membership token unchanged.
+
+  \
++ *ClaimPayout*
+
+  Allows a member to withdraw their earmarked payout (`Pull` mode only — under `Push` there is never anything to claim). Authorization is by *possession of the membership (222) token*, not the stored credential: whoever holds the membership owns the payout. This is what makes lost-wallet recovery work — a member who lost their original wallet can claim from a new one holding the token, to any destination, with no pre-step.
+
+  - The member input (at `member_input_index`) must hold the Account User NFT (the 222 token).
+
+  - The group UTxO is provided as a reference input (at `group_ref_input_index`) for the contribution-asset identity; its ref token name must match the Treasury datum's `group_reference_tokenname` (prevents a forged group from misdirecting the balance measurement).
+
+  - *Exact withdrawal*: the Treasury output's contribution-asset balance must equal `input − claimable_balance` — pinned both ways, so the member can withdraw neither more (draining collateral) nor less than the earmark.
+
+  - Output datum: identical to input with `claimable_balance` reset to `0`; every other field (slot, rounds, credential, refs) frozen. This prevents a double-claim.
+
+  - Output at the script address retaining the membership token; only ADA, the membership token, and the contribution asset may be present.
 
 #pagebreak()
 
@@ -510,6 +523,7 @@ Nothing
     - *`last_distributed_round`*: Must be `−1` at creation — no rounds have run yet.
     - *`start_time`*: Must be 0 at creation — `StartGroup` sets this to the transaction's validity range lower bound.
     - *`member_token_names`*: Must be an empty list `[]` at creation.
+    - *`collateral_rounds`*: Must be in `[1, max_members]` (`1` = PerRound default, `max_members` = FullUpfront, any `k` = partial).
     - *`admin_payment_credential`*: Must be exactly 28 bytes (a valid payment key hash).
     - The Group Reference NFT must be the only token under this policy in the script output (exact token check).
     - The Group User NFT must go to a VerificationKey address — if sent to a script, admin authority is permanently lost.
@@ -535,7 +549,7 @@ Nothing
 
 - *`contribution_fee_assetname: AssetName`* The AssetName of the contribution fee. Empty string for ADA.
 
-- *`contribution_fee: Int`* The contribution fee amount per round. Must be > 0. Each member locks `max_members × contribution_fee` (ADA) or `2 ADA` minimum (non-ADA) at join time to pre-pay all future rounds.
+- *`contribution_fee: Int`* The contribution fee amount per round, in the contribution asset. Must be > 0. The amount a member must lock at join is governed by `collateral_rounds` (see below) — the join floor is `contribution_fee × collateral_rounds`. `DistributeRound` deducts exactly `contribution_fee` from each participating Treasury each round.
 
 - *`joining_fee_policyid: PolicyId`* The PolicyId governing the asset used for the joining fee. Empty string for ADA.
 
@@ -573,7 +587,11 @@ Nothing
 
 - *`member_token_names: List<AssetName>`* On-chain membership registry: one entry per active member, containing their treasury membership token name (CIP-68 prefix_222 form). Appended at `MemberJoin`, removed at `MemberExit`. Invariant: `list.length(member_token_names) == member_count`.
 
-*Note:* All fee amounts, policy IDs, and asset names are *critical fields* — they cannot be changed via `UpdateGroup` while `member_count > 0`. Changing a fee's currency is as disruptive as changing its amount.
+- *`collateral_rounds: Int`* Number of rounds' worth of `contribution_fee` a member must lock at join. `1` = *PerRound* (the traditional ROSCA default — low upfront capital, members top up each round); `max_members` = *FullUpfront* (trustless/stranger groups — defaulting is made impossible); any `k` in `[1, max_members]` = partial. The join floor is `contribution_fee × collateral_rounds`. Deposits are *never capped* — a member may pre-load more and `DistributeRound` still deducts exactly `contribution_fee` per round. Validated `1 ≤ collateral_rounds ≤ max_members` at creation; frozen once any member is active.
+
+- *`payout_mode: PayoutMode`* How the pot is delivered to each round's borrower — `Push` or `Pull`. `Push` (the default) pays the borrower's wallet directly. `Pull` earmarks the pot into the borrower's own Treasury UTxO (`claimable_balance`) for later withdrawal via `ClaimPayout`, which solves the lost-wallet problem (the recipient proves control at claim time and may redirect to any address). Only the *credit* side differs; the per-round debit is identical. Fixed at creation; a critical field frozen once any member is active. See the Treasury `DistributeRound` and `ClaimPayout` validation.
+
+*Note:* All fee amounts, policy IDs, asset names, `collateral_rounds`, and `payout_mode` are *critical fields* — they cannot be changed via `UpdateGroup` while `member_count > 0`. Changing a fee's currency is as disruptive as changing its amount.
 
 \
 
@@ -651,7 +669,7 @@ Nothing
 
   - `is_active` is a one-way latch: only `true → false` is permitted. Reactivation (`false → true`) is permanently forbidden; deactivation is the admin's irrevocable signal to members to exit.
 
-  - The following fields are *critical* and may only be changed when `member_count == 0`: all fee amounts, all fee policy IDs, all fee asset names, `creator_bond`, `grace_period_length`, `interval_length`, `num_intervals`, `start_time`, `max_members`, and `admin_payment_credential`. Changing `start_time` while members are active would shift every member's payout window; changing fee currency is an economic rug-pull equivalent to raising the amount.
+  - The following fields are *critical* and may only be changed when `member_count == 0`: all fee amounts, all fee policy IDs, all fee asset names, `creator_bond`, `grace_period_length`, `interval_length`, `num_intervals`, `start_time`, `max_members`, `collateral_rounds`, and `admin_payment_credential`. Changing `start_time` while members are active would shift every member's payout window; changing fee currency is an economic rug-pull equivalent to raising the amount.
 
   \
 + *RemoveGroup*
@@ -728,6 +746,8 @@ Nothing
   - `is_active` must be `True`.
 
   - `round_number` must be < `num_intervals` (round must be within the current cycle).
+
+  - *Complete member set*: the transaction must account for every member in `member_token_names` — each appears either as a contributing Treasury input or as a skipped defaulter. Because the membership registry lives in the group datum, this completeness check is anchored here, so the pro-rata `active_members` count cannot be understated by excluding healthy members. _(The contributing/defaulter classification and the `contribution_fee × active_members` payout are enforced in the Treasury `DistributeRound` validation.)_
 
   - Group output: `last_distributed_round = round_number`; all other fields frozen.
 
@@ -1572,7 +1592,7 @@ This transaction permanently deletes a cooperative group. It is a hard-delete: b
 \
 === Mint :: JoinGroup
 \
-This transaction occurs when a member joins a cooperative group. It atomically mints one Membership Token, creates the member's Treasury UTxO with pre-paid contributions, and updates the Group UTxO to increment `member_count`. The Group UTxO is a *spending input* — not a reference — so the group state is updated in the same transaction.
+This transaction occurs when a member joins a cooperative group. It atomically mints one Membership Token, creates the member's Treasury UTxO with the configured collateral locked (`contribution_fee × collateral_rounds`), and updates the Group UTxO to increment `member_count`. The Group UTxO is a *spending input* — not a reference — so the group state is updated in the same transaction.
 
 \
 #transaction(
@@ -1615,13 +1635,12 @@ This transaction occurs when a member joins a cooperative group. It atomically m
       name: "Treasury Validator UTxO",
       address: "treasury_validator",
       value: (
-        ada: 60000000, // max_members × contribution_fee pre-paid
+        ada: 60000000, // contribution_fee × collateral_rounds (FullUpfront example)
         Member_Ref: 1, // Membership token locked here
       ),
       datum: (
         assigned_slot: 5,   // == member_count at join time
         rounds_paid: 0,
-        is_deferred: false,
       ),
     ),
     (
@@ -1649,7 +1668,7 @@ This transaction occurs when a member joins a cooperative group. It atomically m
 
     - Value:
 
-      - `max_members × contribution_fee` ADA (pre-pays all future rounds) or minimum 2 ADA for non-ADA fees
+      - At least `contribution_fee × collateral_rounds` in the contribution asset (one round for PerRound groups, up to `max_members` rounds for FullUpfront — this example shows FullUpfront), plus minimum ADA for the UTxO
 
       - 1 Account User NFT (proves account ownership; stays in wallet)
 
@@ -1699,13 +1718,13 @@ This transaction occurs when a member joins a cooperative group. It atomically m
 
       - `assigned_slot`: index equal to `group.member_count` at join time
       - `rounds_paid`: 0
-      - `is_deferred`: False
+      - `claimable_balance`: 0
       - `member_payment_credential`: member's wallet PKH
       - `group_reference_tokenname` / `member_reference_tokenname`: linking tokens
 
     - Value:
 
-      - `max_members × contribution_fee` ADA (pre-paid contributions)
+      - At least `contribution_fee × collateral_rounds` in the contribution asset (the locked collateral; FullUpfront in this example) plus minimum UTxO ADA
 
       - 1 Membership Reference Token (the (100) prefix, locked at script)
 
@@ -1716,112 +1735,6 @@ This transaction occurs when a member joins a cooperative group. It atomically m
     - Datum: same as input with `member_count` incremented by 1 and member token name appended to `member_token_names`
 
     - Value: same as input
-#pagebreak()
-
-=== Spend :: DeferRound
-\
-This transaction allows a member to voluntarily defer their scheduled borrower turn for the next distribution round. The deferred member still contributes their `contribution_fee` when the round runs; the pot routes to the next slot instead. The `is_deferred` flag resets automatically when `DistributeRound` processes this member.
-
-\
-#transaction(
-  "DeferRound",
-  inputs: (
-    (
-      name: "Member Wallet UTxO",
-      address: "member_wallet",
-      value: (
-        ada: 2000000,
-        Account_NFT: 1,
-        Member_User: 1,
-      ),
-    ),
-    (
-      name: "Treasury Validator UTxO",
-      address: "treasury_validator",
-      value: (
-        ada: 60000000,
-        Member_Ref: 1,
-      ),
-      datum: (
-        assigned_slot: 2,
-        rounds_paid: 2,
-        is_deferred: false,
-      ),
-    ),
-  ),
-  outputs: (
-    (
-      name: "Member Wallet UTxO",
-      address: "member_wallet",
-      value: (
-        ada: 1500000,
-        Account_NFT: 1,
-        Member_User: 1,
-      ),
-    ),
-    (
-      name: "Treasury Validator UTxO",
-      address: "treasury_validator",
-      value: (
-        ada: 60000000, // ADA unchanged
-        Member_Ref: 1,
-      ),
-      datum: (
-        assigned_slot: 2,
-        rounds_paid: 2,
-        is_deferred: true, // Only this field changes
-      ),
-    ),
-  ),
-  show_mints: false,
-  notes: [Defer scheduled payout turn — is_deferred set to True, resets at DistributeRound],
-)
-\
-
-==== Inputs
-\
-  + *Member Wallet UTxO*
-
-    - Address: Member's wallet address
-
-    - Value:
-
-      - Minimum ADA
-
-      - 1 Account User NFT Asset (proves ownership)
-
-  + *Treasury Validator UTxO*
-
-    - Address: Treasury validator script address
-
-    - Datum: `TreasuryState` as listed in @treasury-datum
-
-    - Value:
-
-      - Locked contribution funds
-
-      - 1 Membership Reference Token
-\
-==== Outputs
-\
-  + *Member Wallet UTxO*
-
-    - Address: Member's wallet address
-
-    - Value:
-
-      - Change ADA
-
-      - 1 Account User NFT (returned)
-
-  + *Treasury Validator UTxO*
-
-    - Address: Treasury validator script address
-
-    - Datum: identical to input with `is_deferred = True`
-
-    - Value: identical to input (ADA and membership token unchanged)
-
 #pagebreak()
 
 === Spend :: ExitGroup
@@ -1979,7 +1892,7 @@ This transaction allows a member to exit a cooperative group by spending a Treas
 
 === Spend :: DistributeRound
 \
-This transaction distributes the group pot for one sequential round. All active members' Treasury UTxOs are consumed and updated atomically with the Group UTxO. The Group UTxO is a *spending input* so `last_distributed_round` is updated on-chain. The borrower (scheduled slot member) receives the full pot. If the borrower has `is_deferred = True`, the payout routes to the next slot.
+This transaction distributes the group pot for one sequential round. The *complete* member set is accounted for atomically with the Group UTxO: every member in `group.member_token_names` is either consumed as a contributing Treasury input or skipped as a defaulter (`InsufficientCollateralState`/`PenaltyState`) — a caller cannot exclude a healthy member to shrink the pot. The Group UTxO is a *spending input* so `last_distributed_round` is updated on-chain. The borrower (scheduled slot member) receives `contribution_fee × active_members` — the *pro-rata* pot, reduced when members have defaulted rather than stalling the cycle. Under `Pull` mode the pot is earmarked into the borrower's own Treasury (`claimable_balance`) instead of paid to their wallet.
 
 \
 #transaction(
@@ -1995,7 +1908,6 @@ This transaction distributes the group pot for one sequential round. All active 
       datum: (
         assigned_slot: 0,    // current_slot = round_number % num_intervals
         rounds_paid: 0,
-        is_deferred: false,
       ),
     ),
     (
@@ -2008,7 +1920,6 @@ This transaction distributes the group pot for one sequential round. All active 
       datum: (
         assigned_slot: 1,
         rounds_paid: 0,
-        is_deferred: false,
       ),
     ),
     (
@@ -2030,7 +1941,7 @@ This transaction distributes the group pot for one sequential round. All active 
       name: "Borrower Wallet UTxO",
       address: "member_wallet",
       value: (
-        ada: 4000000, // contribution_fee × num_members (2 × 2 ADA)
+        ada: 4000000, // contribution_fee × active_members (2 × 2 ADA — both contributing)
       ),
     ),
     (
@@ -2042,7 +1953,6 @@ This transaction distributes the group pot for one sequential round. All active 
       ),
       datum: (
         rounds_paid: 1,   // Incremented
-        is_deferred: false, // Always reset
       ),
     ),
     (
@@ -2054,7 +1964,6 @@ This transaction distributes the group pot for one sequential round. All active 
       ),
       datum: (
         rounds_paid: 1,
-        is_deferred: false,
       ),
     ),
     (
@@ -2096,7 +2005,7 @@ This transaction distributes the group pot for one sequential round. All active 
 \
 + *Borrower Wallet UTxO*
 
-  - Address: Member's wallet with `assigned_slot == current_slot` (or next slot if deferred)
+  - Address: Member's wallet with `assigned_slot == current_slot` (Push mode; under Pull the pot is earmarked into the borrower's own Treasury instead)
 
   - Value: `contribution_fee × number_of_treasury_inputs` (the full pot for this round)
 
@@ -2104,7 +2013,7 @@ This transaction distributes the group pot for one sequential round. All active 
 
   - Address: Treasury validator script address
 
-  - Datum: same `TreasuryState` with `rounds_paid` incremented by 1 and `is_deferred` reset to `False`
+  - Datum: same `TreasuryState` with `rounds_paid` incremented by 1
 
   - Value: input ADA minus `contribution_fee` per member; membership token preserved
 
@@ -2144,7 +2053,6 @@ This transaction allows a member to top up their Treasury balance when it has fa
       ),
       datum: (
         rounds_paid: 2,
-        is_deferred: false,
       ),
     ),
   ),
@@ -2167,7 +2075,6 @@ This transaction allows a member to top up their Treasury balance when it has fa
       ),
       datum: (
         rounds_paid: 2,   // datum structurally unchanged
-        is_deferred: false,
       ),
     ),
   ),
@@ -2255,7 +2162,6 @@ This transaction allows a member to redirect future payouts to a new wallet addr
       datum: (
         member_payment_credential: "old_pkh_28bytes",
         rounds_paid: 1,
-        is_deferred: false,
       ),
     ),
   ),
@@ -2279,7 +2185,6 @@ This transaction allows a member to redirect future payouts to a new wallet addr
       datum: (
         member_payment_credential: "new_pkh_28bytes", // updated to current wallet
         rounds_paid: 1,    // all other fields frozen
-        is_deferred: false,
       ),
     ),
   ),

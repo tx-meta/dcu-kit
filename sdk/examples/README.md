@@ -39,7 +39,7 @@ Fund at: https://docs.cardano.org/cardano-testnets/tools/faucet
 Rule of thumb:
 
 - **ADMIN**: 150 ADA (group bond + deploy-scripts + joining fee + collateral)
-- **USER1 / USER2**: 50 ADA each (max_members × contribution_fee + tx fees)
+- **USER1 / USER2**: 50 ADA each (contribution_fee × collateral_rounds + tx fees)
 
 ---
 
@@ -183,18 +183,18 @@ pnpm run delete-group
 
 ### Treasury
 
-| Script                     | Default wallet | What it does                                                                                                      |
-| -------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `join-group`               | USER1          | Joins the group. Locks `max_members × contribution_fee` into treasury.                                            |
-| `start-group`              | ADMIN          | Seals membership, sets `num_intervals=member_count`, anchors `start_time`. **Required before distribute-payout.** |
-| `distribute-payout`        | ADMIN          | Collects contributions and pays the current round's borrower. Permissionless.                                     |
-| `exit-group`               | USER1          | Exits the group (mature = full refund; early = PenaltyState created).                                             |
-| `terminate-group`          | ADMIN          | Claims the PenaltyState UTxO after an early exit.                                                                 |
-| `defer-round`              | USER1          | Sets `is_deferred=true` — borrower skips their slot; payout routes to next slot.                                  |
-| `contribute`               | USER1          | Tops up a treasury UTxO balance. `TOP_UP_AMOUNT=<lovelace>` (default 5 ADA).                                      |
-| `update-payout-credential` | USER1          | Redirects future payouts to the current signing wallet's address.                                                 |
-| `extend-grace-window`      | ADMIN          | Extends grace period for `MEMBER_WALLET` (default USER1) in ICS.                                                  |
-| `next-cycle`               | ADMIN          | Resets a mature group for another rotation cycle. Members re-deposit, then admin calls start-group again.         |
+| Script                     | Default wallet | What it does                                                                                                       |
+| -------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `join-group`               | USER1          | Joins the group. Locks `contribution_fee × collateral_rounds` into treasury (PerRound default = 1 round).          |
+| `start-group`              | ADMIN          | Seals membership, sets `num_intervals=member_count`, anchors `start_time`. **Required before distribute-payout.**  |
+| `distribute-payout`        | ADMIN          | Collects contributions and pays the current round's borrower. Permissionless.                                      |
+| `claim-payout`             | USER1          | Pull mode: withdraws the borrower's earmarked `claimable_balance` to a wallet (`DESTINATION_ADDRESS` to redirect). |
+| `exit-group`               | USER1          | Exits the group (mature = full refund; early = PenaltyState created).                                              |
+| `terminate-group`          | ADMIN          | Claims the PenaltyState UTxO after an early exit.                                                                  |
+| `contribute`               | USER1          | Tops up a treasury UTxO balance. `TOP_UP_AMOUNT=<lovelace>` (default 5 ADA).                                       |
+| `update-payout-credential` | USER1          | Redirects future payouts to the current signing wallet's address.                                                  |
+| `extend-grace-window`      | ADMIN          | Extends grace period for `MEMBER_WALLET` (default USER1) in ICS.                                                   |
+| `next-cycle`               | ADMIN          | Resets a mature group for another rotation cycle. Members re-deposit, then admin calls start-group again.          |
 
 ---
 
@@ -260,7 +260,7 @@ Stop with `Ctrl+C` — the daemon finishes the current poll then exits cleanly.
 
 ## Fee structure
 
-**`contribution_fee`** — each member locks `max_members × contribution_fee` at join (covers all rounds).
+**`contribution_fee`** — each member locks `contribution_fee × collateral_rounds` at join (PerRound default = 1 round; top up later via `contribute`).
 
 **`joining_fee`** — one-time fee paid to `admin_payment_credential` at join. Not returned on exit.
 
@@ -356,7 +356,7 @@ ACTIVE_WALLET=USER1 pnpm run join-group   # slot 1
 ACTIVE_WALLET=USER2 pnpm run join-group   # slot 2
 ```
 
-Each join locks `max_members × contribution_fee` (5 × 5 ADA = 25 ADA by default).
+Each join locks `contribution_fee × collateral_rounds` (5 ADA × 1 = 5 ADA by default, PerRound).
 If `scriptRefTreasury` and `scriptRefGroup` are in `state.json`, the tx uses reference
 scripts (~4.5 KB) instead of inlining the full validator (~16 KB).
 
@@ -433,20 +433,6 @@ MEMBER_WALLET=USER1 pnpm run terminate-group
 ---
 
 ## Tier 2 flows
-
-### Defer-round test
-
-A borrower skips their slot — payout routes to the next member.
-
-```bash
-# After start-group, before distribute-payout for round 0:
-ACTIVE_WALLET=ADMIN pnpm run defer-round
-# → ADMIN's treasury UTxO: is_deferred=true
-
-pnpm run distribute-payout
-# → round 0: ADMIN is deferred → payout goes to USER1 (slot 1) instead
-# → ADMIN's is_deferred resets to false automatically
-```
 
 ### Update payout credential test
 

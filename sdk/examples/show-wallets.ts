@@ -11,12 +11,18 @@
 
 import "dotenv/config";
 import { Lucid, Blockfrost, Maestro } from "@lucid-evolution/lucid";
-import {
-  groupPolicyId,
-  accountPolicyId,
-  assetNameLabels,
-} from "@tx-meta/dcu-sdk";
+import { accountPolicyId, assetNameLabels } from "@tx-meta/dcu-sdk";
+import { loadSdk } from "./sdk.js";
 import { cexplorerTxUrl, logError } from "./context.js";
+
+// Settings are optional for this read-only inspector. When present, group (222)
+// tokens are labelled; otherwise group-policy classification is skipped.
+let groupPolicyId: string | undefined;
+try {
+  groupPolicyId = loadSdk().protocol.groupPolicyId;
+} catch {
+  groupPolicyId = undefined;
+}
 
 const LIVE_NETWORKS = ["Preprod", "Mainnet", "Preview"] as const;
 type LiveNetwork = (typeof LIVE_NETWORKS)[number];

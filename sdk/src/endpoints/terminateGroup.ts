@@ -12,11 +12,7 @@ import {
   TreasuryDatumSchema,
   TreasuryRedeemer,
 } from "../core/types.js";
-import {
-  treasuryValidator,
-  treasuryPolicyId,
-  groupPolicyId,
-} from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 import {
   DcuError,
   InvalidDatumError,
@@ -30,6 +26,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  referenceInputIndex,
 } from "../core/utils/index.js";
 
 // --- Configuration ---
@@ -56,16 +53,20 @@ export type TerminateGroupConfig = {
  * @returns Effect yielding TxSignBuilder.
  */
 export const unsignedTerminateGroupTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: TerminateGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const { treasuryValidator, treasuryPolicyId, groupPolicyId, settingsUnit } =
+      protocol;
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix, memberAccountTokenSuffix } = config;
 
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
     const adminUnit =
-      groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix222 + groupTokenSuffix;
 
     // Group UTxO — reference input only, not spent
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
@@ -124,17 +125,23 @@ export const unsignedTerminateGroupTxProgram = (
       );
     }
 
-    const memberToken = toUnit(treasuryPolicyId!, memberRefName);
+    const memberToken = toUnit(treasuryPolicyId, memberRefName);
     const burnAssets: Assets = { [memberToken]: -1n };
 
-    // Treasury spend redeemer — group_ref_input_index: 0 (first reference input)
+    // Group's canonical position among the reference inputs (group + settings) — see note
+    // in contribute/claimPayout: hardcoding 0n breaks now that settings is also referenced.
+    const groupRefInputIndex = referenceInputIndex(
+      [groupUtxo, settingsUtxo],
+      groupUtxo,
+    );
+
     const treasurySpendRedeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
             ClaimPenalty: {
-              group_ref_input_index: 0n, // first (only) reference input
+              group_ref_input_index: groupRefInputIndex,
               admin_input_index: inputIndices[0],
             },
           },
@@ -160,6 +167,7 @@ export const unsignedTerminateGroupTxProgram = (
       .addSigner(address)
       .attach.MintingPolicy(treasuryValidator.mintTreasury)
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
+      .readFrom([settingsUtxo])
       .completeProgram(
         lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
       )

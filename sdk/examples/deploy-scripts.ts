@@ -27,6 +27,7 @@
 
 import { Effect } from "effect";
 import { deployScripts, verifyDeployment } from "@tx-meta/dcu-sdk";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -48,12 +49,13 @@ async function main() {
   lucid.selectWallet.fromSeed(adminSeed);
   await logWalletInfo(lucid, "ADMIN");
 
+  const { protocol } = loadSdk();
   const state = loadState();
 
   // If already deployed, verify both UTxOs are still on-chain.
   if (state.scriptRefTreasury && state.scriptRefGroup) {
     const result = await Effect.runPromise(
-      verifyDeployment(lucid, {
+      verifyDeployment(protocol, lucid, {
         treasuryRef: state.scriptRefTreasury,
         groupRef: state.scriptRefGroup,
       }),
@@ -92,7 +94,7 @@ async function main() {
     "This will take ~2 minutes (one on-chain confirmation between txs).\n",
   );
 
-  const deployResult = await Effect.runPromise(deployScripts(lucid));
+  const deployResult = await Effect.runPromise(deployScripts(protocol, lucid));
 
   console.log("\nBoth transactions confirmed.");
   console.log(

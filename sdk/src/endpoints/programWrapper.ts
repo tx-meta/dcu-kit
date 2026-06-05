@@ -1,5 +1,6 @@
 import { LucidEvolution } from "@lucid-evolution/lucid";
 import { makeReturn } from "../core/utils/index.js";
+import { buildProtocol, Protocol } from "../core/validators/constants.js";
 
 // Endpoint Imports
 import {
@@ -37,8 +38,11 @@ import {
   unsignedTerminateGroupTxProgram,
   TerminateGroupConfig,
 } from "./terminateGroup.js";
+import {
+  unsignedTerminateDefaultTxProgram,
+  TerminateDefaultConfig,
+} from "./terminateDefault.js";
 import { unsignedContributeTxProgram, ContributeConfig } from "./contribute.js";
-import { unsignedDeferRoundTxProgram, DeferRoundConfig } from "./deferRound.js";
 import {
   unsignedUpdatePayoutCredentialTxProgram,
   UpdatePayoutCredentialConfig,
@@ -48,119 +52,104 @@ import {
   ExtendGraceWindowConfig,
 } from "./extendGraceWindow.js";
 import { unsignedNextCycleTxProgram, NextCycleConfig } from "./nextCycle.js";
+import {
+  unsignedClaimPayoutTxProgram,
+  ClaimPayoutConfig,
+} from "./claimPayout.js";
 
-/**
- * Creates a DCU Account.
- */
+// ─── Account create/update (settings-independent — account validator is a root) ──
+
+/** Creates a DCU Account. */
 export const createAccount = (
   lucid: LucidEvolution,
   config: CreateAccountConfig,
 ) => makeReturn(unsignedCreateAccountTxProgram(lucid, config));
 
-/**
- * Updates a DCU Account.
- */
+/** Updates a DCU Account. */
 export const updateAccount = (
   lucid: LucidEvolution,
   config: UpdateAccountConfig,
 ) => makeReturn(unsignedUpdateAccountTxProgram(lucid, config));
 
-/**
- * Deletes a DCU Account.
- */
-export const deleteAccount = (
-  lucid: LucidEvolution,
-  config: DeleteAccountConfig,
-) => makeReturn(unsignedDeleteAccountTxProgram(lucid, config));
+// NOTE: deleteAccount is NOT here — it scans the deployment's treasury for active
+// memberships before burning, so it needs the protocol context and lives inside
+// createDcuSdk below.
+
+// ─── Group + treasury endpoints (bound to a deployment's protocol context) ───────
 
 /**
- * Creates a generic DCU Group.
+ * Build the DCU group/treasury endpoints for a deployment, bound to its protocol
+ * context (validators/policies derived from the deployment's settings policy).
+ *
+ * `settingsPolicy` is the policy ID of the singleton settings NFT minted by
+ * `initializeSettings` (see admin module). Because the treasury validator is
+ * parameterized by it (P5 trusted binding), the group/treasury endpoints cannot be
+ * static module constants — they are produced here, once per deployment.
+ *
+ * @example
+ * const sdk = createDcuSdk(settingsPolicy);
+ * await sdk.joinGroup(lucid, config).unsafeRun();
  */
-export const createGroup = (lucid: LucidEvolution, config: CreateGroupConfig) =>
-  makeReturn(unsignedCreateGroupTxProgram(lucid, config));
+export const createDcuSdk = (settingsPolicy: string) => {
+  const protocol: Protocol = buildProtocol(settingsPolicy);
+  return {
+    protocol,
 
-/**
- * Updates a DCU Group's parameters.
- */
-export const updateGroup = (lucid: LucidEvolution, config: UpdateGroupConfig) =>
-  makeReturn(unsignedUpdateGroupTxProgram(lucid, config));
+    /** Deletes a DCU Account (rejects if it has active memberships in this deployment). */
+    deleteAccount: (lucid: LucidEvolution, config: DeleteAccountConfig) =>
+      makeReturn(unsignedDeleteAccountTxProgram(protocol, lucid, config)),
 
-/**
- * Deletes (deactivates) a DCU Group.
- */
-export const deleteGroup = (lucid: LucidEvolution, config: DeleteGroupConfig) =>
-  makeReturn(unsignedDeleteGroupTxProgram(lucid, config));
+    createGroup: (lucid: LucidEvolution, config: CreateGroupConfig) =>
+      makeReturn(unsignedCreateGroupTxProgram(protocol, lucid, config)),
 
-/**
- * Joins a user to a DCU Group.
- */
-export const joinGroup = (lucid: LucidEvolution, config: JoinGroupConfig) =>
-  makeReturn(unsignedJoinGroupTxProgram(lucid, config));
+    updateGroup: (lucid: LucidEvolution, config: UpdateGroupConfig) =>
+      makeReturn(unsignedUpdateGroupTxProgram(protocol, lucid, config)),
 
-/**
- * Distributes payouts from a DCU Group Treasury to the assigned member.
- */
-export const distributePayout = (
-  lucid: LucidEvolution,
-  config: DistributePayoutConfig,
-) => makeReturn(unsignedDistributePayoutTxProgram(lucid, config));
+    deleteGroup: (lucid: LucidEvolution, config: DeleteGroupConfig) =>
+      makeReturn(unsignedDeleteGroupTxProgram(protocol, lucid, config)),
 
-/**
- * Exits a member from a DCU Group, claiming refunds or paying penalties.
- */
-export const exitGroup = (lucid: LucidEvolution, config: ExitGroupConfig) =>
-  makeReturn(unsignedExitGroupTxProgram(lucid, config));
+    joinGroup: (lucid: LucidEvolution, config: JoinGroupConfig) =>
+      makeReturn(unsignedJoinGroupTxProgram(protocol, lucid, config)),
 
-/**
- * Exits a member from a DCU Group, claiming refunds or paying penalties.
- */
+    startGroup: (lucid: LucidEvolution, config: StartGroupConfig) =>
+      makeReturn(unsignedStartGroupTxProgram(protocol, lucid, config)),
 
-/**
- * Starts a DCU Group, sealing membership and fixing the rotation schedule.
- */
-export const startGroup = (lucid: LucidEvolution, config: StartGroupConfig) =>
-  makeReturn(unsignedStartGroupTxProgram(lucid, config));
+    distributePayout: (lucid: LucidEvolution, config: DistributePayoutConfig) =>
+      makeReturn(unsignedDistributePayoutTxProgram(protocol, lucid, config)),
 
-/**
- * Terminates a group, burning the treasury membership token.
- */
-export const terminateGroup = (
-  lucid: LucidEvolution,
-  config: TerminateGroupConfig,
-) => makeReturn(unsignedTerminateGroupTxProgram(lucid, config));
+    exitGroup: (lucid: LucidEvolution, config: ExitGroupConfig) =>
+      makeReturn(unsignedExitGroupTxProgram(protocol, lucid, config)),
 
-/**
- * Tops up a member's treasury UTxO balance (Contribute redeemer).
- */
-export const contribute = (lucid: LucidEvolution, config: ContributeConfig) =>
-  makeReturn(unsignedContributeTxProgram(lucid, config));
+    terminateGroup: (lucid: LucidEvolution, config: TerminateGroupConfig) =>
+      makeReturn(unsignedTerminateGroupTxProgram(protocol, lucid, config)),
 
-/**
- * Defers the member's scheduled payout round (sets is_deferred = true).
- */
-export const deferRound = (lucid: LucidEvolution, config: DeferRoundConfig) =>
-  makeReturn(unsignedDeferRoundTxProgram(lucid, config));
+    terminateDefault: (lucid: LucidEvolution, config: TerminateDefaultConfig) =>
+      makeReturn(unsignedTerminateDefaultTxProgram(protocol, lucid, config)),
 
-/**
- * Updates the member's payout destination credential.
- */
-export const updatePayoutCredential = (
-  lucid: LucidEvolution,
-  config: UpdatePayoutCredentialConfig,
-) => makeReturn(unsignedUpdatePayoutCredentialTxProgram(lucid, config));
+    contribute: (lucid: LucidEvolution, config: ContributeConfig) =>
+      makeReturn(unsignedContributeTxProgram(protocol, lucid, config)),
 
-/**
- * Admin grants a grace window extension to a member in InsufficientCollateralState.
- */
-export const extendGraceWindow = (
-  lucid: LucidEvolution,
-  config: ExtendGraceWindowConfig,
-) => makeReturn(unsignedExtendGraceWindowTxProgram(lucid, config));
+    updatePayoutCredential: (
+      lucid: LucidEvolution,
+      config: UpdatePayoutCredentialConfig,
+    ) =>
+      makeReturn(
+        unsignedUpdatePayoutCredentialTxProgram(protocol, lucid, config),
+      ),
 
-/**
- * Resets a mature ROSCA group for another rotation cycle.
- * Requires all rounds to be distributed. Members re-deposit via contribute,
- * then admin calls startGroup again.
- */
-export const nextCycle = (lucid: LucidEvolution, config: NextCycleConfig) =>
-  makeReturn(unsignedNextCycleTxProgram(lucid, config));
+    extendGraceWindow: (
+      lucid: LucidEvolution,
+      config: ExtendGraceWindowConfig,
+    ) =>
+      makeReturn(unsignedExtendGraceWindowTxProgram(protocol, lucid, config)),
+
+    nextCycle: (lucid: LucidEvolution, config: NextCycleConfig) =>
+      makeReturn(unsignedNextCycleTxProgram(protocol, lucid, config)),
+
+    claimPayout: (lucid: LucidEvolution, config: ClaimPayoutConfig) =>
+      makeReturn(unsignedClaimPayoutTxProgram(protocol, lucid, config)),
+  };
+};
+
+/** The bound group/treasury endpoint set returned by {@link createDcuSdk}. */
+export type DcuSdk = ReturnType<typeof createDcuSdk>;

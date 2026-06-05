@@ -1,6 +1,6 @@
 ---
 title: Getting Started
-description: How to install, configure, and initialize the DCU Toolkit SDK.
+description: How to install, configure, initialize, and call the DCU Toolkit SDK.
 ---
 
 ## Installation
@@ -8,12 +8,12 @@ description: How to install, configure, and initialize the DCU Toolkit SDK.
 The DCU SDK requires `@lucid-evolution/lucid` and `effect` as peer dependencies. Install all three:
 
 ```bash
-pnpm install @dcu/sdk @lucid-evolution/lucid effect
+pnpm install @tx-meta/dcu-sdk @lucid-evolution/lucid effect
 ```
 
 ## Initializing Lucid Evolution
 
-The DCU Toolkit is built entirely on top of **Lucid Evolution**. Because of this, the SDK effortlessly supports execution across any Cardano network. You just need to initialize your Lucid instance mapping to the proper network provider (such as Blockfrost, Maestro, or Kupo) before injecting it into the toolkit endpoints.
+The DCU Toolkit is built entirely on top of **Lucid Evolution**. Because of this, the SDK supports execution across any Cardano network — you just initialize your Lucid instance with the proper provider (Blockfrost, Maestro, Kupmios, or the emulator) before injecting it into the toolkit endpoints.
 
 ### Using an Emulator (Testing)
 Ideal for local unit testing and rapid iteration without deploying real transactions.
@@ -23,7 +23,7 @@ Use the SDK's composable setup helpers (`setupBase`, `setupGroup`, etc.) from th
 </Callout>
 
 ### Connecting to Preprod / Preview (Testnets)
-When you are ready to test Smart Contract logic on public testnets, connect to a real provider:
+When you are ready to test smart-contract logic on public testnets, connect to a real provider:
 ```ts
 import { Blockfrost, Lucid } from "@lucid-evolution/lucid";
 
@@ -44,30 +44,100 @@ const lucid = await Lucid(provider, "Mainnet");
 lucid.selectWallet.fromSeed(process.env.WALLET_SEED!);
 ```
 
-## Basic Endpoint Structure
+## Protocol setup (one-time, per deployment)
 
-All endpoints in the SDK follow the exact same execution pattern, powered by the `ProgramRunner`. 
-Instead of returning a simple `Promise`, every endpoint returns an object that lets you decide how you want to execute and handle errors.
+Group and treasury operations are bound to a **deployment's protocol settings**. Before any group/treasury endpoint can be used, an admin performs a **one-time** setup that mints a singleton *settings NFT*. Its policy ID (`settingsPolicy`) becomes the deployment's identity: the treasury validator is parameterized by it, which is what lets the protocol trust the link between a group and its treasuries.
+
+<Callout title="Run this once" type="warn">
+`initializeSettings` is a one-time, irreversible deploy step. Run it once per deployment, persist the resulting `settingsPolicy`, and reuse it in every later session — every group/treasury endpoint is rebuilt from it.
+</Callout>
 
 ```ts
-import { createAccount } from "@dcu/sdk";
+import {
+  initializeSettings,
+  deriveSettings,
+  deployScripts,
+  createDcuSdk,
+} from "@tx-meta/dcu-sdk";
+import { Effect } from "effect";
+
+// 1. Pick a seed UTxO explicitly so the resulting policy is deterministic.
+const [seed] = await lucid.wallet().getUtxos();
+
+// 2. Derive the policy IDs up front (pure — builds no transaction).
+const { settingsPolicy } = deriveSettings({
+  txHash: seed.txHash,
+  outputIndex: seed.outputIndex,
+});
+
+// 3. Mint the singleton settings NFT (locks the ProtocolSettings datum on-chain).
+const settingsTx = await initializeSettings(lucid, seed).unsafeRun();
+await settingsTx.sign.withWallet().complete().then((t) => t.submit());
+
+// 4. Persist `settingsPolicy` — you need it in every future session.
+
+// 5. (Recommended) Deploy reference scripts so later transactions stay under the
+//    16 KB size limit. `protocol` comes from the bound SDK below.
+const sdk = createDcuSdk(settingsPolicy);
+await Effect.runPromise(deployScripts(sdk.protocol, lucid));
+```
+
+## Two tiers of endpoints
+
+The SDK exposes endpoints in two ways depending on whether they need the deployment's protocol context.
+
+### Account endpoints (standalone)
+
+`createAccount` and `updateAccount` operate on a user's own CIP-68 account tokens and do **not** depend on a deployment. Import and call them directly:
+
+```ts
+import { createAccount, updateAccount } from "@tx-meta/dcu-sdk";
+
+const [utxo] = await lucid.wallet().getUtxos();
+const tx = await createAccount(lucid, { selected_out_ref: utxo }).unsafeRun();
+```
+
+### Group & treasury endpoints (bound to a deployment)
+
+Everything else — `createGroup`, `joinGroup`, `startGroup`, `distributePayout`, `claimPayout`, `contribute`, `exitGroup`, `terminateGroup`, `nextCycle`, `extendGraceWindow`, `updatePayoutCredential`, `updateGroup`, `deleteGroup`, and `deleteAccount` — is produced by `createDcuSdk(settingsPolicy)`, because the validators are parameterized by the deployment's settings policy:
+
+```ts
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy); // the policy ID from Protocol setup
+
+await sdk.joinGroup(lucid, config).unsafeRun();
+await sdk.distributePayout(lucid, config).unsafeRun();
+
+// `sdk.protocol` exposes the derived policy IDs and validators
+// (groupPolicyId, treasuryPolicyId, accountPolicyId, settingsUnit, ...).
+```
+
+<Callout title="deleteAccount" type="info">
+`deleteAccount` lives inside `createDcuSdk` (not standalone) because it scans the deployment's treasuries for active memberships before burning, so it needs the protocol context.
+</Callout>
+
+## Basic endpoint structure
+
+All endpoints follow the same execution pattern, powered by the `ProgramRunner`. Instead of returning a plain `Promise`, every endpoint returns an object that lets you choose how to execute and handle errors.
+
+```ts
+import { createAccount } from "@tx-meta/dcu-sdk";
 import { Either } from "effect";
 
 // lucid is your initialised LucidEvolution instance (see above)
-const [selectedUtxo] = await lucid.wallet().getUtxos();
+const [utxo] = await lucid.wallet().getUtxos();
 
 const config = {
-  selected_out_ref: selectedUtxo,
-  account_datum: {
-    email_hash: "a3f1b2e4...", // hex-encoded hash of user's email
-    phone_hash: "c9d8f012...", // hex-encoded hash of user's phone number
-  }
+  selected_out_ref: utxo,
+  display_name: "alice",       // optional UTF-8 display name (defaults to address)
+  contact: "alice#1234",       // optional UTF-8 secondary contact (defaults to address)
 };
 
 // 1. Unsafe Execution: throws on error. Wrap in try/catch.
 try {
   const txBuilder = await createAccount(lucid, config).unsafeRun();
-  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+  const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
   console.log("Account created:", txHash);
 } catch (error) {
   console.error("Failed:", error);
@@ -76,9 +146,13 @@ try {
 // 2. Safe Execution: returns Either, never throws.
 const result = await createAccount(lucid, config).safeRun();
 if (Either.isRight(result)) {
-  const txHash = await result.right.sign.withWallet().complete().then(tx => tx.submit());
+  const txHash = await result.right.sign.withWallet().complete().then((tx) => tx.submit());
   console.log("Account created:", txHash);
 } else {
   console.error("Failed:", result.left);
 }
 ```
+
+<Callout title="Next" type="info">
+Group/treasury endpoints are invoked the same way — through `safeRun()` / `unsafeRun()` — but obtained from `createDcuSdk(settingsPolicy)` as shown above.
+</Callout>

@@ -1,41 +1,54 @@
 ---
 title: updateGroup
-description: Safely modify the configuration parameters of an existing DCU Group.
+description: Modify a group's configuration — including deactivating it.
 ---
 
-The `updateGroup` endpoint grants Group Administrators the capability to reconfigure their DCU pod.
+The `updateGroup` endpoint lets a group admin reconfigure their pod, including deactivating it (`is_active = false`) ahead of deletion.
 
-## Security Constraints
-Certain parameters inside a ROSCA pool (such as `interval_length` or `penalty_fee`) are incredibly sensitive. The `GroupValidator` smart contract will summarily reject any transaction attempting to mutate these core financial timelines unless the group is currently empty (`member_count == 0`).
+<Callout title="Bound endpoint" type="info">
+Obtained from `createDcuSdk(settingsPolicy)`. See [Getting Started](/docs/getting-started).
+</Callout>
+
+### Security constraints
+Critical financial parameters (fees, `interval_length`, collateral/payout policy) are sensitive: the Group Validator rejects any transaction mutating them unless the group is empty (`member_count == 0`). Authorization requires the group admin (222) token.
+
+### What it does
+- Spends the group UTxO and re-locks it with `updatedDatum`.
+- Permits critical-field changes only while `member_count == 0`.
+- Commonly used to set `is_active = false` before [`deleteGroup`](/docs/api-reference/deleteGroup).
 
 ## Configuration
 
 ```ts
-import { UTxO } from "@lucid-evolution/lucid";
-import { GroupDatum } from "@dcu/sdk";
+import { GroupDatum } from "@tx-meta/dcu-sdk";
 
 export type UpdateGroupConfig = {
-    /** The UTxO containing the active group state */
-    groupUtxo: UTxO;
-    
-    /** The newly desired parameter configuration */
-    updatedDatum: GroupDatum;
-    
-    /** The Administrator's authorization proof */
-    adminUtxo: UTxO;
+  /** 28-byte token suffix of the group. */
+  groupTokenSuffix: string;
+
+  /** The full desired group datum (see createGroup for the field reference). */
+  updatedDatum: GroupDatum;
 };
 ```
 
 ## Usage
 
 ```ts
-import { updateGroup } from "@dcu/sdk";
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
+
+// e.g. deactivate the group ahead of deletion
+const updatedDatum = { ...currentDatum, is_active: false };
 
 try {
-    const txBuilder = await updateGroup(lucid, config).unsafeRun();
-    const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
-    console.log("Group Configuration updated! TxHash:", txHash);
+  const txBuilder = await sdk.updateGroup(lucid, {
+    groupTokenSuffix,
+    updatedDatum,
+  }).unsafeRun();
+  const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
+  console.log("Group updated! TxHash:", txHash);
 } catch (error) {
-    console.error("Failed to update group:", error);
+  console.error("Failed to update group:", error);
 }
 ```

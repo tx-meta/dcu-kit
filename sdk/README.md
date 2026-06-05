@@ -68,13 +68,12 @@ const txHash = await signed.submit();
 
 ### Treasury Endpoints
 
-| Function                 | Description                       |
-| ------------------------ | --------------------------------- |
-| `distributePayout`       | Pay out current round's borrower  |
-| `contribute`             | Top up treasury balance           |
-| `deferRound`             | Mark member as deferred for round |
-| `updatePayoutCredential` | Update payout destination         |
-| `extendGraceWindow`      | Admin: extend grace period        |
+| Function                 | Description                      |
+| ------------------------ | -------------------------------- |
+| `distributePayout`       | Pay out current round's borrower |
+| `contribute`             | Top up treasury balance          |
+| `updatePayoutCredential` | Update payout destination        |
+| `extendGraceWindow`      | Admin: extend grace period       |
 
 ### Admin
 

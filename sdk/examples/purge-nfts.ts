@@ -29,11 +29,8 @@
  */
 
 import { credentialToAddress } from "@lucid-evolution/lucid";
-import {
-  accountPolicyId,
-  groupPolicyId,
-  assetNameLabels,
-} from "@tx-meta/dcu-sdk";
+import { accountPolicyId, assetNameLabels } from "@tx-meta/dcu-sdk";
+import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -62,6 +59,16 @@ async function main() {
       "purge-nfts targets live networks only — stale tokens don't accumulate in the emulator.",
     );
     process.exit(0);
+  }
+
+  // Settings are optional for this diagnostic tool — without them we can still sweep
+  // account tokens and (with SWEEP_ALL) every 222 token; group-policy classification
+  // is simply skipped.
+  let groupPolicyId: string | undefined;
+  try {
+    groupPolicyId = loadSdk().protocol.groupPolicyId;
+  } catch {
+    groupPolicyId = undefined;
   }
 
   const sweepAll = process.env.SWEEP_ALL === "true";

@@ -1,0 +1,43 @@
+---
+title: extendGraceWindow
+description: Admin grants a defaulting member more time before termination.
+---
+
+The `extendGraceWindow` endpoint lets the admin grant additional grace time to a member whose treasury has fallen into `DefaultState` (insufficient collateral), buying them time before the position can be terminated.
+
+<Callout title="Bound endpoint" type="info">
+Obtained from `createDcuSdk(settingsPolicy)`. See [Getting Started](/docs/getting-started).
+</Callout>
+
+### What it does
+- Increments `grace_extensions_used` by 1 and extends `grace_expires_at` by `grace_period_length`.
+- Rejected on-chain once `grace_extensions_used` reaches the maximum (2).
+- The group UTxO is a **read-only reference input** (not spent) — used to read `grace_period_length` and derive the group policy ID for admin-token authorization.
+
+## Configuration
+
+```ts
+export type ExtendGraceWindowConfig = {
+  /** 28-byte token suffix of the group. */
+  groupTokenSuffix: string;
+
+  /** 28-byte account token suffix of the member in DefaultState. */
+  memberAccountTokenSuffix: string;
+};
+```
+
+## Usage
+
+```ts
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
+
+const txBuilder = await sdk.extendGraceWindow(lucid, {
+  groupTokenSuffix,
+  memberAccountTokenSuffix,
+}).unsafeRun();
+
+const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
+console.log("Grace extended:", txHash);
+```

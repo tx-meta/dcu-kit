@@ -16,12 +16,7 @@ import {
   TreasuryRedeemer,
   GroupSpendRedeemer,
 } from "../core/types.js";
-import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
-import { accountPolicyId } from "../core/validators/constants.js";
-import {
-  treasuryValidator,
-  treasuryPolicyId,
-} from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 import {
   getScriptAddress,
   parseGroupCip68Datum,
@@ -30,6 +25,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  MIN_ADA_RESERVE,
 } from "../core/utils/index.js";
 import {
   DcuError,
@@ -61,9 +57,13 @@ export type JoinGroupConfig = {
   accountTokenSuffix: string;
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, Date.now() for live
   fundingUtxos?: UTxO[]; // plain ADA UTxOs to pre-supply for coin selection (live network)
-  // Override the lovelace locked in the treasury UTxO. Defaults to max_members ×
-  // contribution_fee for ADA groups. Only for testing ICS transitions — use with care.
+  // Override the lovelace locked in the treasury UTxO (ADA-contribution groups). Defaults to
+  // contribution_fee × collateral_rounds (the validator floor). Prefund more rounds by setting
+  // a larger value; deposits are never capped.
   overrideDepositLovelace?: bigint;
+  // Override the contribution-token amount locked in the treasury UTxO (native-token groups).
+  // Defaults to contribution_fee × collateral_rounds. Prefund more rounds by setting a larger value.
+  depositContributionAmount?: bigint;
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO rather than included inline,
   // keeping the transaction well under the 16KB Cardano size limit.
@@ -74,10 +74,19 @@ export type JoinGroupConfig = {
 };
 
 export const unsignedJoinGroupTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: JoinGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const {
+      groupValidator,
+      groupPolicyId,
+      accountPolicyId,
+      treasuryValidator,
+      treasuryPolicyId,
+      settingsUnit,
+    } = protocol;
     const {
       groupTokenSuffix,
       accountTokenSuffix,
@@ -87,7 +96,7 @@ export const unsignedJoinGroupTxProgram = (
     } = config;
 
     const groupRefUnit =
-      groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
     const accountUserUnit =
       accountPolicyId + assetNameLabels.prefix222 + accountTokenSuffix;
 
@@ -95,13 +104,16 @@ export const unsignedJoinGroupTxProgram = (
     const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUserUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
     const accountUtxo = patchInlineDatum(accountUtxoRaw);
+    // The treasury validator reads the trusted policies from the settings UTxO, so it
+    // must be present as a reference input on every treasury transaction.
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
     const groupDatum = groupCip68.groupDatum;
 
     const assignedSlot = groupDatum.member_count;
 
     const groupRefAssetEntry = Object.keys(groupUtxo.assets).find((k) =>
-      k.startsWith(groupPolicyId!),
+      k.startsWith(groupPolicyId),
     );
     if (!groupRefAssetEntry)
       return yield* Effect.fail(
@@ -110,10 +122,10 @@ export const unsignedJoinGroupTxProgram = (
           address: groupUtxo.address,
         }),
       );
-    const groupRefName = groupRefAssetEntry.slice(groupPolicyId!.length);
+    const groupRefName = groupRefAssetEntry.slice(groupPolicyId.length);
 
     const accountAssetEntry = Object.keys(accountUtxo.assets).find((k) =>
-      k.startsWith(accountPolicyId!),
+      k.startsWith(accountPolicyId),
     );
     if (!accountAssetEntry)
       return yield* Effect.fail(
@@ -122,29 +134,49 @@ export const unsignedJoinGroupTxProgram = (
           address: accountUtxo.address,
         }),
       );
-    const accountAssetName = accountAssetEntry.slice(accountPolicyId!.length);
+    const accountAssetName = accountAssetEntry.slice(accountPolicyId.length);
 
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       member_count: groupDatum.member_count + 1n,
       member_token_names: [accountAssetName, ...groupDatum.member_token_names],
     };
-    const treasuryMemberToken = toUnit(treasuryPolicyId!, accountAssetName);
+    const treasuryMemberToken = toUnit(treasuryPolicyId, accountAssetName);
 
     const mintingAssets: Assets = { [treasuryMemberToken]: 1n };
-    // Lock max_members × contribution_fee for ADA contributions so the treasury UTxO
-    // remains solvent for the full rotation cycle (max_members rounds). For non-ADA
-    // contributions, just lock the minimum UTxO ADA (2 ADA).
+    // Lock the configured collateral floor — contribution_fee × collateral_rounds — in the
+    // contribution asset. collateral_rounds = 1 is PerRound (lock just the first round and top up
+    // each cycle); max_members is FullUpfront. This matches the validator's `fees_locked` floor and
+    // honours the member's chosen mode rather than always forcing the full cycle. Deposits are never
+    // capped — a member may prefund more by overriding (overrideDepositLovelace for ADA, or
+    // depositContributionAmount for native-token groups). For ADA the asset is lovelace; for
+    // native-token groups we lock the token plus 2 ADA min-UTxO.
+    const isAdaContribution = groupDatum.contribution_fee_policyid === "";
+    const collateralFloor =
+      groupDatum.collateral_rounds * groupDatum.contribution_fee;
+    // For ADA groups the validator measures a *contributable* balance = lovelace −
+    // MIN_ADA_RESERVE, so the deposit must carry the reserve ON TOP of the collateral
+    // floor (the reserve keeps the membership token's min-ADA covered as the balance
+    // drains to 0 on the final round). Token groups keep the floor in the token plus a
+    // flat 2 ADA min-UTxO (the reserve concept is ADA-only). See [[contributableBalance]].
     const treasuryLovelace =
       overrideDepositLovelace !== undefined
         ? overrideDepositLovelace
-        : groupDatum.contribution_fee_policyid === ""
-          ? groupDatum.max_members * groupDatum.contribution_fee
+        : isAdaContribution
+          ? collateralFloor + MIN_ADA_RESERVE
           : 2_000_000n;
     const treasuryAssets: Assets = {
       lovelace: treasuryLovelace,
       [treasuryMemberToken]: 1n,
     };
+    if (!isAdaContribution) {
+      const contributionUnit = toUnit(
+        groupDatum.contribution_fee_policyid,
+        groupDatum.contribution_fee_assetname,
+      );
+      treasuryAssets[contributionUnit] =
+        config.depositContributionAmount ?? collateralFloor;
+    }
 
     const address = yield* getWalletAddress(lucid);
     const memberPaymentCredential = paymentCredentialOf(address).hash;
@@ -159,8 +191,9 @@ export const unsignedJoinGroupTxProgram = (
         member_reference_tokenname: accountAssetName,
         assigned_slot: assignedSlot,
         rounds_paid: 0n,
-        is_deferred: false,
         member_payment_credential: memberPaymentCredential,
+        // Fresh member — nothing earmarked yet (0 under both Push and Pull).
+        claimable_balance: 0n,
       },
     };
 
@@ -287,6 +320,7 @@ export const unsignedJoinGroupTxProgram = (
             .attach.SpendingValidator(groupValidator.spendGroup);
 
     const tx = yield* withValidators
+      .readFrom([settingsUtxo])
       .addSigner(address)
       .validFrom(Number(now))
       .completeProgram()

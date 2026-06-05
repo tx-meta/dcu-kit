@@ -10,17 +10,18 @@
  */
 
 import {
-  deleteAccount,
   DeleteAccountConfig,
   accountPolicyId,
   assetNameLabels,
 } from "@tx-meta/dcu-sdk";
+import { loadSdk } from "./sdk.js";
 import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
 import {
   loadState,
   saveState,
   clearState,
   checkValidatorStaleness,
+  accountSuffixKey,
 } from "./state.js";
 
 async function main() {
@@ -34,9 +35,20 @@ async function main() {
     process.exit(0);
   }
 
+  const sdk = loadSdk();
+
   checkValidatorStaleness({ accountPolicyId });
 
-  let { accountTokenSuffix } = loadState();
+  // Select which wallet/account to act on from ACTIVE_WALLET (mirrors join-group), so the
+  // signing wallet and the resolved account suffix always belong to the same member.
+  const activeWallet = (process.env.ACTIVE_WALLET ?? "USER1").toUpperCase();
+  const walletSeed =
+    process.env[`${activeWallet}_SEED`] ?? process.env.USER1_SEED;
+  if (!walletSeed) throw new Error(`${activeWallet}_SEED not found in .env`);
+  lucid.selectWallet.fromSeed(walletSeed);
+
+  const suffixKey = accountSuffixKey(activeWallet);
+  let accountTokenSuffix = loadState()[suffixKey];
 
   if (!accountTokenSuffix) {
     console.log(
@@ -64,7 +76,7 @@ async function main() {
       accountPolicyId.length + assetNameLabels.prefix222.length,
     );
     console.log("Found accountTokenSuffix:", accountTokenSuffix);
-    saveState({ accountTokenSuffix });
+    saveState({ [suffixKey]: accountTokenSuffix });
   }
 
   const config: DeleteAccountConfig = {
@@ -72,7 +84,7 @@ async function main() {
   };
 
   console.log("Building transaction...");
-  const tx = await deleteAccount(lucid, config).unsafeRun();
+  const tx = await sdk.deleteAccount(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();
@@ -82,7 +94,7 @@ async function main() {
 
   console.log("Waiting for confirmation...");
   await lucid.awaitTx(txHash);
-  clearState(["accountTokenSuffix"]);
+  clearState([suffixKey]);
   console.log("Account deleted successfully!");
 }
 

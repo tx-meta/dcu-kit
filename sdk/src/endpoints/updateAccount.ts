@@ -39,7 +39,7 @@ export type UpdateAccountConfig = {
  * Creates an unsigned transaction for updating a DCU Account.
  *
  * **Functionality:**
- * - Updates the Identity Datum (e.g. Email/Phone hashes) on-chain.
+ * - Updates the AccountDatum (`display_name`, `contact`) on-chain.
  * - Requires the User Auth NFT in the wallet for authorization.
  *
  * @param lucid - Lucid instance with wallet selected.

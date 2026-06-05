@@ -36,15 +36,18 @@ import {
   UTxO,
 } from "@lucid-evolution/lucid";
 import {
-  distributePayout,
   DistributePayoutConfig,
-  groupPolicyId,
   GroupDatum,
   GroupCip68Datum,
   assetNameLabels,
+  DcuSdk,
 } from "@tx-meta/dcu-sdk";
+import { loadSdk } from "./sdk.js";
 import { loadState, ExampleState } from "./state.js";
 import { logError } from "./context.js";
+
+// Deployment-bound SDK — assigned in main() before the loop starts.
+let sdk: DcuSdk;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -122,7 +125,7 @@ async function checkRound(
   groupTokenSuffix: string,
 ): Promise<RoundStatus> {
   const groupRefUnit =
-    groupPolicyId! + assetNameLabels.prefix100 + groupTokenSuffix;
+    sdk.protocol.groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
 
   let groupUtxo: UTxO | undefined;
   try {
@@ -250,7 +253,7 @@ async function tick(
   };
 
   try {
-    const txBuilder = await distributePayout(lucid, config).unsafeRun();
+    const txBuilder = await sdk.distributePayout(lucid, config).unsafeRun();
     const signed = await txBuilder.sign.withWallet().complete();
     const txHash = await signed.submit();
     console.log(`[cron] Submitted: ${txHash}`);
@@ -320,6 +323,7 @@ async function main(): Promise<void> {
   console.log(`Clock buffer:    ${CLOCK_BUFFER_MS / 1000}s (for slot lag)`);
 
   const lucid = await makeLucid();
+  sdk = loadSdk();
 
   const addr = await lucid.wallet().address();
   const utxos = await lucid.wallet().getUtxos();

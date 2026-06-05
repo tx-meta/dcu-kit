@@ -4,7 +4,7 @@ use cardano/address.{Address, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value, zero}
 use cardano/transaction.{InlineDatum, Input, NoDatum, Output, OutputReference}
 use dcu/cip68
-use dcu/group.{GroupCip68Datum, GroupDatum}
+use dcu/group.{GroupCip68Datum, GroupDatum, Push}
 
 // --- Constants & Placeholders ---
 
@@ -113,6 +113,8 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     last_distributed_round: -1,
     creator_payment_credential: test_pkh(),
     member_token_names: [],
+    collateral_rounds: 1,
+    payout_mode: Push,
   }
 }
 

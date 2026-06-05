@@ -23,7 +23,7 @@ import {
   TransactionBuildError,
   ValidatorNotFoundError,
 } from "../core/errors.js";
-import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
+import { Protocol } from "../core/validators/constants.js";
 
 /**
  * Creates an unsigned transaction for creating a new DCU Group.
@@ -40,16 +40,23 @@ import { groupValidator, groupPolicyId } from "../core/validators/constants.js";
  */
 export type CreateGroupConfig = {
   groupName: string; // displayed by wallets — goes into metadata["name"]
+  // Optional free-text purpose/description (e.g. "Kiambu land-buying chama"). Stored in the
+  // CIP-68 metadata["description"] of the on-chain group datum and, like the name, frozen by
+  // the validator once a member joins (UpdateGroup treats metadata as a critical field). Kept
+  // short — it lives in the inline datum, so longer text raises the UTxO's min-ADA and tx size.
+  groupDescription?: string;
   groupDatum: GroupDatum;
   utxoToSpend: OutRef;
 };
 
 export const unsignedCreateGroupTxProgram = (
+  protocol: Protocol,
   lucid: LucidEvolution,
   config: CreateGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupName, groupDatum, utxoToSpend } = config;
+    const { groupValidator, groupPolicyId } = protocol;
+    const { groupName, groupDescription, groupDatum, utxoToSpend } = config;
 
     if (!groupPolicyId)
       yield* Effect.fail(
@@ -62,11 +69,14 @@ export const unsignedCreateGroupTxProgram = (
       groupValidator.spendGroup,
     );
 
-    const datum = buildGroupCip68Datum(
-      new Map([[fromText("name"), fromText(groupName)]]),
-      1n,
-      groupDatum,
-    );
+    // CIP-68 display metadata. "description" is added only when provided so a group
+    // created without one keeps the exact same metadata shape as before.
+    const metadata = new Map([[fromText("name"), fromText(groupName)]]);
+    if (groupDescription !== undefined && groupDescription.length > 0) {
+      metadata.set(fromText("description"), fromText(groupDescription));
+    }
+
+    const datum = buildGroupCip68Datum(metadata, 1n, groupDatum);
 
     // Resolve the full UTxO from the OutRef so we can compute CIP-68 names
     // (which require the txHash + outputIndex) and collect from it.
@@ -77,8 +87,8 @@ export const unsignedCreateGroupTxProgram = (
     //   user_token_name = blake2b_256(cbor(utxoToSpend.outputRef)) with prefix_222
     const { refTokenName, userTokenName } = yield* createCip68TokenNames(utxo);
 
-    const refToken = toUnit(groupPolicyId!, refTokenName);
-    const userToken = toUnit(groupPolicyId!, userTokenName);
+    const refToken = toUnit(groupPolicyId, refTokenName);
+    const userToken = toUnit(groupPolicyId, userTokenName);
 
     const mintingAssets: Assets = { [refToken]: 1n, [userToken]: 1n };
     // Lock creator_bond lovelace alongside the ref token so it is held for

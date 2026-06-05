@@ -4,12 +4,7 @@ import {
   DcuValidators,
   makeValidators,
 } from "../src/core/validators/context.js";
-import {
-  groupPolicyId,
-  groupValidator,
-  treasuryValidator,
-  accountPolicyId,
-} from "../src/core/validators/constants.js";
+import { accountPolicyId } from "../src/core/validators/constants.js";
 import {
   createAccountTestCase,
   createGroupTestCase,
@@ -60,9 +55,12 @@ export type MembershipSetupResult = {
 
 // --- Setup Functions ---
 
-export const setupBase = (): Effect.Effect<BaseSetup, Error, never> =>
+export const setupBase = (
+  seedAssets?: Record<string, bigint>,
+): Effect.Effect<BaseSetup, Error, never> =>
   Effect.gen(function* () {
-    const { lucid, users, emulator } = yield* makeLucidContext();
+    const context = yield* makeLucidContext(undefined, seedAssets);
+    const { lucid } = context;
     const network = lucid.config().network;
     if (!network)
       return yield* Effect.fail(
@@ -73,7 +71,7 @@ export const setupBase = (): Effect.Effect<BaseSetup, Error, never> =>
 
     return {
       network,
-      context: { lucid, users, emulator },
+      context,
       scripts,
     };
   });
@@ -111,7 +109,7 @@ export const setupGroup = (
 
     const groupScriptAddress = yield* getScriptAddress(
       lucid,
-      groupValidator.spendGroup,
+      base.context.protocol!.groupValidator.spendGroup,
     );
 
     const groupUtxo = yield* awaitScriptUtxo(
@@ -119,7 +117,9 @@ export const setupGroup = (
       groupScriptAddress,
       (x) =>
         x.txHash === txHash &&
-        Object.keys(x.assets).some((k) => k.startsWith(groupPolicyId!)),
+        Object.keys(x.assets).some((k) =>
+          k.startsWith(base.context.protocol!.groupPolicyId),
+        ),
       "Group UTxO not found after creation",
       { maxWaitMs: 120_000 },
     );
@@ -129,9 +129,9 @@ export const setupGroup = (
       (u) =>
         Object.keys(u.assets).some(
           (k) =>
-            k.startsWith(groupPolicyId!) &&
+            k.startsWith(base.context.protocol!.groupPolicyId) &&
             k
-              .slice(groupPolicyId!.length)
+              .slice(base.context.protocol!.groupPolicyId.length)
               .startsWith(assetNameLabels.prefix222),
         ),
       "Admin UTxO not found after group creation",
@@ -166,12 +166,12 @@ export const setupMembership = (
       (u) =>
         Object.keys(u.assets).some(
           (k) =>
-            k.startsWith(groupPolicyId!) &&
+            k.startsWith(base.context.protocol!.groupPolicyId) &&
             k
-              .slice(groupPolicyId!.length)
+              .slice(base.context.protocol!.groupPolicyId.length)
               .startsWith(assetNameLabels.prefix222),
         ),
-      `Admin UTxO not found in admin wallet after Account setup. Policy: ${groupPolicyId}`,
+      `Admin UTxO not found in admin wallet after Account setup. Policy: ${base.context.protocol!.groupPolicyId}`,
     );
 
     const { txHash } = yield* joinGroupTestCase(context, {
@@ -184,11 +184,11 @@ export const setupMembership = (
     // user1's wallet, so awaitWalletUtxo finds it there.
     const groupScriptAddress = yield* getScriptAddress(
       lucid,
-      groupValidator.spendGroup,
+      base.context.protocol!.groupValidator.spendGroup,
     );
     const treasuryScriptAddress = yield* getScriptAddress(
       lucid,
-      treasuryValidator.spendTreasury,
+      base.context.protocol!.treasuryValidator.spendTreasury,
     );
 
     const [accountUtxo2, groupUtxo2, memberUtxo] = yield* Effect.all([
@@ -204,7 +204,9 @@ export const setupMembership = (
         groupScriptAddress,
         (x) =>
           x.txHash === txHash &&
-          Object.keys(x.assets).some((k) => k.startsWith(groupPolicyId!)),
+          Object.keys(x.assets).some((k) =>
+            k.startsWith(base.context.protocol!.groupPolicyId),
+          ),
         "Group UTxO not found after Join",
       ),
       awaitScriptUtxo(
