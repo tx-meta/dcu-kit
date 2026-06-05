@@ -15,7 +15,12 @@ import {
   assetNameLabels,
 } from "@tx-meta/dcu-sdk";
 import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
-import { loadState, saveState, checkValidatorStaleness } from "./state.js";
+import {
+  loadState,
+  saveState,
+  checkValidatorStaleness,
+  accountSuffixKey,
+} from "./state.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -30,7 +35,15 @@ async function main() {
 
   checkValidatorStaleness({ accountPolicyId });
 
-  let { accountTokenSuffix } = loadState();
+  // Select which wallet/account to act on from ACTIVE_WALLET (mirrors join-group), so the
+  // signing wallet and the resolved account suffix always belong to the same member.
+  const activeWallet = (process.env.ACTIVE_WALLET ?? "USER1").toUpperCase();
+  const walletSeed = process.env[`${activeWallet}_SEED`] ?? process.env.USER1_SEED;
+  if (!walletSeed) throw new Error(`${activeWallet}_SEED not found in .env`);
+  lucid.selectWallet.fromSeed(walletSeed);
+
+  const suffixKey = accountSuffixKey(activeWallet);
+  let accountTokenSuffix = loadState()[suffixKey];
 
   if (!accountTokenSuffix) {
     console.log(
@@ -58,7 +71,7 @@ async function main() {
       accountPolicyId.length + assetNameLabels.prefix222.length,
     );
     console.log("Found accountTokenSuffix:", accountTokenSuffix);
-    saveState({ accountTokenSuffix });
+    saveState({ [suffixKey]: accountTokenSuffix });
   }
 
   const config: UpdateAccountConfig = {
