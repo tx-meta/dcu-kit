@@ -21,6 +21,7 @@ import {
   setupMembership,
 } from "./setup.js";
 import { unsignedTerminateGroupTxProgram } from "../src/endpoints/terminateGroup.js";
+import { unsignedTerminateDefaultTxProgram } from "../src/endpoints/terminateDefault.js";
 import { unsignedDistributePayoutTxProgram } from "../src/endpoints/distributePayout.js";
 import { unsignedJoinGroupTxProgram } from "../src/endpoints/joinGroup.js";
 import { unsignedExitGroupTxProgram } from "../src/endpoints/exitGroup.js";
@@ -934,6 +935,102 @@ describe("Treasury Endpoints", () => {
         });
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
+      }),
+  );
+
+  // --- TerminateDefault (B2) ---
+  // A member who defaults (DefaultState) and never recovers can be removed by the admin
+  // once their grace window has fully expired: the membership token is burned, member_count
+  // decrements, and the collateral is forfeited to the admin. grace_period_length = 0 (the
+  // default), so grace expires at the distribute round's timestamp; advancing the emulator
+  // past it makes `now > grace_expires_at` hold.
+  it.effect(
+    "should let the admin terminate a defaulter after grace expires (TerminateDefault)",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context, groupUtxo } = yield* setupGroup(base, {
+          interval_length: 20_000n,
+        });
+        const { lucid, users } = context;
+
+        const {
+          outputs: { userUtxo: user1AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user1.seedPhrase,
+        });
+        const {
+          outputs: { userUtxo: user2AccountUtxo },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user2.seedPhrase,
+        });
+
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix100,
+        );
+        const user1TokenSuffix = extractTokenSuffix(
+          user1AccountUtxo,
+          accountPolicyId,
+          assetNameLabels.prefix222,
+        );
+
+        // user1 joins PerRound (default deposit) → defaults to DefaultState after round 0.
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: user1AccountUtxo,
+          userSeed: users.user1.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: user2AccountUtxo,
+          userSeed: users.user2.seedPhrase,
+        });
+        yield* startGroupTestCase(context, { groupUtxo });
+
+        // Distribute round 0: user1 (slot 0) is debited the fee → contributable 0 → DefaultState.
+        yield* distributePayoutTestCase(context, {
+          groupUtxo,
+          callerSeed: users.user1.seedPhrase,
+        });
+
+        // Advance past grace_expires_at so the termination time-gate opens.
+        yield* advanceBlock(context.emulator, 2);
+
+        // Admin terminates the defaulter.
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+        const terminateTx = yield* unsignedTerminateDefaultTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            memberAccountTokenSuffix: user1TokenSuffix,
+            currentTime: BigInt(context.emulator!.now()),
+          },
+        );
+        const terminateHash = yield* signAndSubmit(terminateTx);
+        yield* advanceBlock(context.emulator);
+        expect(terminateHash).toHaveLength(64);
+
+        // Group member_count decremented 2 → 1, and user1 removed from the registry —
+        // this is the definitive on-chain proof: the count only drops via the group Exit
+        // handler, which requires the burned membership token to be spent at the treasury.
+        const groupRefUnit =
+          context.protocol!.groupPolicyId +
+          assetNameLabels.prefix100 +
+          groupTokenSuffix;
+        const currentGroup = yield* Effect.promise(() =>
+          lucid.utxoByUnit(groupRefUnit),
+        );
+        const groupCip68 = yield* parseGroupCip68Datum(
+          patchInlineDatum(currentGroup).datum,
+        );
+        expect(groupCip68.groupDatum.member_count).toBe(1n);
+        const memberRefName = assetNameLabels.prefix222 + user1TokenSuffix;
+        expect(
+          groupCip68.groupDatum.member_token_names.includes(memberRefName),
+        ).toBe(false);
       }),
   );
 

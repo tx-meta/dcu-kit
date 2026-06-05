@@ -38,6 +38,10 @@ import {
   unsignedTerminateGroupTxProgram,
   TerminateGroupConfig,
 } from "./terminateGroup.js";
+import {
+  unsignedTerminateDefaultTxProgram,
+  TerminateDefaultConfig,
+} from "./terminateDefault.js";
 import { unsignedContributeTxProgram, ContributeConfig } from "./contribute.js";
 import {
   unsignedUpdatePayoutCredentialTxProgram,
@@ -115,6 +119,9 @@ export const createDcuSdk = (settingsPolicy: string) => {
 
     terminateGroup: (lucid: LucidEvolution, config: TerminateGroupConfig) =>
       makeReturn(unsignedTerminateGroupTxProgram(protocol, lucid, config)),
+
+    terminateDefault: (lucid: LucidEvolution, config: TerminateDefaultConfig) =>
+      makeReturn(unsignedTerminateDefaultTxProgram(protocol, lucid, config)),
 
     contribute: (lucid: LucidEvolution, config: ContributeConfig) =>
       makeReturn(unsignedContributeTxProgram(protocol, lucid, config)),

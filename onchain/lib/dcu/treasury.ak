@@ -126,4 +126,21 @@ pub type TreasuryRedeemer {
     member_input_index: Int,
     treasury_output_index: Int,
   }
+  // Admin terminates a member stuck in DefaultState after their grace window (including
+  // any extensions) has fully expired. The membership token is burned, the group's
+  // member_count decrements (the group is spent with the Exit redeemer in the same tx),
+  // and the forfeited collateral is claimed by the admin who builds the transaction.
+  // Time-gated (now > grace_expires_at) and admin-only, so it is neutral and fair: grace
+  // plus extensions are always offered before a defaulter can be removed. Appended LAST to
+  // keep the Constr indices of all existing variants stable.
+  TerminateDefault {
+    // Group SPENDING input — spent with the group Exit redeemer to decrement member_count.
+    group_ref_input_index: Int,
+    // Group output showing member_count decremented and the member removed from the registry.
+    group_output_index: Int,
+    // Admin input holding the group (222) user token.
+    admin_input_index: Int,
+    // Self-reference — the defaulter's DefaultState treasury UTxO.
+    treasury_input_index: Int,
+  }
 }

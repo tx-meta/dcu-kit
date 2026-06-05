@@ -700,6 +700,98 @@ pub fn validate_claim_penalty(
   }
 }
 
+// ─── Spend: TerminateDefault ──────────────────────────────────────────────────
+
+// validate_terminate_default
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin removes a member stuck in DefaultState whose grace window (including any
+// ExtendGrace extensions) has fully expired. The membership token is burned, the group
+// is spent with the Exit redeemer (decrementing member_count and removing the member from
+// the registry — re-verified here on the group output), and the forfeited collateral is
+// claimed by the admin who builds the tx (its destination is unconstrained, exactly like
+// ClaimPenalty). Neutral and fair: termination is time-gated, so grace + extensions are
+// always offered first, and admin-only, so it cannot be triggered arbitrarily by peers.
+//
+// NOTE: self-reference (own UTxO at treasury_input_index) is enforced at the entry point.
+//
+// [spec TerminateDefault 1]: datum must be DefaultState
+// [spec TerminateDefault 2]: group spending input sits at the trusted group script and
+//                            links to this treasury (group_reference_tokenname matches)
+// [spec TerminateDefault 3]: group output shows member_count - 1 and the member removed
+// [spec TerminateDefault 4]: admin holds the group (222) user token
+// [spec TerminateDefault 5]: the grace window has fully expired (now > grace_expires_at)
+// [spec TerminateDefault 6]: exactly one membership token is burned (forfeiture)
+pub fn validate_terminate_default(
+  own_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
+  group_ref_input_index: Int,
+  group_output_index: Int,
+  admin_input_index: Int,
+  datum: TreasuryDatum,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, outputs, mint, .. } = tx
+
+  // [spec TerminateDefault 1]: datum must be DefaultState
+  expect
+      DefaultState {
+        member_reference_tokenname,
+        group_reference_tokenname,
+        grace_expires_at,
+        ..
+      }
+    = datum
+
+  // [spec TerminateDefault 2]: group spending input at the trusted group script (C1/C3).
+  expect Some(group_input) = list.at(inputs, group_ref_input_index)
+  expect group_input.output.address.payment_credential == Script(trusted_group_policy)
+  expect InlineDatum(group_datum_data) = group_input.output.datum
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
+  let expected_group_token_name = find_group_token_name(group_input)
+  let group_link_valid = group_reference_tokenname == expected_group_token_name
+
+  // [spec TerminateDefault 3]: group output decrements member_count and drops the member
+  // from the registry. The group is also spent with the Exit redeemer, which enforces the
+  // same transition independently — this check keeps the treasury self-sufficient so the
+  // membership token can never be burned without the count being corrected (no ghost member).
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect group_output.address == group_input.output.address
+  expect InlineDatum(go_data) = group_output.datum
+  expect GroupCip68Datum { extra: updated_group, .. } = go_data
+  let member_removed = updated_group.member_count == group.member_count - 1 && !list.any(
+    updated_group.member_token_names,
+    fn(n) { n == member_reference_tokenname },
+  )
+
+  // [spec TerminateDefault 4]: admin holds the group (222) user token derived from the
+  // group reference token name. [security C3] the trusted policy comes from settings.
+  let admin_token_name = cip68.convert_ref_to_user_token(group_reference_tokenname)
+  expect Some(admin_input) = list.at(inputs, admin_input_index)
+  let admin_authorized = assets.quantity_of(
+    admin_input.output.value,
+    trusted_group_policy,
+    admin_token_name,
+  ) == 1
+
+  // [spec TerminateDefault 5]: the grace window (incl. extensions) has fully expired.
+  let grace_expired = get_lower_bound(tx) > grace_expires_at
+
+  // [spec TerminateDefault 6]: exactly one membership token burned (verified in mint too).
+  let token_burned = assets.quantity_of(
+    mint,
+    own_policy_id,
+    member_reference_tokenname,
+  ) == -1
+
+  and {
+    group_link_valid?,
+    member_removed?,
+    admin_authorized?,
+    grace_expired?,
+    token_burned?,
+  }
+}
+
 // ─── Spend: Contribute ────────────────────────────────────────────────────────
 
 // validate_contribute

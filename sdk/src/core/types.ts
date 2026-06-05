@@ -360,6 +360,17 @@ export const TreasuryRedeemerSchema = Data.Enum([
       treasury_output_index: Data.Integer(),
     }),
   }),
+  Data.Object({
+    // Admin terminates a defaulter (DefaultState) after grace expires: burns the
+    // membership token, decrements member_count (group spent with Exit), forfeits the
+    // collateral to the admin. Appended LAST to keep existing Constr indices stable.
+    TerminateDefault: Data.Object({
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      admin_input_index: Data.Integer(),
+      treasury_input_index: Data.Integer(),
+    }),
+  }),
 ]);
 
 export type TreasuryRedeemer = Data.Static<typeof TreasuryRedeemerSchema>;

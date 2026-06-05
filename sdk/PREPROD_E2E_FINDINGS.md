@@ -52,7 +52,33 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 - **Tests:** new emulator test (transition + preserved fields); enforcement already covered by
   the Aiken `contribute__*_default_recovery_*` suite. Validated on Preprod.
 
-### B2. Defaulter resolution — SPEC'D (validator change → redeploy)
+### B2. Defaulter resolution — DONE ✅ (treasury hash → 982d5c8d)
+- **Implemented.** New `TerminateDefault` treasury redeemer (appended LAST → existing Constr
+  indices stable) + `validate_terminate_default`. The admin removes a member stuck in
+  DefaultState after their grace window (incl. extensions) has fully expired: burns the
+  membership token, decrements member_count, and forfeits the collateral to the admin (flows
+  to the admin's wallet as change, exactly like ClaimPenalty). Gates: datum is DefaultState;
+  group spending input at the trusted group script with a matching link; group output shows
+  member_count − 1 and the member dropped from the registry (self-enforced, so no ghost
+  member); admin holds the group (222) token; `get_lower_bound(tx) > grace_expires_at`; exactly
+  one membership token burned. The member_count decrement reuses the group `Exit` redeemer
+  (permissionless at the group level — authorised by the membership token being spent at the
+  treasury), so no group-validator change was needed (group/account hashes unchanged).
+- **Aiken:** 9 tests — accept-after-grace; reject before-grace / at-grace-boundary / non-admin /
+  no-burn / no-count-decrement / member-left-in-registry / non-DefaultState (fail) /
+  fake-group-script (fail, C3). 179 tests / 0 warn.
+- **SDK:** `TerminateDefault` in TreasuryRedeemerSchema; `terminateDefault` endpoint (admin-gated,
+  spends group with Exit + treasury with TerminateDefault, burns, slot-aligned validFrom for the
+  grace gate, plain completeProgram so emulator UPLC enforces it); wired into `createDcuSdk`. e2e
+  test: member defaults after round 0 → advance past grace → admin terminates → member_count 2→1,
+  member removed from registry. 35 SDK tests pass.
+- **Sub-decision (forfeited collateral):** admin-claim (simple), as recommended. Pro-rata
+  redistribution to shorted members is a future enhancement.
+- **Preprod:** redeploy pending (shared with B3). Re-run e2e after deploy.
+
+<details><summary>Original B2 spec (for reference)</summary>
+
+#### B2. Defaulter resolution — SPEC'D (validator change → redeploy)
 - **Problem:** a DefaultState member who never recovers (grace + extensions expired) has no
   resolution path; they sit in the group forever.
 - **Decision (fair design):** the admin can **terminate a defaulter after grace expires** —
@@ -69,6 +95,8 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 - **Offchain:** new `terminateDefault` (or extended `terminateGroup`) endpoint + emulator test.
 - Open sub-decision: forfeited collateral → admin (simple) vs pro-rata to underpaid members
   (fairer, more complex). Recommend admin-claim now, pro-rata as a later enhancement.
+
+</details>
 
 ### B3. min-ADA last-round gap for ADA-contribution groups — DONE ✅ (treasury hash → f2ba562a)
 - **Implemented on-chain.** `dcu/treasury_utils` adds `min_ada_reserve = 2_000_000` and a

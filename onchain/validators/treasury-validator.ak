@@ -6,13 +6,14 @@ use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/settings.{read_settings}
 use dcu/treasury.{
   ClaimPayout, ClaimPenalty, Contribute, DistributeRound, ExitGroup, ExtendGrace,
-  JoinGroup, NextCycle, TreasuryDatum, TreasuryRedeemer, UpdatePayout,
+  JoinGroup, NextCycle, TerminateDefault, TreasuryDatum, TreasuryRedeemer,
+  UpdatePayout,
 } as treasury_types
 use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
   validate_contribute, validate_distribute_treasury, validate_exit_treasury,
   validate_extend_grace, validate_join_treasury, validate_next_cycle_treasury,
-  validate_update_payout,
+  validate_terminate_default, validate_update_payout,
 }
 
 // treasury(account_policy_id)
@@ -61,9 +62,11 @@ validator treasury(settings_policy: PolicyId) {
 
       // ClaimPenalty redeemer covers PenaltyWithdraw burn path.
       // ExitGroup redeemer covers mature (inactive/past-rotation) burn path.
-      // Both paths require exactly 1 token burned under this policy.
+      // TerminateDefault covers the admin-forced defaulter forfeiture burn path.
+      // All three require exactly 1 token burned under this policy.
       ClaimPenalty { .. } -> validate_claim_penalty_mint(policy_id, mint)
       ExitGroup { .. } -> validate_claim_penalty_mint(policy_id, mint)
+      TerminateDefault { .. } -> validate_claim_penalty_mint(policy_id, mint)
 
       // All other redeemers are spend-only — reject at mint
       _ -> fail
@@ -287,6 +290,29 @@ validator treasury(settings_policy: PolicyId) {
           utxo,
           self,
         )
+
+      TerminateDefault {
+        group_ref_input_index,
+        group_output_index,
+        admin_input_index,
+        treasury_input_index,
+      } -> {
+        // [security]: self-reference — treasury_input_index must resolve to own UTxO
+        expect Some(treasury_input) = list.at(inputs, treasury_input_index)
+        expect treasury_input.output_reference == utxo
+
+        // [security C3]: the trusted group policy comes from the settings UTxO, so a forged
+        // "group" cannot supply a matching admin token under an attacker policy.
+        validate_terminate_default(
+          policy_id_from_utxo(inputs, utxo),
+          settings.group_policy,
+          group_ref_input_index,
+          group_output_index,
+          admin_input_index,
+          treasury_datum,
+          self,
+        )
+      }
 
       // JoinGroup is a mint redeemer — reject at spend
       _ -> fail

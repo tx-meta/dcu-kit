@@ -15,7 +15,7 @@ use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
   validate_contribute, validate_distribute_treasury, validate_exit_treasury,
   validate_extend_grace, validate_join_treasury, validate_next_cycle_treasury,
-  validate_update_payout,
+  validate_terminate_default, validate_update_payout,
 }
 use tests/common
 
@@ -3461,4 +3461,226 @@ test next_cycle__rejects_underfunded_restart() {
     utxo,
     tx,
   )
+}
+
+// ─── validate_terminate_default (B2) ──────────────────────────────────────────
+// Admin removes a member stuck in DefaultState after their grace window has expired.
+// The membership token is burned, member_count decrements, and the forfeited collateral
+// goes to the admin. test_insufficient_collateral_state() sets grace_expires_at = 5000,
+// so a validity lower bound > 5000 means the grace window has expired.
+
+// Group input with one defaulting member registered (member_count = 1).
+fn terminate_group_input() -> Input {
+  let gp = group_policy()
+  let datum = cip68_with_group(
+    GroupDatum {
+      ..test_group_datum(),
+      member_count: 1,
+      member_token_names: [member_tn()],
+    },
+  )
+  Input {
+    output_reference: OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(datum),
+      reference_script: None,
+    },
+  }
+}
+
+// Group output after termination: member_count 1 → 0, member removed from registry.
+fn terminate_group_output(member_count: Int, names: List<assets.AssetName>) -> Output {
+  let gp = group_policy()
+  let datum = cip68_with_group(
+    GroupDatum { ..test_group_datum(), member_count, member_token_names: names },
+  )
+  Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
+}
+
+// Composes a terminate-default tx. inputs = [group(0), admin(1), treasury(2)];
+// outputs = [group(0)]. validity lower bound = `lower`.
+fn terminate_default_tx(
+  datum: TreasuryDatum,
+  group_input: Input,
+  group_output: Output,
+  admin_input: Input,
+  mint: assets.Value,
+  lower: Int,
+) -> Transaction {
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, treasury_value()),
+  )
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, admin_input, treasury_in],
+    outputs: [group_output],
+    mint,
+    validity_range: interval.after(lower),
+  }
+}
+
+fn terminate_burn() -> assets.Value {
+  assets.from_asset(treasury_policy(), member_tn(), -1)
+}
+
+// Happy path: grace expired (6000 > 5000), admin authorized, count decremented, token burned.
+test terminate_default__accepts_after_grace_expired() {
+  let datum = test_insufficient_collateral_state()
+  let tx = terminate_default_tx(
+    datum,
+    terminate_group_input(),
+    terminate_group_output(0, []),
+    test_admin_input(),
+    terminate_burn(),
+    6000,
+  )
+  validate_terminate_default(treasury_policy(), group_policy(), 0, 0, 1, datum, tx)
+}
+
+// Grace not yet expired (lower bound 3000 < 5000) → grace_expired fails.
+test terminate_default__rejects_before_grace_expiry() {
+  let datum = test_insufficient_collateral_state()
+  let tx = terminate_default_tx(
+    datum,
+    terminate_group_input(),
+    terminate_group_output(0, []),
+    test_admin_input(),
+    terminate_burn(),
+    3000,
+  )
+  !validate_terminate_default(treasury_policy(), group_policy(), 0, 0, 1, datum, tx)
+}
+
+// Boundary: lower bound exactly == grace_expires_at (5000) is NOT strictly greater → reject.
+test terminate_default__rejects_at_grace_boundary() {
+  let datum = test_insufficient_collateral_state()
+  let tx = terminate_default_tx(
+    datum,
+    terminate_group_input(),
+    terminate_group_output(0, []),
+    test_admin_input(),
+    terminate_burn(),
+    5000,
+  )
+  !validate_terminate_default(treasury_policy(), group_policy(), 0, 0, 1, datum, tx)
+}
+
+// The "admin" input does not hold the group (222) user token → admin_authorized fails.
+test terminate_default__rejects_non_admin() {
+  let datum = test_insufficient_collateral_state()
+  let tx = terminate_default_tx(
+    datum,
+    terminate_group_input(),
+    terminate_group_output(0, []),
+    test_member_input(),
+    terminate_burn(),
+    6000,
+  )
+  !validate_terminate_default(treasury_policy(), group_policy(), 0, 0, 1, datum, tx)
+}
+
+// No membership token burned → token_burned fails (defaulter could escape forfeiture).
+test terminate_default__rejects_no_burn() {
+  let datum = test_insufficient_collateral_state()
+  let tx = terminate_default_tx(
+    datum,
+    terminate_group_input(),
+    terminate_group_output(0, []),
+    test_admin_input(),
+    assets.zero,
+    6000,
+  )
+  !validate_terminate_default(treasury_policy(), group_policy(), 0, 0, 1, datum, tx)
+}
+
+// Group output keeps member_count = 1 (not decremented) → member_removed fails.
+test terminate_default__rejects_no_count_decrement() {
+  let datum = test_insufficient_collateral_state()
+  let tx = terminate_default_tx(
+    datum,
+    terminate_group_input(),
+    terminate_group_output(1, [member_tn()]),
+    test_admin_input(),
+    terminate_burn(),
+    6000,
+  )
+  !validate_terminate_default(treasury_policy(), group_policy(), 0, 0, 1, datum, tx)
+}
+
+// Count decremented but the member is still listed in the registry → member_removed fails.
+test terminate_default__rejects_member_left_in_registry() {
+  let datum = test_insufficient_collateral_state()
+  let tx = terminate_default_tx(
+    datum,
+    terminate_group_input(),
+    terminate_group_output(0, [member_tn()]),
+    test_admin_input(),
+    terminate_burn(),
+    6000,
+  )
+  !validate_terminate_default(treasury_policy(), group_policy(), 0, 0, 1, datum, tx)
+}
+
+// Datum is TreasuryState, not DefaultState → expect DefaultState crashes (fail test).
+test terminate_default__rejects_non_default_state() fail {
+  let datum = test_treasury_state(0)
+  let tx = terminate_default_tx(
+    datum,
+    terminate_group_input(),
+    terminate_group_output(0, []),
+    test_admin_input(),
+    terminate_burn(),
+    6000,
+  )
+  validate_terminate_default(treasury_policy(), group_policy(), 0, 0, 1, datum, tx)
+}
+
+// [security C3] The group input is the attacker's forged group at a fake script → the
+// trusted-binding assertion (Script(trusted_group_policy)) crashes (fail test).
+test terminate_default__rejects_fake_group_script() fail {
+  let fp = fake_group_policy()
+  let datum = test_insufficient_collateral_state()
+  let fake_group_in = Input {
+    output_reference: OutputReference {
+      transaction_id: #"2222222222222222222222222222222222222222222222222222222222222222",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(fp), stake_credential: None },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(fp, group_ref_tn(), 1)),
+      datum: InlineDatum(
+        cip68_with_group(
+          GroupDatum {
+            ..test_group_datum(),
+            member_count: 1,
+            member_token_names: [member_tn()],
+          },
+        ),
+      ),
+      reference_script: None,
+    },
+  }
+  let tx = terminate_default_tx(
+    datum,
+    fake_group_in,
+    terminate_group_output(0, []),
+    test_admin_input(),
+    terminate_burn(),
+    6000,
+  )
+  validate_terminate_default(treasury_policy(), group_policy(), 0, 0, 1, datum, tx)
 }
