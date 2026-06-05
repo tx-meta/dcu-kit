@@ -43,21 +43,32 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 
 ## B. Feature gaps / capability mismatches (need deliberate design + tests, NOT ad-hoc)
 
-### B1. DefaultState recovery via `contribute` — PROTOTYPED ⚠️ (uncommitted; needs proper treatment)
-- **Gap:** the validator supports `DefaultState → TreasuryState` recovery (`recovery_funded`,
-  `treasury_validation.ak`), but `contribute.ts` rejected any non-TreasuryState input.
-- **Current state:** a working implementation was added mid-test to unstick a member and was
-  validated on Preprod (USER1 recovered). **This was scope creep** — it is a prototype, not a
-  reviewed feature. Treat it as a spec'd change: design note, unit tests (emulator), negative
-  tests (underfunded recovery, PenaltyState rejection), then commit.
-- **Decision needed:** keep recovery in `contribute`, or expose as its own `recoverDefault`
-  endpoint for clarity.
+### B1. DefaultState recovery via `contribute` — DONE ✅ (committed `c555fba`)
+- **Decision:** keep recovery in `contribute` (mirrors the on-chain single `Contribute`
+  redeemer — most modular; no variant/endpoint proliferation, recovery is "a top-up that
+  clears the default"). SDK branches on input datum: TreasuryState top-up unchanged;
+  DefaultState → TreasuryState reconstruct (preserve slot/rounds_paid/credential/earmark,
+  require post-top-up balance ≥ contribution_fee); PenaltyState rejected.
+- **Tests:** new emulator test (transition + preserved fields); enforcement already covered by
+  the Aiken `contribute__*_default_recovery_*` suite. Validated on Preprod.
 
-### B2. DefaultState members cannot `exit` — DESIGN DECISION NEEDED
-- `exit-group` requires `TreasuryState`. A defaulted (DefaultState) member's only exits are
-  recover-via-contribute (B1) or admin termination. There is no direct DefaultState exit path.
-- **Decision needed:** allow DefaultState in exit-group (burn path), or document termination as
-  the only route, or add a dedicated endpoint.
+### B2. Defaulter resolution — SPEC'D (validator change → redeploy)
+- **Problem:** a DefaultState member who never recovers (grace + extensions expired) has no
+  resolution path; they sit in the group forever.
+- **Decision (fair design):** the admin can **terminate a defaulter after grace expires** —
+  burn their membership, decrement `member_count`, and forfeit their remaining collateral as
+  the penalty. Time-gated (`get_lower_bound(tx) > grace_expires_at`), so it is neutral (not
+  arbitrary admin power) and fair (grace + extensions were offered first).
+- **On-chain work:**
+  - Treasury redeemer: either extend `ClaimPenalty` to accept a `DefaultState` input gated on
+    grace expiry, or add a `TerminateDefault` variant (append LAST to keep Constr indices
+    stable). Mint handler burns the member tokens; spend handler verifies `now > grace_expires_at`,
+    admin auth, member_count decrement on the group output, and routes the forfeited balance
+    (to admin, or — future — pro-rata to shorted members).
+  - Aiken tests: accept-after-grace, reject-before-grace, reject-non-admin, balance routing.
+- **Offchain:** new `terminateDefault` (or extended `terminateGroup`) endpoint + emulator test.
+- Open sub-decision: forfeited collateral → admin (simple) vs pro-rata to underpaid members
+  (fairer, more complex). Recommend admin-claim now, pro-rata as a later enhancement.
 
 ### B3. min-ADA last-round gap for ADA-contribution groups — NEEDS FIX
 - **Cause:** distribute pins `output_bal == input_bal − contribution_fee` in the contribution
@@ -65,8 +76,20 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
   must output **0 lovelace**, colliding with min-ADA (~1.3 ADA for the token-bearing UTxO) →
   validator rejects. Any ADA-group member who funds exactly `num_rounds × fee` fails the last
   round. (Native-token groups are unaffected — token balance is separate from min-ADA.)
-- **Options:** (a) SDK join/deposit floor reserves min-ADA on top of `fee × collateral_rounds`;
-  (b) validator measures a contributable balance = `lovelace − minAdaReserve`. (a) is no-redeploy.
+- **Decision (production-grade):** fix **on-chain** — the validator measures a *contributable*
+  balance = `lovelace − MIN_ADA_RESERVE` (a fixed constant ≥ real treasury min-ADA, e.g. 2 ADA),
+  so correctness does not depend on how the tx is built (a direct API caller can't underfund).
+  The SDK deposit-floor mitigation was rejected as a band-aid.
+- **On-chain work (touches the core conservation math — high care):**
+  - Define `MIN_ADA_RESERVE` (or derive). Apply `contributable = lovelace − reserve` consistently
+    in: join floor (`≥ fee × collateral_rounds + reserve`), distribute conservation
+    (`out_contributable == in_contributable − fee`), ICS threshold, exit refund, and
+    `recovery_funded`. The treasury UTxO always retains `reserve` lovelace for its token.
+  - For native-token groups the contribution asset is already separate from lovelace — keep the
+    reserve concept ADA-only so token groups are unaffected.
+  - Aiken tests: last-round to exactly-reserve accepted; below-reserve rejected; join floor;
+    exit refund nets the reserve back.
+- **Offchain:** join/contribute/distribute deposit + balance math updated to match; e2e re-run.
 - **Confirmed on Preprod:** 3-member, 15 ADA (=3×5) deposits → round 2 crashed; a group with
   headroom (balances staying above min-ADA) distributes the final round fine.
 
