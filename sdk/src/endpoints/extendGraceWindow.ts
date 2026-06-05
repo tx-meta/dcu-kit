@@ -25,6 +25,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  referenceInputIndex,
 } from "../core/utils/index.js";
 
 /**
@@ -110,13 +111,18 @@ export const unsignedExtendGraceWindowTxProgram = (
     // ExtendGraceWindow uses group_ref_input_index into reference_inputs (not spending inputs).
     // The redeemer indices are: [0] = group ref input index in reference_inputs,
     // [1] = admin spending input index in inputs, [2] = treasury spending input index in inputs.
+    const groupRefInputIndex = referenceInputIndex(
+      [groupUtxo, settingsUtxo],
+      groupUtxo,
+    );
+
     const redeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
             ExtendGrace: {
-              group_ref_input_index: 0n, // first (only) reference input
+              group_ref_input_index: groupRefInputIndex,
               admin_input_index: inputIndices[0],
               treasury_input_index: inputIndices[1],
               treasury_output_index: 0n,

@@ -25,6 +25,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  referenceInputIndex,
 } from "../core/utils/index.js";
 
 /**
@@ -110,13 +111,21 @@ export const unsignedContributeTxProgram = (
     // Ensure the membership token is retained (it already exists in treasuryUtxo.assets).
     outputAssets[memberToken] = 1n;
 
+    // Reference inputs are canonically ordered (by txHash, then output index) in the
+    // final transaction. Since P5 added the settings UTxO as a second reference input,
+    // the group is no longer guaranteed to be at index 0 — compute its real position.
+    const groupRefInputIndex = referenceInputIndex(
+      [groupUtxo, settingsUtxo],
+      groupUtxo,
+    );
+
     const redeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
             Contribute: {
-              group_ref_input_index: 0n, // first (only) reference input
+              group_ref_input_index: groupRefInputIndex,
               member_input_index: inputIndices[0],
               treasury_input_index: inputIndices[1],
               treasury_output_index: 0n,

@@ -26,6 +26,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  referenceInputIndex,
 } from "../core/utils/index.js";
 
 // --- Configuration ---
@@ -126,14 +127,20 @@ export const unsignedTerminateGroupTxProgram = (
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
     const burnAssets: Assets = { [memberToken]: -1n };
 
-    // Treasury spend redeemer — group_ref_input_index: 0 (first reference input)
+    // Group's canonical position among the reference inputs (group + settings) — see note
+    // in contribute/claimPayout: hardcoding 0n breaks now that settings is also referenced.
+    const groupRefInputIndex = referenceInputIndex(
+      [groupUtxo, settingsUtxo],
+      groupUtxo,
+    );
+
     const treasurySpendRedeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
             ClaimPenalty: {
-              group_ref_input_index: 0n, // first (only) reference input
+              group_ref_input_index: groupRefInputIndex,
               admin_input_index: inputIndices[0],
             },
           },

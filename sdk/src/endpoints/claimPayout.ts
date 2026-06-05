@@ -27,6 +27,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  referenceInputIndex,
 } from "../core/utils/index.js";
 
 /**
@@ -141,13 +142,21 @@ export const unsignedClaimPayoutTxProgram = (
       ? { lovelace: claimable }
       : { lovelace: 2_000_000n, [contributionUnit]: claimable };
 
+    // Group's canonical position among ALL reference inputs: group + settings, plus the
+    // optional treasury ref-script when scriptRefs are used. Hardcoding 0n breaks once the
+    // P5 settings UTxO (or a ref-script) sorts ahead of the group input.
+    const claimRefInputs = [groupUtxo, settingsUtxo];
+    if (config.scriptRefs?.treasury)
+      claimRefInputs.push(config.scriptRefs.treasury);
+    const groupRefInputIndex = referenceInputIndex(claimRefInputs, groupUtxo);
+
     const redeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
             ClaimPayout: {
-              group_ref_input_index: 0n, // first (only) reference input
+              group_ref_input_index: groupRefInputIndex,
               member_input_index: inputIndices[0],
               treasury_output_index: 0n,
             },
