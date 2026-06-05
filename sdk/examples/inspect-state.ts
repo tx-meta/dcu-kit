@@ -8,6 +8,7 @@ import { loadSdk } from "./sdk.js";
 import { loadState } from "./state.js";
 import {
   parseGroupCip68Datum,
+  decodeGroupMetadata,
   parseSafeDatum,
   TreasuryDatumSchema,
   getScriptAddress,
@@ -28,7 +29,9 @@ async function main() {
   const groupUtxo = await lucid.utxoByUnit(groupUnit);
   const cip = await Effect.runPromise(parseGroupCip68Datum(groupUtxo.datum));
   const gd = cip.groupDatum;
+  const meta = decodeGroupMetadata(cip.metadata);
   console.log("=== GROUP ===");
+  console.log(j({ name: meta.name, description: meta.description }));
   console.log(
     j({
       member_count: gd.member_count,

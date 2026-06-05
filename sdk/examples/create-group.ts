@@ -128,6 +128,10 @@ async function main() {
     // groupName goes into the CIP-68 metadata map (metadata["name"]) on the group
     // reference token. Wallets display this name when showing the group NFT.
     groupName: process.env.GROUP_NAME ?? "My DCU Group",
+    // groupDescription is the chama's stated purpose — e.g. "Kiambu land-buying chama".
+    // Stored on-chain in metadata["description"] and frozen once a member joins. Optional.
+    groupDescription:
+      process.env.GROUP_DESCRIPTION ?? "A rotating savings group (chama).",
     groupDatum,
     utxoToSpend: utxos[0],
   };

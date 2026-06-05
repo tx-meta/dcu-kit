@@ -267,6 +267,8 @@ export const deleteAccountTestCase = (
 export type CreateGroupTestParams = {
   datumOverride?: Partial<GroupDatum>;
   creatorSeed?: string;
+  groupName?: string;
+  groupDescription?: string;
 };
 
 export const createGroupTestCase = (
@@ -275,7 +277,7 @@ export const createGroupTestCase = (
 ): Effect.Effect<CreateGroupResult, Error, never> =>
   Effect.gen(function* () {
     const { lucid, users } = context;
-    const { datumOverride, creatorSeed } = params;
+    const { datumOverride, creatorSeed, groupName, groupDescription } = params;
 
     selectWalletFromSeed(lucid, creatorSeed ?? users.admin.seedPhrase);
 
@@ -288,7 +290,8 @@ export const createGroupTestCase = (
 
     const groupDatum = createDefaultGroupDatum(datumOverride);
     const groupConfig: CreateGroupConfig = {
-      groupName: "Test Group",
+      groupName: groupName ?? "Test Group",
+      ...(groupDescription !== undefined ? { groupDescription } : {}),
       groupDatum,
       utxoToSpend: selectedUTxO,
     };

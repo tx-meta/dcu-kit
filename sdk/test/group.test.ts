@@ -13,6 +13,7 @@ import {
   selectWalletFromSeed,
   assetNameLabels,
   parseGroupCip68Datum,
+  decodeGroupMetadata,
   getScriptAddress,
   patchInlineDatum,
 } from "../src/core/utils/index.js";
@@ -37,35 +38,44 @@ describe("Group Endpoints", () => {
   // --- Group name readable from on-chain datum ---
   // Verifies the CIP-68 wrapper is written correctly and the metadata["name"] key
   // resolves to the groupName string passed to CreateGroupConfig.
-  it.effect("should store the group name in CIP-68 metadata on-chain", () =>
-    Effect.gen(function* () {
-      const { context } = yield* setupBase();
+  it.effect(
+    "should store the group name and description in CIP-68 metadata on-chain",
+    () =>
+      Effect.gen(function* () {
+        const { context } = yield* setupBase();
 
-      const { txHash } = yield* createGroupTestCase(context, {
-        datumOverride: {},
-      });
+        const { txHash } = yield* createGroupTestCase(context, {
+          datumOverride: {},
+          groupDescription: "Kiambu land-buying chama",
+        });
 
-      const groupAddress = yield* getScriptAddress(
-        context.lucid,
-        context.protocol!.groupValidator.spendGroup,
-      );
-      const utxos = yield* Effect.tryPromise(() =>
-        context.lucid.utxosAt(groupAddress),
-      );
-      const groupUtxo = utxos.find((u) => u.txHash === txHash);
-      expect(groupUtxo).toBeDefined();
+        const groupAddress = yield* getScriptAddress(
+          context.lucid,
+          context.protocol!.groupValidator.spendGroup,
+        );
+        const utxos = yield* Effect.tryPromise(() =>
+          context.lucid.utxosAt(groupAddress),
+        );
+        const groupUtxo = utxos.find((u) => u.txHash === txHash);
+        expect(groupUtxo).toBeDefined();
 
-      const cip68 = yield* parseGroupCip68Datum(
-        patchInlineDatum(groupUtxo!).datum,
-      );
+        const cip68 = yield* parseGroupCip68Datum(
+          patchInlineDatum(groupUtxo!).datum,
+        );
 
-      // metadata is a Plutus Map — at runtime it's a JS Map<string, string>
-      // Key = fromText("name") = "6e616d65"
-      const metadataMap = cip68.metadata as unknown as Map<string, string>;
-      const nameHex = metadataMap.get("6e616d65");
-      expect(nameHex).toBeDefined();
-      expect(toText(nameHex!)).toBe("Test Group");
-    }),
+        // Raw map check: name + description are stored on-chain under their UTF-8 keys.
+        const metadataMap = cip68.metadata as unknown as Map<string, string>;
+        expect(toText(metadataMap.get("6e616d65")!)).toBe("Test Group");
+        // fromText("description") = "6465736372697074696f6e"
+        expect(toText(metadataMap.get("6465736372697074696f6e")!)).toBe(
+          "Kiambu land-buying chama",
+        );
+
+        // The decodeGroupMetadata helper surfaces both as plain text.
+        const decoded = decodeGroupMetadata(cip68.metadata);
+        expect(decoded.name).toBe("Test Group");
+        expect(decoded.description).toBe("Kiambu land-buying chama");
+      }),
   );
 
   // --- Create Group with creator_bond ---
