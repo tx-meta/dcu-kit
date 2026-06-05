@@ -1,16 +1,22 @@
 ---
 title: distributePayout
-description: Calculate the current rotation slot and distribute pooled contributions to the eligible borrower.
+description: Run a rotation round — assemble the pro-rata pot and pay the round's borrower.
 ---
 
-The `distributePayout` endpoint is the operational engine of the DCU Toolkit. It enforces the core logic of a **Rotating Savings and Credit Association (ROSCA)**.
+The `distributePayout` endpoint is the operational engine of the DCU Toolkit. It runs a single **round** of a Rotating Savings and Credit Association (ROSCA): every active member contributes one `contribution_fee`, and the pooled pot goes to the member whose `assigned_slot` matches the current round.
 
 ### The ROSCA Financial Model
-In a standard DCU pod, funds remain locked inside the `Treasury Validator` until a mathematically proven cycle elapses. This transaction pulls those locked funds, verifies the participant queue encoded across the Treasury UTxOs, and distributes the payout to the member whose rotation slot matches the current interval. The on-chain Aiken validators enforce that turns cannot be skipped and funds cannot be pulled early.
+A round can only run after the group has been started ([`startGroup`](/docs/getting-started)), and rounds are **sequential and time-gated** — round `N` opens at `start_time + N × interval_length`, and `round_number` must equal `last_distributed_round + 1`. The on-chain validator enforces that turns cannot be skipped and funds cannot be pulled early. The pot is **pro-rata**: `total_payout = contribution_fee × active_members`, where the complete member set must be accounted for (contributing members as spending inputs, defaulters as reference inputs).
 
-<Callout title="Current Limitation: Payout Address" type="warn">
-The SDK currently sends the payout to the **transaction submitter's wallet**. The borrower's address is not stored in the Treasury datum, so the SDK cannot automatically route funds to the correct member. The intended borrower must submit this transaction themselves to receive the payout.
+<Callout title="Permissionless — pays the borrower, not the caller" type="info">
+This transaction is permissionless: any wallet can submit it. The payout always goes to the round's borrower (the member at the current slot, whose `member_payment_credential` is stored in their treasury datum) — never to the submitter. Operators typically automate it (see the `cron-daemon` example).
 </Callout>
+
+### Push vs Pull
+The destination of the pot depends on the group's `payout_mode`:
+
+- **Push** (default): the pot is paid directly to the borrower's wallet.
+- **Pull**: the pot is earmarked into the borrower's **own** treasury (`claimable_balance`) and withdrawn later via [`claimPayout`](/docs/api-reference/claimPayout) — the lost-wallet-safe mode.
 
 ## Configuration
 
@@ -18,32 +24,34 @@ The SDK currently sends the payout to the **transaction submitter's wallet**. Th
 import { UTxO } from "@lucid-evolution/lucid";
 
 export type DistributePayoutConfig = {
-    /** The Group's unique Reference UTxO */
-    groupUtxo: UTxO;
-    
-    /** 
-     * An array of all Treasury UTxOs representing the active members.
-     * The SDK parses the Contribution Lists and assigned slots inside these 
-     * UTxOs to mathematically determine who receives the payout.
-     */
-    treasuryUtxos: UTxO[];
+  /** 28-byte token suffix of the group running the round. */
+  groupTokenSuffix: string;
+
+  /** POSIX ms. Use the emulator clock for tests; omit on live networks. */
+  currentTime?: bigint;
+
+  /** Reference scripts (from deploy-scripts) to keep the tx under the 16 KB limit. */
+  scriptRefs?: { treasury?: UTxO; group?: UTxO };
 };
 ```
 
 ## Internal Execution Mechanics
 
-1. **Current Slot Calculation:** The SDK uses the `calculateCurrentSlot` utility to determine who is owed the payout based on the absolute blockchain time and the `interval_length` and `start_time` defined in the Group datum.
-2. **Redeemer Construction:** The SDK builds the exact `DistributePayout` Redeemer expected by the Treasury Validator, including precise input/output indices. If no claimable contributions are found or no member matches the current slot, the SDK fails early with a `TransactionBuildError` before the transaction is ever submitted.
+1. **Round selection:** the SDK reads the group datum and targets `round_number = last_distributed_round + 1`, deriving the borrower as the member with `assigned_slot == round_number % num_rounds`.
+2. **Member set assembly:** it collects every member's treasury — healthy members as spending inputs, defaulters as reference inputs — so the validator can compute `active_members` over the complete registry.
+3. **Redeemer construction:** it builds the `DistributeRound` redeemer with precise input/output indices. If the group has not started, the round is not yet open, or the borrower is absent, the SDK fails early with a `TransactionBuildError` before submission.
 
 ## Usage
 
 ```ts
-import { distributePayout } from "@dcu/sdk";
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
 
 try {
-  const txBuilder = await distributePayout(lucid, config).unsafeRun();
-  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
-  console.log("Payout distributed! TxHash:", txHash);
+  const txBuilder = await sdk.distributePayout(lucid, { groupTokenSuffix }).unsafeRun();
+  const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
+  console.log("Round distributed! TxHash:", txHash);
 } catch (error) {
   console.error("Failed to distribute payout:", error);
 }

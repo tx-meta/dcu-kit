@@ -2,15 +2,20 @@
     "title": "API Reference",
     "pages": [
         "createAccount",
+        "updateAccount",
+        "deleteAccount",
         "createGroup",
+        "updateGroup",
+        "deleteGroup",
         "joinGroup",
+        "startGroup",
         "distributePayout",
-        "memberWithdraw",
+        "claimPayout",
+        "contribute",
+        "updatePayoutCredential",
+        "extendGraceWindow",
         "exitGroup",
         "terminateGroup",
-        "updateAccount",
-        "updateGroup",
-        "deleteAccount",
-        "deleteGroup"
+        "nextCycle"
     ]
 }

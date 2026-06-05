@@ -24,7 +24,7 @@ import { Protocol } from "../core/validators/constants.js";
  *
  * **Functionality:**
  * - Burns both group tokens (Reference 100 + Admin Auth 222).
- * - Returns all ADA locked in the group UTxO (including creation_deposit) to the
+ * - Returns all ADA locked in the group UTxO (including creator_bond) to the
  *   admin wallet as transaction change.
  *
  * **Constraints:**

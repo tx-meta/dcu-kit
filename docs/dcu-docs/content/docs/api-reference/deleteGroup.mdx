@@ -1,59 +1,43 @@
 ---
 title: deleteGroup
-description: Deactivate a DCU Group and prevent any future memberships.
+description: Burn an empty, deactivated group and reclaim its locked ADA.
 ---
 
-The `deleteGroup` endpoint performs a programmatic "soft delete" of a Decentralized Credit Union. 
+The `deleteGroup` endpoint permanently tears down a group: it burns both group tokens and returns the locked ADA (including the `creator_bond`) to the admin.
 
-## Protocol Constraints
-You **cannot** completely destroy the Group Reference UTxO natively if it holds critical historical data. Instead, this endpoint updates the Group's datum state to `is_active: false`. Furthermore, the smart contract strictly validates that the group's `member_count` evaluates to absolutely `0` before allowing deactivation.
+<Callout title="Bound endpoint" type="info">
+Obtained from `createDcuSdk(settingsPolicy)`. See [Getting Started](/docs/getting-started).
+</Callout>
+
+### Constraints
+- The group must already be **deactivated** (`is_active == false`) — set this first via [`updateGroup`](/docs/api-reference/updateGroup).
+- `member_count` must be `0` — every member must have exited.
+
+### What it does
+- Burns both group tokens (Reference 100 + Admin Auth 222).
+- Returns all ADA locked in the group UTxO, including the `creator_bond`, to the admin as change.
 
 ## Configuration
 
 ```ts
-import { UTxO } from "@lucid-evolution/lucid";
-import { GroupDatum } from "@dcu/sdk";
-
 export type DeleteGroupConfig = {
-    /** The Group's master state UTxO */
-    groupUtxo: UTxO;
-    
-    /** The currently active group parameters */
-    currentDatum: GroupDatum;
-    
-    /** The Administrator's Auth UTxO proving possession of the Admin credentials */
-    adminUtxo: UTxO;
+  /** 28-byte token suffix of the (deactivated, empty) group. */
+  groupTokenSuffix: string;
 };
 ```
-
-## Obtaining `currentDatum`
-
-`currentDatum` must be decoded from the inline datum on the `groupUtxo`. Use `Data.from` with the `GroupDatum` schema:
-
-```ts
-import { Data } from "@lucid-evolution/lucid";
-import { GroupDatum } from "@dcu/sdk";
-
-if (!groupUtxo.datum) throw new Error("Group UTxO has no inline datum");
-const currentDatum = Data.from(groupUtxo.datum, GroupDatum);
-```
-
-## Internal Execution Mechanics
-When an admin triggers this transaction:
-1. It validates the `adminUtxo` as the holder of the `GroupAdmin` NFT.
-2. It copies `currentDatum` and sets `is_active` to `false`.
-3. It pushes the deactivated datum back to the `GroupValidator`.
 
 ## Usage
 
 ```ts
-import { deleteGroup } from "@dcu/sdk";
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
 
 try {
-    const txBuilder = await deleteGroup(lucid, config).unsafeRun();
-    const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
-    console.log("Group successfully deactivated! TxHash:", txHash);
+  const txBuilder = await sdk.deleteGroup(lucid, { groupTokenSuffix }).unsafeRun();
+  const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
+  console.log("Group deleted! TxHash:", txHash);
 } catch (error) {
-    console.error("Failed to deactivate group:", error);
+  console.error("Failed to delete group:", error);
 }
 ```

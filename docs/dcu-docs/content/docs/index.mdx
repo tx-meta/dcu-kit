@@ -18,7 +18,7 @@ This SDK is built heavily on the [Effect](https://effect.website/) ecosystem to 
 ## Installation
 
 ```bash
-pnpm install @dcu/sdk @lucid-evolution/lucid effect
+pnpm install @tx-meta/dcu-sdk @lucid-evolution/lucid effect
 ```
 
 ## Quick Start
@@ -26,7 +26,7 @@ pnpm install @dcu/sdk @lucid-evolution/lucid effect
 Every endpoint in the SDK returns a `ProgramRunner`, giving you three ways to execute. Here's creating an account and submitting the transaction:
 
 ```ts
-import { createAccount } from "@dcu/sdk";
+import { createAccount } from "@tx-meta/dcu-sdk";
 
 // Pick any UTxO you own. Consumed as entropy for CIP-68 token name derivation.
 const [selectedUtxo] = await lucid.wallet().getUtxos();
@@ -34,10 +34,8 @@ const [selectedUtxo] = await lucid.wallet().getUtxos();
 try {
   const txBuilder = await createAccount(lucid, {
     selected_out_ref: selectedUtxo,
-    account_datum: {
-      email_hash: "abc123...",
-      phone_hash: "def456..."
-    }
+    display_name: "alice",   // optional UTF-8 (defaults to wallet address)
+    contact: "alice#1234",   // optional UTF-8 (defaults to wallet address)
   }).unsafeRun();
 
   const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());

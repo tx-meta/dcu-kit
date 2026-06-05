@@ -1,0 +1,40 @@
+---
+title: startGroup
+description: Seal a group's membership and anchor its rotation schedule.
+---
+
+The `startGroup` endpoint is the admin action that transitions a group from "open for joining" to "running." It is **required before any payout** and, once called, no further members can join.
+
+<Callout title="Bound endpoint" type="info">
+Obtained from `createDcuSdk(settingsPolicy)`. See [Getting Started](/docs/getting-started).
+</Callout>
+
+### What it does
+- **Seals membership** — no new members can join after `startGroup`.
+- Sets `num_rounds = member_count`, fixing the rotation schedule.
+- Sets `start_time` to the transaction's validity lower bound, anchoring round timing (round `N` opens at `start_time + N × interval_length`).
+- Requires **at least 2 members** (enforced on-chain).
+
+## Configuration
+
+```ts
+export type StartGroupConfig = {
+  /** 28-byte token suffix of the group to start. */
+  groupTokenSuffix: string;
+
+  /** POSIX ms. Use the emulator clock for tests; omit on live networks. */
+  currentTime?: bigint;
+};
+```
+
+## Usage
+
+```ts
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
+
+const txBuilder = await sdk.startGroup(lucid, { groupTokenSuffix }).unsafeRun();
+const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
+console.log("Group started:", txHash);
+```

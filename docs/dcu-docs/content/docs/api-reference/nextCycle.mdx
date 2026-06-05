@@ -1,0 +1,46 @@
+---
+title: nextCycle
+description: Reset a matured group for another rotation cycle.
+---
+
+The `nextCycle` endpoint resets a group that has completed all its rounds so the same members can run another cycle, keeping their existing slots.
+
+<Callout title="Bound endpoint" type="info">
+Obtained from `createDcuSdk(settingsPolicy)`. See [Getting Started](/docs/getting-started).
+</Callout>
+
+### What it does
+- Requires all rounds distributed (`last_distributed_round + 1 == num_rounds`).
+- Resets the group datum: `is_started = false`, `last_distributed_round = -1`, `num_rounds = 0`, `start_time = 0`.
+- Resets every active `TreasuryState` UTxO: `rounds_paid = 0`.
+- Members remain in the group at their existing slots.
+
+<Callout title="Re-funding required" type="warn">
+`nextCycle` preserves value — it cannot add funds. Each member's treasury must already hold at least the join floor (`contribution_fee × collateral_rounds`) before the reset, so depleted members must [`contribute`](/docs/api-reference/contribute) first. After `nextCycle`, the admin calls [`startGroup`](/docs/api-reference/startGroup) again.
+</Callout>
+
+## Configuration
+
+```ts
+import { UTxO } from "@lucid-evolution/lucid";
+
+export type NextCycleConfig = {
+  /** 28-byte token suffix of the matured group. */
+  groupTokenSuffix: string;
+
+  /** Reference scripts (from deploy-scripts) to keep the tx under the 16 KB limit. */
+  scriptRefs?: { treasury?: UTxO; group?: UTxO };
+};
+```
+
+## Usage
+
+```ts
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
+
+const txBuilder = await sdk.nextCycle(lucid, { groupTokenSuffix }).unsafeRun();
+const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
+console.log("Cycle reset:", txHash);
+```

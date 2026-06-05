@@ -1,42 +1,43 @@
 ---
 title: deleteAccount
-description: Burn your User Auth NFT and gracefully exit the DCU Toolkit ecosystem.
+description: Burn your account NFTs and exit the protocol — if you have no active memberships.
 ---
 
-The `deleteAccount` endpoint allows a user to completely remove their identity from the DCU protocol. It guarantees that the user leaves no dangling reference metadata behind.
+The `deleteAccount` endpoint removes a user's identity, burning both CIP-68 account tokens and reclaiming the locked min-ADA.
 
-## Security Constraints
-You **cannot** delete an account if that account is currently an active member of any DCU Group. The `deleteAccount` transaction sweeps the Treasury validators looking for your specific Reference Token. If a match is found, the SDK yields a `TransactionBuildError` protecting the integrity of the protocol.
+<Callout title="Bound endpoint" type="info">
+`deleteAccount` is obtained from `createDcuSdk(settingsPolicy)` — it scans the deployment's treasuries for active memberships before burning, so it needs the protocol context.
+</Callout>
+
+### Integrity check
+You **cannot** delete an account that is still an active member of any group. The transaction sweeps the deployment's treasury UTxOs for this account's token; if a membership is found, the SDK yields a `TransactionBuildError`, protecting protocol integrity.
+
+### What it does
+- Matches the exact User Auth (222) and Reference (100) token pair.
+- Verifies the account holds no active membership across the deployment's treasuries.
+- Burns both tokens and returns the reference NFT's min-ADA to the caller.
 
 ## Configuration
 
 ```ts
-import { UTxO } from "@lucid-evolution/lucid";
-
 export type DeleteAccountConfig = {
-    /** The UTxO in your wallet holding the User Auth NFT */
-    user_utxo: UTxO;
-    /** The UTxO sitting at the Account Validator holding the Reference NFT */
-    account_utxo: UTxO;
+  /** 28-byte token suffix of the account to delete. */
+  accountTokenSuffix: string;
 };
 ```
-
-## Internal Execution Mechanics
-When you trigger this endpoint, the SDK:
-1. Uses `findCip68TokenPair` to match the exact User Token and Reference Token.
-2. Performs a parallel `Effect.all` search against every known Treasury UTxO to ensure this token is **not** an active member of any pod.
-3. Constructs a transaction that simultaneously **burns** both tokens and redeems the min-ADA locked in the Reference NFT back to the user.
 
 ## Usage
 
 ```ts
-import { deleteAccount } from "@dcu/sdk";
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
 
 try {
-    const txBuilder = await deleteAccount(lucid, config).unsafeRun();
-    const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
-    console.log("Account successfully deleted! TxHash:", txHash);
+  const txBuilder = await sdk.deleteAccount(lucid, { accountTokenSuffix }).unsafeRun();
+  const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
+  console.log("Account deleted! TxHash:", txHash);
 } catch (error) {
-    console.error("Failed to delete account:", error);
+  console.error("Failed to delete account:", error);
 }
 ```

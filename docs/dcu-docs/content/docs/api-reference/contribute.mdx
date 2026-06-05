@@ -1,0 +1,51 @@
+---
+title: contribute
+description: Top up your treasury balance in the contribution asset.
+---
+
+The `contribute` endpoint lets a member add funds to their own treasury UTxO. Under the default **PerRound** collateral policy, members lock only one round's floor at join and top up before each round via `contribute`.
+
+<Callout title="Bound endpoint" type="info">
+Obtained from `createDcuSdk(settingsPolicy)`. See [Getting Started](/docs/getting-started).
+</Callout>
+
+### What it does
+- Increases the contribution-asset balance of the member's treasury UTxO by `topUpAmount`.
+- The contribution asset may be ADA or any Cardano native token (read from the group datum).
+- The datum is structurally unchanged (a `TreasuryState` top-up); the group UTxO is a read-only reference input.
+- Requires the member's account NFT in the wallet for authorization.
+
+<Callout title="ICS is terminal" type="warn">
+`contribute` requires a `TreasuryState` datum. A treasury already in `DefaultState` (insufficient collateral) cannot be topped up to recover — its only resolutions are an admin grace extension or termination.
+</Callout>
+
+## Configuration
+
+```ts
+export type ContributeConfig = {
+  /** 28-byte token suffix of the group. */
+  groupTokenSuffix: string;
+
+  /** 28-byte token suffix of the caller's account. */
+  accountTokenSuffix: string;
+
+  /** Units of the contribution asset to add to the treasury UTxO. */
+  topUpAmount: bigint;
+};
+```
+
+## Usage
+
+```ts
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
+
+const txBuilder = await sdk.contribute(lucid, {
+  groupTokenSuffix,
+  accountTokenSuffix,
+  topUpAmount: 5_000_000n, // e.g. one more round of a 5 ADA fee
+}).unsafeRun();
+
+const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
+```

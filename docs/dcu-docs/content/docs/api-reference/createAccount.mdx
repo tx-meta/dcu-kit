@@ -1,53 +1,59 @@
 ---
 title: createAccount
-description: Generate an unsigned transaction to mint a new User Auth NFT and Reference NFT.
+description: Mint a CIP-68 account identity for a protocol participant.
 ---
 
-The `createAccount` endpoint is the first step for any new user entering the DCU ecosystem. 
+The `createAccount` endpoint is the first step for any new user. It establishes an on-chain identity that every group interaction references.
+
+<Callout title="Standalone endpoint" type="info">
+`createAccount` does not depend on a deployment's settings, so it is imported and called directly (not via `createDcuSdk`).
+</Callout>
 
 ### Why Mint Two NFTs?
-Under the Cardano **CIP-68 standard**, smart contracts cannot easily read data from tokens held directly in a user's wallet. To solve this, `createAccount` mints a synchronized pair:
-1. **User Auth NFT**: This token goes directly into the user's wallet. It acts as their cryptographic "keycard".
-2. **Reference NFT**: This token is locked permanently in the `Account Validator` smart contract. It holds the user's `account_datum` (their encrypted metadata).
+Under the Cardano **CIP-68 standard**, contracts cannot read data from tokens held in a wallet. `createAccount` mints a synchronized pair:
+1. **User Auth (222) NFT** — sent to the user's wallet; their cryptographic "keycard".
+2. **Reference (100) NFT** — locked at the `Account Validator`, holding the account datum (`display_name`, `contact`).
 
-When a user tries to join a group, the smart contract checks their wallet for the Auth NFT, and then reads the Reference NFT's data to verify their identity.
+When joining a group, the contract checks the wallet for the auth token and reads the reference token's datum.
+
+### What it does
+- Mints the CIP-68 pair under the account policy.
+- Locks the reference NFT at the Account Validator with the account datum.
+- Sends the user auth NFT to the caller's wallet.
+- Initialises `display_name` and `contact` as raw UTF-8 — both default to the wallet address when omitted.
 
 ## Configuration
 
-This endpoint requires a specific configuration object:
-
 ```ts
-import { UTxO } from "@lucid-evolution/lucid";
-import { AccountDatum } from "@dcu/sdk";
+import { OutRef } from "@lucid-evolution/lucid";
 
 export type CreateAccountConfig = {
-  /** The UTxO consumed as entropy for CIP-68 token name derivation */
-  selected_out_ref: UTxO;
+  /** Reference to a wallet UTxO spent for token-name entropy (CIP-68 derivation). */
+  selected_out_ref: OutRef;
 
-  /** The user's encrypted personal metadata to be locked in the Reference NFT */
-  account_datum: AccountDatum;
+  /** Optional UTF-8 display name (username, ADA Handle, etc.). Defaults to address. */
+  display_name?: string;
+
+  /** Optional UTF-8 secondary contact identifier. Defaults to address. */
+  contact?: string;
 };
 ```
 
 ## Usage
 
-Like all endpoints, this returns a `ProgramRunner` giving you execution flexibility.
-
 ```ts
-import { createAccount } from "@dcu/sdk";
+import { createAccount } from "@tx-meta/dcu-sdk";
 
-const [selectedUtxo] = await lucid.wallet().getUtxos();
+const [utxo] = await lucid.wallet().getUtxos();
 
 try {
   const txBuilder = await createAccount(lucid, {
-    selected_out_ref: selectedUtxo,
-    account_datum: {
-      email_hash: "a3f1b2e4...", // hex-encoded hash of user's email
-      phone_hash: "c9d8f012...", // hex-encoded hash of user's phone number
-    }
+    selected_out_ref: utxo,
+    display_name: "alice",
+    contact: "alice#1234",
   }).unsafeRun();
 
-  const txHash = await txBuilder.sign.withWallet().complete().then(tx => tx.submit());
+  const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
   console.log("Account created! TxHash:", txHash);
 } catch (error) {
   console.error("Failed to create account:", error);

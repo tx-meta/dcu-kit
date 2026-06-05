@@ -1,0 +1,52 @@
+---
+title: claimPayout
+description: Withdraw an earmarked Pull-mode payout from your treasury to any address.
+---
+
+The `claimPayout` endpoint is the withdrawal step of **Pull** mode. When a Pull-mode group runs a round, the pot is not paid to the borrower's wallet — it accumulates in the borrower's own treasury as `claimable_balance`. `claimPayout` withdraws exactly that earmark.
+
+<Callout title="Bound endpoint" type="info">
+Obtained from `createDcuSdk(settingsPolicy)`. See [Getting Started](/docs/getting-started).
+</Callout>
+
+### What it does
+- Withdraws exactly `claimable_balance` (in the contribution asset) from the member's treasury; the collateral and membership token stay locked.
+- Resets `claimable_balance` to `0` on the treasury continuation output.
+- **Authorization is by possession of the member (222) token** — not a stored credential. A member who lost their original wallet can claim from any wallet holding the token, to any destination.
+
+<Callout title="Lost-wallet recovery" type="info">
+Set `destinationAddress` to claim to a fresh address. This is the lost-wallet-safe path: entitlement is durable until claimed (or returned automatically at mature exit).
+</Callout>
+
+## Configuration
+
+```ts
+import { UTxO } from "@lucid-evolution/lucid";
+
+export type ClaimPayoutConfig = {
+  /** 28-byte token suffix of the caller's account. */
+  accountTokenSuffix: string;
+
+  /** Where claimed funds go. Defaults to the signing wallet — set to redirect (recovery). */
+  destinationAddress?: string;
+
+  /** Reference script (from deploy-scripts) to keep the tx under the 16 KB limit. */
+  scriptRefs?: { treasury?: UTxO };
+};
+```
+
+## Usage
+
+```ts
+import { createDcuSdk } from "@tx-meta/dcu-sdk";
+
+const sdk = createDcuSdk(settingsPolicy);
+
+const txBuilder = await sdk.claimPayout(lucid, {
+  accountTokenSuffix,
+  // destinationAddress: "addr_test1...", // optional: claim to a fresh address
+}).unsafeRun();
+
+const txHash = await txBuilder.sign.withWallet().complete().then((tx) => tx.submit());
+console.log("Payout claimed:", txHash);
+```
