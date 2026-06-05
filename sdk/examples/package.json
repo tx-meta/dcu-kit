@@ -19,6 +19,7 @@
     "claim-payout": "pnpm run build && node dist/claim-payout.js",
     "exit-group": "pnpm run build && node dist/exit-group.js",
     "terminate-group": "pnpm run build && node dist/terminate-group.js",
+    "terminate-default": "pnpm run build && node dist/terminate-default.js",
     "contribute": "pnpm run build && node dist/contribute.js",
     "update-payout-credential": "pnpm run build && node dist/update-payout-credential.js",
     "extend-grace-window": "pnpm run build && node dist/extend-grace-window.js",
