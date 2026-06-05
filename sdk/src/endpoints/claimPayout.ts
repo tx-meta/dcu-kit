@@ -59,7 +59,13 @@ export const unsignedClaimPayoutTxProgram = (
   config: ClaimPayoutConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { treasuryValidator, treasuryPolicyId, accountPolicyId, groupPolicyId, settingsUnit } = protocol;
+    const {
+      treasuryValidator,
+      treasuryPolicyId,
+      accountPolicyId,
+      groupPolicyId,
+      settingsUnit,
+    } = protocol;
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { accountTokenSuffix, destinationAddress } = config;
 

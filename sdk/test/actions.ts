@@ -405,7 +405,11 @@ export const joinGroupTestCase = (
       currentTime,
     };
 
-    const joinTx = yield* unsignedJoinGroupTxProgram(context.protocol!,lucid, joinConfig);
+    const joinTx = yield* unsignedJoinGroupTxProgram(
+      context.protocol!,
+      lucid,
+      joinConfig,
+    );
     const txHash = yield* signAndSubmit(joinTx);
     yield* advanceBlock(context.emulator);
 
@@ -441,7 +445,11 @@ export const startGroupTestCase = (
       currentTime: currentTimeFinal,
     };
 
-    const startTx = yield* unsignedStartGroupTxProgram(context.protocol!,lucid, startConfig);
+    const startTx = yield* unsignedStartGroupTxProgram(
+      context.protocol!,
+      lucid,
+      startConfig,
+    );
     const txHash = yield* signAndSubmit(startTx);
     yield* advanceBlock(context.emulator);
 
@@ -528,7 +536,11 @@ export const exitGroupTestCase = (
       currentTime,
     };
 
-    const exitTx = yield* unsignedExitGroupTxProgram(context.protocol!,lucid, exitConfig);
+    const exitTx = yield* unsignedExitGroupTxProgram(
+      context.protocol!,
+      lucid,
+      exitConfig,
+    );
     const txHash = yield* signAndSubmit(exitTx);
     yield* advanceBlock(context.emulator);
 
@@ -554,7 +566,11 @@ export const nextCycleTestCase = (
     );
     const nextCycleConfig: NextCycleConfig = { groupTokenSuffix };
 
-    const tx = yield* unsignedNextCycleTxProgram(context.protocol!,lucid, nextCycleConfig);
+    const tx = yield* unsignedNextCycleTxProgram(
+      context.protocol!,
+      lucid,
+      nextCycleConfig,
+    );
     const txHash = yield* signAndSubmit(tx);
     yield* advanceBlock(context.emulator);
 

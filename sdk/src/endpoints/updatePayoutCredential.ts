@@ -51,7 +51,12 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
   config: UpdatePayoutCredentialConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { treasuryValidator, treasuryPolicyId, accountPolicyId, settingsUnit } = protocol;
+    const {
+      treasuryValidator,
+      treasuryPolicyId,
+      accountPolicyId,
+      settingsUnit,
+    } = protocol;
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { accountTokenSuffix } = config;
 

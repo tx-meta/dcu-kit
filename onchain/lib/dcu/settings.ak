@@ -32,13 +32,12 @@ pub fn read_settings(
   reference_inputs: List<Input>,
   settings_policy: PolicyId,
 ) -> ProtocolSettings {
-  expect Some(settings_input) =
-    list.find(
-      reference_inputs,
-      fn(i) {
-        assets.quantity_of(i.output.value, settings_policy, settings_token_name) == 1
-      },
-    )
+  expect Some(settings_input) = list.find(
+    reference_inputs,
+    fn(i) {
+      assets.quantity_of(i.output.value, settings_policy, settings_token_name) == 1
+    },
+  )
   expect InlineDatum(d) = settings_input.output.datum
   expect settings: ProtocolSettings = d
   settings
@@ -57,9 +56,8 @@ pub fn validate_settings_mint(
   tx: Transaction,
 ) -> Bool {
   let seed_spent = list.any(tx.inputs, fn(i) { i.output_reference == seed })
-  let mint_is_singleton =
-    dict.to_pairs(assets.tokens(tx.mint, own_policy_id)) == [
-      Pair(settings_token_name, 1),
-    ]
+  let mint_is_singleton = dict.to_pairs(assets.tokens(tx.mint, own_policy_id)) == [
+    Pair(settings_token_name, 1),
+  ]
   seed_spent && mint_is_singleton
 }

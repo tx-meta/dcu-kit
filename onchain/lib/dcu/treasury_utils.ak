@@ -22,11 +22,7 @@ pub const min_ada_reserve: Int = 2_000_000
 // round a member's contributable balance reaches 0 while `min_ada_reserve` lovelace
 // remains to carry the token. For native tokens the reserve is 0 — the token balance is
 // independent of the UTxO's lovelace — so token-denominated groups are unaffected.
-pub fn contributable_in(
-  value: Value,
-  policy: PolicyId,
-  name: AssetName,
-) -> Int {
+pub fn contributable_in(value: Value, policy: PolicyId, name: AssetName) -> Int {
   let raw = assets.quantity_of(value, policy, name)
   if policy == ada_policy_id {
     raw - min_ada_reserve
@@ -97,6 +93,7 @@ pub fn indices_in_ascending_order(indices: List<Int>) -> Bool {
     [a, b, ..rest] -> a < b && indices_in_ascending_order([b, ..rest])
   }
 }
+
 // count_active_members
 // Enforces the COMPLETE member set for a distribution round and returns the number of
 // contributors. Every name in `member_token_names` must be held by exactly one of:
@@ -116,10 +113,9 @@ pub fn count_active_members(
     member_token_names,
     0,
     fn(name, acc) {
-      let holds =
-        fn(i: Input) {
-          assets.quantity_of(i.output.value, treasury_policy_id, name) == 1
-        }
+      let holds = fn(i: Input) {
+        assets.quantity_of(i.output.value, treasury_policy_id, name) == 1
+      }
       when list.find(inputs, holds) is {
         // Member is a spending input → must be TreasuryState (contributing this round).
         Some(member_input) -> {

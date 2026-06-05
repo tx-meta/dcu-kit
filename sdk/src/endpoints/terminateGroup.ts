@@ -58,7 +58,8 @@ export const unsignedTerminateGroupTxProgram = (
   config: TerminateGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { treasuryValidator, treasuryPolicyId, groupPolicyId, settingsUnit } = protocol;
+    const { treasuryValidator, treasuryPolicyId, groupPolicyId, settingsUnit } =
+      protocol;
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix, memberAccountTokenSuffix } = config;
 

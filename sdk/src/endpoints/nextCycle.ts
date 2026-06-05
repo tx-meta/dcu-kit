@@ -55,7 +55,13 @@ export const unsignedNextCycleTxProgram = (
   config: NextCycleConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { treasuryValidator, treasuryPolicyId, groupPolicyId, groupValidator, settingsUnit } = protocol;
+    const {
+      treasuryValidator,
+      treasuryPolicyId,
+      groupPolicyId,
+      groupValidator,
+      settingsUnit,
+    } = protocol;
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix } = config;
 

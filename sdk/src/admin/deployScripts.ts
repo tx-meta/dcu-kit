@@ -4,7 +4,10 @@ import {
   validatorToAddress,
 } from "@lucid-evolution/lucid";
 import { Effect, Schedule } from "effect";
-import { alwaysFailsValidator, Protocol } from "../core/validators/constants.js";
+import {
+  alwaysFailsValidator,
+  Protocol,
+} from "../core/validators/constants.js";
 import { DcuError, TransactionBuildError, SetupError } from "../core/errors.js";
 import { getWalletAddress } from "../core/utils/index.js";
 

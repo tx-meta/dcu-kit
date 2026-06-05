@@ -25,11 +25,10 @@ fn sample_settings() -> ProtocolSettings {
 // A reference input holding the singleton settings NFT + the ProtocolSettings datum,
 // locked at an arbitrary script address (in production: the always-fails address).
 fn settings_ref_input(datum: ProtocolSettings, nft_qty: Int) -> Input {
-  let value =
-    assets.from_lovelace(2_000_000)
-      |> assets.merge(
-          assets.from_asset(settings_policy(), settings_token_name, nft_qty),
-        )
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(
+        assets.from_asset(settings_policy(), settings_token_name, nft_qty),
+      )
   Input {
     output_reference: OutputReference {
       transaction_id: #"5555555555555555555555555555555555555555555555555555555555555555",
@@ -79,42 +78,38 @@ test read_settings__rejects_non_singleton() fail {
 // Accept: the seed UTxO is spent and exactly one settings NFT is minted.
 test settings_mint__accepts_one_shot() {
   let seed = seed_ref()
-  let seed_input =
-    Input { output_reference: seed, output: common.placeholder_output }
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [seed_input],
-      mint: assets.from_asset(settings_policy(), settings_token_name, 1),
-    }
+  let seed_input = Input {
+    output_reference: seed,
+    output: common.placeholder_output,
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [seed_input],
+    mint: assets.from_asset(settings_policy(), settings_token_name, 1),
+  }
   validate_settings_mint(seed, settings_policy(), tx)
 }
 
 // Reject: the seed UTxO is not spent → not a genuine one-shot.
 test settings_mint__rejects_without_seed() {
   let seed = seed_ref()
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [],
-      mint: assets.from_asset(settings_policy(), settings_token_name, 1),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [],
+    mint: assets.from_asset(settings_policy(), settings_token_name, 1),
+  }
   !validate_settings_mint(seed, settings_policy(), tx)
 }
 
 // Reject: more than one token minted under the policy (extra token piggy-backed).
 test settings_mint__rejects_extra_token() {
   let seed = seed_ref()
-  let seed_input =
-    Input { output_reference: seed, output: common.placeholder_output }
-  let mint =
-    assets.from_asset(settings_policy(), settings_token_name, 1)
-      |> assets.merge(assets.from_asset(settings_policy(), #"6666", 1))
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [seed_input],
-      mint,
-    }
+  let seed_input = Input {
+    output_reference: seed,
+    output: common.placeholder_output,
+  }
+  let mint = assets.from_asset(settings_policy(), settings_token_name, 1)
+    |> assets.merge(assets.from_asset(settings_policy(), #"6666", 1))
+  let tx = Transaction { ..transaction.placeholder, inputs: [seed_input], mint }
   !validate_settings_mint(seed, settings_policy(), tx)
 }

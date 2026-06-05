@@ -117,7 +117,9 @@ export const setupGroup = (
       groupScriptAddress,
       (x) =>
         x.txHash === txHash &&
-        Object.keys(x.assets).some((k) => k.startsWith(base.context.protocol!.groupPolicyId)),
+        Object.keys(x.assets).some((k) =>
+          k.startsWith(base.context.protocol!.groupPolicyId),
+        ),
       "Group UTxO not found after creation",
       { maxWaitMs: 120_000 },
     );
@@ -202,7 +204,9 @@ export const setupMembership = (
         groupScriptAddress,
         (x) =>
           x.txHash === txHash &&
-          Object.keys(x.assets).some((k) => k.startsWith(base.context.protocol!.groupPolicyId)),
+          Object.keys(x.assets).some((k) =>
+            k.startsWith(base.context.protocol!.groupPolicyId),
+          ),
         "Group UTxO not found after Join",
       ),
       awaitScriptUtxo(

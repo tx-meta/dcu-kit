@@ -61,7 +61,13 @@ export const unsignedDistributePayoutTxProgram = (
   config: DistributePayoutConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { treasuryValidator, treasuryPolicyId, groupPolicyId, groupValidator, settingsUnit } = protocol;
+    const {
+      treasuryValidator,
+      treasuryPolicyId,
+      groupPolicyId,
+      groupValidator,
+      settingsUnit,
+    } = protocol;
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix } = config;
 
@@ -236,7 +242,8 @@ export const unsignedDistributePayoutTxProgram = (
       }
     }
 
-    const rawValidFrom = currentTime > minValidFrom ? currentTime : minValidFrom;
+    const rawValidFrom =
+      currentTime > minValidFrom ? currentTime : minValidFrom;
 
     // Align the lower bound to the slot grid (1000 ms), same pattern as exitGroup. The
     // DefaultState transition pins grace_expires_at == get_lower_bound + grace_period_length,

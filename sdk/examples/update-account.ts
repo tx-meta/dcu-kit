@@ -38,7 +38,8 @@ async function main() {
   // Select which wallet/account to act on from ACTIVE_WALLET (mirrors join-group), so the
   // signing wallet and the resolved account suffix always belong to the same member.
   const activeWallet = (process.env.ACTIVE_WALLET ?? "USER1").toUpperCase();
-  const walletSeed = process.env[`${activeWallet}_SEED`] ?? process.env.USER1_SEED;
+  const walletSeed =
+    process.env[`${activeWallet}_SEED`] ?? process.env.USER1_SEED;
   if (!walletSeed) throw new Error(`${activeWallet}_SEED not found in .env`);
   lucid.selectWallet.fromSeed(walletSeed);
 

@@ -4,7 +4,10 @@ import {
   validatorToAddress,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { alwaysFailsValidator, Protocol } from "../core/validators/constants.js";
+import {
+  alwaysFailsValidator,
+  Protocol,
+} from "../core/validators/constants.js";
 import { DcuError, SetupError } from "../core/errors.js";
 import { ScriptRefOutRef } from "./deployScripts.js";
 

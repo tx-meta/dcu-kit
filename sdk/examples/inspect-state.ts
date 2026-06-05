@@ -59,7 +59,10 @@ async function main() {
       );
       console.log(j(d));
     } catch (e) {
-      console.log(`\n[${u.txHash.slice(0, 12)}#${u.outputIndex}] UNDECODABLE`, String(e));
+      console.log(
+        `\n[${u.txHash.slice(0, 12)}#${u.outputIndex}] UNDECODABLE`,
+        String(e),
+      );
     }
   }
 }

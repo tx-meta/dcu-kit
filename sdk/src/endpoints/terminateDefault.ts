@@ -223,8 +223,7 @@ export const unsignedTerminateDefaultTxProgram = (
     // slot-aligned validFrom used by exitGroup/distribute so the lower bound is deterministic.
     const rawNow =
       currentTime !== undefined ? currentTime : BigInt(Date.now()) - 120_000n;
-    const now =
-      currentTime !== undefined ? rawNow : rawNow - (rawNow % 1000n);
+    const now = currentTime !== undefined ? rawNow : rawNow - (rawNow % 1000n);
 
     const baseTx = lucid
       .newTx()

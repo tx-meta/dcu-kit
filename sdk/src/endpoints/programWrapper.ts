@@ -52,7 +52,10 @@ import {
   ExtendGraceWindowConfig,
 } from "./extendGraceWindow.js";
 import { unsignedNextCycleTxProgram, NextCycleConfig } from "./nextCycle.js";
-import { unsignedClaimPayoutTxProgram, ClaimPayoutConfig } from "./claimPayout.js";
+import {
+  unsignedClaimPayoutTxProgram,
+  ClaimPayoutConfig,
+} from "./claimPayout.js";
 
 // ─── Account create/update (settings-independent — account validator is a root) ──
 
@@ -137,7 +140,8 @@ export const createDcuSdk = (settingsPolicy: string) => {
     extendGraceWindow: (
       lucid: LucidEvolution,
       config: ExtendGraceWindowConfig,
-    ) => makeReturn(unsignedExtendGraceWindowTxProgram(protocol, lucid, config)),
+    ) =>
+      makeReturn(unsignedExtendGraceWindowTxProgram(protocol, lucid, config)),
 
     nextCycle: (lucid: LucidEvolution, config: NextCycleConfig) =>
       makeReturn(unsignedNextCycleTxProgram(protocol, lucid, config)),

@@ -183,18 +183,18 @@ pnpm run delete-group
 
 ### Treasury
 
-| Script                     | Default wallet | What it does                                                                                                      |
-| -------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `join-group`               | USER1          | Joins the group. Locks `contribution_fee × collateral_rounds` into treasury (PerRound default = 1 round).         |
-| `start-group`              | ADMIN          | Seals membership, sets `num_intervals=member_count`, anchors `start_time`. **Required before distribute-payout.** |
-| `distribute-payout`        | ADMIN          | Collects contributions and pays the current round's borrower. Permissionless.                                     |
+| Script                     | Default wallet | What it does                                                                                                       |
+| -------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `join-group`               | USER1          | Joins the group. Locks `contribution_fee × collateral_rounds` into treasury (PerRound default = 1 round).          |
+| `start-group`              | ADMIN          | Seals membership, sets `num_intervals=member_count`, anchors `start_time`. **Required before distribute-payout.**  |
+| `distribute-payout`        | ADMIN          | Collects contributions and pays the current round's borrower. Permissionless.                                      |
 | `claim-payout`             | USER1          | Pull mode: withdraws the borrower's earmarked `claimable_balance` to a wallet (`DESTINATION_ADDRESS` to redirect). |
-| `exit-group`               | USER1          | Exits the group (mature = full refund; early = PenaltyState created).                                             |
-| `terminate-group`          | ADMIN          | Claims the PenaltyState UTxO after an early exit.                                                                 |
-| `contribute`               | USER1          | Tops up a treasury UTxO balance. `TOP_UP_AMOUNT=<lovelace>` (default 5 ADA).                                      |
-| `update-payout-credential` | USER1          | Redirects future payouts to the current signing wallet's address.                                                 |
-| `extend-grace-window`      | ADMIN          | Extends grace period for `MEMBER_WALLET` (default USER1) in ICS.                                                  |
-| `next-cycle`               | ADMIN          | Resets a mature group for another rotation cycle. Members re-deposit, then admin calls start-group again.         |
+| `exit-group`               | USER1          | Exits the group (mature = full refund; early = PenaltyState created).                                              |
+| `terminate-group`          | ADMIN          | Claims the PenaltyState UTxO after an early exit.                                                                  |
+| `contribute`               | USER1          | Tops up a treasury UTxO balance. `TOP_UP_AMOUNT=<lovelace>` (default 5 ADA).                                       |
+| `update-payout-credential` | USER1          | Redirects future payouts to the current signing wallet's address.                                                  |
+| `extend-grace-window`      | ADMIN          | Extends grace period for `MEMBER_WALLET` (default USER1) in ICS.                                                   |
+| `next-cycle`               | ADMIN          | Resets a mature group for another rotation cycle. Members re-deposit, then admin calls start-group again.          |
 
 ---
 

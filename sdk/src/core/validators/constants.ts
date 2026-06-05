@@ -68,9 +68,10 @@ export const buildSettingsNft = (seed: {
   const seedData = new Constr(0, [seed.txHash, BigInt(seed.outputIndex)]);
   const validator: Script = {
     type: "PlutusV3",
-    script: applyParamsToScript(raw("settings_validator.settings_nft.mint").script, [
-      seedData,
-    ]),
+    script: applyParamsToScript(
+      raw("settings_validator.settings_nft.mint").script,
+      [seedData],
+    ),
   };
   return { validator, policyId: mintingPolicyToId(validator) };
 };

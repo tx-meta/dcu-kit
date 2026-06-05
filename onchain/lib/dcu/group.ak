@@ -168,7 +168,11 @@ fn load_group_input(
 ) -> (Input, GroupCip68Datum) {
   expect Some(group_input) = list.at(inputs, group_input_index)
   expect
-    assets.quantity_of(group_input.output.value, policy_id, group_ref_token_name) == 1
+    assets.quantity_of(
+      group_input.output.value,
+      policy_id,
+      group_ref_token_name,
+    ) == 1
   expect InlineDatum(d) = group_input.output.datum
   expect cip68: GroupCip68Datum = d
   (group_input, cip68)
@@ -336,22 +340,30 @@ pub fn validate_update_group(
   outputs: List<Output>,
 ) -> Bool {
   // 1. Find Group Input + unwrap CIP-68 datum
-  let (
-    group_input,
-    GroupCip68Datum {
-      metadata: input_metadata,
-      version: input_version,
-      extra: current_datum,
-    },
-  ) = load_group_input(inputs, group_input_index, policy_id, group_ref_token_name)
-
-  // 2. Validate Admin Authorization
-  expect group_admin_authorized(
+  let  
+      (
+        group_input,
+        GroupCip68Datum {
+          metadata: input_metadata,
+          version: input_version,
+          extra: current_datum,
+        },
+      )
+    = load_group_input(
     inputs,
-    admin_input_index,
+    group_input_index,
     policy_id,
     group_ref_token_name,
   )
+
+  // 2. Validate Admin Authorization
+  expect
+    group_admin_authorized(
+      inputs,
+      admin_input_index,
+      policy_id,
+      group_ref_token_name,
+    )
 
   // 3. Validate Group Output — unwrap CIP-68 from output
   expect Some(group_output) = list.at(outputs, group_output_index)
@@ -427,8 +439,12 @@ pub fn validate_close_group(
   mint: Value,
 ) -> Bool {
   // 1. Find Group Input + unwrap CIP-68 datum (ref-token presence checked in helper)
-  let (_group_input, GroupCip68Datum { extra: current_datum, .. }) =
-    load_group_input(inputs, group_input_index, policy_id, group_ref_token_name)
+  let (_group_input, GroupCip68Datum { extra: current_datum, .. }) = load_group_input(
+    inputs,
+    group_input_index,
+    policy_id,
+    group_ref_token_name,
+  )
 
   // 2. Validate Admin Authorization
   let admin_authorized = group_admin_authorized(
@@ -484,8 +500,12 @@ pub fn validate_join_group(
   mint: Value,
 ) -> Bool {
   // [spec Join 1]: group input holds the ref token
-  let (group_input, GroupCip68Datum { metadata, version, extra: current }) =
-    load_group_input(inputs, group_input_index, policy_id, group_ref_token_name)
+  let (group_input, GroupCip68Datum { metadata, version, extra: current }) = load_group_input(
+    inputs,
+    group_input_index,
+    policy_id,
+    group_ref_token_name,
+  )
 
   // [spec Join 0]: group must not be started — StartGroup seals membership
   let not_started = !current.is_started
@@ -563,8 +583,12 @@ pub fn validate_exit_group(
   outputs: List<Output>,
 ) -> Bool {
   // [spec Exit 1]: group input holds the ref token
-  let (group_input, GroupCip68Datum { metadata, version, extra: current }) =
-    load_group_input(inputs, group_input_index, policy_id, group_ref_token_name)
+  let (group_input, GroupCip68Datum { metadata, version, extra: current }) = load_group_input(
+    inputs,
+    group_input_index,
+    policy_id,
+    group_ref_token_name,
+  )
 
   // [spec Exit 3]: member_count must be >= 1 before decrement
   expect current.member_count >= 1
@@ -646,8 +670,12 @@ pub fn validate_start_group(
   tx: Transaction,
 ) -> Bool {
   // [spec StartGroup 1]: group input holds the ref token
-  let (group_input, GroupCip68Datum { metadata, version, extra: current }) =
-    load_group_input(inputs, group_input_index, policy_id, group_ref_token_name)
+  let (group_input, GroupCip68Datum { metadata, version, extra: current }) = load_group_input(
+    inputs,
+    group_input_index,
+    policy_id,
+    group_ref_token_name,
+  )
 
   // [spec StartGroup 2]: admin holds the user (222) token
   let admin_authorized = group_admin_authorized(
@@ -726,8 +754,12 @@ pub fn validate_distribute_group(
   outputs: List<Output>,
   tx: Transaction,
 ) -> Bool {
-  let (group_input, GroupCip68Datum { metadata, version, extra: current }) =
-    load_group_input(inputs, group_input_index, policy_id, group_ref_token_name)
+  let (group_input, GroupCip68Datum { metadata, version, extra: current }) = load_group_input(
+    inputs,
+    group_input_index,
+    policy_id,
+    group_ref_token_name,
+  )
 
   // [spec DistributeRound 2]: group must be started and active
   let group_started = current.is_started
@@ -802,8 +834,12 @@ pub fn validate_next_cycle_group(
   inputs: List<Input>,
   outputs: List<Output>,
 ) -> Bool {
-  let (group_input, GroupCip68Datum { metadata, version, extra: current }) =
-    load_group_input(inputs, group_input_index, policy_id, group_ref_token_name)
+  let (group_input, GroupCip68Datum { metadata, version, extra: current }) = load_group_input(
+    inputs,
+    group_input_index,
+    policy_id,
+    group_ref_token_name,
+  )
 
   let user_token_name = cip68.convert_ref_to_user_token(group_ref_token_name)
   expect Some(admin_input) = list.at(inputs, admin_input_index)

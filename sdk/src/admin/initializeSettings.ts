@@ -54,7 +54,9 @@ export const unsignedInitializeSettingsProgram = (
     });
     if (walletUtxos.length === 0)
       return yield* Effect.fail(
-        new SetupError({ message: "No wallet UTxOs available to seed the settings NFT" }),
+        new SetupError({
+          message: "No wallet UTxOs available to seed the settings NFT",
+        }),
       );
 
     // Any wallet UTxO works as the one-shot seed — it is consumed by this tx.

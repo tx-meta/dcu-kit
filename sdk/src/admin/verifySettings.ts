@@ -1,4 +1,8 @@
-import { Data, LucidEvolution, validatorToAddress } from "@lucid-evolution/lucid";
+import {
+  Data,
+  LucidEvolution,
+  validatorToAddress,
+} from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
   buildProtocol,
@@ -41,7 +45,8 @@ export const unsignedVerifySettingsProgram = (
 
     const utxo = yield* Effect.tryPromise({
       try: () => lucid.utxoByUnit(settingsUnit),
-      catch: () => new SetupError({ message: "settings NFT not found on-chain" }),
+      catch: () =>
+        new SetupError({ message: "settings NFT not found on-chain" }),
     }).pipe(Effect.orElse(() => Effect.succeed(undefined)));
 
     if (!utxo || !utxo.datum)

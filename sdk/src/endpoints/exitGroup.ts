@@ -76,7 +76,14 @@ export const unsignedExitGroupTxProgram = (
   config: ExitGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { treasuryValidator, treasuryPolicyId, groupValidator, groupPolicyId, accountPolicyId, settingsUnit } = protocol;
+    const {
+      treasuryValidator,
+      treasuryPolicyId,
+      groupValidator,
+      groupPolicyId,
+      accountPolicyId,
+      settingsUnit,
+    } = protocol;
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix, currentTime } = config;
 
@@ -334,8 +341,8 @@ export const unsignedExitGroupTxProgram = (
     // won't pull an extra wallet UTxO — leaving too little ADA to satisfy the token's
     // min-UTxO ("not enough ADA leftover for non-ADA change"). The explicit output forces
     // selection to fund it. Mirrors the value-neutral endpoints' pattern.
-    const afterPath = withPenaltyOrBurn
-      .pay.ToAddress(address, { [accountUserUnit]: 1n })
+    const afterPath = withPenaltyOrBurn.pay
+      .ToAddress(address, { [accountUserUnit]: 1n })
       .validFrom(Number(now));
 
     // Use reference scripts when provided — avoids ~12KB of inline script bytes.
@@ -355,13 +362,13 @@ export const unsignedExitGroupTxProgram = (
       .readFrom([settingsUtxo])
       .completeProgram()
       .pipe(
-      Effect.mapError(
-        (e) =>
-          new TransactionBuildError({
-            operation: "exitGroup",
-            error: String(e),
-          }),
-      ),
-    );
+        Effect.mapError(
+          (e) =>
+            new TransactionBuildError({
+              operation: "exitGroup",
+              error: String(e),
+            }),
+        ),
+      );
     return tx;
   });

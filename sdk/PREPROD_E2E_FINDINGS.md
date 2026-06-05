@@ -13,6 +13,7 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 ## A. Confirmed bugs
 
 ### A1. `group_ref_input_index` hardcoded to `0n` — FIXED ✅ (committed `f55123f`)
+
 - **Where:** `contribute.ts`, `claimPayout.ts`, `extendGraceWindow.ts`, `terminateGroup.ts`.
 - **Cause:** redeemer hardcoded the group's position in `reference_inputs` as 0. P5 added the
   settings UTxO as a second reference input; reference inputs are canonically sorted by txHash,
@@ -23,10 +24,11 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 - **Validated on Preprod:** contribute, claimPayout, terminateGroup, extendGraceWindow all pass.
 
 ### A2. distribute `grace_expires_at` slot-misalignment — FIXED ✅ (uncommitted, validated)
+
 - **Where:** `distributePayout.ts` (ICS/DefaultState transition).
 - **Cause:** `grace_expires_at` was `validFrom + grace_period_length` with `validFrom = Date.now()
-  − buffer` (not slot-aligned). The validator pins `grace_expires_at == get_lower_bound(tx) +
-  grace_period_length`, and the tx lower bound is slot-rounded → up to ~1s mismatch → DefaultState
+− buffer` (not slot-aligned). The validator pins `grace_expires_at == get_lower_bound(tx) +
+grace_period_length`, and the tx lower bound is slot-rounded → up to ~1s mismatch → DefaultState
   output datum rejected. Only hit on an ICS transition (happy path uses an inequality).
 - **Fix:** slot-align `validFrom` to the 1000ms grid for live networks, matching the existing
   `exitGroup` pattern (`config.currentTime !== undefined ? raw : raw - (raw % 1000n)`).
@@ -35,6 +37,7 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
   distributePayout (currently duplicated) so future endpoints don't re-derive it.
 
 ### A3. `examples:setup` installs a stale tarball — FIXED ✅ (committed `aae1e34`)
+
 - **Cause:** `pnpm pack` emits `tx-meta-dcu-sdk-<v>.tgz`, but the script referenced
   `dcu-sdk-<v>.tgz`, so repacks silently kept the previous tarball installed.
 - **Fix:** `repack` renames the pack output to `dcu-sdk-<v>.tgz`.
@@ -44,6 +47,7 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 ## B. Feature gaps / capability mismatches (need deliberate design + tests, NOT ad-hoc)
 
 ### B1. DefaultState recovery via `contribute` — DONE ✅ (committed `c555fba`)
+
 - **Decision:** keep recovery in `contribute` (mirrors the on-chain single `Contribute`
   redeemer — most modular; no variant/endpoint proliferation, recovery is "a top-up that
   clears the default"). SDK branches on input datum: TreasuryState top-up unchanged;
@@ -53,6 +57,7 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
   the Aiken `contribute__*_default_recovery_*` suite. Validated on Preprod.
 
 ### B2. Defaulter resolution — DONE ✅ (treasury hash → 982d5c8d)
+
 - **Implemented.** New `TerminateDefault` treasury redeemer (appended LAST → existing Constr
   indices stable) + `validate_terminate_default`. The admin removes a member stuck in
   DefaultState after their grace window (incl. extensions) has fully expired: burns the
@@ -79,6 +84,7 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 <details><summary>Original B2 spec (for reference)</summary>
 
 #### B2. Defaulter resolution — SPEC'D (validator change → redeploy)
+
 - **Problem:** a DefaultState member who never recovers (grace + extensions expired) has no
   resolution path; they sit in the group forever.
 - **Decision (fair design):** the admin can **terminate a defaulter after grace expires** —
@@ -99,6 +105,7 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 </details>
 
 ### B3. min-ADA last-round gap for ADA-contribution groups — DONE ✅ (treasury hash → f2ba562a)
+
 - **Implemented on-chain.** `dcu/treasury_utils` adds `min_ada_reserve = 2_000_000` and a
   `contributable_in(value, policy, name)` helper (= `lovelace − reserve` for ADA assets, raw
   balance for native tokens). Applied at 5 validator sites in `treasury_validation.ak`:
@@ -122,12 +129,13 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 <details><summary>Original B3 spec (for reference)</summary>
 
 #### B3. min-ADA last-round gap for ADA-contribution groups — NEEDS FIX
+
 - **Cause:** distribute pins `output_bal == input_bal − contribution_fee` in the contribution
   asset (= lovelace for ADA groups). On the final round a member at exactly `contribution_fee`
   must output **0 lovelace**, colliding with min-ADA (~1.3 ADA for the token-bearing UTxO) →
   validator rejects. Any ADA-group member who funds exactly `num_rounds × fee` fails the last
   round. (Native-token groups are unaffected — token balance is separate from min-ADA.)
-- **Decision (production-grade):** fix **on-chain** — the validator measures a *contributable*
+- **Decision (production-grade):** fix **on-chain** — the validator measures a _contributable_
   balance = `lovelace − MIN_ADA_RESERVE` (a fixed constant ≥ real treasury min-ADA, e.g. 2 ADA),
   so correctness does not depend on how the tx is built (a direct API caller can't underfund).
   The SDK deposit-floor mitigation was rejected as a band-aid.
@@ -147,13 +155,15 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 </details>
 
 ### B5. `update-account` / `delete-account` ignore `ACTIVE_WALLET` — EXAMPLE BUG
+
 - Both read `accountTokenSuffix` (USER1's) from state.json directly instead of mapping via
   `accountSuffixKey(ACTIVE_WALLET)` like create-account/join do. So `ACTIVE_WALLET=USER2
-  delete-account` actually targeted USER1's account (correctly rejected — USER1 had active
+delete-account` actually targeted USER1's account (correctly rejected — USER1 had active
   membership). Fix: resolve the suffix via `accountSuffixKey(activeWallet)` in both examples.
   (SDK behaviour is correct; this is examples-only.)
 
 ### B4. exit/join confirmation-spacing — NEEDS FIX
+
 - `join-group` and `exit-group` resolve the group UTxO fresh and don't await the previous tx's
   confirmation. Sequential ops on the shared group UTxO race → `BadInputsUTxO` (observed on
   back-to-back exits). Workaround during tests: manual wait between calls.
@@ -178,7 +188,7 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 Validated: initialize-settings, deploy-scripts, create-account, create-group (Push + Pull),
 join-group, start-group, distribute-payout (Push r0/r1, Pull earmark, ICS transition),
 claim-payout, exit-group (mature + early/penalty), terminate-group, contribute (TreasuryState +
-DefaultState recovery*), extend-grace-window, update-payout-credential, update-group, delete-group.
+DefaultState recovery\*), extend-grace-window, update-payout-credential, update-group, delete-group.
 
 Pending: update-account, delete-account, next-cycle.
 

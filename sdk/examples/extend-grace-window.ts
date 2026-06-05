@@ -20,10 +20,7 @@
  * Reads groupTokenSuffix and the member's accountTokenSuffix from state.json.
  */
 
-import {
-  ExtendGraceWindowConfig,
-  accountPolicyId,
-} from "@tx-meta/dcu-sdk";
+import { ExtendGraceWindowConfig, accountPolicyId } from "@tx-meta/dcu-sdk";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,

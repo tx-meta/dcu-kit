@@ -2,7 +2,9 @@ use aiken/collection/dict
 use aiken/collection/list
 use cardano/address.{Script, VerificationKey}
 use cardano/assets.{PolicyId, Value, ada_policy_id}
-use cardano/transaction.{InlineDatum, Input, Output, OutputReference, Transaction}
+use cardano/transaction.{
+  InlineDatum, Input, Output, OutputReference, Transaction,
+}
 use dcu/cip68
 use dcu/group.{GroupCip68Datum, GroupDatum, Pull}
 use dcu/treasury.{
@@ -64,7 +66,10 @@ pub fn validate_join_treasury(
   // [security C1/C2]: the group input MUST sit at the trusted group script (from the
   // protocol settings UTxO) — not merely any script presenting a token with the right
   // name. Defeats a fake always-succeeds "group" minted under an attacker policy.
-  expect group_input.output.address.payment_credential == Script(trusted_group_policy)
+  expect
+    group_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
   let group_policy_id = trusted_group_policy
 
   // [spec JoinGroup 4]: treasury output at script address
@@ -300,7 +305,10 @@ pub fn validate_distribute_treasury(
 
   // [spec DistributeRound 5]: group output at correct address with ref token
   // [security C1/C2]: group input must sit at the trusted group script (settings UTxO).
-  expect group_input.output.address.payment_credential == Script(trusted_group_policy)
+  expect
+    group_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
   let group_policy_id = trusted_group_policy
   let expected_group_token_name = find_group_token_name(group_input)
   let group_output_valid = group_output.address == group_input.output.address && assets.quantity_of(
@@ -438,7 +446,7 @@ pub fn validate_distribute_treasury(
       claimable_balance,
     }
   } else {
-    expect
+    expect  
         TreasuryState {
           rounds_paid: output_rounds_paid,
           claimable_balance: output_claimable_balance,
@@ -550,7 +558,10 @@ pub fn validate_exit_treasury(
 
   // Extract group policy ID
   // [security C1/C2]: group input must sit at the trusted group script (settings UTxO).
-  expect group_input.output.address.payment_credential == Script(trusted_group_policy)
+  expect
+    group_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
   let group_policy_id = trusted_group_policy
   let expected_group_token_name = find_group_token_name(group_input)
 
@@ -678,7 +689,9 @@ pub fn validate_claim_penalty(
     = datum
 
   // [spec PenaltyWithdraw 3]: admin (222) user token derived from group reference token name
-  let admin_token_name = cip68.convert_ref_to_user_token(group_reference_tokenname)
+  let admin_token_name = cip68.convert_ref_to_user_token(
+    group_reference_tokenname,
+  )
 
   expect Some(admin_input) = list.at(inputs, admin_input_index)
   let admin_authorized = assets.quantity_of(
@@ -733,7 +746,7 @@ pub fn validate_terminate_default(
   let Transaction { inputs, outputs, mint, .. } = tx
 
   // [spec TerminateDefault 1]: datum must be DefaultState
-  expect
+  expect  
       DefaultState {
         member_reference_tokenname,
         group_reference_tokenname,
@@ -744,7 +757,10 @@ pub fn validate_terminate_default(
 
   // [spec TerminateDefault 2]: group spending input at the trusted group script (C1/C3).
   expect Some(group_input) = list.at(inputs, group_ref_input_index)
-  expect group_input.output.address.payment_credential == Script(trusted_group_policy)
+  expect
+    group_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
   expect InlineDatum(group_datum_data) = group_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
   let expected_group_token_name = find_group_token_name(group_input)
@@ -765,7 +781,9 @@ pub fn validate_terminate_default(
 
   // [spec TerminateDefault 4]: admin holds the group (222) user token derived from the
   // group reference token name. [security C3] the trusted policy comes from settings.
-  let admin_token_name = cip68.convert_ref_to_user_token(group_reference_tokenname)
+  let admin_token_name = cip68.convert_ref_to_user_token(
+    group_reference_tokenname,
+  )
   expect Some(admin_input) = list.at(inputs, admin_input_index)
   let admin_authorized = assets.quantity_of(
     admin_input.output.value,
@@ -835,16 +853,10 @@ pub fn validate_contribute(
 
   // [spec Contribute 1]: extract member + group token names — valid for both datum states
   let (member_reference_tokenname, datum_group_tokenname) = when datum is {
-    TreasuryState {
-      member_reference_tokenname,
-      group_reference_tokenname,
-      ..
-    } -> (member_reference_tokenname, group_reference_tokenname)
-    DefaultState {
-      member_reference_tokenname,
-      group_reference_tokenname,
-      ..
-    } -> (member_reference_tokenname, group_reference_tokenname)
+    TreasuryState { member_reference_tokenname, group_reference_tokenname, .. } ->
+      (member_reference_tokenname, group_reference_tokenname)
+    DefaultState { member_reference_tokenname, group_reference_tokenname, .. } ->
+      (member_reference_tokenname, group_reference_tokenname)
     PenaltyState { .. } -> fail @"PenaltyState cannot receive contributions"
   }
 
@@ -858,11 +870,15 @@ pub fn validate_contribute(
 
   // Read the group reference input for the contribution asset + fee, and verify it
   // links to this treasury (defense-in-depth — see ISSUE A note above).
-  expect Some(group_ref_input) = list.at(reference_inputs, group_ref_input_index)
-  // [security C1]: the group reference input must sit at the trusted group script.
-  expect group_ref_input.output.address.payment_credential == Script(
-    trusted_group_policy,
+  expect Some(group_ref_input) = list.at(
+    reference_inputs,
+    group_ref_input_index,
   )
+  // [security C1]: the group reference input must sit at the trusted group script.
+  expect
+    group_ref_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
   expect InlineDatum(group_datum_data) = group_ref_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
   let group_link_valid = datum_group_tokenname == find_group_token_name(
@@ -1017,8 +1033,8 @@ pub fn validate_update_payout(
   let output_at_script = own_output.address.payment_credential == Script(
     own_policy_id,
   )
-  // token retention is implied by value_preserved (output value == input value).
 
+  // token retention is implied by value_preserved (output value == input value).
   and {
     member_authorized?,
     datum_correct?,
@@ -1070,7 +1086,9 @@ pub fn validate_extend_grace(
   let extensions_available = grace_extensions_used < max_grace_extensions
 
   // [spec ExtendGrace 3]: admin auth via group (222) user token
-  let admin_token_name = cip68.convert_ref_to_user_token(group_reference_tokenname)
+  let admin_token_name = cip68.convert_ref_to_user_token(
+    group_reference_tokenname,
+  )
   expect Some(admin_input) = list.at(inputs, admin_input_index)
   let admin_authorized = assets.quantity_of(
     admin_input.output.value,
@@ -1106,8 +1124,8 @@ pub fn validate_extend_grace(
   let output_at_script = own_output.address.payment_credential == Script(
     own_policy_id,
   )
-  // token retention is implied by value_preserved (output value == input value).
 
+  // token retention is implied by value_preserved (output value == input value).
   and {
     extensions_available?,
     admin_authorized?,
@@ -1163,7 +1181,10 @@ pub fn validate_next_cycle_treasury(
   // [spec NextCycle 3]: group spending input with GroupDatum
   expect Some(group_input) = list.at(inputs, group_input_index)
   // [security C1]: group input must sit at the trusted group script (settings UTxO).
-  expect group_input.output.address.payment_credential == Script(trusted_group_policy)
+  expect
+    group_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
   expect InlineDatum(group_datum_data) = group_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
 
@@ -1235,8 +1256,8 @@ pub fn validate_next_cycle_treasury(
   let output_at_script = own_output.address.payment_credential == Script(
     own_policy_id,
   )
-  // token retention is implied by value_preserved (output value == input value).
 
+  // token retention is implied by value_preserved (output value == input value).
   and {
     member_cycle_complete?,
     group_reset?,
@@ -1282,7 +1303,7 @@ pub fn validate_claim_payout(
   let Transaction { inputs, outputs, reference_inputs, .. } = tx
 
   // [spec ClaimPayout 1]: datum must be TreasuryState
-  expect
+  expect  
       TreasuryState {
         group_reference_tokenname,
         member_reference_tokenname,
@@ -1304,11 +1325,15 @@ pub fn validate_claim_payout(
   // [spec ClaimPayout 3]: group reference input for the contribution asset identity.
   // The group-link check ties it to this treasury so a forged group ref cannot misdirect
   // the balance measurement (e.g. claim ADA when the contribution asset is a token).
-  expect Some(group_ref_input) = list.at(reference_inputs, group_ref_input_index)
-  // [security C1]: the group reference input must sit at the trusted group script.
-  expect group_ref_input.output.address.payment_credential == Script(
-    trusted_group_policy,
+  expect Some(group_ref_input) = list.at(
+    reference_inputs,
+    group_ref_input_index,
   )
+  // [security C1]: the group reference input must sit at the trusted group script.
+  expect
+    group_ref_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
   expect InlineDatum(group_datum_data) = group_ref_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
   let group_link_valid = group_reference_tokenname == find_group_token_name(

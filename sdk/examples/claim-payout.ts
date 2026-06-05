@@ -51,7 +51,9 @@ async function main() {
   const { lucid, isEmulator } = await makeLucid();
 
   if (isEmulator) {
-    console.log("This example requires an active treasury with an earmarked payout.");
+    console.log(
+      "This example requires an active treasury with an earmarked payout.",
+    );
     console.log(
       "These example scripts require existing on-chain state. Run on Preprod.",
     );
@@ -107,7 +109,9 @@ async function main() {
   if (destinationAddress) {
     console.log(`Claiming to fresh address: ${destinationAddress}`);
   } else {
-    console.log("Claiming to the signing wallet (set DESTINATION_ADDRESS to redirect).");
+    console.log(
+      "Claiming to the signing wallet (set DESTINATION_ADDRESS to redirect).",
+    );
   }
 
   // Load the treasury reference script UTxO — keeps the tx under the size limit.

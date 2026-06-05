@@ -40,7 +40,9 @@ async function main() {
   if (existing.settingsPolicy) {
     console.log("Protocol settings already initialized.");
     console.log("  settingsPolicy:", existing.settingsPolicy);
-    console.log("Delete it from state.json only if redeploying a fresh protocol.");
+    console.log(
+      "Delete it from state.json only if redeploying a fresh protocol.",
+    );
     return;
   }
 

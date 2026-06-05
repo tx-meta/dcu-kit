@@ -161,7 +161,9 @@ describe("Treasury Endpoints", () => {
         context.protocol!.groupPolicyId +
         assetNameLabels.prefix100 +
         groupTokenSuffix;
-      const sealed = yield* Effect.promise(() => lucid.utxoByUnit(groupRefUnit));
+      const sealed = yield* Effect.promise(() =>
+        lucid.utxoByUnit(groupRefUnit),
+      );
       const cip = yield* parseGroupCip68Datum(patchInlineDatum(sealed).datum);
       expect(cip.groupDatum.is_started).toBe(true);
       expect(cip.groupDatum.member_count).toBe(2n);
@@ -251,10 +253,14 @@ describe("Treasury Endpoints", () => {
       );
 
       selectWalletFromSeed(lucid, users.admin.seedPhrase);
-      const unsignedTx = yield* unsignedTerminateGroupTxProgram(context.protocol!,lucid, {
-        groupTokenSuffix,
-        memberAccountTokenSuffix,
-      });
+      const unsignedTx = yield* unsignedTerminateGroupTxProgram(
+        context.protocol!,
+        lucid,
+        {
+          groupTokenSuffix,
+          memberAccountTokenSuffix,
+        },
+      );
       const txHash = yield* signAndSubmit(unsignedTx);
       expect(txHash).toHaveLength(64);
     }),
@@ -373,7 +379,9 @@ describe("Treasury Endpoints", () => {
           assetNameLabels.prefix222,
         );
         const treasuryUnit1 =
-          context.protocol!.treasuryPolicyId + assetNameLabels.prefix222 + suffix1;
+          context.protocol!.treasuryPolicyId +
+          assetNameLabels.prefix222 +
+          suffix1;
 
         // The borrower's treasury output carries the earmark; nobody else does.
         const borrowerTreasury = result.treasuryOutputs.find(
@@ -386,17 +394,19 @@ describe("Treasury Endpoints", () => {
         )) as unknown as TreasuryDatum;
         expect("TreasuryState" in earmarkDatum).toBe(true);
         if ("TreasuryState" in earmarkDatum) {
-          expect(earmarkDatum.TreasuryState.claimable_balance).toBe(
-            4_000_000n,
-          );
+          expect(earmarkDatum.TreasuryState.claimable_balance).toBe(4_000_000n);
           expect(earmarkDatum.TreasuryState.rounds_paid).toBe(1n);
         }
 
         // user1 claims their earmarked payout (auth by holding the 222 token).
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const claimTx = yield* unsignedClaimPayoutTxProgram(context.protocol!,lucid, {
-          accountTokenSuffix: suffix1,
-        });
+        const claimTx = yield* unsignedClaimPayoutTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            accountTokenSuffix: suffix1,
+          },
+        );
         const claimHash = yield* signAndSubmit(claimTx);
         yield* advanceBlock(context.emulator);
         expect(claimHash).toHaveLength(64);
@@ -431,10 +441,14 @@ describe("Treasury Endpoints", () => {
         const fresh = generateEmulatorAccount({ lovelace: 0n });
 
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const claimTx = yield* unsignedClaimPayoutTxProgram(context.protocol!,lucid, {
-          accountTokenSuffix: suffix1,
-          destinationAddress: fresh.address,
-        });
+        const claimTx = yield* unsignedClaimPayoutTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            accountTokenSuffix: suffix1,
+            destinationAddress: fresh.address,
+          },
+        );
         const claimHash = yield* signAndSubmit(claimTx);
         yield* advanceBlock(context.emulator);
         expect(claimHash).toHaveLength(64);
@@ -469,7 +483,9 @@ describe("Treasury Endpoints", () => {
           assetNameLabels.prefix100,
         );
         const groupRefUnit =
-          context.protocol!.groupPolicyId + assetNameLabels.prefix100 + groupSuffix;
+          context.protocol!.groupPolicyId +
+          assetNameLabels.prefix100 +
+          groupSuffix;
         const currentGroupUtxo = yield* Effect.promise(() =>
           lucid.utxoByUnit(groupRefUnit),
         );
@@ -525,7 +541,9 @@ describe("Treasury Endpoints", () => {
         assetNameLabels.prefix100,
       );
       const err = yield* Effect.flip(
-        unsignedDistributePayoutTxProgram(context.protocol!,lucid, { groupTokenSuffix }),
+        unsignedDistributePayoutTxProgram(context.protocol!, lucid, {
+          groupTokenSuffix,
+        }),
       );
 
       expect(err._tag).toBe("TransactionBuildError");
@@ -554,7 +572,7 @@ describe("Treasury Endpoints", () => {
         const fakeAccountSuffix = "00".repeat(28);
 
         const err = yield* Effect.flip(
-          unsignedJoinGroupTxProgram(context.protocol!,lucid, {
+          unsignedJoinGroupTxProgram(context.protocol!, lucid, {
             groupTokenSuffix,
             accountTokenSuffix: fakeAccountSuffix,
           }),
@@ -595,7 +613,7 @@ describe("Treasury Endpoints", () => {
 
       selectWalletFromSeed(lucid, users.user1.seedPhrase);
       const err = yield* Effect.flip(
-        unsignedExitGroupTxProgram(context.protocol!,lucid, {
+        unsignedExitGroupTxProgram(context.protocol!, lucid, {
           groupTokenSuffix,
           accountTokenSuffix,
         }),
@@ -649,10 +667,11 @@ describe("Treasury Endpoints", () => {
           base.context.protocol!,
           lucid,
           {
-          groupTokenSuffix,
-          accountTokenSuffix,
-          currentTime,
-        });
+            groupTokenSuffix,
+            accountTokenSuffix,
+            currentTime,
+          },
+        );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
       }),
@@ -684,7 +703,7 @@ describe("Treasury Endpoints", () => {
       );
 
       const err = yield* Effect.flip(
-        unsignedJoinGroupTxProgram(context.protocol!,lucid, {
+        unsignedJoinGroupTxProgram(context.protocol!, lucid, {
           groupTokenSuffix,
           accountTokenSuffix,
         }),
@@ -828,11 +847,15 @@ describe("Treasury Endpoints", () => {
         );
 
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const txBuilder = yield* unsignedContributeTxProgram(context.protocol!,lucid, {
-          groupTokenSuffix,
-          accountTokenSuffix,
-          topUpAmount: 2_000_000n,
-        });
+        const txBuilder = yield* unsignedContributeTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix,
+            topUpAmount: 2_000_000n,
+          },
+        );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
       }),
@@ -876,11 +899,15 @@ describe("Treasury Endpoints", () => {
         );
 
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const txBuilder = yield* unsignedContributeTxProgram(context.protocol!,lucid, {
-          groupTokenSuffix,
-          accountTokenSuffix,
-          topUpAmount: 5n,
-        });
+        const txBuilder = yield* unsignedContributeTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix,
+            topUpAmount: 5n,
+          },
+        );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
       }),
@@ -955,11 +982,15 @@ describe("Treasury Endpoints", () => {
           assetNameLabels.prefix222,
         );
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const joinUser1Tx = yield* unsignedJoinGroupTxProgram(context.protocol!,lucid, {
-          groupTokenSuffix,
-          accountTokenSuffix: user1TokenSuffix,
-          currentTime: BigInt(context.emulator!.now()),
-        });
+        const joinUser1Tx = yield* unsignedJoinGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix: user1TokenSuffix,
+            currentTime: BigInt(context.emulator!.now()),
+          },
+        );
         yield* signAndSubmit(joinUser1Tx);
         yield* advanceBlock(context.emulator);
 
@@ -984,10 +1015,14 @@ describe("Treasury Endpoints", () => {
           assetNameLabels.prefix222,
         );
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const txBuilder = yield* unsignedExtendGraceWindowTxProgram(context.protocol!,lucid, {
-          groupTokenSuffix,
-          memberAccountTokenSuffix,
-        });
+        const txBuilder = yield* unsignedExtendGraceWindowTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            memberAccountTokenSuffix,
+          },
+        );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
       }),
@@ -1264,15 +1299,19 @@ describe("Treasury Endpoints", () => {
         { seed: users.user2.seedPhrase, acct: user2AccountUtxo },
       ]) {
         selectWalletFromSeed(lucid, m.seed);
-        const topUp = yield* unsignedContributeTxProgram(context.protocol!,lucid, {
-          groupTokenSuffix: groupTokenSuffix0,
-          accountTokenSuffix: extractTokenSuffix(
-            m.acct,
-            accountPolicyId,
-            assetNameLabels.prefix222,
-          ),
-          topUpAmount: 4_000_000n,
-        });
+        const topUp = yield* unsignedContributeTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix: groupTokenSuffix0,
+            accountTokenSuffix: extractTokenSuffix(
+              m.acct,
+              accountPolicyId,
+              assetNameLabels.prefix222,
+            ),
+            topUpAmount: 4_000_000n,
+          },
+        );
         yield* signAndSubmit(topUp);
         yield* advanceBlock(context.emulator);
       }
@@ -1292,7 +1331,9 @@ describe("Treasury Endpoints", () => {
         assetNameLabels.prefix100,
       );
       const groupUnit =
-        context.protocol!.groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
+        context.protocol!.groupPolicyId +
+        assetNameLabels.prefix100 +
+        groupTokenSuffix;
       const updatedGroupUtxo = yield* Effect.tryPromise(() =>
         lucid.utxoByUnit(groupUnit),
       );

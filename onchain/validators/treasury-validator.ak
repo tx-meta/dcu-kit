@@ -225,9 +225,10 @@ validator treasury(settings_policy: PolicyId) {
           reference_inputs,
           group_ref_input_index,
         )
-        expect group_ref_input.output.address.payment_credential == Script(
-          settings.group_policy,
-        )
+        expect
+          group_ref_input.output.address.payment_credential == Script(
+            settings.group_policy,
+          )
         expect InlineDatum(gd) = group_ref_input.output.datum
         expect GroupCip68Datum { extra: gd_typed, .. } = gd
 
