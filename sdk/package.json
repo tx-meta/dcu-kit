@@ -43,7 +43,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,md}\"",
     "test": "vitest run",
-    "repack": "pnpm run build && pnpm pack",
+    "repack": "pnpm run build && pnpm pack && mv -f tx-meta-dcu-sdk-$(node -p 'require(\"./package.json\").version').tgz dcu-sdk-$(node -p 'require(\"./package.json\").version').tgz",
     "examples:setup": "pnpm run repack && cd examples && pnpm add file:../dcu-sdk-$(node -p 'require(\"../package.json\").version').tgz --force",
     "examples:create-account": "pnpm run examples:setup && cd examples && npx tsx create-account.ts",
     "examples:create-group": "pnpm run examples:setup && cd examples && npx tsx create-group.ts",
