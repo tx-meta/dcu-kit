@@ -9,8 +9,8 @@ use dcu/treasury.{
   DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
 }
 use dcu/treasury_utils.{
-  count_active_members, find_group_token_name, indices_in_ascending_order,
-  member_has_user_token, treasury_output_clean,
+  contributable_in, count_active_members, find_group_token_name,
+  indices_in_ascending_order, member_has_user_token, treasury_output_clean,
 }
 use dcu/utils.{find_own_input, get_lower_bound, only_allowed_policies}
 
@@ -119,7 +119,10 @@ pub fn validate_join_treasury(
   //   (contribution_fee * collateral_rounds) in the contribution asset. collateral_rounds
   //   = 1 for traditional PerRound groups, max_members for FullUpfront. Deposits are not
   //   capped — a member may lock more and distribute deducts contribution_fee per round.
-  let fees_locked = assets.quantity_of(
+  //   The floor is measured on the *contributable* balance, so an ADA group's treasury
+  //   must additionally hold min_ada_reserve to carry the membership token — the round
+  //   conservation then drains contributable to 0 (not the raw lovelace) on the last round.
+  let fees_locked = contributable_in(
     treasury_output.value,
     group.contribution_fee_policyid,
     group.contribution_fee_assetname,
@@ -377,14 +380,18 @@ pub fn validate_distribute_treasury(
   expect InlineDatum(output_datum_data) = own_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
 
-  // [spec DistributeRound 7b]: balance reduced by contribution_fee in contribution asset
+  // [spec DistributeRound 7b]: balance reduced by contribution_fee in contribution asset.
+  // Measured on the contributable balance (excludes the ADA reserve): the -fee conservation
+  // is reserve-invariant (the reserve cancels on both sides), while the ICS threshold below
+  // correctly fires on *spendable* shortfall and the final round lands contributable at 0
+  // with min_ada_reserve still carrying the token.
   expect Some(own_input) = find_own_input(inputs, utxo)
-  let input_bal = assets.quantity_of(
+  let input_bal = contributable_in(
     own_input.output.value,
     group.contribution_fee_policyid,
     group.contribution_fee_assetname,
   )
-  let output_bal = assets.quantity_of(
+  let output_bal = contributable_in(
     own_output.value,
     group.contribution_fee_policyid,
     group.contribution_fee_assetname,
@@ -596,8 +603,10 @@ pub fn validate_exit_treasury(
       own_policy_id,
     )
 
-    // Penalty output contains >= penalty_fee of the penalty asset
-    let penalty_fee_locked = assets.quantity_of(
+    // Penalty output contains >= penalty_fee of the penalty asset, measured on the
+    // contributable balance so an ADA penalty is genuine forfeiture above the min-ADA the
+    // PenaltyState UTxO needs to carry its membership token (not min-ADA counted as penalty).
+    let penalty_fee_locked = contributable_in(
       penalty_output.value,
       group.penalty_fee_policyid,
       group.penalty_fee_assetname,
@@ -776,12 +785,14 @@ pub fn validate_contribute(
 
   // [spec Contribute 4]: contribution-asset balance must increase (works for ADA and
   // any native token — for ADA groups contribution_fee_policyid == ada_policy_id).
-  let input_bal = assets.quantity_of(
+  // Measured on the contributable balance (excludes the ADA reserve) so recovery requires
+  // a genuinely spendable fee, not min-ADA masquerading as contribution.
+  let input_bal = contributable_in(
     own_input.output.value,
     group.contribution_fee_policyid,
     group.contribution_fee_assetname,
   )
-  let output_bal = assets.quantity_of(
+  let output_bal = contributable_in(
     own_output.value,
     group.contribution_fee_policyid,
     group.contribution_fee_assetname,
@@ -1122,7 +1133,7 @@ pub fn validate_next_cycle_treasury(
   // Because value is preserved here, a depleted member must top up via Contribute BEFORE
   // NextCycle. NextCycle is atomic over all members, so one underfunded member blocks the
   // restart until everyone is re-funded — the cycle never begins under-collateralized.
-  let refunded = assets.quantity_of(
+  let refunded = contributable_in(
     own_output.value,
     group.contribution_fee_policyid,
     group.contribution_fee_assetname,

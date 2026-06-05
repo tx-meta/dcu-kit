@@ -70,7 +70,30 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 - Open sub-decision: forfeited collateral → admin (simple) vs pro-rata to underpaid members
   (fairer, more complex). Recommend admin-claim now, pro-rata as a later enhancement.
 
-### B3. min-ADA last-round gap for ADA-contribution groups — NEEDS FIX
+### B3. min-ADA last-round gap for ADA-contribution groups — DONE ✅ (treasury hash → f2ba562a)
+- **Implemented on-chain.** `dcu/treasury_utils` adds `min_ada_reserve = 2_000_000` and a
+  `contributable_in(value, policy, name)` helper (= `lovelace − reserve` for ADA assets, raw
+  balance for native tokens). Applied at 5 validator sites in `treasury_validation.ak`:
+  join floor (`fees_locked`), distribute conservation + ICS threshold (`input_bal`/`output_bal`),
+  contribute recovery (`recovery_funded`), next-cycle refund guard (`refunded`), and exit penalty
+  floor (`penalty_fee_locked`). The −fee conservation is reserve-invariant (the reserve cancels);
+  only the floor/threshold sites change, so the final round drains contributable to 0 while the
+  reserve keeps the membership token's min-ADA covered.
+- **Aiken:** existing ADA fixtures bumped by the reserve (contributable preserved); 2 new tests —
+  `distribute_round__accepts_final_round_drains_to_reserve` (the core fix) and
+  `join_group__rejects_deposit_without_reserve` (floor now requires the reserve). 170 tests / 0 warn.
+- **SDK:** `MIN_ADA_RESERVE` + `contributableBalance` in `core/utils/treasury.ts`. joinGroup ADA
+  deposit = `collateralFloor + reserve`; distribute ICS threshold and contribute recovery measure
+  contributable; exit penalty uses the named constant. Also fixed a latent coin-selection gap
+  exposed by the larger deposits: exitGroup now explicitly returns the account (222) token to the
+  member's wallet (appended AFTER the penalty/burn output so penalty_output_index is unchanged).
+  34 SDK tests pass. ExtendGrace/recovery tests now reach DefaultState via the natural PerRound
+  path (default deposit, no thin override — a thinner deposit is correctly rejected by the floor).
+- **Preprod:** redeploy pending (shared with B2). Re-run the full e2e after both land.
+
+<details><summary>Original B3 spec (for reference)</summary>
+
+#### B3. min-ADA last-round gap for ADA-contribution groups — NEEDS FIX
 - **Cause:** distribute pins `output_bal == input_bal − contribution_fee` in the contribution
   asset (= lovelace for ADA groups). On the final round a member at exactly `contribution_fee`
   must output **0 lovelace**, colliding with min-ADA (~1.3 ADA for the token-bearing UTxO) →
@@ -92,6 +115,8 @@ to **0.4.31** (0.5.x has a RedeemerBuilder index regression). See `memory/`.
 - **Offchain:** join/contribute/distribute deposit + balance math updated to match; e2e re-run.
 - **Confirmed on Preprod:** 3-member, 15 ADA (=3×5) deposits → round 2 crashed; a group with
   headroom (balances staying above min-ADA) distributes the final round fine.
+
+</details>
 
 ### B5. `update-account` / `delete-account` ignore `ACTIVE_WALLET` — EXAMPLE BUG
 - Both read `accountTokenSuffix` (USER1's) from state.json directly instead of mapping via

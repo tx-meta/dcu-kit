@@ -25,6 +25,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  contributableBalance,
 } from "../core/utils/index.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
 
@@ -370,9 +371,17 @@ export const unsignedDistributePayoutTxProgram = (
       const outputBal = isBorrowerTreasury
         ? inputBal - groupDatum.contribution_fee + payoutAmount
         : inputBal - groupDatum.contribution_fee;
+      // ICS transition is decided on the *contributable* balance (lovelace − reserve for
+      // ADA groups), mirroring the validator: a member whose spendable balance drops below
+      // a round's fee defaults — but the min-ADA reserve is not "spendable", so it must be
+      // excluded or an ADA member would be wrongly kept in TreasuryState (datum mismatch).
+      const outputContributable = contributableBalance(
+        outputBal,
+        isAdaContribution,
+      );
       const transitionToIcs =
         !isBorrowerTreasury &&
-        outputBal < groupDatum.contribution_fee &&
+        outputContributable < groupDatum.contribution_fee &&
         !isLastRound;
 
       const updatedDatum: TreasuryDatum = transitionToIcs

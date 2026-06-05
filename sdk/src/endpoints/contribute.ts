@@ -26,6 +26,7 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
   referenceInputIndex,
+  contributableBalance,
 } from "../core/utils/index.js";
 
 /**
@@ -118,14 +119,21 @@ export const unsignedContributeTxProgram = (
     // recovery transitions back to TreasuryState, preserving the carried fields (slot,
     // rounds_paid, payout credential, earmark) exactly as the validator's recovery branch
     // reconstructs them — and requires the post-top-up balance to reach contribution_fee.
-    const recoveredBalance = outputAssets[contributionUnit] ?? 0n;
+    // Recovery is gated on the *contributable* balance (lovelace − reserve for ADA groups),
+    // mirroring the validator's `recovery_funded`: the reserve carries the membership token
+    // and is not spendable collateral, so it cannot count toward reaching contribution_fee.
+    const isAdaContribution = groupDatum.contribution_fee_policyid === "";
+    const recoveredBalance = contributableBalance(
+      outputAssets[contributionUnit] ?? 0n,
+      isAdaContribution,
+    );
     let outputDatum: TreasuryDatum = treasuryDatum;
     if ("DefaultState" in treasuryDatum) {
       if (recoveredBalance < groupDatum.contribution_fee) {
         return yield* Effect.fail(
           new InvalidDatumError({
             field: "topUpAmount",
-            reason: `DefaultState recovery requires the treasury to reach at least contribution_fee (${groupDatum.contribution_fee}); after top-up it would be ${recoveredBalance}.`,
+            reason: `DefaultState recovery requires the treasury's contributable balance to reach at least contribution_fee (${groupDatum.contribution_fee}); after top-up it would be ${recoveredBalance}.`,
           }),
         );
       }

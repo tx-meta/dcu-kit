@@ -1,10 +1,39 @@
 use aiken/collection/dict
 use aiken/collection/list
 use cardano/address.{Script}
-use cardano/assets.{AssetName, PolicyId, ada_policy_id}
+use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
 use cardano/transaction.{InlineDatum, Input, Output}
 use dcu/treasury.{DefaultState, PenaltyState, TreasuryDatum, TreasuryState}
 use dcu/utils.{only_allowed_policies}
+
+// ─── Min-ADA reserve ──────────────────────────────────────────────────────────
+
+// min_ada_reserve
+// Lovelace permanently retained in any live treasury/penalty UTxO to satisfy the
+// ledger min-ADA requirement of the membership token it carries. 2 ADA sits safely
+// above the real min-ADA (~1.2–1.4 ADA for a single-token UTxO with an inline
+// TreasuryDatum), so a treasury can always cover its own existence.
+pub const min_ada_reserve: Int = 2_000_000
+
+// contributable_in
+// The *spendable* amount of `policy`/`name` held in `value`. For an ADA-denominated
+// asset (policy == ada_policy_id) the min-ADA reserve is excluded, so the conservation
+// math never drives a live, token-bearing UTxO's lovelace below min-ADA: on the final
+// round a member's contributable balance reaches 0 while `min_ada_reserve` lovelace
+// remains to carry the token. For native tokens the reserve is 0 — the token balance is
+// independent of the UTxO's lovelace — so token-denominated groups are unaffected.
+pub fn contributable_in(
+  value: Value,
+  policy: PolicyId,
+  name: AssetName,
+) -> Int {
+  let raw = assets.quantity_of(value, policy, name)
+  if policy == ada_policy_id {
+    raw - min_ada_reserve
+  } else {
+    raw
+  }
+}
 
 // ─── Treasury Helpers ─────────────────────────────────────────────────────────
 

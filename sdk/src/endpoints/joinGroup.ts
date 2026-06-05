@@ -25,6 +25,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  MIN_ADA_RESERVE,
 } from "../core/utils/index.js";
 import {
   DcuError,
@@ -153,11 +154,16 @@ export const unsignedJoinGroupTxProgram = (
     const isAdaContribution = groupDatum.contribution_fee_policyid === "";
     const collateralFloor =
       groupDatum.collateral_rounds * groupDatum.contribution_fee;
+    // For ADA groups the validator measures a *contributable* balance = lovelace −
+    // MIN_ADA_RESERVE, so the deposit must carry the reserve ON TOP of the collateral
+    // floor (the reserve keeps the membership token's min-ADA covered as the balance
+    // drains to 0 on the final round). Token groups keep the floor in the token plus a
+    // flat 2 ADA min-UTxO (the reserve concept is ADA-only). See [[contributableBalance]].
     const treasuryLovelace =
       overrideDepositLovelace !== undefined
         ? overrideDepositLovelace
         : isAdaContribution
-          ? collateralFloor
+          ? collateralFloor + MIN_ADA_RESERVE
           : 2_000_000n;
     const treasuryAssets: Assets = {
       lovelace: treasuryLovelace,

@@ -10,6 +10,7 @@ use dcu/group.{GroupCip68Datum, GroupDatum, Pull, Push}
 use dcu/treasury.{
   DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
 }
+use dcu/treasury_utils.{min_ada_reserve}
 use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
   validate_contribute, validate_distribute_treasury, validate_exit_treasury,
@@ -215,9 +216,12 @@ fn test_insufficient_collateral_state() -> TreasuryDatum {
   }
 }
 
-// Treasury UTxO value: min ADA + 1 membership token
+// Treasury UTxO value: the min-ADA reserve that carries the membership token, plus
+// 5 ADA of *contributable* collateral, plus 1 membership token. Expressing the reserve
+// explicitly keeps the contributable balance (what the conservation math measures) at 5M
+// after the validator excludes the reserve.
 fn treasury_value() -> assets.Value {
-  assets.from_lovelace(5_000_000)
+  assets.from_lovelace(min_ada_reserve + 5_000_000)
     |> assets.merge(assets.from_asset(treasury_policy(), member_tn(), 1))
 }
 
@@ -637,7 +641,8 @@ test join_group__accepts_full_collateral() {
   let member_input = test_member_input()
 
   let datum = test_treasury_state(0)
-  let output_value = assets.from_lovelace(6_000_000)
+  // 6M contributable meets the 3 × 2M floor; reserve carries the membership token.
+  let output_value = assets.from_lovelace(min_ada_reserve + 6_000_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let treasury_output = test_treasury_output(datum, output_value)
   let group_out = test_group_output(1)
@@ -653,6 +658,36 @@ test join_group__accepts_full_collateral() {
   }
 
   validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
+}
+
+// [B3] Join floor requires the min-ADA reserve ON TOP of the contribution collateral.
+// A deposit of exactly contribution_fee (2M) has contributable == 0 < the 2M floor → rejected.
+// Pre-B3 this passed (raw 2M >= 2M), letting a member join with no spendable headroom and
+// brick the final round on min-ADA. The reserve makes the floor count only real collateral.
+test join_group__rejects_deposit_without_reserve() {
+  let tp = treasury_policy()
+
+  let group_input = test_group_input()
+  let member_input = test_member_input()
+
+  let datum = test_treasury_state(0)
+  // Exactly the contribution_fee, no reserve → contributable == 0.
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_output = test_treasury_output(datum, output_value)
+  let group_out = test_group_output(1)
+
+  let mint = assets.from_asset(tp, member_tn(), 1)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, member_input],
+    outputs: [treasury_output, group_out],
+    mint,
+    validity_range: interval.after(0),
+  }
+
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // joining_fee > 0 but no output at creator_payment_credential — joining_fee_routed fails
@@ -738,7 +773,8 @@ test join_group__accepts_joining_fee_routed_to_admin() {
   let member_input = test_member_input()
 
   let datum = test_treasury_state(0)
-  let output_value = assets.from_lovelace(2_000_000)
+  // 2M contributable meets the 1 × 2M floor; reserve carries the membership token.
+  let output_value = assets.from_lovelace(min_ada_reserve + 2_000_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let treasury_output = test_treasury_output(datum, output_value)
   let group_out = Output {
@@ -1195,9 +1231,10 @@ fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
   let utxo_ref = treasury_utxo_ref()
   let treasury_in = test_treasury_input(utxo_ref, treasury_in_output)
 
-  // Treasury output: rounds_paid = 1, is_deferred = False, ADA reduced by contribution_fee (2M)
+  // Treasury output: rounds_paid = 1, contributable reduced by contribution_fee (5M → 3M),
+  // with the min-ADA reserve retained to carry the membership token.
   let updated_treasury_datum = build_treasury_state(0, group_ref_tn(), 1)
-  let treasury_out_value = assets.from_lovelace(3_000_000)
+  let treasury_out_value = assets.from_lovelace(min_ada_reserve + 3_000_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let treasury_out = test_treasury_output(
     updated_treasury_datum,
@@ -1314,6 +1351,74 @@ test distribute_round__accepts_valid_round() {
   )
 }
 
+// [B3] Final-round min-ADA: a member funded to exactly the round's fee enters the last
+// round with contributable == fee, is debited fee, and lands at contributable == 0 while
+// min_ada_reserve still carries the membership token. The output stays TreasuryState
+// (is_last_round suppresses the ICS transition) so the member can mature-exit via burn.
+// Pre-B3 this required the output lovelace to be 0, colliding with min-ADA → rejected.
+test distribute_round__accepts_final_round_drains_to_reserve() {
+  let tp = treasury_policy()
+  let gp = group_policy()
+
+  // Single-round group: round 0 is the final round (0 + 1 == num_rounds).
+  let group_datum = GroupDatum {
+    ..test_group_datum(),
+    num_rounds: 1,
+    is_started: True,
+    last_distributed_round: -1,
+    member_token_names: [member_tn()],
+  }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: group_in_value,
+      datum: InlineDatum(cip68_with_group(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: group_in_value,
+    datum: InlineDatum(
+      cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 0 }),
+    ),
+    reference_script: None,
+  }
+
+  // Input: contributable == fee (2M) on top of the reserve.
+  let treasury_datum = build_treasury_state(0, group_ref_tn(), 0)
+  let utxo_ref = treasury_utxo_ref()
+  let treasury_in = test_treasury_input(
+    utxo_ref,
+    test_treasury_output(
+      treasury_datum,
+      assets.from_lovelace(min_ada_reserve + 2_000_000)
+        |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+    ),
+  )
+  // Output: contributable drained to 0, only the reserve remains; still TreasuryState.
+  let treasury_out = test_treasury_output(
+    build_treasury_state(0, group_ref_tn(), 1),
+    assets.from_lovelace(min_ada_reserve)
+      |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+  )
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, treasury_in],
+    outputs: [treasury_out, group_output, test_borrower_output()],
+    validity_range: interval.after(0),
+  }
+
+  validate_distribute_treasury(tp, group_policy(), 0, 0, 1, [1], [0], 2, treasury_datum, utxo_ref, tx)
+}
+
 // fail: expect TreasuryState crashes when datum is PenaltyState
 test distribute_round__rejects_penalty_state_datum() fail {
   let (tx, _, utxo) = setup_distribute_round()
@@ -1342,9 +1447,10 @@ test distribute_round__rejects_no_ada_reduction() {
   let (tx, datum, utxo) = setup_distribute_round()
 
   let Transaction { inputs, outputs, validity_range, .. } = tx
-  // outputs[0] is the treasury out — replace with one that keeps full 5M ADA
+  // outputs[0] is the treasury out — replace with one that keeps the full input ADA
+  // (reserve + 5M contributable), so balance_deducted fails: no contribution was paid.
   expect Some(old_treasury_out) = list.at(outputs, 0)
-  let no_reduction_value = assets.from_lovelace(5_000_000)
+  let no_reduction_value = assets.from_lovelace(min_ada_reserve + 5_000_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let bad_treasury_out = Output {
     ..old_treasury_out,
@@ -1762,7 +1868,7 @@ fn two_member_distribute(
   )
   let a_out = test_treasury_output(
     build_treasury_state(0, group_ref_tn(), 1),
-    assets.from_lovelace(3_000_000)
+    assets.from_lovelace(min_ada_reserve + 3_000_000)
       |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
   )
 
@@ -1907,7 +2013,8 @@ test exit_group__accepts_early_exit_with_penalty() {
     group_reference_tokenname: group_ref_tn(),
     member_reference_tokenname: member_tn(),
   }
-  let penalty_value = assets.from_lovelace(500_000)
+  // 500K contributable meets the penalty_fee floor; reserve carries the membership token.
+  let penalty_value = assets.from_lovelace(min_ada_reserve + 500_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let penalty_output = Output {
     address: Address { payment_credential: Script(tp), stake_credential: None },
@@ -2028,7 +2135,8 @@ test exit_group__rejects_member_input_without_user_token() {
     group_reference_tokenname: group_ref_tn(),
     member_reference_tokenname: member_tn(),
   }
-  let penalty_value = assets.from_lovelace(500_000)
+  // 500K contributable meets the penalty_fee floor; reserve carries the membership token.
+  let penalty_value = assets.from_lovelace(min_ada_reserve + 500_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let penalty_output = Output {
     address: Address { payment_credential: Script(tp), stake_credential: None },
@@ -2139,7 +2247,8 @@ test exit_group__accepts_member_reclaims_refund() {
     group_reference_tokenname: group_ref_tn(),
     member_reference_tokenname: member_tn(),
   }
-  let penalty_value = assets.from_lovelace(500_000)
+  // 500K contributable meets the penalty_fee floor; reserve carries the membership token.
+  let penalty_value = assets.from_lovelace(min_ada_reserve + 500_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let penalty_output = Output {
     address: Address { payment_credential: Script(tp), stake_credential: None },
@@ -2271,7 +2380,8 @@ test exit_group__rejects_early_exit_without_group_count_decrement() {
     group_reference_tokenname: group_ref_tn(),
     member_reference_tokenname: member_tn(),
   }
-  let penalty_value = assets.from_lovelace(500_000)
+  // 500K contributable meets the penalty_fee floor; reserve carries the membership token.
+  let penalty_value = assets.from_lovelace(min_ada_reserve + 500_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let penalty_output = Output {
     address: Address { payment_credential: Script(tp), stake_credential: None },
@@ -2446,7 +2556,7 @@ test spend_terminate_group__rejects_no_admin_token() {
 
 // ─── validate_contribute ──────────────────────────────────────────────────────
 
-// Member tops up their treasury balance from 5M to 7M ADA
+// Member tops up their contributable balance from 5M to 7M (reserve retained on top)
 test contribute__accepts_valid_top_up() {
   let tp = treasury_policy()
 
@@ -2458,7 +2568,7 @@ test contribute__accepts_valid_top_up() {
   )
   let member_input = test_member_input()
 
-  let out_value = assets.from_lovelace(7_000_000)
+  let out_value = assets.from_lovelace(min_ada_reserve + 7_000_000)
     |> assets.merge(assets.from_asset(tp, member_tn(), 1))
   let treasury_out = test_treasury_output(datum, out_value)
 

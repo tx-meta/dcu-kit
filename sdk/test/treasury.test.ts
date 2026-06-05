@@ -858,14 +858,13 @@ describe("Treasury Endpoints", () => {
   );
 
   // --- ExtendGrace ---
-  // User1 joins with an intentionally low deposit (3 ADA = 1.5 × contribution_fee).
-  // After distribute round 0, user1's balance = 3M - 2M = 1M < 2M → DefaultState.
-  // Admin then extends the grace window (grace_extensions_used 0 → 1).
-  //
-  // Why overrideDepositLovelace = 3_000_000?
-  //   Standard deposit is max_members × contribution_fee = 2 × 2M = 4M.
-  //   After one round: 4M - 2M = 2M which is NOT < 2M (no ICS trigger).
-  //   With 3M: 3M - 2M = 1M < 2M → ICS triggered on round 0.
+  // User1 joins as a PerRound member (collateral_rounds = 1): the default deposit is
+  // contribution_fee + MIN_ADA_RESERVE = 2M + 2M = 4M, i.e. exactly one round of
+  // *contributable* collateral. After distribute round 0 debits the fee, user1's
+  // contributable balance is 0 < 2M (and round 0 is not the last of 2) → DefaultState.
+  // Admin then extends the grace window (grace_extensions_used 0 → 1). No deposit override
+  // is needed — a single-round member naturally defaults after one round under B3, and a
+  // thinner deposit would (correctly) be rejected by the join floor.
   it.effect(
     "should allow admin to extend a member's grace window (ExtendGrace)",
     () =>
@@ -904,7 +903,6 @@ describe("Treasury Endpoints", () => {
           groupTokenSuffix,
           accountTokenSuffix: user1TokenSuffix,
           currentTime: BigInt(context.emulator!.now()),
-          overrideDepositLovelace: 3_000_000n, // 1.5× fee — triggers ICS after round 0
         });
         yield* signAndSubmit(joinUser1Tx);
         yield* advanceBlock(context.emulator);
@@ -917,7 +915,7 @@ describe("Treasury Endpoints", () => {
 
         yield* startGroupTestCase(context, { groupUtxo });
 
-        // Distribute round 0: user1 has 3M - 2M = 1M < 2M → DefaultState.
+        // Distribute round 0: user1's contributable 2M − 2M fee = 0 < 2M → DefaultState.
         yield* distributePayoutTestCase(context, {
           groupUtxo,
           callerSeed: users.user1.seedPhrase,
@@ -976,7 +974,8 @@ describe("Treasury Endpoints", () => {
           assetNameLabels.prefix222,
         );
 
-        // user1 joins thin (1.5× fee) so round 0 drops them to 1M < 2M → DefaultState.
+        // user1 joins PerRound (default deposit = fee + reserve = 4M, contributable 2M),
+        // so round 0 debits the fee and drops them to contributable 0 < 2M → DefaultState.
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
         const joinUser1Tx = yield* unsignedJoinGroupTxProgram(
           context.protocol!,
@@ -985,7 +984,6 @@ describe("Treasury Endpoints", () => {
             groupTokenSuffix,
             accountTokenSuffix: user1TokenSuffix,
             currentTime: BigInt(context.emulator!.now()),
-            overrideDepositLovelace: 3_000_000n,
           },
         );
         yield* signAndSubmit(joinUser1Tx);
@@ -998,7 +996,7 @@ describe("Treasury Endpoints", () => {
         });
         yield* startGroupTestCase(context, { groupUtxo });
 
-        // Distribute round 0: user1 has 3M - 2M = 1M < 2M → DefaultState.
+        // Distribute round 0: user1's contributable 2M − 2M fee = 0 < 2M → DefaultState.
         yield* distributePayoutTestCase(context, {
           groupUtxo,
           callerSeed: users.user1.seedPhrase,
@@ -1026,7 +1024,7 @@ describe("Treasury Endpoints", () => {
           {
             groupTokenSuffix,
             accountTokenSuffix: user1TokenSuffix,
-            topUpAmount: 2_000_000n, // 1M + 2M = 3M ≥ 2M fee
+            topUpAmount: 2_000_000n, // raw 2M + 2M = 4M → contributable 2M ≥ 2M fee
           },
         );
         const recoverHash = yield* signAndSubmit(recoverTx);
