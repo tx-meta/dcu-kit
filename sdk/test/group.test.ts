@@ -35,9 +35,9 @@ describe("Group Endpoints", () => {
     }),
   );
 
-  // --- Group name readable from on-chain datum ---
-  // Verifies the CIP-68 wrapper is written correctly and the metadata["name"] key
-  // resolves to the groupName string passed to CreateGroupConfig.
+  // --- Group name + description readable from on-chain datum ---
+  // Verifies the CIP-68 wrapper is written correctly and the metadata["name"] and
+  // metadata["description"] keys resolve to the strings passed to CreateGroupConfig.
   it.effect(
     "should store the group name and description in CIP-68 metadata on-chain",
     () =>
@@ -168,7 +168,7 @@ describe("Group Endpoints", () => {
         const fakeSuffix = "00".repeat(28);
 
         const err = yield* Effect.flip(
-          unsignedUpdateGroupTxProgram(context.protocol!,lucid, {
+          unsignedUpdateGroupTxProgram(context.protocol!, lucid, {
             groupTokenSuffix: fakeSuffix,
             updatedDatum: createDefaultGroupDatum(),
           }),
@@ -191,7 +191,9 @@ describe("Group Endpoints", () => {
         const fakeSuffix = "00".repeat(28);
 
         const err = yield* Effect.flip(
-          unsignedDeleteGroupTxProgram(context.protocol!,lucid, { groupTokenSuffix: fakeSuffix }),
+          unsignedDeleteGroupTxProgram(context.protocol!, lucid, {
+            groupTokenSuffix: fakeSuffix,
+          }),
         );
 
         expect(err._tag).toBe("UtxoNotFoundError");
@@ -224,7 +226,7 @@ describe("Group Endpoints", () => {
         };
 
         const err = yield* Effect.flip(
-          unsignedUpdateGroupTxProgram(context.protocol!,lucid, {
+          unsignedUpdateGroupTxProgram(context.protocol!, lucid, {
             groupTokenSuffix,
             updatedDatum: badDatum,
           }),
@@ -253,7 +255,9 @@ describe("Group Endpoints", () => {
       );
 
       const err = yield* Effect.flip(
-        unsignedDeleteGroupTxProgram(context.protocol!,lucid, { groupTokenSuffix }),
+        unsignedDeleteGroupTxProgram(context.protocol!, lucid, {
+          groupTokenSuffix,
+        }),
       );
 
       expect(err._tag).toBe("TransactionBuildError");
