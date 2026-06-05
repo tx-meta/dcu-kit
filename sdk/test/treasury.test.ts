@@ -117,6 +117,61 @@ describe("Treasury Endpoints", () => {
     }),
   );
 
+  // --- Start Group ---
+  // Seals membership and anchors the rotation schedule: is_started flips true,
+  // num_rounds is fixed to member_count, and start_time is set to the tx lower bound.
+  // Exercised indirectly by every multi-round test; this asserts the sealed datum directly.
+  it.effect("should seal membership and anchor the schedule (StartGroup)", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const { context, groupUtxo } = yield* setupGroup(base);
+      const { lucid, users } = context;
+
+      const {
+        outputs: { userUtxo: user1AccountUtxo },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const {
+        outputs: { userUtxo: user2AccountUtxo },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
+
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: user1AccountUtxo,
+        userSeed: users.user1.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: user2AccountUtxo,
+        userSeed: users.user2.seedPhrase,
+      });
+
+      yield* startGroupTestCase(context, { groupUtxo });
+
+      // Read the sealed group datum back from chain.
+      const groupTokenSuffix = extractTokenSuffix(
+        groupUtxo,
+        context.protocol!.groupPolicyId,
+        assetNameLabels.prefix100,
+      );
+      const groupRefUnit =
+        context.protocol!.groupPolicyId +
+        assetNameLabels.prefix100 +
+        groupTokenSuffix;
+      const sealed = yield* Effect.promise(() => lucid.utxoByUnit(groupRefUnit));
+      const cip = yield* parseGroupCip68Datum(patchInlineDatum(sealed).datum);
+      expect(cip.groupDatum.is_started).toBe(true);
+      expect(cip.groupDatum.member_count).toBe(2n);
+      // num_rounds is sealed to member_count.
+      expect(cip.groupDatum.num_rounds).toBe(2n);
+      // start_time is anchored to the tx lower bound (a positive emulator timestamp).
+      expect(cip.groupDatum.start_time > 0n).toBe(true);
+    }),
+  );
+
   // --- Exit Group (Standard) ---
   // With num_rounds=0 (no startGroup called), maturityTime = start_time.
   // Any exit at or after start_time is a mature exit (token burn, full refund).
