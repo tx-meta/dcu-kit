@@ -111,7 +111,8 @@ async function main() {
     // Push (default): the round's pot is paid straight to the borrower's wallet.
     // Pull: the pot is earmarked in the borrower's own treasury (claimable_balance)
     //       and withdrawn later via ClaimPayout — the lost-wallet-safe mode.
-    payout_mode: "Push",
+    // Set PAYOUT_MODE=Pull to create a Pull-mode group.
+    payout_mode: process.env.PAYOUT_MODE === "Pull" ? "Pull" : "Push",
 
     member_count: 0n,
     is_active: true,
