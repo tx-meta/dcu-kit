@@ -11,8 +11,9 @@ use dcu/treasury.{
   DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
 }
 use dcu/treasury_utils.{
-  contributable_in, count_active_members, find_group_token_name,
-  indices_in_ascending_order, member_has_user_token, treasury_output_clean,
+  ada_reserve_conserved, contributable_in, count_active_members,
+  find_group_token_name, indices_in_ascending_order, member_has_user_token,
+  treasury_output_clean,
 }
 use dcu/utils.{find_own_input, get_lower_bound, only_allowed_policies}
 
@@ -509,6 +510,15 @@ pub fn validate_distribute_treasury(
     output_datum_correct?,
     treasury_output_ok?,
     balance_deducted?,
+    // [security]: token groups — output keeps ≥ the input's lovelace. The -fee
+    // conservation above measures the contribution TOKEN, leaving lovelace unpinned;
+    // without this a permissionless cranker could skim the min-ADA reserve. No-op for
+    // ADA groups (lovelace is the contribution asset, already pinned by balance_deducted).
+    ada_reserve_conserved(
+      own_input.output.value,
+      own_output.value,
+      group.contribution_fee_policyid,
+    )?,
     borrower_payout_valid?,
   }
 }

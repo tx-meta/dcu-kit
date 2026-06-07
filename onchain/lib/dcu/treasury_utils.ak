@@ -31,6 +31,31 @@ pub fn contributable_in(value: Value, policy: PolicyId, name: AssetName) -> Int 
   }
 }
 
+// ada_reserve_conserved
+// Pins the lovelace floor of a treasury UTxO across a value-preserving spend.
+// For a NATIVE-TOKEN group the contribution asset is the token, so the -fee
+// conservation (measured in the token by `contributable_in`) leaves the UTxO's
+// lovelace entirely unpinned: the membership token's min-ADA reserve, plus any
+// over-funded ADA, could be routed into a cranker's change. DistributeRound is
+// permissionless, so without this floor any party advancing a round on a
+// token-denominated group could skim each member's ADA down to the ledger min.
+// The output must retain at least the input's lovelace.
+//
+// For an ADA-denominated group the lovelace IS the contribution asset and is
+// already pinned by the -fee balance check (and legitimately *decreases* by the
+// fee each round), so this MUST NOT apply — it returns True (no-op).
+pub fn ada_reserve_conserved(
+  input_value: Value,
+  output_value: Value,
+  contribution_fee_policyid: PolicyId,
+) -> Bool {
+  if contribution_fee_policyid == ada_policy_id {
+    True
+  } else {
+    assets.lovelace_of(output_value) >= assets.lovelace_of(input_value)
+  }
+}
+
 // ─── Treasury Helpers ─────────────────────────────────────────────────────────
 
 // treasury_output_clean

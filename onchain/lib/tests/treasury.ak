@@ -2013,6 +2013,124 @@ test distribute_round__pull_rejects_value_not_credited() {
   )
 }
 
+// --- Token-group ADA-reserve conservation (permissionless-skim guard) ---
+
+// Single-member Pull round on a NATIVE-TOKEN group. The lone member (slot 0) is the
+// borrower, so the pot (1 × 1000 tokens) is earmarked into their own treasury via
+// claimable_balance — the contribution asset is a token, so the -fee balance check
+// measures the TOKEN and the UTxO's lovelace is governed only by ada_reserve_conserved.
+// Caller supplies the treasury output so the skim negative can drain its lovelace.
+fn token_pull_distribute_tx(
+  treasury_out: Output,
+) -> (Transaction, TreasuryDatum, OutputReference) {
+  let gp = group_policy()
+  let group_datum = GroupDatum {
+    ..token_group_datum(),
+    num_rounds: 3,
+    is_started: True,
+    last_distributed_round: -1,
+    member_token_names: [member_tn()],
+    payout_mode: Pull,
+  }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: group_in_value,
+      datum: InlineDatum(cip68_with_group(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: group_in_value,
+    datum: InlineDatum(
+      cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 0 }),
+    ),
+    reference_script: None,
+  }
+  // Treasury input: slot 0, round 0, claimable 0, holding 2M ADA reserve + 2000 tokens.
+  let treasury_datum = build_treasury_state(0, group_ref_tn(), 0)
+  let utxo_ref = treasury_utxo_ref()
+  let treasury_in = test_treasury_input(
+    utxo_ref,
+    test_treasury_output(treasury_datum, token_treasury_value(2000)),
+  )
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, treasury_in],
+    outputs: [treasury_out, group_output],
+    validity_range: interval.after(0),
+  }
+  (tx, treasury_datum, utxo_ref)
+}
+
+// Correct Pull earmark on the token group: token balance net unchanged
+// (2000 − 1000 fee + 1000 payout) and claimable += 1000.
+fn token_pull_earmark_datum() -> TreasuryDatum {
+  TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: member_tn(),
+    assigned_slot: 0,
+    rounds_paid: 1,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: 1000,
+  }
+}
+
+// Token group: a round that keeps the full 2M ADA reserve is accepted. (Positive control
+// proving ada_reserve_conserved is not over-tight — only a *decrease* is rejected.)
+test distribute_round__token_group_accepts_conserved_ada() {
+  let out = test_treasury_output(
+    token_pull_earmark_datum(),
+    token_treasury_value(2000),
+  )
+  let (tx, datum, utxo) = token_pull_distribute_tx(out)
+  validate_distribute_treasury(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    1,
+    [1],
+    [0],
+    0,
+    datum,
+    utxo,
+    tx,
+  )
+}
+
+// Token group: the cranker routes 600k of the member's 2M ADA reserve into their own
+// change. The contribution TOKEN is still conserved (2000 unchanged) and the earmark is
+// correct, so EVERY other check passes — only ada_reserve_conserved catches the skim.
+// Pre-fix this returned True (the lovelace was unpinned); the guard now rejects it.
+test distribute_round__token_group_rejects_ada_skim() {
+  let skim_value = assets.from_lovelace(1_400_000)
+    |> assets.merge(assets.from_asset(treasury_policy(), member_tn(), 1))
+    |> assets.merge(assets.from_asset(token_policy(), token_name(), 2000))
+  let out = test_treasury_output(token_pull_earmark_datum(), skim_value)
+  let (tx, datum, utxo) = token_pull_distribute_tx(out)
+  !validate_distribute_treasury(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    1,
+    [1],
+    [0],
+    0,
+    datum,
+    utxo,
+    tx,
+  )
+}
+
 // --- Pro-rata distribution (complete member set) ---
 
 fn member_b_tn() -> assets.AssetName {
