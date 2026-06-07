@@ -18,11 +18,24 @@ describe("Account Endpoints", () => {
   it.effect("should create an account successfully", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
-      const { txHash, outputs } = yield* createAccountTestCase(base.context);
+      const { txHash, outputs, accountTokenSuffix } =
+        yield* createAccountTestCase(base.context);
 
       expect(txHash).toBeDefined();
       expect(txHash).toHaveLength(64);
       expect(outputs.accountUtxo).toBeDefined();
+
+      // #59: the suffix surfaced by createAccount must be the permanent 28-byte
+      // (56 hex char) CIP-68 identity, and must match the token actually minted
+      // on-chain — i.e. consumers can trust it instead of re-deriving from output 0.
+      expect(accountTokenSuffix).toHaveLength(56);
+      expect(accountTokenSuffix).toBe(
+        extractTokenSuffix(
+          outputs.accountUtxo,
+          accountPolicyId,
+          assetNameLabels.prefix100,
+        ),
+      );
     }).pipe(Effect.asVoid),
   );
 

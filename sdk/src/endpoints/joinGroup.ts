@@ -10,6 +10,7 @@ import {
   UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import {
   GroupDatum,
   TreasuryDatum,
@@ -308,10 +309,11 @@ export const unsignedJoinGroupTxProgram = (
 
     // Use reference scripts when provided — avoids including ~12KB of script bytes
     // inline, keeping the tx under Cardano's 16,384-byte size limit.
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
     const withValidators =
-      config.scriptRefs?.treasury || config.scriptRefs?.group
+      scriptRefs.treasury || scriptRefs.group
         ? withFee.readFrom(
-            [config.scriptRefs?.treasury, config.scriptRefs?.group].filter(
+            [scriptRefs.treasury, scriptRefs.group].filter(
               Boolean,
             ) as UTxO[],
           )

@@ -15,6 +15,7 @@ import {
   createCip68TokenNames,
   getWalletAddress,
   resolveUtxoByOutRef,
+  assetNameLabels,
 } from "../core/utils/index.js";
 import {
   accountValidator,
@@ -48,7 +49,11 @@ export type CreateAccountConfig = {
  *
  * @param lucid - Lucid instance with wallet selected.
  * @param config - CreateAccountConfig (UTxO + optional identity fields).
- * @returns Effect yielding TxSignBuilder.
+ * @returns Effect yielding `{ tx, accountTokenSuffix }` — the `TxSignBuilder` to
+ *   sign/submit, plus the permanent 28-byte CIP-68 token suffix (hex) derived from
+ *   the spent UTxO. The suffix is the stable account identity used by all subsequent
+ *   endpoints (`updateAccount`, `joinGroup`, …), so callers no longer need to re-fetch
+ *   output 0 and string-slice the asset key to recover it.
  *
  * @example
  * ```ts
@@ -68,7 +73,11 @@ const program = createAccount(lucid, {
 export const unsignedCreateAccountTxProgram = (
   lucid: LucidEvolution,
   config: CreateAccountConfig,
-): Effect.Effect<TxSignBuilder, DcuError, never> =>
+): Effect.Effect<
+  { tx: TxSignBuilder; accountTokenSuffix: string },
+  DcuError,
+  never
+> =>
   Effect.gen(function* () {
     const address = yield* getWalletAddress(lucid);
     const accountScriptAddress = yield* getScriptAddress(
@@ -81,6 +90,13 @@ export const unsignedCreateAccountTxProgram = (
     );
     const { refTokenName, userTokenName } =
       yield* createCip68TokenNames(selectedUtxo);
+
+    // The permanent CIP-68 suffix: the 28-byte hash tail shared by the ref (100) and
+    // user (222) tokens, i.e. the asset name minus its label prefix. This is the stable
+    // account identity consumers feed into every later endpoint.
+    const accountTokenSuffix = refTokenName.slice(
+      assetNameLabels.prefix100.length,
+    );
 
     const accountDatum: AccountDatum = {
       display_name: fromText(config.display_name ?? address),
@@ -130,5 +146,5 @@ export const unsignedCreateAccountTxProgram = (
             }),
         ),
       );
-    return tx;
+    return { tx, accountTokenSuffix };
   });

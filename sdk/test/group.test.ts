@@ -26,12 +26,18 @@ describe("Group Endpoints", () => {
     Effect.gen(function* () {
       const { context } = yield* setupBase();
 
-      const { txHash, groupDatum } = yield* createGroupTestCase(context);
+      const { txHash, groupDatum, groupTokenSuffix } =
+        yield* createGroupTestCase(context);
 
       expect(txHash).toBeDefined();
       expect(txHash).toHaveLength(64);
       expect(groupDatum.is_active).toBe(true);
       expect(groupDatum.member_count).toBe(0n);
+
+      // #59: createGroup surfaces the permanent 28-byte (56 hex char) CIP-68 group
+      // identity directly, so consumers don't re-fetch output 0 to recover it.
+      expect(groupTokenSuffix).toHaveLength(56);
+      expect(groupTokenSuffix).toMatch(/^[0-9a-f]+$/);
     }),
   );
 

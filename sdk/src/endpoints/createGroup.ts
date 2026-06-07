@@ -17,6 +17,7 @@ import {
   getWalletAddress,
   createCip68TokenNames,
   resolveUtxoByOutRef,
+  assetNameLabels,
 } from "../core/utils/index.js";
 import {
   DcuError,
@@ -36,7 +37,8 @@ import { Protocol } from "../core/validators/constants.js";
  *
  * @param lucid - Lucid instance with wallet selected.
  * @param config - Initial Group Configuration.
- * @returns Effect yielding a TxSignBuilder ready for signing.
+ * @returns Effect yielding `{ tx, groupTokenSuffix }` — the signable tx plus the
+ *   permanent CIP-68 group token suffix.
  */
 export type CreateGroupConfig = {
   groupName: string; // displayed by wallets — goes into metadata["name"]
@@ -53,7 +55,11 @@ export const unsignedCreateGroupTxProgram = (
   protocol: Protocol,
   lucid: LucidEvolution,
   config: CreateGroupConfig,
-): Effect.Effect<TxSignBuilder, DcuError, never> =>
+): Effect.Effect<
+  { tx: TxSignBuilder; groupTokenSuffix: string },
+  DcuError,
+  never
+> =>
   Effect.gen(function* () {
     const { groupValidator, groupPolicyId } = protocol;
     const { groupName, groupDescription, groupDatum, utxoToSpend } = config;
@@ -86,6 +92,12 @@ export const unsignedCreateGroupTxProgram = (
     //   ref_token_name  = blake2b_256(cbor(utxoToSpend.outputRef)) with prefix_100
     //   user_token_name = blake2b_256(cbor(utxoToSpend.outputRef)) with prefix_222
     const { refTokenName, userTokenName } = yield* createCip68TokenNames(utxo);
+
+    // Permanent CIP-68 suffix: the 28-byte hash tail shared by the ref (100) and admin
+    // (222) tokens (asset name minus its label prefix) — the stable group identity.
+    const groupTokenSuffix = refTokenName.slice(
+      assetNameLabels.prefix100.length,
+    );
 
     const refToken = toUnit(groupPolicyId, refTokenName);
     const userToken = toUnit(groupPolicyId, userTokenName);
@@ -129,5 +141,5 @@ export const unsignedCreateGroupTxProgram = (
             }),
         ),
       );
-    return tx;
+    return { tx, groupTokenSuffix };
   });

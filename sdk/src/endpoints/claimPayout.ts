@@ -8,6 +8,7 @@ import {
   UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import {
   TreasuryDatum,
   TreasuryDatumSchema,
@@ -151,9 +152,9 @@ export const unsignedClaimPayoutTxProgram = (
     // Group's canonical position among ALL reference inputs: group + settings, plus the
     // optional treasury ref-script when scriptRefs are used. Hardcoding 0n breaks once the
     // P5 settings UTxO (or a ref-script) sorts ahead of the group input.
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
     const claimRefInputs = [groupUtxo, settingsUtxo];
-    if (config.scriptRefs?.treasury)
-      claimRefInputs.push(config.scriptRefs.treasury);
+    if (scriptRefs.treasury) claimRefInputs.push(scriptRefs.treasury);
     const groupRefInputIndex = referenceInputIndex(claimRefInputs, groupUtxo);
 
     const redeemer: RedeemerBuilder = {
@@ -188,8 +189,8 @@ export const unsignedClaimPayoutTxProgram = (
       // its min-ADA from the wallet rather than failing on a thin change output).
       .pay.ToAddress(address, { [accountUnit]: 1n });
 
-    const withValidator = config.scriptRefs?.treasury
-      ? baseTx.readFrom([config.scriptRefs.treasury])
+    const withValidator = scriptRefs.treasury
+      ? baseTx.readFrom([scriptRefs.treasury])
       : baseTx.attach.SpendingValidator(treasuryValidator.spendTreasury);
 
     const tx = yield* withValidator

@@ -6,6 +6,7 @@ import {
   UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import {
   GroupDatum,
   GroupSpendRedeemer,
@@ -254,10 +255,11 @@ export const unsignedNextCycleTxProgram = (
         treasuryRedeemer,
       );
 
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
     const baseTx =
-      config.scriptRefs?.treasury || config.scriptRefs?.group
+      scriptRefs.treasury || scriptRefs.group
         ? baseTxNoValidators.readFrom(
-            [config.scriptRefs?.treasury, config.scriptRefs?.group].filter(
+            [scriptRefs.treasury, scriptRefs.group].filter(
               Boolean,
             ) as UTxO[],
           )

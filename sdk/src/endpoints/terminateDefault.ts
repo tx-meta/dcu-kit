@@ -8,6 +8,7 @@ import {
   UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import {
   TreasuryDatum,
   TreasuryDatumSchema,
@@ -247,10 +248,11 @@ export const unsignedTerminateDefaultTxProgram = (
       .validFrom(Number(now));
 
     // Reference scripts when provided — avoids inlining ~12KB of validator bytes.
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
     const withValidators =
-      config.scriptRefs?.treasury || config.scriptRefs?.group
+      scriptRefs.treasury || scriptRefs.group
         ? baseTx.readFrom(
-            [config.scriptRefs?.treasury, config.scriptRefs?.group].filter(
+            [scriptRefs.treasury, scriptRefs.group].filter(
               Boolean,
             ) as UTxO[],
           )

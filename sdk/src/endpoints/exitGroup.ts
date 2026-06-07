@@ -8,6 +8,7 @@ import {
   toUnit,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import {
   GroupDatum,
   GroupSpendRedeemer,
@@ -346,10 +347,11 @@ export const unsignedExitGroupTxProgram = (
       .validFrom(Number(now));
 
     // Use reference scripts when provided — avoids ~12KB of inline script bytes.
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
     const withValidators =
-      config.scriptRefs?.treasury || config.scriptRefs?.group
+      scriptRefs.treasury || scriptRefs.group
         ? afterPath.readFrom(
-            [config.scriptRefs?.treasury, config.scriptRefs?.group].filter(
+            [scriptRefs.treasury, scriptRefs.group].filter(
               Boolean,
             ) as UTxO[],
           )

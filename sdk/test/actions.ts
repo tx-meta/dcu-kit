@@ -97,7 +97,10 @@ export const createAccountTestCase = (
   context: LucidContext,
   params: CreateAccountTestParams = {},
 ): Effect.Effect<
-  CreateAccountResult & { outputs: { accountUtxo: UTxO; userUtxo: UTxO } },
+  CreateAccountResult & {
+    outputs: { accountUtxo: UTxO; userUtxo: UTxO };
+    accountTokenSuffix: string;
+  },
   Error,
   never
 > =>
@@ -134,10 +137,8 @@ export const createAccountTestCase = (
       contact,
     };
 
-    const createAccountTx = yield* unsignedCreateAccountTxProgram(
-      lucid,
-      accountConfig,
-    ).pipe(
+    const { tx: createAccountTx, accountTokenSuffix } =
+      yield* unsignedCreateAccountTxProgram(lucid, accountConfig).pipe(
       Effect.timeout("60 seconds"),
       Effect.catchTag("TimeoutException", () =>
         Effect.fail(
@@ -173,7 +174,11 @@ export const createAccountTestCase = (
       ),
     ]);
 
-    return { txHash, outputs: { accountUtxo, userUtxo } };
+    return {
+      txHash,
+      outputs: { accountUtxo, userUtxo },
+      accountTokenSuffix,
+    };
   });
 
 export type UpdateAccountTestParams = {
@@ -274,7 +279,11 @@ export type CreateGroupTestParams = {
 export const createGroupTestCase = (
   context: LucidContext,
   params: CreateGroupTestParams = {},
-): Effect.Effect<CreateGroupResult, Error, never> =>
+): Effect.Effect<
+  CreateGroupResult & { groupTokenSuffix: string },
+  Error,
+  never
+> =>
   Effect.gen(function* () {
     const { lucid, users } = context;
     const { datumOverride, creatorSeed, groupName, groupDescription } = params;
@@ -296,15 +305,12 @@ export const createGroupTestCase = (
       utxoToSpend: selectedUTxO,
     };
 
-    const createGroupTx = yield* unsignedCreateGroupTxProgram(
-      context.protocol!,
-      lucid,
-      groupConfig,
-    );
+    const { tx: createGroupTx, groupTokenSuffix } =
+      yield* unsignedCreateGroupTxProgram(context.protocol!, lucid, groupConfig);
     const txHash = yield* signAndSubmit(createGroupTx);
     yield* advanceBlock(context.emulator);
 
-    return { txHash, groupDatum };
+    return { txHash, groupDatum, groupTokenSuffix };
   });
 
 export type UpdateGroupTestParams = {

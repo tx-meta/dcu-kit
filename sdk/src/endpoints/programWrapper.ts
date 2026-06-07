@@ -153,3 +153,70 @@ export const createDcuSdk = (settingsPolicy: string) => {
 
 /** The bound group/treasury endpoint set returned by {@link createDcuSdk}. */
 export type DcuSdk = ReturnType<typeof createDcuSdk>;
+
+// ─── Session pattern ─────────────────────────────────────────────────────────
+
+/**
+ * Binds a `LucidEvolution` instance and a deployment's settings policy once, and
+ * returns every endpoint as a method that takes only its config — no repeated
+ * `lucid` first argument, no repeated `settingsPolicy`.
+ *
+ * This removes the noisiest boilerplate at the call site and the most common bug
+ * source (passing the wrong/stale lucid instance). The bound instance's wallet is
+ * read at call time, so re-selecting the wallet between calls works as expected.
+ *
+ * Account endpoints are settings-independent and are included for convenience;
+ * the group/treasury endpoints use the settings-bound protocol (P5).
+ *
+ * NOTE: this binds a concrete `LucidEvolution`. A backend-agnostic `DCUProvider`
+ * abstraction (issue #44 Part 2) is intentionally deferred until a second tx
+ * backend (e.g. Blaze) actually exists — abstracting over a single implementation
+ * now would be speculative surface area.
+ *
+ * @example
+ * const dcu = createDcuSession(lucid, settingsPolicy);
+ * await dcu.joinGroup(config).unsafeRun();
+ * await dcu.createAccount({ selected_out_ref }).unsafeRun();
+ */
+export const createDcuSession = (
+  lucid: LucidEvolution,
+  settingsPolicy: string,
+) => {
+  const sdk = createDcuSdk(settingsPolicy);
+  return {
+    /** The settings-bound protocol context (validators/policies). */
+    protocol: sdk.protocol,
+
+    // Account (settings-independent root validator)
+    createAccount: (config: CreateAccountConfig) =>
+      createAccount(lucid, config),
+    updateAccount: (config: UpdateAccountConfig) =>
+      updateAccount(lucid, config),
+    deleteAccount: (config: DeleteAccountConfig) =>
+      sdk.deleteAccount(lucid, config),
+
+    // Group + treasury (settings-bound)
+    createGroup: (config: CreateGroupConfig) => sdk.createGroup(lucid, config),
+    updateGroup: (config: UpdateGroupConfig) => sdk.updateGroup(lucid, config),
+    deleteGroup: (config: DeleteGroupConfig) => sdk.deleteGroup(lucid, config),
+    joinGroup: (config: JoinGroupConfig) => sdk.joinGroup(lucid, config),
+    startGroup: (config: StartGroupConfig) => sdk.startGroup(lucid, config),
+    distributePayout: (config: DistributePayoutConfig) =>
+      sdk.distributePayout(lucid, config),
+    exitGroup: (config: ExitGroupConfig) => sdk.exitGroup(lucid, config),
+    terminateGroup: (config: TerminateGroupConfig) =>
+      sdk.terminateGroup(lucid, config),
+    terminateDefault: (config: TerminateDefaultConfig) =>
+      sdk.terminateDefault(lucid, config),
+    contribute: (config: ContributeConfig) => sdk.contribute(lucid, config),
+    updatePayoutCredential: (config: UpdatePayoutCredentialConfig) =>
+      sdk.updatePayoutCredential(lucid, config),
+    extendGraceWindow: (config: ExtendGraceWindowConfig) =>
+      sdk.extendGraceWindow(lucid, config),
+    nextCycle: (config: NextCycleConfig) => sdk.nextCycle(lucid, config),
+    claimPayout: (config: ClaimPayoutConfig) => sdk.claimPayout(lucid, config),
+  };
+};
+
+/** The bound, lucid-and-settings session returned by {@link createDcuSession}. */
+export type DcuSession = ReturnType<typeof createDcuSession>;
