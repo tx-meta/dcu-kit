@@ -246,6 +246,18 @@ pub fn validate_claim_penalty_mint(own_policy_id: PolicyId, mint: Value) -> Bool
 // NOTE: self-reference check (own UTxO is at one of treasury_input_indices) is
 //       enforced at the entry point before this function.
 //
+// [KNOWN-SCALE-LIMIT — AIK-1/2, documented 2026-06-13]: DistributeRound (and
+// NextCycle) consume N member treasury UTxOs in one tx and re-run this per-input
+// logic for each, with `count_active_members` folding over the membership registry
+// (O(N²) overall). There is NO withdraw-zero delegation (aiken-design-patterns
+// `stake_validator`) so the script CPU/mem budget caps the practical group size,
+// and duplicate-index protection is the hand-rolled `indices_in_ascending_order`
+// rather than `multi_utxo_indexer.one_to_one_no_redeemer`. Both are deliberate
+// deferrals (Harun, 2026-06-13: document, do not migrate now). Before raising
+// max_members materially, benchmark distribute ex-units and enforce a measured
+// ceiling, or adopt the design-patterns primitives. The hand-rolled indexer IS
+// correct today; the risk is reviewability/scale, not a live exploit.
+//
 // [spec DistributeRound 1]: datum must be TreasuryState
 // [spec DistributeRound 2]: member.rounds_paid == round_number (hasn't paid this round)
 // [spec DistributeRound 3]: group spending input at group_ref_input_index

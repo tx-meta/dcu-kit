@@ -63,6 +63,17 @@ pub fn ada_reserve_conserved(
 // UTxO: it sits at the treasury script address, holds EXACTLY the one membership
 // token (exact check — blocks account-merge attacks), and carries no value beyond
 // ADA + own policy + the group's contribution asset.
+//
+// [KNOWN-LATENT — AIK-4, MLabs #11, documented 2026-06-13]: this pins only the
+// payment_credential of the continuing output, NOT the full address. The stake
+// credential is therefore unconstrained — a tx builder could attach an arbitrary
+// stake credential to the continuing treasury output and redirect staking rewards
+// on the pooled/locked ADA. This is LATENT only: the offchain SDK builds treasury
+// UTxOs at enterprise (stakeless) addresses, so no rewards exist to redirect today.
+// Before enabling delegation of treasury ADA, change this (and the penalty/exit
+// output checks) to full-address equality `out.address == in.output.address`
+// (group outputs already do this). Decision (Harun, 2026-06-13): document, do not
+// alter immutable validators now.
 pub fn treasury_output_clean(
   own_output: Output,
   own_policy_id: PolicyId,

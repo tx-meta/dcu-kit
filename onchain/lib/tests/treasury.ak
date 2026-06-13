@@ -2040,7 +2040,10 @@ fn token_pull_distribute_tx(
       output_index: 0,
     },
     output: Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value: group_in_value,
       datum: InlineDatum(cip68_with_group(group_datum)),
       reference_script: None,
