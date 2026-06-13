@@ -376,15 +376,24 @@ pub fn validate_update_group(
       }
     = datum_data
 
-  // [security 3]: critical fields include amounts AND policy IDs AND asset names AND
-  // schedule parameters. Switching fee currency is an economic rug-pull; changing
-  // start_time shifts every member's payout window; reducing max_members can invalidate
-  // joins. creator_bond and grace_period_length affect member economics. All must be
-  // frozen while any member is active.
-  // metadata and version are also critical — group name cannot change once members join.
-  let is_critical_update = output_metadata != input_metadata || output_version != input_version || updated_datum.contribution_fee != current_datum.contribution_fee || updated_datum.contribution_fee_policyid != current_datum.contribution_fee_policyid || updated_datum.contribution_fee_assetname != current_datum.contribution_fee_assetname || updated_datum.joining_fee != current_datum.joining_fee || updated_datum.joining_fee_policyid != current_datum.joining_fee_policyid || updated_datum.joining_fee_assetname != current_datum.joining_fee_assetname || updated_datum.penalty_fee != current_datum.penalty_fee || updated_datum.penalty_fee_policyid != current_datum.penalty_fee_policyid || updated_datum.penalty_fee_assetname != current_datum.penalty_fee_assetname || updated_datum.creator_bond != current_datum.creator_bond || updated_datum.grace_period_length != current_datum.grace_period_length || updated_datum.interval_length != current_datum.interval_length || updated_datum.creator_payment_credential != current_datum.creator_payment_credential || updated_datum.start_time != current_datum.start_time || updated_datum.max_members != current_datum.max_members || updated_datum.collateral_rounds != current_datum.collateral_rounds || updated_datum.payout_mode != current_datum.payout_mode
+  // [security 3]: once any member has joined, the group's economic terms are frozen —
+  // switching fee currency is a rug-pull, shifting start_time moves every payout window,
+  // reducing max_members invalidates joins, etc. Expressed as an ALLOWLIST (compare the
+  // whole record) rather than a denylist of critical fields: the ONLY field an update may
+  // change after a join is `is_active` (and only True -> False, enforced below). A
+  // GroupDatum field added in future is therefore frozen-by-default and can never silently
+  // remain mutable-after-join — the failure mode of the old 20-term `||` enumeration.
+  // Equivalent to that enumeration: every field except is_active is covered here, and the
+  // structural fields (member_count, num_rounds, is_started, last_distributed_round,
+  // member_token_names) are additionally pinned in the `and { .. }` block below.
+  // metadata and version (CIP-68 wrapper) are frozen separately as they live off the datum.
+  let metadata_frozen =
+    output_metadata == input_metadata && output_version == input_version
+  let only_is_active_differs =
+    updated_datum == GroupDatum { ..current_datum, is_active: updated_datum.is_active }
 
-  let is_safe_update = !is_critical_update || current_datum.member_count == 0
+  let is_safe_update =
+    current_datum.member_count == 0 || metadata_frozen && only_is_active_differs
 
   // [security 7]: ADA preservation — admin must not drain the group UTxO during update
   let in_ada = assets.lovelace_of(group_input.output.value)
