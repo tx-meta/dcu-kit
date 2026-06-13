@@ -91,7 +91,7 @@ pnpm format         # Auto-fix formatting
 pnpm lint           # ESLint
 pnpm tsc --noEmit   # Type check
 pnpm run build      # Compile to dist/
-NETWORK=Custom pnpm test  # Full test suite (Lucid emulator, no live network)
+NETWORK=Emulator pnpm test  # Full test suite (Lucid emulator, no live network)
 ```
 
 ## Testing
@@ -99,14 +99,14 @@ NETWORK=Custom pnpm test  # Full test suite (Lucid emulator, no live network)
 Tests use `vitest` + `@effect/vitest` against the Lucid emulator (real UPLC execution, no mocks):
 
 ```sh
-NETWORK=Custom pnpm test                        # All suites
-NETWORK=Custom pnpm test test/account.test.ts   # Account only
-NETWORK=Custom pnpm test test/group.test.ts     # Group only
-NETWORK=Custom pnpm test test/treasury.test.ts  # Treasury only
-NETWORK=Custom pnpm test -- -t "pattern"        # Filter by name
+NETWORK=Emulator pnpm test                        # All suites
+NETWORK=Emulator pnpm test test/account.test.ts   # Account only
+NETWORK=Emulator pnpm test test/group.test.ts     # Group only
+NETWORK=Emulator pnpm test test/treasury.test.ts  # Treasury only
+NETWORK=Emulator pnpm test -- -t "pattern"        # Filter by name
 ```
 
-`NETWORK=Custom` is required. Without it the SDK attempts to connect to Preprod.
+`NETWORK=Emulator` is required. Without it the SDK attempts to connect to Preprod.
 
 ## License
 

@@ -67,6 +67,20 @@ export const setupBase = (
         new SetupError({ message: "Invalid Network selection" }),
       );
 
+    // The test suite runs on the Lucid emulator, which deploys the protocol settings
+    // and exposes `protocol`. A live NETWORK (e.g. .env's NETWORK=Preprod) skips that
+    // deployment, leaving `protocol` undefined. Fail with a clear, actionable message
+    // instead of a cryptic "Cannot destructure property 'groupValidator'" downstream.
+    if (!context.protocol)
+      return yield* Effect.fail(
+        new SetupError({
+          message:
+            `Emulator protocol context missing — the test suite must run on the Lucid ` +
+            `emulator. Set NETWORK=Emulator (current NETWORK=${process.env.NETWORK ?? "unset"}). ` +
+            `Tip: \`pnpm test\` sets NETWORK=Emulator for you.`,
+        }),
+      );
+
     const scripts = yield* makeValidators(network);
 
     return {

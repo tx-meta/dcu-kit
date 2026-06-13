@@ -52,7 +52,7 @@ pnpm format:check   # Prettier
 pnpm lint           # ESLint
 pnpm tsc --noEmit   # Type check
 pnpm run build      # Compile to dist/
-NETWORK=Custom pnpm test  # Run full test suite against Lucid emulator
+NETWORK=Emulator pnpm test  # Run full test suite against Lucid emulator
 ```
 
 Aiken on-chain checks:
