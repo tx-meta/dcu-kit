@@ -552,4 +552,3 @@ export const exitGroupTestCase = (
 
     return { txHash };
   });
-

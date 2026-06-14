@@ -1292,5 +1292,4 @@ describe("Treasury Endpoints", () => {
         }
       }),
   );
-
 });
