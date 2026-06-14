@@ -1222,6 +1222,7 @@ fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
     num_rounds: 3,
     is_started: True,
     last_distributed_round: -1,
+    active_member_count: 1,
     member_token_names: [member_tn()],
   }
   let group_in_value = assets.from_lovelace(2_000_000)
@@ -1298,6 +1299,7 @@ test distribute_round__rejects_fake_group_script() fail {
     num_rounds: 3,
     is_started: True,
     last_distributed_round: -1,
+    active_member_count: 1,
     member_token_names: [member_tn()],
   }
   let group_in_value = assets.from_lovelace(2_000_000)
@@ -1389,6 +1391,7 @@ test distribute_round__accepts_final_round_drains_to_reserve() {
     num_rounds: 1,
     is_started: True,
     last_distributed_round: -1,
+    active_member_count: 1,
     member_token_names: [member_tn()],
   }
   let group_in_value = assets.from_lovelace(2_000_000)
@@ -1471,6 +1474,7 @@ test distribute_round__accepts_transition_to_default() {
     num_rounds: 3,
     is_started: True,
     last_distributed_round: -1,
+    active_member_count: 1,
     member_token_names: [member_tn()],
   }
   let group_in_value = assets.from_lovelace(2_000_000)
@@ -1494,7 +1498,14 @@ test distribute_round__accepts_transition_to_default() {
     address: Address { payment_credential: Script(gp), stake_credential: None },
     value: group_in_value,
     datum: InlineDatum(
-      cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 0 }),
+      cip68_with_group(
+        GroupDatum {
+          ..group_datum,
+          last_distributed_round: 0,
+          // the lone member transitioned to ICS this round → active set shrinks 1 → 0
+          active_member_count: 0,
+        },
+      ),
     ),
     reference_script: None,
   }
@@ -1907,6 +1918,7 @@ fn pull_distribute_tx(
     num_rounds: 3,
     is_started: True,
     last_distributed_round: -1,
+    active_member_count: 1,
     member_token_names: [member_tn()],
     payout_mode: Pull,
   }
@@ -2040,6 +2052,7 @@ fn token_pull_distribute_tx(
     num_rounds: 3,
     is_started: True,
     last_distributed_round: -1,
+    active_member_count: 1,
     member_token_names: [member_tn()],
     payout_mode: Pull,
   }
@@ -2153,15 +2166,20 @@ fn member_b_tn() -> assets.AssetName {
 fn two_member_distribute(
   b_datum: TreasuryDatum,
   b_as_reference: Bool,
+  active: Int,
 ) -> (Transaction, TreasuryDatum, OutputReference) {
   let tp = treasury_policy()
   let gp = group_policy()
 
+  // active = cached active_member_count. With the continuous model, defaulters are excluded
+  // from this count (not referenced in the tx). A round must spend exactly `active` of the
+  // group's TreasuryState members (spent_set_complete) — that is the C4 anti-skim guard.
   let group_datum = GroupDatum {
     ..test_group_datum(),
     num_rounds: 3,
     is_started: True,
     last_distributed_round: -1,
+    active_member_count: active,
     member_token_names: [member_tn(), member_b_tn()],
   }
   let group_in_value = assets.from_lovelace(2_000_000)
@@ -2237,9 +2255,12 @@ fn two_member_distribute(
 // so the borrower receives 1 × contribution_fee (2M) — the reduced pot — and the round
 // still completes rather than stalling.
 test distribute_round__accepts_prorata_with_defaulter() {
+  // B defaulted in a prior round → excluded from active_member_count (== 1) and absent here
+  // (the validator no longer reads references). Spending just A satisfies spent_set_complete.
   let (tx, _, _) = two_member_distribute(
     test_insufficient_collateral_state(),
     True,
+    1,
   )
   validate_distribute_withdraw(
     treasury_policy(),
@@ -2265,6 +2286,8 @@ test distribute_round__rejects_excluded_member() fail {
     num_rounds: 3,
     is_started: True,
     last_distributed_round: -1,
+    // 2 active members but only A is spent below → spent_set_complete rejects (C4).
+    active_member_count: 2,
     member_token_names: [member_tn(), member_b_tn()],
   }
   let group_in_value = assets.from_lovelace(2_000_000)
@@ -2323,12 +2346,15 @@ test distribute_round__rejects_excluded_member() fail {
   )
 }
 
-// Anti-dodge: a healthy member (TreasuryState) cannot be parked as a reference input to
-// avoid contributing — count_active_members rejects a TreasuryState found in references.
+// Anti-dodge / C4: with 2 active members the round MUST spend both. Here active_member_count
+// is 2 but only member A is spent (B parked aside) → spent_set_complete (length 1 != 2) rejects
+// the round. This is the continuous model's replacement for the old reference-classification
+// guard: a healthy member can never be silently excluded from a distribution.
 test distribute_round__rejects_healthy_member_referenced() fail {
   let (tx, _, _) = two_member_distribute(
     build_treasury_state(1, group_ref_tn(), 0),
     True,
+    2,
   )
   validate_distribute_withdraw(
     treasury_policy(),

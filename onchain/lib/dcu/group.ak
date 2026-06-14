@@ -821,18 +821,31 @@ pub fn validate_distribute_group(
   let round_start_time = current.start_time + round_number * current.interval_length
   let time_valid = current_time >= round_start_time
 
-  // [spec DistributeRound 5]: round must be within the current cycle
-  let within_cycle = round_number >= 0 && round_number < current.num_rounds
+  // [spec DistributeRound 5 / continuous]: round_number is monotonic and UNBOUNDED above —
+  // a cycle is just num_rounds rounds and the rotation wraps via effective_slot =
+  // round_number % num_rounds (treasury side). There is no per-cycle cap and no NextCycle
+  // reset: distribute simply keeps running, so "next cycle" needs no separate trigger.
+  let round_number_valid = round_number >= 0
 
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(output_datum_data) = group_output.datum
   expect updated_cip68: GroupCip68Datum = output_datum_data
 
-  // [spec DistributeRound 6]: only last_distributed_round changes; metadata/version frozen
+  // [spec DistributeRound 6 / D3]: last_distributed_round advances to round_number; metadata and
+  // version frozen. active_member_count may DECREASE by the round's ICS transitions — the exact
+  // new value is pinned by the treasury withdraw handler (= old - ics_count). Here we accept the
+  // output's value (so this equality does not freeze it) and bound it to [0, current] so a
+  // group-only spend can never INFLATE the active set (which would over-pay future borrowers).
+  let new_active = updated_cip68.extra.active_member_count
+  let active_count_bounded = new_active >= 0 && new_active <= current.active_member_count
   let expected = GroupCip68Datum {
     metadata,
     version,
-    extra: GroupDatum { ..current, last_distributed_round: round_number },
+    extra: GroupDatum {
+      ..current,
+      last_distributed_round: round_number,
+      active_member_count: new_active,
+    },
   }
 
   // [security]: ADA must not decrease
@@ -847,7 +860,8 @@ pub fn validate_distribute_group(
     group_active?,
     sequential?,
     time_valid?,
-    within_cycle?,
+    round_number_valid?,
+    active_count_bounded?,
     (group_output.address == group_input.output.address)?,
     (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
       Pair(group_ref_token_name, 1),

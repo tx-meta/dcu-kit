@@ -130,6 +130,34 @@ pub fn indices_in_ascending_order(indices: List<Int>) -> Bool {
   }
 }
 
+// count_default_outputs
+// Counts how many of the given output indices carry a DefaultState datum. DistributeRound
+// uses this to decrement the group's cached active_member_count by exactly the number of
+// members that transitioned to InsufficientCollateral (DefaultState) this round — keeping
+// active_member_count == (count of live TreasuryState members) without an O(N²) re-scan.
+pub fn count_default_outputs(
+  output_indices: List<Int>,
+  outputs: List<Output>,
+) -> Int {
+  list.foldl(
+    output_indices,
+    0,
+    fn(idx, acc) {
+      when list.at(outputs, idx) is {
+        Some(o) -> {
+          expect InlineDatum(d) = o.datum
+          expect td: TreasuryDatum = d
+          when td is {
+            DefaultState { .. } -> acc + 1
+            _ -> acc
+          }
+        }
+        None -> acc
+      }
+    },
+  )
+}
+
 // count_active_members
 // Enforces the COMPLETE member set for a distribution round and returns the number of
 // contributors. Every name in `member_token_names` must be held by exactly one of:

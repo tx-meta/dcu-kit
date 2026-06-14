@@ -12,7 +12,7 @@ use dcu/treasury.{
   DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
 }
 use dcu/treasury_utils.{
-  ada_reserve_conserved, contributable_in, count_active_members,
+  ada_reserve_conserved, contributable_in, count_default_outputs,
   find_group_token_name, member_has_user_token, treasury_output_clean,
 }
 use dcu/utils.{find_own_input, get_lower_bound, only_allowed_policies}
@@ -296,7 +296,7 @@ pub fn validate_distribute_withdraw(
   borrower_output_index: Int,
   tx: Transaction,
 ) -> Bool {
-  let Transaction { inputs, outputs, reference_inputs, .. } = tx
+  let Transaction { inputs, outputs, .. } = tx
 
   // [spec DistributeRound 3]: group spending input with GroupDatum
   expect Some(group_input) = list.at(inputs, group_ref_input_index)
@@ -359,23 +359,24 @@ pub fn validate_distribute_withdraw(
   )
   let borrower_present = borrower_cred_opt != None
 
-  // [spec DistributeRound 6c]: PRO-RATA pot = contribution_fee × active_members.
-  // active_members is derived from the group's full membership registry (every member
-  // accounted for as a contributing spend or a defaulter reference) — NOT from the
-  // caller-supplied treasury_input_indices. This (a) closes the partial-set attack
-  // (round cannot advance while excluding healthy members) and (b) prevents under-paying
-  // the borrower: released fees (active × fee) must all reach the borrower, none can leak.
-  let active_members = count_active_members(
-    group.member_token_names,
-    own_policy_id,
-    inputs,
-    reference_inputs,
-  )
+  // [spec DistributeRound 6c / D3]: PRO-RATA pot = contribution_fee × cached active_member_count
+  // (O(1), replaces the O(N²) count_active_members fold). C4 anti-skim is preserved by two pins:
+  //   (1) spent_set_complete — the spent treasury set size == active_member_count, and
+  //   (2) group_link_ok (per-input) — every spent treasury belongs to THIS group.
+  // The group has exactly active_member_count TreasuryState members, so spending that many
+  // distinct, this-group TreasuryState treasuries is necessarily ALL of them — a healthy member
+  // cannot be excluded, and a foreign-group treasury cannot pad the count.
+  let active_members = group.active_member_count
   let total_payout = active_members * group.contribution_fee
+  let spent_set_complete = list.length(treasury_input_indices) == active_members
 
   let is_pull = group.payout_mode == Pull
-  // [spec DistributeRound 7a]: final round suppresses ICS so a drained member can mature-exit.
-  let is_last_round = round_number + 1 == group.num_rounds
+  // [spec DistributeRound 7a / D2]: the last round of EVERY cycle (generalising the old
+  // single-cycle is_last_round) suppresses the ICS transition, so a member drained to the
+  // reserve at a cycle boundary stays TreasuryState and can mature/free-exit (D4) — preserving
+  // the ROSCA "complete your cycle, then leave clean" path across unlimited cycles. Mid-cycle
+  // drains still transition to DefaultState (grace → recover or TerminateDefault).
+  let is_cycle_boundary = ( round_number + 1 ) % group.num_rounds == 0
   let current_time = get_lower_bound(tx)
 
   // [spec DistributeRound 6c]: PUSH only — borrower output at scheduled member's wallet,
@@ -430,6 +431,11 @@ pub fn validate_distribute_withdraw(
           claimable_balance,
         } = in_datum_data
 
+        // [security C4 / D3]: the spent treasury must belong to THIS group. count_active_members
+        // used to provide this implicitly (by iterating this group's registry); with the cached
+        // count we assert it per input so foreign-group treasuries cannot pad the spent set.
+        let group_link_ok = group_reference_tokenname == expected_group_token_name
+
         // [spec DistributeRound 2]: member hasn't been processed for this round yet
         let member_at_correct_round = rounds_paid == round_number
 
@@ -467,9 +473,11 @@ pub fn validate_distribute_withdraw(
             output_bal == input_bal - group.contribution_fee
           }
 
-        // [spec DistributeRound 7a]: ICS transition only below threshold AND not last round.
+        // [spec DistributeRound 7a / D2]: ICS transition when spendable balance drops below
+        // contribution_fee, EXCEPT at a cycle boundary (last round of any cycle) — there the
+        // member stays TreasuryState so they can mature/free-exit (D4). See is_cycle_boundary.
         let transition_to_ics =
-          output_bal < group.contribution_fee && !is_last_round
+          output_bal < group.contribution_fee && !is_cycle_boundary
 
         let output_datum_correct =
           if transition_to_ics {
@@ -515,6 +523,7 @@ pub fn validate_distribute_withdraw(
           )
 
         and {
+          group_link_ok?,
           member_at_correct_round?,
           balance_deducted?,
           output_datum_correct?,
@@ -530,10 +539,19 @@ pub fn validate_distribute_withdraw(
       },
     )
 
+  // [D3]: group output decrements active_member_count by exactly the number of members that
+  // transitioned to DefaultState (ICS) this round. The pot above used the PRE-decrement count
+  // (correct — every member who contributed this round is counted, including any going to ICS).
+  let ics_count = count_default_outputs(treasury_output_indices, outputs)
+  let active_count_correct =
+    updated_group.active_member_count == group.active_member_count - ics_count
+
   and {
     borrower_present?,
+    spent_set_complete?,
     group_round_incremented?,
     group_output_valid?,
+    active_count_correct?,
     borrower_payout_valid?,
     per_input_valid?,
   }
