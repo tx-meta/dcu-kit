@@ -584,16 +584,14 @@ pub fn validate_exit_treasury(
   let Transaction { inputs, outputs, mint, .. } = tx
 
   // [spec ExitGroup 1]: datum must be TreasuryState
-  expect  
+  expect
       TreasuryState {
         member_reference_tokenname,
         group_reference_tokenname,
+        rounds_paid,
         ..
       }
     = datum
-
-  // Get current time
-  let current_time = get_lower_bound(tx)
 
   // [spec ExitGroup 3]: group spending input with GroupDatum
   expect Some(group_input) = list.at(inputs, group_ref_input_index)
@@ -620,12 +618,15 @@ pub fn validate_exit_treasury(
     account_policy_id,
   )
 
-  // Determine exit branch:
-  //   pre_cycle  (current_time < start_time)           → free exit, token burned
-  //   in_cycle   (active && past start && pre-maturity) → penalty exit, PenaltyState
-  //   post_cycle (past maturity || inactive)            → free exit, token burned
-  let maturity_time = group.start_time + group.num_rounds * group.interval_length
-  let is_early_exit = group.is_active && group.start_time <= current_time && current_time < maturity_time
+  // [spec ExitGroup D4]: exit branch is rounds_paid-anchored (continuous model — no wall-clock
+  // maturity, since a group cycles indefinitely):
+  //   pre-start (!is_started) or inactive                          → free exit, token burned
+  //   completed a whole cycle (rounds_paid > 0 && % num_rounds==0)  → free exit, token burned
+  //   otherwise (mid-cycle, active, started)                       → penalty exit, PenaltyState
+  // The is_started guard short-circuits before the modulo so pre-start (num_rounds == 0) never /0.
+  let completed_full_cycle =
+    group.is_started && rounds_paid > 0 && rounds_paid % group.num_rounds == 0
+  let is_early_exit = group.is_active && group.is_started && !completed_full_cycle
 
   // [spec ExitGroup 3]: group output — member_count decrements on BOTH paths
   expect Some(group_output_utxo) = list.at(outputs, group_output_index)

@@ -367,6 +367,35 @@ fn test_group_input_with_member_count(member_count: Int) -> Input {
   }
 }
 
+// Started group input (is_started, num_rounds = 3) — for exit tests where the penalty/free
+// branch is decided by rounds_paid % num_rounds (D4). A member with rounds_paid not a positive
+// multiple of num_rounds is mid-cycle → penalty path.
+fn test_started_group_input(member_count: Int) -> Input {
+  let gp = group_policy()
+  let datum = cip68_with_group(
+    GroupDatum {
+      ..test_group_datum(),
+      member_count,
+      active_member_count: member_count,
+      is_started: True,
+    },
+  )
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  Input {
+    output_reference: OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value,
+      datum: InlineDatum(datum),
+      reference_script: None,
+    },
+  }
+}
+
 // Group reference input with a custom collateral_rounds (FullUpfront / partial tests).
 fn group_input_collateral(cr: Int) -> Input {
   let gp = group_policy()
@@ -2375,26 +2404,9 @@ test distribute_round__rejects_healthy_member_referenced() fail {
 // Penalty output holds ≥ penalty_fee; member_count decrements immediately.
 test exit_group__accepts_early_exit_with_penalty() {
   let tp = treasury_policy()
-  let gp = group_policy()
 
-  let current_time = 1500
-  let active_group_datum = GroupDatum { ..test_group_datum(), member_count: 1 }
-  let group_input = Input {
-    output_reference: OutputReference {
-      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
-      output_index: 0,
-    },
-    output: Output {
-      address: Address {
-        payment_credential: Script(gp),
-        stake_credential: None,
-      },
-      value: assets.from_lovelace(2_000_000)
-        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-      datum: InlineDatum(cip68_with_group(active_group_datum)),
-      reference_script: None,
-    },
-  }
+  // Started group; member is mid-cycle (rounds_paid 0, not a completed cycle) → penalty path.
+  let group_input = test_started_group_input(1)
   let member_input = test_member_input()
 
   let datum = test_treasury_state(0)
@@ -2420,7 +2432,7 @@ test exit_group__accepts_early_exit_with_penalty() {
     ..transaction.placeholder,
     inputs: [group_input, member_input],
     outputs: [penalty_output, group_out],
-    validity_range: interval.after(current_time),
+    validity_range: interval.after(0),
   }
 
   validate_exit_treasury(
@@ -2476,6 +2488,41 @@ test exit_group__accepts_mature_exit_with_burn() {
     outputs: [group_out],
     mint,
     validity_range: interval.after(500),
+  }
+
+  validate_exit_treasury(
+    tp,
+    account_policy(),
+    group_policy(),
+    0,
+    0,
+    1,
+    0,
+    datum,
+    tx,
+  )
+}
+
+// D4 free exit: an ACTIVE, STARTED group where the member has completed a whole cycle
+// (rounds_paid == num_rounds, so rounds_paid % num_rounds == 0) → free exit via burn, no
+// penalty. This is the continuous-model "finish your cycle, leave clean" path.
+test exit_group__accepts_free_exit_after_full_cycle() {
+  let tp = treasury_policy()
+
+  // num_rounds == 3 (test_group_datum); rounds_paid == 3 → completed a full cycle.
+  let group_input = test_started_group_input(1)
+  let member_input = test_member_input()
+  let datum = build_treasury_state(0, group_ref_tn(), 3)
+
+  let mint = assets.from_asset(tp, member_tn(), -1)
+  let group_out = test_group_output(0)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, member_input],
+    outputs: [group_out],
+    mint,
+    validity_range: interval.after(0),
   }
 
   validate_exit_treasury(
@@ -2688,8 +2735,8 @@ test exit_group__rejects_early_exit_missing_penalty_fee() {
 test exit_group__accepts_member_reclaims_refund() {
   let tp = treasury_policy()
 
-  let current_time = 1500
-  let group_input = test_group_input_with_member_count(1)
+  // Started group, member mid-cycle (rounds_paid 0) → penalty path.
+  let group_input = test_started_group_input(1)
   let member_input = test_member_input()
   let datum = test_treasury_state(0)
 
@@ -2713,7 +2760,7 @@ test exit_group__accepts_member_reclaims_refund() {
     ..transaction.placeholder,
     inputs: [group_input, member_input],
     outputs: [penalty_output, group_out],
-    validity_range: interval.after(current_time),
+    validity_range: interval.after(0),
   }
 
   validate_exit_treasury(
@@ -2797,27 +2844,10 @@ test exit_group__accepts_pre_cycle_exit_without_penalty() {
 // In-cycle burn attempt: is_early_exit = True but no penalty output — expect PenaltyState crashes
 test exit_group__rejects_in_cycle_burn_without_penalty() fail {
   let tp = treasury_policy()
-  let gp = group_policy()
 
-  let current_time = 1500
-  let active_group_datum = GroupDatum { ..test_group_datum(), member_count: 1 }
-  let group_input = Input {
-    output_reference: OutputReference {
-      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
-      output_index: 0,
-    },
-    output: Output {
-      address: Address {
-        payment_credential: Script(gp),
-        stake_credential: None,
-      },
-      value: assets.from_lovelace(2_000_000)
-        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-      datum: InlineDatum(cip68_with_group(active_group_datum)),
-      reference_script: None,
-    },
-  }
-
+  // Started group, member mid-cycle (rounds_paid 0) → penalty required; burning without a
+  // penalty output must be rejected.
+  let group_input = test_started_group_input(1)
   let member_input = test_member_input()
   let datum = test_treasury_state(0)
 
@@ -2831,7 +2861,7 @@ test exit_group__rejects_in_cycle_burn_without_penalty() fail {
     inputs: [group_input, member_input],
     outputs: [group_out],
     mint,
-    validity_range: interval.after(current_time),
+    validity_range: interval.after(0),
   }
 
   validate_exit_treasury(
