@@ -31,7 +31,6 @@ describe("createDcuSession", () => {
       "contribute",
       "updatePayoutCredential",
       "extendGraceWindow",
-      "nextCycle",
       "claimPayout",
     ] as const;
     for (const m of methods) expect(typeof session[m]).toBe("function");

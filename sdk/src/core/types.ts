@@ -107,8 +107,15 @@ export const GroupDatumSchema = Data.Object({
   num_rounds: Data.Integer(),
   /** Maximum number of members allowed. Recommended ≤ 30 to stay within tx execution limits. */
   max_members: Data.Integer(),
-  /** Current active member count. Incremented by `joinGroup`, decremented by `exitGroup`. */
+  /** Total members in the group (the membership registry size). +1 join, -1 exit/terminate. */
   member_count: Data.Integer(),
+  /**
+   * Cached count of members currently in `TreasuryState` (contributing). Distribute reads it
+   * in O(1) for the pro-rata pot. 0 at creation; set to `member_count` by `startGroup`; +1 on
+   * join and contribute-recovery; -1 on exit and per ICS transition in distribute (terminate
+   * of a defaulter leaves it unchanged — they already left the active set at ICS).
+   */
+  active_member_count: Data.Integer(),
   /** False once deactivated by `updateGroup`. Deactivation is one-way — cannot be reversed. */
   is_active: Data.Boolean(),
   /**
@@ -229,11 +236,14 @@ export const GroupSpendRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    NextCycle: Data.Object({
+    // Re-admits a recovering member to the active set (active_member_count + 1). Spent
+    // atomically with the treasury Contribute recovery (DefaultState -> TreasuryState).
+    Recover: Data.Object({
       group_ref_token_name: Data.Bytes(),
-      admin_input_index: Data.Integer(),
       group_input_index: Data.Integer(),
       group_output_index: Data.Integer(),
+      treasury_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
     }),
   }),
 ]);
@@ -343,13 +353,6 @@ export const TreasuryRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    // Withdraw-zero coupling (see DistributeRound): heavy reset validation runs once in the
-    // `withdraw` handler (NextCycleWithdraw); each spend asserts that withdrawal is present.
-    NextCycle: Data.Object({
-      withdrawal_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
     // Pull mode: member withdraws their earmarked payout (claimable_balance).
     ClaimPayout: Data.Object({
       group_ref_input_index: Data.Integer(),
@@ -377,29 +380,20 @@ export const TreasuryRedeemer =
 /**
  * Treasury withdraw-validator redeemer (the withdraw-zero coupling). Carried by the 0-ADA
  * reward withdrawal from the treasury's own stake credential; the heavy round validation
- * runs once here instead of per spend input. Variant order MUST match the Aiken
- * `TreasuryWithdrawRedeemer` enum (DistributeWithdraw = 0, NextCycleWithdraw = 1).
+ * runs once here instead of per spend input. DistributeWithdraw is the only constructor
+ * (NextCycleWithdraw was removed with the continuous-round model), so this is a single-
+ * constructor type — encoded as `Constr(0, fields)`, i.e. `Data.Object` (NOT a `Data.Enum`,
+ * which Lucid Evolution cannot cast when it has only one variant). Field order must match the
+ * Aiken `DistributeWithdraw` constructor exactly.
  */
-export const TreasuryWithdrawRedeemerSchema = Data.Enum([
-  Data.Object({
-    DistributeWithdraw: Data.Object({
-      round_number: Data.Integer(),
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      treasury_input_indices: Data.Array(Data.Integer()),
-      treasury_output_indices: Data.Array(Data.Integer()),
-      borrower_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    NextCycleWithdraw: Data.Object({
-      group_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      treasury_input_indices: Data.Array(Data.Integer()),
-      treasury_output_indices: Data.Array(Data.Integer()),
-    }),
-  }),
-]);
+export const TreasuryWithdrawRedeemerSchema = Data.Object({
+  round_number: Data.Integer(),
+  group_ref_input_index: Data.Integer(),
+  group_output_index: Data.Integer(),
+  treasury_input_indices: Data.Array(Data.Integer()),
+  treasury_output_indices: Data.Array(Data.Integer()),
+  borrower_output_index: Data.Integer(),
+});
 
 export type TreasuryWithdrawRedeemer = Data.Static<
   typeof TreasuryWithdrawRedeemerSchema

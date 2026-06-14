@@ -219,18 +219,24 @@ export const unsignedExitGroupTxProgram = (
     const rawNow =
       currentTime !== undefined ? currentTime : BigInt(Date.now()) - 120_000n;
     const now = currentTime !== undefined ? rawNow : rawNow - (rawNow % 1000n);
-    const maturityTime =
-      groupDatum.start_time +
-      groupDatum.num_rounds * groupDatum.interval_length;
+    // [D4] Continuous model: free vs penalty is rounds_paid-anchored, not wall-clock. Free exit
+    // (burn) when inactive, pre-start, or a whole cycle completed (rounds_paid > 0 &&
+    // rounds_paid % num_rounds == 0); penalty (PenaltyState) when mid-cycle. The is_started
+    // guard short-circuits before the modulo so pre-start (num_rounds == 0) never divides by 0.
+    const roundsPaid = treasuryDatum.TreasuryState.rounds_paid;
+    const completedFullCycle =
+      groupDatum.is_started &&
+      roundsPaid > 0n &&
+      roundsPaid % groupDatum.num_rounds === 0n;
     const isEarlyExit =
-      groupDatum.is_active &&
-      groupDatum.start_time <= now &&
-      now < maturityTime;
+      groupDatum.is_active && groupDatum.is_started && !completedFullCycle;
 
-    // Updated Group datum: decrement member count and remove member from registry
+    // Updated Group datum: decrement member count and remove member from registry.
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       member_count: groupDatum.member_count - 1n,
+      // ExitGroup is TreasuryState-only → the leaver was active, so the active set shrinks by 1.
+      active_member_count: groupDatum.active_member_count - 1n,
       member_token_names: groupDatum.member_token_names.filter(
         (n) => n !== memberRefName,
       ),

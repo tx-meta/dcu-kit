@@ -111,15 +111,10 @@ export const unsignedDistributePayoutTxProgram = (
       );
     }
 
+    // round_number is monotonic and unbounded — a cycle is just num_rounds rounds and the
+    // rotation wraps via roundNumber % num_rounds. There is no per-cycle cap (NextCycle is gone):
+    // distribute simply keeps running, so the "next cycle" needs no separate trigger.
     const roundNumber = groupDatum.last_distributed_round + 1n;
-    if (roundNumber >= groupDatum.num_rounds) {
-      return yield* Effect.fail(
-        new TransactionBuildError({
-          operation: "distributeRound",
-          error: `All ${groupDatum.num_rounds} rounds have been distributed (rounds 0–${groupDatum.num_rounds - 1n} complete). Group is mature — members can now call exit-group.`,
-        }),
-      );
-    }
 
     const currentSlot = Number(roundNumber % groupDatum.num_rounds);
 
@@ -172,22 +167,10 @@ export const unsignedDistributePayoutTxProgram = (
       }
     }
 
-    // Defaulters (DefaultState / PenaltyState) for this group must be presented as
-    // reference inputs so the validator's complete-member-set check passes. They do not
-    // contribute, so they are excluded from memberStates and the pro-rata payout.
-    const defaulterUtxos: UTxO[] = [];
-    for (const state of parsedStates) {
-      if (!state) continue;
-      const d = state.datum;
-      const grt =
-        "DefaultState" in d
-          ? d.DefaultState.group_reference_tokenname
-          : "PenaltyState" in d
-            ? d.PenaltyState.group_reference_tokenname
-            : undefined;
-      if (grt === groupRefName) defaulterUtxos.push(state.utxo);
-    }
-
+    // Continuous model: defaulters are NOT referenced. The pot uses the cached
+    // active_member_count and C4 is enforced by spent_set_complete (the spent set size must
+    // equal active_member_count) + the per-input group-link check — so a defaulter simply sits
+    // in its DefaultState UTxO, excluded, and the round proceeds around it.
     if (memberStates.length === 0) {
       return yield* Effect.fail(
         new TransactionBuildError({
@@ -264,9 +247,47 @@ export const unsignedDistributePayoutTxProgram = (
       hash: borrowerPaymentCred,
     });
 
+    // Mode + contribution-asset locals (also used when building treasury outputs below).
+    const isPull = groupDatum.payout_mode === "Pull";
+    const isAdaContribution = groupDatum.contribution_fee_policyid === "";
+    const contributionUnit = isAdaContribution
+      ? "lovelace"
+      : toUnit(
+          groupDatum.contribution_fee_policyid,
+          groupDatum.contribution_fee_assetname,
+        );
+    // ICS suppression at every cycle boundary (last round of any cycle) — generalises the old
+    // single-cycle last round so a member drained at a boundary stays TreasuryState and can exit.
+    const isCycleBoundary = (roundNumber + 1n) % groupDatum.num_rounds === 0n;
+
+    // Count members transitioning to DefaultState this round so the group output can decrement
+    // active_member_count (mirrors the validator's count_default_outputs). Uses the same
+    // per-member ICS test as the treasury output construction below.
+    let icsCount = 0n;
+    for (const state of memberStates) {
+      if (!("TreasuryState" in state.datum)) continue;
+      const ts = state.datum.TreasuryState;
+      const isBorrowerTreasury =
+        isPull && Number(ts.assigned_slot) === effectiveSlot;
+      const inBal = state.utxo.assets[contributionUnit] ?? 0n;
+      const outBal = isBorrowerTreasury
+        ? inBal - groupDatum.contribution_fee + payoutAmount
+        : inBal - groupDatum.contribution_fee;
+      if (
+        !isBorrowerTreasury &&
+        contributableBalance(outBal, isAdaContribution) <
+          groupDatum.contribution_fee &&
+        !isCycleBoundary
+      ) {
+        icsCount += 1n;
+      }
+    }
+
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       last_distributed_round: roundNumber,
+      // Members who transitioned to ICS this round leave the active set.
+      active_member_count: groupDatum.active_member_count - icsCount,
     };
 
     // Output layout: [0] group, [1..n] treasury outputs, [n+1] borrower
@@ -307,14 +328,12 @@ export const unsignedDistributePayoutTxProgram = (
         const treasuryOutIndices = treasuryIndices.map((_, i) => BigInt(i + 1));
         return Data.to(
           {
-            DistributeWithdraw: {
-              round_number: roundNumber,
-              group_ref_input_index: groupIdx,
-              group_output_index: 0n,
-              treasury_input_indices: treasuryIndices,
-              treasury_output_indices: treasuryOutIndices,
-              borrower_output_index: borrowerOutputIndex,
-            },
+            round_number: roundNumber,
+            group_ref_input_index: groupIdx,
+            group_output_index: 0n,
+            treasury_input_indices: treasuryIndices,
+            treasury_output_indices: treasuryOutIndices,
+            borrower_output_index: borrowerOutputIndex,
           },
           TreasuryWithdrawRedeemer,
         );
@@ -364,21 +383,7 @@ export const unsignedDistributePayoutTxProgram = (
       groupUtxo.assets,
     );
 
-    const isLastRound = roundNumber + 1n === groupDatum.num_rounds;
-
-    // Pull mode: the pot is earmarked into the borrower's OWN treasury (claimable_balance)
-    // instead of paid to a wallet. Push mode keeps the direct wallet output.
-    const isPull = groupDatum.payout_mode === "Pull";
-
-    // The contribution asset may be ADA (lovelace) or any native token.
-    const isAdaContribution = groupDatum.contribution_fee_policyid === "";
-    const contributionUnit = isAdaContribution
-      ? "lovelace"
-      : toUnit(
-          groupDatum.contribution_fee_policyid,
-          groupDatum.contribution_fee_assetname,
-        );
-
+    // isPull / isAdaContribution / contributionUnit / isCycleBoundary computed above.
     const withTreasuryOutputs = memberStates.reduce((tx, state) => {
       if (!("TreasuryState" in state.datum)) return tx;
       const ts = state.datum.TreasuryState;
@@ -407,7 +412,7 @@ export const unsignedDistributePayoutTxProgram = (
       const transitionToIcs =
         !isBorrowerTreasury &&
         outputContributable < groupDatum.contribution_fee &&
-        !isLastRound;
+        !isCycleBoundary;
 
       const updatedDatum: TreasuryDatum = transitionToIcs
         ? {
@@ -455,17 +460,11 @@ export const unsignedDistributePayoutTxProgram = (
       ? { lovelace: payoutAmount }
       : { lovelace: 2_000_000n, [contributionUnit]: payoutAmount };
 
-    // Present defaulters as reference inputs so the complete-member-set check is satisfied.
-    const withRefs =
-      defaulterUtxos.length > 0
-        ? withTreasuryOutputs.readFrom(defaulterUtxos)
-        : withTreasuryOutputs;
-
     // Push: pay the pot to the borrower's wallet. Pull: the pot was earmarked into the
     // borrower's own treasury above, so there is no wallet output.
     const withBorrower = isPull
-      ? withRefs
-      : withRefs.pay.ToAddress(borrowerAddress, borrowerAssets);
+      ? withTreasuryOutputs
+      : withTreasuryOutputs.pay.ToAddress(borrowerAddress, borrowerAssets);
 
     const tx = yield* withBorrower
       .validFrom(Number(validFrom))

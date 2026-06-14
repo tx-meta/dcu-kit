@@ -13,6 +13,5 @@ export * from "./terminateDefault.js";
 export * from "./contribute.js";
 export * from "./updatePayoutCredential.js";
 export * from "./extendGraceWindow.js";
-export * from "./nextCycle.js";
 export * from "./claimPayout.js";
 export * from "./programWrapper.js";

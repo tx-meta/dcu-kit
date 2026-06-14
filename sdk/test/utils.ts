@@ -71,6 +71,8 @@ export const createDefaultGroupDatum = (
   // Within the protocol ceiling (max_group_members = 20). Was 30 before the scale cap.
   max_members: 20n,
   member_count: 0n,
+  // 0 at creation; startGroup sets it to member_count. Active-cycle tests override explicitly.
+  active_member_count: 0n,
   is_active: true,
   is_started: false,
   last_distributed_round: -1n,

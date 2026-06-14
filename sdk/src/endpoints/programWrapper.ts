@@ -51,7 +51,6 @@ import {
   unsignedExtendGraceWindowTxProgram,
   ExtendGraceWindowConfig,
 } from "./extendGraceWindow.js";
-import { unsignedNextCycleTxProgram, NextCycleConfig } from "./nextCycle.js";
 import {
   unsignedClaimPayoutTxProgram,
   ClaimPayoutConfig,
@@ -143,9 +142,6 @@ export const createDcuSdk = (settingsPolicy: string) => {
     ) =>
       makeReturn(unsignedExtendGraceWindowTxProgram(protocol, lucid, config)),
 
-    nextCycle: (lucid: LucidEvolution, config: NextCycleConfig) =>
-      makeReturn(unsignedNextCycleTxProgram(protocol, lucid, config)),
-
     claimPayout: (lucid: LucidEvolution, config: ClaimPayoutConfig) =>
       makeReturn(unsignedClaimPayoutTxProgram(protocol, lucid, config)),
   };
@@ -213,7 +209,6 @@ export const createDcuSession = (
       sdk.updatePayoutCredential(lucid, config),
     extendGraceWindow: (config: ExtendGraceWindowConfig) =>
       sdk.extendGraceWindow(lucid, config),
-    nextCycle: (config: NextCycleConfig) => sdk.nextCycle(lucid, config),
     claimPayout: (config: ClaimPayoutConfig) => sdk.claimPayout(lucid, config),
   };
 };

@@ -86,6 +86,8 @@ export const unsignedStartGroupTxProgram = (
       ...groupDatum,
       is_started: true,
       num_rounds: groupDatum.member_count,
+      // Seal the active set = full membership at start.
+      active_member_count: groupDatum.member_count,
       start_time: now,
     };
 

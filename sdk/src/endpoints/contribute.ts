@@ -7,6 +7,8 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
+  GroupDatum,
+  GroupSpendRedeemer,
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
@@ -27,6 +29,7 @@ import {
   resolveUtxoByUnit,
   referenceInputIndex,
   contributableBalance,
+  buildGroupCip68Datum,
 } from "../core/utils/index.js";
 
 /**
@@ -57,6 +60,7 @@ export const unsignedContributeTxProgram = (
   Effect.gen(function* () {
     const {
       treasuryValidator,
+      groupValidator,
       treasuryPolicyId,
       accountPolicyId,
       groupPolicyId,
@@ -156,9 +160,104 @@ export const unsignedContributeTxProgram = (
       };
     }
 
-    // Reference inputs are canonically ordered (by txHash, then output index) in the
-    // final transaction. Since P5 added the settings UTxO as a second reference input,
-    // the group is no longer guaranteed to be at index 0 — compute its real position.
+    const groupRefName = assetNameLabels.prefix100 + groupTokenSuffix;
+
+    if ("DefaultState" in treasuryDatum) {
+      // RECOVERY (DefaultState → TreasuryState): the group is SPENT with the Recover redeemer so
+      // it can bump active_member_count (which lives in the group datum). Output layout:
+      // [0] group (active_member_count + 1), [1] treasury (recovered TreasuryState).
+      const groupAddress = yield* getScriptAddress(
+        lucid,
+        groupValidator.spendGroup,
+      );
+      const updatedGroupDatum: GroupDatum = {
+        ...groupDatum,
+        active_member_count: groupDatum.active_member_count + 1n,
+      };
+
+      // Treasury Contribute redeemer — on the recovery path the group is a SPENDING input, so
+      // group_ref_input_index points into tx.inputs.
+      const contributeRedeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (idx: bigint[]) =>
+          Data.to(
+            {
+              Contribute: {
+                group_ref_input_index: idx[2], // group (spending input)
+                member_input_index: idx[0], // account
+                treasury_input_index: idx[1], // treasury
+                treasury_output_index: 1n,
+              },
+            },
+            TreasuryRedeemer,
+          ),
+        inputs: [accountUtxo, treasuryUtxo, groupUtxo],
+      };
+      // Group Recover redeemer — verifies the DefaultState → TreasuryState transition and bumps
+      // active_member_count + 1.
+      const recoverRedeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (idx: bigint[]) =>
+          Data.to(
+            {
+              Recover: {
+                group_ref_token_name: groupRefName,
+                group_input_index: idx[0], // group
+                group_output_index: 0n,
+                treasury_input_index: idx[1], // treasury
+                treasury_output_index: 1n,
+              },
+            },
+            GroupSpendRedeemer,
+          ),
+        inputs: [groupUtxo, treasuryUtxo],
+      };
+
+      const tx = yield* lucid
+        .newTx()
+        .collectFrom([accountUtxo])
+        .collectFrom([treasuryUtxo], contributeRedeemer)
+        .collectFrom([groupUtxo], recoverRedeemer)
+        .addSigner(address)
+        .pay.ToContract(
+          groupAddress,
+          {
+            kind: "inline",
+            value: buildGroupCip68Datum(
+              groupCip68.metadata,
+              groupCip68.version,
+              updatedGroupDatum,
+            ),
+          },
+          groupUtxo.assets,
+        )
+        .pay.ToContract(
+          treasuryAddress,
+          { kind: "inline", value: Data.to(outputDatum, TreasuryDatum) },
+          outputAssets,
+        )
+        .attach.SpendingValidator(treasuryValidator.spendTreasury)
+        .attach.SpendingValidator(groupValidator.spendGroup)
+        .readFrom([settingsUtxo])
+        .completeProgram(
+          lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
+        )
+        .pipe(
+          Effect.mapError(
+            (e) =>
+              new TransactionBuildError({
+                operation: "contribute:recovery",
+                error: String(e),
+              }),
+          ),
+        );
+
+      return tx;
+    }
+
+    // TOP-UP (TreasuryState): the group is a read-only reference input. Reference inputs are
+    // canonically ordered (by txHash, then output index); compute the group's real position
+    // since the settings UTxO is also a reference input.
     const groupRefInputIndex = referenceInputIndex(
       [groupUtxo, settingsUtxo],
       groupUtxo,

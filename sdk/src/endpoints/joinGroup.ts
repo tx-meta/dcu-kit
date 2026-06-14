@@ -140,6 +140,8 @@ export const unsignedJoinGroupTxProgram = (
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       member_count: groupDatum.member_count + 1n,
+      // New member joins in TreasuryState → active set grows by 1.
+      active_member_count: groupDatum.active_member_count + 1n,
       member_token_names: [accountAssetName, ...groupDatum.member_token_names],
     };
     const treasuryMemberToken = toUnit(treasuryPolicyId, accountAssetName);
