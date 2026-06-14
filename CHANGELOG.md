@@ -6,21 +6,44 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-06-15
+
+Post-audit hardening, scale work, and licensing. Builds on 0.2.6; no settings/deploy-flow
+change, but the treasury validator hash shifts (see Security) so **`deploy-scripts` is
+required** before use.
+
 ### Added
 - `getGroupMetadata(source)` / `getGroupName(source)` — decode a group's CIP-68 metadata
   to a plain `Record<string, string>` (or read `metadata["name"]`) without hand-rolling
   the `fromText`/`toText` plumbing. Accept both `GroupCip68Datum` and `GroupCip68Parts`.
+- `getGroupHistory` hardening — request timeout, retry with backoff, bounded concurrency,
+  and `tx_index` ordering for deterministic lifecycle reconstruction.
+- `deploy-scripts` now registers the treasury stake credential (required for the
+  withdraw-zero round handlers to validate on-chain).
 
 ### Changed
 - **Breaking:** `createAccount` / `createGroup` resolve to `{ tx, accountTokenSuffix }` /
   `{ tx, groupTokenSuffix }` instead of a bare `TxSignBuilder`, surfacing the permanent
   CIP-68 token suffix so consumers stop re-deriving it from output 0.
-  See [MIGRATION.md](./MIGRATION.md#unreleased--next-027).
+  See [MIGRATION.md](./MIGRATION.md#026--027).
+- Package renamed to `@tx-meta/dcu-kit` (was `@dcu/dcu-sdk`).
+- `UpdateGroup` freeze is now an explicit allowlist of mutable fields (defence-in-depth);
+  blueprint recompiled to match.
 
 ### Security
-- **Breaking (hash):** treasury `DistributeRound` now conserves the treasury UTxO's
-  lovelace for native-token groups, closing a permissionless ADA-reserve skim. Treasury
-  hash `982d5c8d → 0c7d8087` — **`deploy-scripts` required**.
+- treasury `DistributeRound` now conserves the treasury UTxO's lovelace for native-token
+  groups, closing a permissionless ADA-reserve skim.
+- Withdraw-zero round handlers + an on-chain `max_members` cap (20) bound per-tx CPU at
+  scale. AIK-4 (treasury stake credential) and AIK-1/2 (distribute scale) documented as
+  known-latent.
+- **Breaking (hash):** all four validators recompiled this release —
+  treasury `982d5c8d → 38b14e40`, group `24f046d5 → 54d48e2f`,
+  account `e32328b8 → d80e2e5a`, settings `0dd2c77a → 07a7cd9d`
+  (`always_fails` unchanged). **`initialize-settings` + `deploy-scripts` required.**
+
+### Licensing
+- Toolkit licensed under BUSL-1.1 (converts to Apache-2.0); added `SECURITY.md`
+  vulnerability-reporting policy.
 
 ## [0.2.6]
 
@@ -69,7 +92,8 @@ See [MIGRATION.md](./MIGRATION.md#024--025) for before/after snippets.
 
 - Baseline for the migration notes above.
 
-[Unreleased]: https://github.com/tx-meta/dcu-kit/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/tx-meta/dcu-kit/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/tx-meta/dcu-kit/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/tx-meta/dcu-kit/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/tx-meta/dcu-kit/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/tx-meta/dcu-kit/releases/tag/v0.2.4

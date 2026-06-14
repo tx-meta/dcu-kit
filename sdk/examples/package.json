@@ -35,8 +35,8 @@
     "inspect-tx": "pnpm run build && node dist/inspect-tx.js"
   },
   "dependencies": {
-    "@tx-meta/dcu-kit": "file:../dcu-kit-0.2.6.tgz",
     "@lucid-evolution/lucid": "0.4.31",
+    "@tx-meta/dcu-kit": "file:../dcu-kit-0.2.7.tgz",
     "dotenv": "^16.4.7",
     "effect": "3.21.2"
   },

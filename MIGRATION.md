@@ -8,7 +8,7 @@ cryptic script errors. Validator hashes for each release are tabled at the botto
 
 ---
 
-## Unreleased → next (`0.2.7`)
+## `0.2.6` → `0.2.7`  ⭐ current release
 
 ### `createAccount` / `createGroup` now resolve to an object
 
@@ -40,13 +40,24 @@ or the `GroupCip68Parts` from `parseGroupCip68Datum`), so you no longer hand-rol
 
 ### Validator hash change → redeploy
 
-The treasury validator gained an ADA-reserve conservation check for native-token groups
-(closes a permissionless distribute-round skim). Treasury hash
-`982d5c8d → 0c7d8087`; group and account unchanged. **Run `deploy-scripts` before use.**
+**All four validators recompiled this release** (ADA-reserve conservation, withdraw-zero
+round handlers, `UpdateGroup` freeze allowlist, and an Aiken toolchain bump together shift
+every hash):
+
+| Validator | v0.2.6 | v0.2.7 |
+|---|---|---|
+| treasury | `982d5c8dc0872f93` | `38b14e406a21f44e` |
+| group | `24f046d5b86ff58b` | `54d48e2f3b03eb98` |
+| account | `e32328b8dd296c53` | `d80e2e5a82cb60b3` |
+| settings | `0dd2c77a083ca729` | `07a7cd9d64681a33` |
+
+The settings policy ID changes, so **re-run `initialize-settings`** (it produces the new
+`createDcuSdk(settingsPolicy)` argument) **then `deploy-scripts`**, and refresh any stored
+reference-script outRefs.
 
 ---
 
-## `0.2.5` → `0.2.6`  ⭐ current release
+## `0.2.5` → `0.2.6`
 
 The audit-hardened ROSCA release. This is the migration most integrators need: it makes
 the SDK **settings-bound**, recompiles the treasury validator, and retires `DeferRound`.
@@ -172,11 +183,12 @@ All three protocol validators recompiled (`always_fails` unchanged). Re-run
 Blueprint hashes (first 16 bytes). A change in any row means that release requires a
 redeploy of that validator's reference script.
 
-| Validator | v0.2.4 | v0.2.5 | v0.2.6 | 0.2.7 (unreleased) |
+| Validator | v0.2.4 | v0.2.5 | v0.2.6 | v0.2.7 |
 |---|---|---|---|---|
-| treasury | `fc500036ad9ebea5` | `d1bf38fb921ec64c` | `982d5c8dc0872f93` | `0c7d8087d8c03bf2` |
-| group | `140698782799f181` | `d19e192b1d005dd8` | `24f046d5b86ff581` | `24f046d5b86ff581` |
-| account | `f0d4bf83e11fced2` | `394027d4084e26f5` | `e32328b8dd296c53` | `e32328b8dd296c53` |
+| treasury | `fc500036ad9ebea5` | `d1bf38fb921ec64c` | `982d5c8dc0872f93` | `38b14e406a21f44e` |
+| group | `140698782799f181` | `d19e192b1d005dd8` | `24f046d5b86ff58b` | `54d48e2f3b03eb98` |
+| account | `f0d4bf83e11fced2` | `394027d4084e26f5` | `e32328b8dd296c53` | `d80e2e5a82cb60b3` |
+| settings | — | — | `0dd2c77a083ca729` | `07a7cd9d64681a33` |
 | always_fails | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` |
 
 From v0.2.6 the group/treasury policy IDs are additionally parameterized by the
