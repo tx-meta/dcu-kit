@@ -2,6 +2,7 @@ import {
   Data,
   LucidEvolution,
   validatorToAddress,
+  validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
 import { Effect, Schedule } from "effect";
 import {
@@ -31,6 +32,14 @@ export type DeployScriptsResult = {
   groupRef: ScriptRefOutRef;
   /** The alwaysFails script address both UTxOs were sent to. */
   deployAddress: string;
+  /**
+   * The treasury validator's reward (stake) address, registered by this deploy.
+   * The withdraw-zero round handlers (DistributeRound / NextCycle) fire a 0-ADA
+   * withdrawal from this credential; the ledger rejects a withdrawal from an
+   * unregistered stake credential, so registration is a one-time prerequisite for
+   * every distribute/next-cycle on this deployment.
+   */
+  treasuryRewardAddress: string;
 };
 
 /**
@@ -71,9 +80,13 @@ const awaitWalletIndexed = (
  * Reference scripts deposited here are permanently on-chain and safe to use
  * as `.readFrom()` inputs for the lifetime of the deployment.
  *
- * **Why two transactions?**
- * Each compiled PlutusV3 validator is ~8 KB. Both together plus the tx
- * envelope exceed Cardano's 16,384-byte limit. One per tx stays well under.
+ * **Why three transactions?**
+ * Tx 1 + Tx 2 deposit the two reference scripts (~8 KB each — both together plus
+ * the tx envelope exceed Cardano's 16,384-byte limit, so one per tx). Tx 3
+ * registers the treasury stake credential, a one-time prerequisite for the
+ * withdraw-zero round handlers (see below). Re-running this function on an
+ * already-deployed protocol will fail at Tx 3 because the credential is already
+ * registered — registration is one-time per deployment.
  *
  * **Why poll between transactions?**
  * Blockfrost's wallet UTxO endpoint can lag behind the chain even after
@@ -191,9 +204,74 @@ export const deployScripts = (
         }),
     });
 
+    yield* Effect.tryPromise({
+      try: () => lucid.awaitTx(groupTxHash),
+      catch: (e) =>
+        new TransactionBuildError({
+          operation: "deployScripts:group:confirm",
+          error: String(e),
+        }),
+    });
+
+    // Poll until Blockfrost indexes Tx 2's change so Tx 3 coin-selects fresh UTxOs.
+    yield* awaitWalletIndexed(lucid, address, groupTxHash);
+
+    // --- Tx 3: register the treasury stake credential (one-time, withdraw-zero) ---
+    // The treasury validator is self-coupled (staking hash == spending hash == policy id).
+    // Its withdraw handler runs the heavy round logic once per tx, triggered by a 0-ADA
+    // reward withdrawal that each treasury spend asserts is present. A withdrawal from an
+    // unregistered stake credential is rejected by the ledger, so this registration must
+    // happen once before any DistributeRound / NextCycle on this deployment.
+    const treasuryRewardAddress = validatorToRewardAddress(
+      network,
+      treasuryValidator.spendTreasury,
+    );
+
+    const stakeRegTxBuilder = yield* lucid
+      .newTx()
+      .register.Stake(treasuryRewardAddress)
+      .addSigner(address)
+      .completeProgram()
+      .pipe(
+        Effect.mapError(
+          (e) =>
+            new TransactionBuildError({
+              operation: "deployScripts:stakeRegister:build",
+              error: String(e),
+            }),
+        ),
+      );
+
+    const stakeRegSigned = yield* Effect.tryPromise({
+      try: () => stakeRegTxBuilder.sign.withWallet().complete(),
+      catch: (e) =>
+        new TransactionBuildError({
+          operation: "deployScripts:stakeRegister:sign",
+          error: String(e),
+        }),
+    });
+    const stakeRegTxHash = yield* Effect.tryPromise({
+      try: () => stakeRegSigned.submit(),
+      catch: (e) =>
+        new TransactionBuildError({
+          operation: "deployScripts:stakeRegister:submit",
+          error: String(e),
+        }),
+    });
+
+    yield* Effect.tryPromise({
+      try: () => lucid.awaitTx(stakeRegTxHash),
+      catch: (e) =>
+        new TransactionBuildError({
+          operation: "deployScripts:stakeRegister:confirm",
+          error: String(e),
+        }),
+    });
+
     return {
       treasuryRef: { txHash: treasuryTxHash, outputIndex: 0 },
       groupRef: { txHash: groupTxHash, outputIndex: 0 },
       deployAddress,
+      treasuryRewardAddress,
     };
   });
