@@ -1,3 +1,4 @@
+use aiken/builtin
 use aiken/collection/list
 use aiken/interval
 use cardano/address.{Address, Script, VerificationKey}
@@ -10,7 +11,7 @@ use dcu/group.{GroupCip68Datum, GroupDatum, Pull, Push}
 use dcu/treasury.{
   DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
 }
-use dcu/treasury_utils.{min_ada_reserve}
+use dcu/treasury_utils.{count_active_members, min_ada_reserve}
 use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
   validate_contribute, validate_distribute_treasury, validate_exit_treasury,
@@ -4292,4 +4293,74 @@ test terminate_default__rejects_fake_group_script() fail {
     datum,
     tx,
   )
+}
+
+// ─── Scale benchmark: distribute cost driver ─────────────────────────────────
+// count_active_members is the dominant cost in distribute: O(N^2) per call (folds
+// N member names, each list.find over ~N inputs), and the treasury spend validator
+// runs ONCE PER treasury input (N times) → per-tx cost ~ N * O(N^2). These tests
+// report mem/cpu for a single count_active_members call at various N (via `aiken
+// check`); per-tx cost ≈ N * the reported figure. Building the N inputs is O(N),
+// negligible vs the O(N^2) call at these sizes, so the figure slightly OVERstates
+// the validator cost → conservative ceiling.
+
+fn bench_member_names(n: Int) -> List<assets.AssetName> {
+  list.map(list.range(0, n - 1), fn(i) { builtin.cons_bytearray(i, #"") })
+}
+
+fn bench_inputs(names: List<assets.AssetName>) -> List<Input> {
+  let tp = treasury_policy()
+  list.indexed_map(
+    names,
+    fn(i, name) {
+      test_treasury_input(
+        OutputReference {
+          transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+          output_index: i,
+        },
+        test_treasury_output(
+          build_treasury_state(i, group_ref_tn(), 0),
+          assets.from_lovelace(min_ada_reserve)
+            |> assets.merge(assets.from_asset(tp, name, 1)),
+        ),
+      )
+    },
+  )
+}
+
+fn bench_count(n: Int) -> Int {
+  let names = bench_member_names(n)
+  count_active_members(names, treasury_policy(), bench_inputs(names), [])
+}
+
+test bench_count_active_n10() {
+  bench_count(10) == 10
+}
+
+test bench_count_active_n20() {
+  bench_count(20) == 20
+}
+
+test bench_count_active_n30() {
+  bench_count(30) == 30
+}
+
+test bench_count_active_n40() {
+  bench_count(40) == 40
+}
+
+test bench_count_active_n5() {
+  bench_count(5) == 5
+}
+
+test bench_count_active_n6() {
+  bench_count(6) == 6
+}
+
+test bench_count_active_n7() {
+  bench_count(7) == 7
+}
+
+test bench_count_active_n8() {
+  bench_count(8) == 8
 }

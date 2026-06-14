@@ -185,6 +185,60 @@ const makeEmulatorContext = (seedAssets?: Record<string, bigint>) =>
     } as LucidContext;
   });
 
+// Benchmark helper: an emulator context with `memberCount` funded member wallets
+// (plus admin), exposed as `memberSeeds`. Used by the scale benchmark to build
+// N-member distribute rounds. maxTxSize defaults very high so transaction SIZE never
+// blocks the build — the benchmark measures EX-UNITS (mem/cpu), which are independent
+// of inline-vs-reference scripts and are the real per-tx constraint.
+export const makeEmulatorContextWithMembers = (
+  memberCount: number,
+  options?: { seedAssets?: Record<string, bigint>; maxTxSize?: number },
+) =>
+  Effect.gen(function* () {
+    const generate = () =>
+      generateEmulatorAccount({
+        lovelace: BigInt(10_000_000_000),
+        ...(options?.seedAssets ?? {}),
+      });
+
+    const admin = yield* Effect.sync(generate);
+    const members = yield* Effect.sync(() =>
+      Array.from({ length: memberCount }, generate),
+    );
+
+    const emulator = new Emulator([admin, ...members], {
+      ...PROTOCOL_PARAMETERS_DEFAULT,
+      maxTxSize: options?.maxTxSize ?? 5_000_000,
+    });
+
+    const lucid = yield* Effect.promise(() => Lucid(emulator, "Custom"));
+
+    const { protocol, settingsUnit } = yield* deployEmulatorSettings(
+      lucid,
+      emulator,
+      admin.seedPhrase,
+    );
+
+    return {
+      lucid,
+      users: {
+        admin: { seedPhrase: admin.seedPhrase, address: admin.address },
+        user1: {
+          seedPhrase: members[0]?.seedPhrase ?? admin.seedPhrase,
+          address: members[0]?.address,
+        },
+        user2: {
+          seedPhrase: members[1]?.seedPhrase ?? admin.seedPhrase,
+          address: members[1]?.address,
+        },
+      },
+      emulator,
+      protocol,
+      settingsUnit,
+      memberSeeds: members.map((m) => m.seedPhrase),
+    } as LucidContext & { memberSeeds: string[] };
+  });
+
 const makeMaestroContext = (network: OnChainNetwork) =>
   Effect.gen(function* () {
     const apiKey = process.env.MAESTRO_API_KEY;
