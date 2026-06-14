@@ -327,7 +327,7 @@ async function main(): Promise<void> {
     `  Size : ${GRN}${commas(sizeRemaining)} bytes remaining${RST}  ${DIM}(${(100 - sizePct).toFixed(1)}% free)${RST}`,
   );
 
-  // Scale measurement for distribute / next-cycle (WITHDRAW-ZERO model).
+  // Scale measurement for distribute (WITHDRAW-ZERO model).
   //
   // With withdraw-zero, the member-count-scaling cost lives in the SINGLE treasury
   // REWARD (withdrawal) redeemer — the per-member treasury SPEND redeemers are now O(1)

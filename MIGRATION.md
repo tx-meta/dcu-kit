@@ -8,7 +8,52 @@ cryptic script errors. Validator hashes for each release are tabled at the botto
 
 ---
 
-## `0.2.6` → `0.2.7`  ⭐ current release
+## `0.2.7` → `0.3.0`  ⭐ current release
+
+The **continuous round model**. The group cycles indefinitely; there is no per-cycle
+`NextCycle` transaction. Most integrators need three changes.
+
+### 1. `NextCycle` is gone
+
+Delete any `nextCycle` call and its scheduling. Distribute simply keeps running — a new
+cycle begins automatically when `round_number` crosses a multiple of `num_rounds`.
+
+```ts
+// Before — reset the group each cycle
+await sdk.nextCycle(lucid, config).unsafeRun();
+
+// After — nothing. Keep calling distribute each round; cycles roll over on their own.
+await sdk.distributePayout(lucid, config).unsafeRun();
+```
+
+### 2. `GroupDatum` gains `active_member_count`
+
+A new `Int` field caching the number of contributing members. It is `0` at creation, set to
+`member_count` by `startGroup`, and maintained by the protocol (+1 join/recover,
+−1 exit/terminate/ICS). Any code that constructs a `GroupDatum` must add the field; any code
+that reads the datum by position must account for it.
+
+### 3. Exit boundary is round-based, not time-based
+
+Free vs penalty exit now keys off whether the member has completed a whole cycle
+(`rounds_paid % num_rounds == 0`) instead of a wall-clock maturity time. No SDK call changes;
+the on-chain decision is just more robust across unlimited cycles.
+
+### 4. Validator hash change → redeploy
+
+| Validator | v0.2.7 | v0.3.0 |
+|---|---|---|
+| treasury | `38b14e406a21f44e` | `2023c6894336a168` |
+| group | `54d48e2f3b03eb98` | `3ddc716a5a1d7994` |
+
+account, settings, and `always_fails` are unchanged, so the settings policy ID is stable —
+**re-run `deploy-scripts`** (no need to re-`initialize-settings`) and refresh stored
+reference-script outRefs. This is an immutable-contract redesign: Preprod redeploy + full
+e2e + external audit gate mainnet.
+
+---
+
+## `0.2.6` → `0.2.7`
 
 ### `createAccount` / `createGroup` now resolve to an object
 
@@ -183,12 +228,12 @@ All three protocol validators recompiled (`always_fails` unchanged). Re-run
 Blueprint hashes (first 16 bytes). A change in any row means that release requires a
 redeploy of that validator's reference script.
 
-| Validator | v0.2.4 | v0.2.5 | v0.2.6 | v0.2.7 |
+| Validator | v0.2.5 | v0.2.6 | v0.2.7 | v0.3.0 |
 |---|---|---|---|---|
-| treasury | `fc500036ad9ebea5` | `d1bf38fb921ec64c` | `982d5c8dc0872f93` | `38b14e406a21f44e` |
-| group | `140698782799f181` | `d19e192b1d005dd8` | `24f046d5b86ff58b` | `54d48e2f3b03eb98` |
-| account | `f0d4bf83e11fced2` | `394027d4084e26f5` | `e32328b8dd296c53` | `d80e2e5a82cb60b3` |
-| settings | — | — | `0dd2c77a083ca729` | `07a7cd9d64681a33` |
+| treasury | `d1bf38fb921ec64c` | `982d5c8dc0872f93` | `38b14e406a21f44e` | `2023c6894336a168` |
+| group | `d19e192b1d005dd8` | `24f046d5b86ff58b` | `54d48e2f3b03eb98` | `3ddc716a5a1d7994` |
+| account | `394027d4084e26f5` | `e32328b8dd296c53` | `d80e2e5a82cb60b3` | `d80e2e5a82cb60b3` |
+| settings | — | `0dd2c77a083ca729` | `07a7cd9d64681a33` | `07a7cd9d64681a33` |
 | always_fails | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` |
 
 From v0.2.6 the group/treasury policy IDs are additionally parameterized by the

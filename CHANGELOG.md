@@ -6,6 +6,35 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-15
+
+Continuous round model — the ROSCA now cycles indefinitely with one cheap distribute per
+round and no per-cycle maintenance transaction. **Immutable-contract redesign → new hashes
+→ Preprod redeploy + external audit required before mainnet.**
+
+### Changed
+- **Breaking:** rounds are now a single monotonic counter (`round_number`); a cycle is the
+  counter crossing a multiple of `num_rounds`. Group lifetime is indefinite until terminated.
+- **Breaking:** `GroupDatum` gains `active_member_count` — the cached count of contributing
+  members. `DistributeRound` reads it in O(1) for the pro-rata pot, replacing the O(N²)
+  `count_active_members` fold (distribute is now **O(N)**).
+- **Breaking:** exit free/penalty boundary is re-anchored to `rounds_paid % num_rounds == 0`
+  (a completed cycle), replacing the wall-clock maturity computation.
+
+### Added
+- `Recover` redeemer — `contribute`-based recovery of a `DefaultState` member re-admits them
+  to the active set (`active_member_count + 1`).
+
+### Removed
+- **Breaking:** `NextCycle` — the per-cycle batch reset (redeemer, withdraw handler, endpoint,
+  and the `count_active_members` fold) is deleted; continuous rounds make it unnecessary.
+
+### Security
+- **Breaking (hash):** treasury `38b14e40 → 2023c689`, group `54d48e2f → 3ddc716a`
+  (account/settings/`always_fails` unchanged). C4 anti-skim preserved via
+  `length(treasury_input_indices) == active_member_count` + per-input group link.
+  **`deploy-scripts` required.** Self-review (`cardano-aiken-review`): no critical/major.
+
 ## [0.2.7] - 2026-06-15
 
 Post-audit hardening, scale work, and licensing. Builds on 0.2.6; no settings/deploy-flow
@@ -92,7 +121,8 @@ See [MIGRATION.md](./MIGRATION.md#024--025) for before/after snippets.
 
 - Baseline for the migration notes above.
 
-[Unreleased]: https://github.com/tx-meta/dcu-kit/compare/v0.2.7...HEAD
+[Unreleased]: https://github.com/tx-meta/dcu-kit/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tx-meta/dcu-kit/compare/v0.2.7...v0.3.0
 [0.2.7]: https://github.com/tx-meta/dcu-kit/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/tx-meta/dcu-kit/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/tx-meta/dcu-kit/compare/v0.2.4...v0.2.5

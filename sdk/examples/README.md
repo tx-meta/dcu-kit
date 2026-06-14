@@ -194,7 +194,6 @@ pnpm run delete-group
 | `contribute`               | USER1          | Tops up a treasury UTxO balance. `TOP_UP_AMOUNT=<lovelace>` (default 5 ADA).                                       |
 | `update-payout-credential` | USER1          | Redirects future payouts to the current signing wallet's address.                                                  |
 | `extend-grace-window`      | ADMIN          | Extends grace period for `MEMBER_WALLET` (default USER1) in ICS.                                                   |
-| `next-cycle`               | ADMIN          | Resets a mature group for another rotation cycle. Members re-deposit, then admin calls start-group again.          |
 
 ---
 

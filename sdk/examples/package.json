@@ -23,7 +23,6 @@
     "contribute": "pnpm run build && node dist/contribute.js",
     "update-payout-credential": "pnpm run build && node dist/update-payout-credential.js",
     "extend-grace-window": "pnpm run build && node dist/extend-grace-window.js",
-    "next-cycle": "pnpm run build && node dist/next-cycle.js",
     "show-wallets": "pnpm run build && node dist/show-wallets.js",
     "send-ada": "pnpm run build && node dist/send-ada.js",
     "deploy-scripts": "pnpm run build && node dist/deploy-scripts.js",
@@ -36,7 +35,7 @@
   },
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.31",
-    "@tx-meta/dcu-kit": "file:../dcu-kit-0.2.7.tgz",
+    "@tx-meta/dcu-kit": "file:../dcu-kit-0.3.0.tgz",
     "dotenv": "^16.4.7",
     "effect": "3.21.2"
   },
