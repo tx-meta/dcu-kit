@@ -964,6 +964,12 @@ pub fn validate_recover_group(
   expect t_out_datum: TreasuryDatum = t_out_data
   expect TreasuryState { member_reference_tokenname: out_member_tn, .. } = t_out_datum
   let recovery_same_member = in_member_tn == out_member_tn
+  // [security]: the recovered output must sit at the treasury script (same policy as the
+  // spent treasury input) — defense-in-depth so Recover is self-sufficient rather than relying
+  // solely on the coupled Contribute handler to place the output correctly.
+  let recovery_output_at_treasury = treasury_out.address.payment_credential == Script(
+    treasury_policy_id,
+  )
 
   // [security]: ADA must not decrease; output at same script with ref token; clean value
   let in_ada = assets.lovelace_of(group_input.output.value)
@@ -974,6 +980,7 @@ pub fn validate_recover_group(
     // [spec Recover 3]: cannot exceed total membership
     (current.active_member_count + 1 <= current.member_count)?,
     treasury_in_authentic?,
+    recovery_output_at_treasury?,
     recovery_same_member?,
     (group_output.address == group_input.output.address)?,
     (assets.quantity_of(group_output.value, policy_id, group_ref_token_name) == 1)?,
