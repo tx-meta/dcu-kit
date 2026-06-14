@@ -20,6 +20,7 @@ pub fn gen_group_datum() {
   let num_rounds <- fuzz.and_then(fuzz.int())
   let max_members <- fuzz.and_then(fuzz.int())
   let member_count <- fuzz.and_then(fuzz.int())
+  let active_member_count <- fuzz.and_then(fuzz.int())
   let is_active <- fuzz.and_then(fuzz.bool())
   let is_started <- fuzz.and_then(fuzz.bool())
   let start_time <- fuzz.and_then(fuzz.int())
@@ -44,6 +45,7 @@ pub fn gen_group_datum() {
       num_rounds,
       max_members,
       member_count,
+      active_member_count,
       is_active,
       is_started,
       start_time,
@@ -98,6 +100,8 @@ pub fn gen_valid_group_datum() {
       num_rounds: 0,
       max_members,
       member_count: 0,
+      // creation invariant — 0 at create, set to member_count by startGroup
+      active_member_count: 0,
       is_active: True,
       is_started: False,
       start_time: 0,

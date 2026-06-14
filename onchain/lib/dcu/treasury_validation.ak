@@ -112,6 +112,10 @@ pub fn validate_join_treasury(
   expect InlineDatum(go_data) = group_output.datum
   expect GroupCip68Datum { extra: updated_group, .. } = go_data
   let member_count_incremented = updated_group.member_count == group.member_count + 1
+  // [spec JoinGroup NEW]: the active set grows by 1 alongside member_count (a fresh
+  // member is in TreasuryState). Group validator pins the full datum; this is
+  // defense-in-depth so the treasury cannot mint a member without the active count rising.
+  let active_count_incremented = updated_group.active_member_count == group.active_member_count + 1
 
   // [spec JoinGroup Minor]: group output at correct address with ref token
   let group_output_at_correct_address = group_output.address == group_input.output.address
@@ -215,6 +219,7 @@ pub fn validate_join_treasury(
     rounds_paid_valid?,
     no_claimable?,
     member_count_incremented?,
+    active_count_incremented?,
     group_output_at_correct_address?,
     group_output_has_ref_token?,
     fees_locked?,

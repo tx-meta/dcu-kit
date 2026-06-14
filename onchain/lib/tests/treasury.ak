@@ -65,6 +65,8 @@ fn test_group_datum() -> GroupDatum {
     num_rounds: 3,
     max_members: 30,
     member_count: 0,
+    // 0 here; started-group distribute/exit fixtures override to member_count
+    active_member_count: 0,
     is_active: True,
     is_started: False,
     start_time: 0,
@@ -271,8 +273,14 @@ fn test_member_input() -> Input {
 // Group output at Script(group_policy) with the given member_count.
 fn test_group_output(member_count: Int) -> Output {
   let gp = group_policy()
+  // No-default invariant: every member is active, so active == member_count.
+  // Default-scenario tests override active_member_count explicitly.
   let datum = cip68_with_group(
-    GroupDatum { ..test_group_datum(), member_count },
+    GroupDatum {
+      ..test_group_datum(),
+      member_count,
+      active_member_count: member_count,
+    },
   )
   Output {
     address: Address { payment_credential: Script(gp), stake_credential: None },
@@ -333,8 +341,14 @@ fn test_admin_input() -> Input {
 // Helper: builds a group Input with an overridden member_count
 fn test_group_input_with_member_count(member_count: Int) -> Input {
   let gp = group_policy()
+  // No-default invariant: every member is active, so active == member_count.
+  // Default-scenario tests override active_member_count explicitly.
   let datum = cip68_with_group(
-    GroupDatum { ..test_group_datum(), member_count },
+    GroupDatum {
+      ..test_group_datum(),
+      member_count,
+      active_member_count: member_count,
+    },
   )
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
@@ -732,7 +746,13 @@ test join_group__rejects_joining_fee_not_routed_to_admin() {
     value: assets.from_lovelace(2_000_000)
       |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
     datum: InlineDatum(
-      cip68_with_group(GroupDatum { ..group_datum_with_fee, member_count: 1 }),
+      cip68_with_group(
+        GroupDatum {
+          ..group_datum_with_fee,
+          member_count: 1,
+          active_member_count: 1,
+        },
+      ),
     ),
     reference_script: None,
   }
@@ -787,7 +807,13 @@ test join_group__accepts_joining_fee_routed_to_admin() {
     value: assets.from_lovelace(2_000_000)
       |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
     datum: InlineDatum(
-      cip68_with_group(GroupDatum { ..group_datum_with_fee, member_count: 1 }),
+      cip68_with_group(
+        GroupDatum {
+          ..group_datum_with_fee,
+          member_count: 1,
+          active_member_count: 1,
+        },
+      ),
     ),
     reference_script: None,
   }

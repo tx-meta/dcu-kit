@@ -102,6 +102,32 @@ test create_group_invalid_member_count() {
   !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
+test create_group_rejects_nonzero_active_member_count() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  // active_member_count MUST be 0 at creation (set to member_count by startGroup)
+  let datum = GroupDatum { ..base_datum, active_member_count: 1 }
+
+  let output_value = assets.from_asset(policy_id, ref_tn, 1)
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
 test create_group_invalid_intervals() {
   let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
@@ -1523,7 +1549,12 @@ fn group_input_with_count(
   ref_tn: ByteArray,
   member_count: Int,
 ) -> Input {
-  let datum = GroupDatum { ..common.test_group_datum(policy_id), member_count }
+  // Pre-start / no-default invariant: every member is active, so active == member_count.
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count,
+    active_member_count: member_count,
+  }
   // Include 2 ADA so the ADA preservation check (out_ada >= in_ada) is non-trivial
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
@@ -1548,7 +1579,12 @@ fn group_output_with_count(
   ref_tn: ByteArray,
   member_count: Int,
 ) -> Output {
-  let datum = GroupDatum { ..common.test_group_datum(policy_id), member_count }
+  // Pre-start / no-default invariant: every member is active, so active == member_count.
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count,
+    active_member_count: member_count,
+  }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
   common.test_script_utxo(policy_id, value, cip68_with(policy_id, datum))
@@ -1565,6 +1601,7 @@ fn group_input_with_names(
   let datum = GroupDatum {
     ..common.test_group_datum(policy_id),
     member_count,
+    active_member_count: member_count,
     member_token_names: names,
   }
   let value = assets.from_lovelace(2_000_000)
@@ -1593,6 +1630,7 @@ fn group_output_with_names(
   let datum = GroupDatum {
     ..common.test_group_datum(policy_id),
     member_count,
+    active_member_count: member_count,
     member_token_names: names,
   }
   let value = assets.from_lovelace(2_000_000)

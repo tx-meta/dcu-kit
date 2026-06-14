@@ -105,6 +105,8 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     // Within the protocol ceiling (max_group_members = 20). Was 30 before the scale cap.
     max_members: 20,
     member_count: 0,
+    // 0 at creation; tests simulating post-startGroup state set this to member_count
+    active_member_count: 0,
     is_active: True,
     // is_started = False at creation; tests simulating post-startGroup state
     // should set is_started = True and num_rounds = member_count explicitly

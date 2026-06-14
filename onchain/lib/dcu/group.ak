@@ -73,6 +73,12 @@ pub type GroupDatum {
   num_rounds: Int,
   max_members: Int,
   member_count: Int,
+  // Cached count of members currently in TreasuryState (contributing). Maintained
+  // incrementally: +1 at Join and at Contribute-recovery, -1 at Exit and per ICS
+  // transition inside DistributeRound. Distribute reads it in O(1) for the pro-rata pot
+  // (replacing the O(N^2) count_active_members fold) and pins the spent-set size to it
+  // (C4 anti-skim). MUST be 0 at creation; startGroup sets it to member_count.
+  active_member_count: Int,
   is_active: Bool,
   // False at creation; True after startGroup seals membership.
   // Once True, no new members can join and num_rounds / start_time are fixed.
@@ -310,6 +316,8 @@ pub fn validate_create_group(
     // a group can never grow past a submittable distribute/next-cycle tx. See max_group_members.
     (datum.max_members <= max_group_members)?,
     (datum.member_count == 0)?,
+    // [spec CreateGroup 10e]: active_member_count == 0 at creation; startGroup sets it to member_count
+    (datum.active_member_count == 0)?,
     (datum.member_token_names == [])?,
     datum.is_active?,
     // [spec CreateGroup 10b]: group not yet started; sealed by StartGroup
@@ -560,6 +568,8 @@ pub fn validate_join_group(
     extra: GroupDatum {
       ..current,
       member_count: current.member_count + 1,
+      // [spec Join 4b]: a new member joins in TreasuryState → active set grows by 1.
+      active_member_count: current.active_member_count + 1,
       member_token_names: [member_token_name, ..current.member_token_names],
     },
   }
@@ -637,6 +647,11 @@ pub fn validate_exit_group(
     extra: GroupDatum {
       ..current,
       member_count: current.member_count - 1,
+      // [spec Exit 5b]: ExitGroup is TreasuryState-only (treasury validator rejects
+      // Default/Penalty), so the leaver is always an active member → active set shrinks
+      // by 1. Defaulters leave via TerminateDefault, which does NOT touch active_member_count
+      // (they were already removed from it at their ICS transition) — no double-count.
+      active_member_count: current.active_member_count - 1,
       member_token_names: list.filter(
         current.member_token_names,
         fn(n) { n != member_token_name },
@@ -736,6 +751,8 @@ pub fn validate_start_group(
       is_started: True,
       num_rounds: current.member_count,
       start_time: current_time,
+      // [spec StartGroup 5b]: seal the active set = full membership at start.
+      active_member_count: current.member_count,
     },
   }
 
