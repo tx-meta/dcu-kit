@@ -913,6 +913,66 @@ describe("Treasury Endpoints", () => {
       }),
   );
 
+  // --- Native-token group: full distribute round (end-to-end) ---
+  // Closes the coverage gap noted in the roadmap: a 2-member group whose contribution asset
+  // is a native token, driven Join -> StartGroup -> DistributeRound. Round 0 debits each
+  // member's treasury by the fee in the TOKEN (Push mode pays the borrower from the pool to
+  // their wallet). Join locks collateral_rounds(2) x fee(5) = 10 tokens; round 0 deducts 5,
+  // so each treasury output holds 5 tokens afterward.
+  it.effect("should distribute a native-token round to two members", () =>
+    Effect.gen(function* () {
+      const tokenPolicy =
+        "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0";
+      const tokenName = "55534454"; // "USDT"
+      const tokenUnit = tokenPolicy + tokenName;
+
+      const base = yield* setupBase({ [tokenUnit]: 1_000_000n });
+      const { context, groupUtxo } = yield* setupGroup(base, {
+        contribution_fee_policyid: tokenPolicy,
+        contribution_fee_assetname: tokenName,
+        contribution_fee: 5n,
+        collateral_rounds: 2n,
+      });
+      const { users } = context;
+
+      const {
+        outputs: { userUtxo: user1AccountUtxo },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const {
+        outputs: { userUtxo: user2AccountUtxo },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
+
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: user1AccountUtxo,
+        userSeed: users.user1.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: user2AccountUtxo,
+        userSeed: users.user2.seedPhrase,
+      });
+      yield* startGroupTestCase(context, { groupUtxo });
+
+      const result = yield* distributePayoutTestCase(context, {
+        groupUtxo,
+        callerSeed: users.user1.seedPhrase,
+      });
+
+      expect(result.txHash).toHaveLength(64);
+      // Both members' treasuries are spent and re-output, each debited exactly the fee
+      // (5) in the contribution token: 10 locked - 5 = 5 remaining.
+      expect(result.treasuryOutputs).toHaveLength(2);
+      for (const out of result.treasuryOutputs) {
+        expect(out.assets[tokenUnit]).toBe(5n);
+      }
+    }),
+  );
+
   // --- UpdatePayout ---
   // Member updates their payout destination to their current wallet address.
   it.effect(
