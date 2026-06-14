@@ -3325,10 +3325,10 @@ test contribute__rejects_default_recovery_below_fee() {
   let out_datum = build_treasury_state(0, group_ref_tn(), 0)
   let treasury_out = test_treasury_output(out_datum, out_value)
 
+  // Recovery spends the group (Recover redeemer) → it is a SPENDING input.
   let tx = Transaction {
     ..transaction.placeholder,
-    inputs: [member_input, treasury_in],
-    reference_inputs: [token_group_input()],
+    inputs: [token_group_input(), member_input, treasury_in],
     outputs: [treasury_out],
   }
 
@@ -3337,7 +3337,7 @@ test contribute__rejects_default_recovery_below_fee() {
     account_policy(),
     group_policy(),
     0,
-    0,
+    1,
     0,
     datum,
     treasury_utxo_ref(),
@@ -3362,10 +3362,10 @@ test contribute__accepts_default_recovery_at_fee() {
   let out_datum = build_treasury_state(0, group_ref_tn(), 0)
   let treasury_out = test_treasury_output(out_datum, out_value)
 
+  // Recovery spends the group (Recover redeemer) → it is a SPENDING input.
   let tx = Transaction {
     ..transaction.placeholder,
-    inputs: [member_input, treasury_in],
-    reference_inputs: [token_group_input()],
+    inputs: [token_group_input(), member_input, treasury_in],
     outputs: [treasury_out],
   }
 
@@ -3374,7 +3374,7 @@ test contribute__accepts_default_recovery_at_fee() {
     account_policy(),
     group_policy(),
     0,
-    0,
+    1,
     0,
     datum,
     treasury_utxo_ref(),
@@ -3418,10 +3418,10 @@ test contribute__recovery_carries_claimable_balance() {
   }
   let treasury_out = test_treasury_output(out_datum, out_value)
 
+  // Recovery spends the group (Recover redeemer) → it is a SPENDING input.
   let tx = Transaction {
     ..transaction.placeholder,
-    inputs: [member_input, treasury_in],
-    reference_inputs: [token_group_input()],
+    inputs: [token_group_input(), member_input, treasury_in],
     outputs: [treasury_out],
   }
 
@@ -3430,7 +3430,7 @@ test contribute__recovery_carries_claimable_balance() {
     account_policy(),
     group_policy(),
     0,
-    0,
+    1,
     0,
     datum,
     treasury_utxo_ref(),
@@ -3465,10 +3465,10 @@ test contribute__rejects_recovery_dropping_claimable() {
   let out_datum = build_treasury_state(0, group_ref_tn(), 0)
   let treasury_out = test_treasury_output(out_datum, out_value)
 
+  // Recovery spends the group (Recover redeemer) → it is a SPENDING input.
   let tx = Transaction {
     ..transaction.placeholder,
-    inputs: [member_input, treasury_in],
-    reference_inputs: [token_group_input()],
+    inputs: [token_group_input(), member_input, treasury_in],
     outputs: [treasury_out],
   }
 
@@ -3477,7 +3477,7 @@ test contribute__rejects_recovery_dropping_claimable() {
     account_policy(),
     group_policy(),
     0,
-    0,
+    1,
     0,
     datum,
     treasury_utxo_ref(),

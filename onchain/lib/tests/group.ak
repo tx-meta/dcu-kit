@@ -6,7 +6,7 @@ use dcu/cip68
 use dcu/group.{
   GroupCip68Datum, GroupDatum, max_group_members, validate_close_group,
   validate_create_group, validate_exit_group, validate_join_group,
-  validate_update_group,
+  validate_recover_group, validate_update_group,
 }
 use dcu/treasury.{DefaultState, TreasuryState}
 use tests/common
@@ -1945,6 +1945,108 @@ test member_exit__terminate_default_keeps_active_count() {
     [group_in, treasury_in],
     [group_out],
   )
+}
+
+// Recover: a defaulted member rejoins the active set. member_count stays 1, active_member_count
+// 0 → 1, and the named treasury transitions DefaultState → TreasuryState.
+fn recover_setup(
+  policy_id: assets.PolicyId,
+  tp: assets.PolicyId,
+  ref_tn: ByteArray,
+  out_active: Int,
+  treasury_out_is_treasury_state: Bool,
+) -> (List<Input>, List<Output>) {
+  let base = common.test_group_datum(policy_id)
+  // 1 member who defaulted → member_count 1, active_member_count 0.
+  let in_datum =
+    GroupDatum {
+      ..base,
+      member_count: 1,
+      active_member_count: 0,
+      member_token_names: [#"aabb"],
+    }
+  let out_datum =
+    GroupDatum {
+      ..base,
+      member_count: 1,
+      active_member_count: out_active,
+      member_token_names: [#"aabb"],
+    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = defaulted_treasury_input_with_token(tp, #"aabb")
+  let t_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, #"aabb", 1))
+  let recovered_datum =
+    TreasuryState {
+      group_reference_tokenname: #"aabb",
+      member_reference_tokenname: #"aabb",
+      assigned_slot: 0,
+      rounds_paid: 0,
+      member_payment_credential: common.test_pkh(),
+      claimable_balance: 0,
+    }
+  // When false, leave the treasury output as DefaultState (no real recovery) to exercise rejection.
+  let still_default =
+    DefaultState {
+      group_reference_tokenname: #"aabb",
+      member_reference_tokenname: #"aabb",
+      grace_expires_at: 0,
+      grace_extensions_used: 0,
+      rounds_paid: 0,
+      assigned_slot: 0,
+      member_payment_credential: common.test_pkh(),
+      claimable_balance: 0,
+    }
+  let treasury_out = common.test_script_utxo(
+    tp,
+    t_value,
+    if treasury_out_is_treasury_state {
+      recovered_datum
+    } else {
+      still_default
+    },
+  )
+  ([group_in, treasury_in], [group_out, treasury_out])
+}
+
+test member_recover__accepts_valid_recovery() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let (inputs, outputs) = recover_setup(policy_id, tp, ref_tn, 1, True)
+  validate_recover_group(policy_id, tp, ref_tn, 0, 0, 1, 1, inputs, outputs)
+}
+
+// active_member_count must increment by exactly 1 — output active unchanged (0) is rejected.
+test member_recover__rejects_active_not_incremented() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let (inputs, outputs) = recover_setup(policy_id, tp, ref_tn, 0, True)
+  !validate_recover_group(policy_id, tp, ref_tn, 0, 0, 1, 1, inputs, outputs)
+}
+
+// No real recovery: the treasury output is still DefaultState → expect TreasuryState crashes,
+// so active_member_count cannot be bumped without a genuine DefaultState → TreasuryState move.
+test member_recover__rejects_no_real_recovery() fail {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let (inputs, outputs) = recover_setup(policy_id, tp, ref_tn, 1, False)
+  validate_recover_group(policy_id, tp, ref_tn, 0, 0, 1, 1, inputs, outputs)
 }
 
 // Exit: group output member_count not decremented → rejected

@@ -913,22 +913,30 @@ pub fn validate_contribute(
     account_policy_id,
   )
 
-  // Read the group reference input for the contribution asset + fee, and verify it
-  // links to this treasury (defense-in-depth — see ISSUE A note above).
-  expect Some(group_ref_input) = list.at(
-    reference_inputs,
-    group_ref_input_index,
-  )
-  // [security C1]: the group reference input must sit at the trusted group script.
+  // The group supplies the contribution asset + fee and links to this treasury. During a
+  // TOP-UP (TreasuryState) the group is a read-only REFERENCE input. During a RECOVERY
+  // (DefaultState -> TreasuryState) the group is SPENT with the Recover redeemer (it must bump
+  // active_member_count, which lives in the group datum), so it appears in `inputs` instead of
+  // `reference_inputs`. Read it from the correct list. The Recover handler independently
+  // verifies the active+1 transition; here we only need the asset identity + link.
+  let is_recovery = when datum is {
+    DefaultState { .. } -> True
+    _ -> False
+  }
+  let group_utxo =
+    if is_recovery {
+      expect Some(gi) = list.at(inputs, group_ref_input_index)
+      gi
+    } else {
+      expect Some(gi) = list.at(reference_inputs, group_ref_input_index)
+      gi
+    }
+  // [security C1]: the group must sit at the trusted group script.
   expect
-    group_ref_input.output.address.payment_credential == Script(
-      trusted_group_policy,
-    )
-  expect InlineDatum(group_datum_data) = group_ref_input.output.datum
+    group_utxo.output.address.payment_credential == Script(trusted_group_policy)
+  expect InlineDatum(group_datum_data) = group_utxo.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
-  let group_link_valid = datum_group_tokenname == find_group_token_name(
-    group_ref_input,
-  )
+  let group_link_valid = datum_group_tokenname == find_group_token_name(group_utxo)
 
   expect Some(own_input) = find_own_input(inputs, utxo)
 

@@ -5,7 +5,7 @@ use cardano/address.{Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use dcu/cip68
-use dcu/treasury.{TreasuryDatum, TreasuryState}
+use dcu/treasury.{DefaultState, TreasuryDatum, TreasuryState}
 use dcu/utils.{get_lower_bound, output_holds_only_own}
 
 /// Protocol-wide ceiling on members per group, enforced at create-group (a group cannot
@@ -159,6 +159,21 @@ pub type GroupSpendRedeemer {
     group_input_index: Int,
     group_output_index: Int,
     round_number: Int,
+  }
+  // Re-admits a recovering member to the active set: increments active_member_count by 1
+  // (member_count and all economic fields frozen). Spent atomically with the treasury
+  // Contribute recovery (DefaultState -> TreasuryState) — this redeemer verifies that
+  // transition on the named treasury UTxO so active_member_count cannot be inflated without
+  // a genuine recovery. This is the ONLY count-changing op that does not already spend the
+  // group, so it needs its own redeemer (ICS happens inside Distribute; join/exit/terminate
+  // already spend the group).
+  Recover {
+    group_ref_token_name: AssetName,
+    group_input_index: Int,
+    group_output_index: Int,
+    // The recovering member's treasury: DefaultState input -> TreasuryState output.
+    treasury_input_index: Int,
+    treasury_output_index: Int,
   }
 }
 
@@ -881,6 +896,87 @@ pub fn validate_distribute_group(
     (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
       Pair(group_ref_token_name, 1),
     ])?,
+    output_clean_value?,
+    (updated_cip68 == expected)?,
+    (out_ada >= in_ada)?,
+  }
+}
+
+// validate_recover_group
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE: self-reference check enforced at entry point.
+//
+// Re-admits a recovering member to the active set. Spent atomically with the treasury
+// Contribute recovery; this handler verifies the DefaultState -> TreasuryState transition on
+// the named treasury UTxO so active_member_count cannot be inflated without a real recovery.
+//
+// [spec Recover 1]: group input holds the ref token
+// [spec Recover 2]: group output: active_member_count + 1, all other fields frozen
+// [spec Recover 3]: active_member_count + 1 <= member_count (cannot exceed total membership)
+// [spec Recover 4]: treasury input is DefaultState; treasury output is TreasuryState; same member
+// [security]: ADA must not decrease; output holds only ADA + own policy
+pub fn validate_recover_group(
+  policy_id: PolicyId,
+  treasury_policy_id: PolicyId,
+  group_ref_token_name: AssetName,
+  group_input_index: Int,
+  group_output_index: Int,
+  treasury_input_index: Int,
+  treasury_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
+) -> Bool {
+  // [spec Recover 1]: group input holds the ref token
+  let (group_input, GroupCip68Datum { metadata, version, extra: current }) = load_group_input(
+    inputs,
+    group_input_index,
+    policy_id,
+    group_ref_token_name,
+  )
+
+  // [spec Recover 2]: only active_member_count changes (+1); metadata and version preserved
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect InlineDatum(output_datum_data) = group_output.datum
+  expect updated_cip68: GroupCip68Datum = output_datum_data
+  let expected = GroupCip68Datum {
+    metadata,
+    version,
+    extra: GroupDatum {
+      ..current,
+      active_member_count: current.active_member_count + 1,
+    },
+  }
+
+  // [spec Recover 4]: the named treasury UTxO transitions DefaultState -> TreasuryState (the
+  // genuine recovery), tying this active bump to an actual member rejoining the active set.
+  expect Some(treasury_in) = list.at(inputs, treasury_input_index)
+  expect InlineDatum(t_in_data) = treasury_in.output.datum
+  expect t_in_datum: TreasuryDatum = t_in_data
+  expect DefaultState { member_reference_tokenname: in_member_tn, .. } = t_in_datum
+  let treasury_in_authentic = assets.quantity_of(
+    treasury_in.output.value,
+    treasury_policy_id,
+    in_member_tn,
+  ) == 1
+
+  expect Some(treasury_out) = list.at(outputs, treasury_output_index)
+  expect InlineDatum(t_out_data) = treasury_out.datum
+  expect t_out_datum: TreasuryDatum = t_out_data
+  expect TreasuryState { member_reference_tokenname: out_member_tn, .. } = t_out_datum
+  let recovery_same_member = in_member_tn == out_member_tn
+
+  // [security]: ADA must not decrease; output at same script with ref token; clean value
+  let in_ada = assets.lovelace_of(group_input.output.value)
+  let out_ada = assets.lovelace_of(group_output.value)
+  let output_clean_value = output_holds_only_own(group_output.value, policy_id)
+
+  and {
+    // [spec Recover 3]: cannot exceed total membership
+    (current.active_member_count + 1 <= current.member_count)?,
+    treasury_in_authentic?,
+    recovery_same_member?,
+    (group_output.address == group_input.output.address)?,
+    (assets.quantity_of(group_output.value, policy_id, group_ref_token_name) == 1)?,
     output_clean_value?,
     (updated_cip68 == expected)?,
     (out_ada >= in_ada)?,
