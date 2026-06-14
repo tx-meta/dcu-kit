@@ -8,6 +8,7 @@ use dcu/group.{
   validate_create_group, validate_exit_group, validate_join_group,
   validate_update_group,
 }
+use dcu/treasury.{DefaultState, TreasuryState}
 use tests/common
 use tests/fuzzers.{gen_group_datum, gen_valid_group_datum}
 
@@ -1640,6 +1641,8 @@ fn group_output_with_names(
 
 // Treasury input holding a specific membership token under tp.
 // Used to satisfy member_token_authenticated in validate_member_exit.
+// Treasury spending input for an ACTIVE (TreasuryState) member — validate_exit_group reads
+// this datum to decide active_member_count decrements (TreasuryState → active - 1).
 fn treasury_input_with_token(tp: assets.PolicyId, member_tn: ByteArray) -> Input {
   common.test_input(
     OutputReference {
@@ -1650,7 +1653,43 @@ fn treasury_input_with_token(tp: assets.PolicyId, member_tn: ByteArray) -> Input
       tp,
       assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(tp, member_tn, 1)),
-      common.test_group_datum(tp),
+      TreasuryState {
+        group_reference_tokenname: member_tn,
+        member_reference_tokenname: member_tn,
+        assigned_slot: 0,
+        rounds_paid: 0,
+        member_payment_credential: common.test_pkh(),
+        claimable_balance: 0,
+      },
+    ),
+  )
+}
+
+// Treasury spending input for a DEFAULTED member — used to assert validate_exit_group does
+// NOT decrement active_member_count when a non-active member is removed (TerminateDefault path).
+fn defaulted_treasury_input_with_token(
+  tp: assets.PolicyId,
+  member_tn: ByteArray,
+) -> Input {
+  common.test_input(
+    OutputReference {
+      transaction_id: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      tp,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(tp, member_tn, 1)),
+      DefaultState {
+        group_reference_tokenname: member_tn,
+        member_reference_tokenname: member_tn,
+        grace_expires_at: 0,
+        grace_extensions_used: 0,
+        rounds_paid: 0,
+        assigned_slot: 0,
+        member_payment_credential: common.test_pkh(),
+        claimable_balance: 0,
+      },
     ),
   )
 }
@@ -1843,6 +1882,58 @@ test member_exit__accepts_partial_exit() {
   // After removing #"aabb": member_token_names = [] — matches group_output_with_count
   let group_out = group_output_with_count(policy_id, ref_tn, 1)
   let treasury_in = treasury_input_with_token(tp, #"aabb")
+
+  validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in, treasury_in],
+    [group_out],
+  )
+}
+
+// Terminate a DEFAULTED member: member_count 2 → 1 but active_member_count stays 1 (the
+// defaulter already left the active set at their ICS transition). This is the regression
+// guard for the exit/terminate double-decrement bug — validate_exit_group must read the
+// spent treasury's datum (DefaultState here) and NOT decrement active.
+test member_exit__terminate_default_keeps_active_count() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+
+  let base = common.test_group_datum(policy_id)
+  let in_datum =
+    GroupDatum {
+      ..base,
+      member_count: 2,
+      active_member_count: 1,
+      member_token_names: [#"aabb"],
+    }
+  let out_datum =
+    GroupDatum {
+      ..base,
+      member_count: 1,
+      active_member_count: 1,
+      member_token_names: [],
+    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = defaulted_treasury_input_with_token(tp, #"aabb")
 
   validate_exit_group(
     policy_id,

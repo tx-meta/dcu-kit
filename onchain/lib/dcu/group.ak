@@ -5,6 +5,7 @@ use cardano/address.{Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use dcu/cip68
+use dcu/treasury.{TreasuryDatum, TreasuryState}
 use dcu/utils.{get_lower_bound, output_holds_only_own}
 
 /// Protocol-wide ceiling on members per group, enforced at create-group (a group cannot
@@ -634,6 +635,32 @@ pub fn validate_exit_group(
   // [spec Exit 3]: member_count must be >= 1 before decrement
   expect current.member_count >= 1
 
+  // [security MemberExit 6 / D3]: the member's treasury must be a spending input. Its INPUT
+  // datum decides the active_member_count transition:
+  //   TreasuryState leaver (ExitGroup)                       → was active   → active - 1
+  //   DefaultState/PenaltyState leaver (TerminateDefault /   → already left → active unchanged
+  //   ClaimPenalty)                                            active at ICS
+  // TerminateDefault spends the group with THIS Exit redeemer; without the branch it would
+  // double-decrement active_member_count, driving it below the true active count and bricking
+  // distribution (spent_set_complete could never be satisfied again).
+  let member_treasury_input = list.find(
+    inputs,
+    fn(i) {
+      assets.quantity_of(i.output.value, treasury_policy_id, member_token_name) == 1
+    },
+  )
+  let member_was_active = when member_treasury_input is {
+    Some(ti) -> {
+      expect InlineDatum(d) = ti.output.datum
+      expect td: TreasuryDatum = d
+      when td is {
+        TreasuryState { .. } -> True
+        _ -> False
+      }
+    }
+    None -> False
+  }
+
   // [spec Exit 4]: group output at script address with ref token
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(output_datum_data) = group_output.datum
@@ -647,11 +674,14 @@ pub fn validate_exit_group(
     extra: GroupDatum {
       ..current,
       member_count: current.member_count - 1,
-      // [spec Exit 5b]: ExitGroup is TreasuryState-only (treasury validator rejects
-      // Default/Penalty), so the leaver is always an active member → active set shrinks
-      // by 1. Defaulters leave via TerminateDefault, which does NOT touch active_member_count
-      // (they were already removed from it at their ICS transition) — no double-count.
-      active_member_count: current.active_member_count - 1,
+      // [spec Exit 5b / D3]: active set shrinks by 1 ONLY if the leaver was active
+      // (TreasuryState). A defaulter (DefaultState/PenaltyState) already left active at ICS,
+      // so terminating/penalty-claiming them must NOT decrement again — see member_was_active.
+      active_member_count: if member_was_active {
+        current.active_member_count - 1
+      } else {
+        current.active_member_count
+      },
       member_token_names: list.filter(
         current.member_token_names,
         fn(n) { n != member_token_name },
@@ -666,13 +696,8 @@ pub fn validate_exit_group(
   // [security]: output holds only ADA + own policy
   let output_clean_value = output_holds_only_own(group_output.value, policy_id)
 
-  // [security MemberExit 6]: authenticate member_token_name via treasury spending input
-  let member_token_authenticated = list.any(
-    inputs,
-    fn(i) {
-      assets.quantity_of(i.output.value, treasury_policy_id, member_token_name) == 1
-    },
-  )
+  // [security MemberExit 6]: the member's treasury must be a spending input (found above).
+  let member_token_authenticated = member_treasury_input != None
 
   // [security MemberExit]: member must exist in current registry
   let member_exists = list.any(
