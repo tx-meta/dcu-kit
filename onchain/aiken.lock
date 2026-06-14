@@ -3,7 +3,7 @@
 
 [[requirements]]
 name = "aiken-lang/stdlib"
-version = "v3.0.0"
+version = "v3.1.0"
 source = "github"
 
 [[requirements]]
@@ -11,9 +11,19 @@ name = "aiken-lang/fuzz"
 version = "v2.2.0"
 source = "github"
 
+[[requirements]]
+name = "anastasia-labs/aiken-design-patterns"
+version = "v1.7.0"
+source = "github"
+
+[[requirements]]
+name = "keyan-m/aiken-scott-utils"
+version = "v1.4.0"
+source = "github"
+
 [[packages]]
 name = "aiken-lang/stdlib"
-version = "v3.0.0"
+version = "v3.1.0"
 requirements = []
 source = "github"
 
@@ -23,5 +33,16 @@ version = "v2.2.0"
 requirements = []
 source = "github"
 
+[[packages]]
+name = "anastasia-labs/aiken-design-patterns"
+version = "v1.7.0"
+requirements = []
+source = "github"
+
+[[packages]]
+name = "keyan-m/aiken-scott-utils"
+version = "v1.4.0"
+requirements = []
+source = "github"
+
 [etags]
-"aiken-lang/fuzz@v2" = [{ secs_since_epoch = 1769854396, nanos_since_epoch = 759866026 }, "9843473958e51725a9274b487d2d4aac0395ec1a2e30f090724fa737226bc127"]

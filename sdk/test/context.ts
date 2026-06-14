@@ -10,6 +10,7 @@ import {
   Network,
   PROTOCOL_PARAMETERS_DEFAULT,
   validatorToAddress,
+  validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
 import { ConfigurationError } from "../src/core/errors.js";
 import { Effect } from "effect";
@@ -138,6 +139,25 @@ const deployEmulatorSettings = (
     const signed = yield* Effect.promise(() => tx.sign.withWallet().complete());
     yield* Effect.promise(() => signed.submit());
     emulator.awaitBlock(1);
+
+    // Withdraw-zero prerequisite: register the treasury's own stake credential so that
+    // distribute / next-cycle txs can carry the 0-ADA reward withdrawal that triggers the
+    // treasury `withdraw` handler. The emulator's submit enforces that a withdrawal matches
+    // the registered reward balance, so an unregistered credential rejects even a 0 withdrawal.
+    // (Production: deploy-scripts must perform this same one-time registration on Preprod/mainnet.)
+    const treasuryRewardAddress = validatorToRewardAddress(
+      "Custom",
+      protocol.treasuryValidator.spendTreasury,
+    );
+    const regTx = yield* Effect.promise(() =>
+      lucid.newTx().register.Stake(treasuryRewardAddress).complete(),
+    );
+    const regSigned = yield* Effect.promise(() =>
+      regTx.sign.withWallet().complete(),
+    );
+    yield* Effect.promise(() => regSigned.submit());
+    emulator.awaitBlock(1);
+
     return { protocol, settingsUnit };
   });
 

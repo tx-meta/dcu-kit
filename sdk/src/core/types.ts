@@ -303,13 +303,11 @@ export const TreasuryRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
+    // Withdraw-zero coupling: the heavy round validation runs once in the treasury
+    // `withdraw` handler (DistributeWithdraw). Each spend only asserts that withdrawal is
+    // present, found by its index in the tx redeemer list.
     DistributeRound: Data.Object({
-      round_number: Data.Integer(),
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      treasury_input_indices: Data.Array(Data.Integer()),
-      treasury_output_indices: Data.Array(Data.Integer()),
-      borrower_output_index: Data.Integer(),
+      withdrawal_index: Data.Integer(),
     }),
   }),
   Data.Object({
@@ -345,11 +343,10 @@ export const TreasuryRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
+    // Withdraw-zero coupling (see DistributeRound): heavy reset validation runs once in the
+    // `withdraw` handler (NextCycleWithdraw); each spend asserts that withdrawal is present.
     NextCycle: Data.Object({
-      group_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      treasury_input_indices: Data.Array(Data.Integer()),
-      treasury_output_indices: Data.Array(Data.Integer()),
+      withdrawal_index: Data.Integer(),
     }),
   }),
   Data.Object({
@@ -376,3 +373,36 @@ export const TreasuryRedeemerSchema = Data.Enum([
 export type TreasuryRedeemer = Data.Static<typeof TreasuryRedeemerSchema>;
 export const TreasuryRedeemer =
   TreasuryRedeemerSchema as unknown as TreasuryRedeemer;
+
+/**
+ * Treasury withdraw-validator redeemer (the withdraw-zero coupling). Carried by the 0-ADA
+ * reward withdrawal from the treasury's own stake credential; the heavy round validation
+ * runs once here instead of per spend input. Variant order MUST match the Aiken
+ * `TreasuryWithdrawRedeemer` enum (DistributeWithdraw = 0, NextCycleWithdraw = 1).
+ */
+export const TreasuryWithdrawRedeemerSchema = Data.Enum([
+  Data.Object({
+    DistributeWithdraw: Data.Object({
+      round_number: Data.Integer(),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      treasury_input_indices: Data.Array(Data.Integer()),
+      treasury_output_indices: Data.Array(Data.Integer()),
+      borrower_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    NextCycleWithdraw: Data.Object({
+      group_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      treasury_input_indices: Data.Array(Data.Integer()),
+      treasury_output_indices: Data.Array(Data.Integer()),
+    }),
+  }),
+]);
+
+export type TreasuryWithdrawRedeemer = Data.Static<
+  typeof TreasuryWithdrawRedeemerSchema
+>;
+export const TreasuryWithdrawRedeemer =
+  TreasuryWithdrawRedeemerSchema as unknown as TreasuryWithdrawRedeemer;

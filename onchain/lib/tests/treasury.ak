@@ -14,8 +14,8 @@ use dcu/treasury.{
 use dcu/treasury_utils.{count_active_members, min_ada_reserve}
 use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
-  validate_contribute, validate_distribute_treasury, validate_exit_treasury,
-  validate_extend_grace, validate_join_treasury, validate_next_cycle_treasury,
+  validate_contribute, validate_distribute_withdraw, validate_exit_treasury,
+  validate_extend_grace, validate_join_treasury, validate_next_cycle_withdraw,
   validate_terminate_default, validate_update_payout,
 }
 use tests/common
@@ -1315,7 +1315,7 @@ test distribute_round__rejects_fake_group_script() fail {
     validity_range: interval.after(0),
   }
 
-  validate_distribute_treasury(
+  validate_distribute_withdraw(
     tp,
     group_policy(),
     0,
@@ -1324,15 +1324,13 @@ test distribute_round__rejects_fake_group_script() fail {
     [1],
     [0],
     2,
-    treasury_datum,
-    treasury_utxo_ref(),
     tx,
   )
 }
 
 test distribute_round__accepts_valid_round() {
-  let (tx, datum, utxo) = setup_distribute_round()
-  validate_distribute_treasury(
+  let (tx, _, _) = setup_distribute_round()
+  validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -1346,8 +1344,6 @@ test distribute_round__accepts_valid_round() {
     [0],
     // borrower_output_index
     2,
-    datum,
-    utxo,
     tx,
   )
 }
@@ -1420,7 +1416,7 @@ test distribute_round__accepts_final_round_drains_to_reserve() {
     validity_range: interval.after(0),
   }
 
-  validate_distribute_treasury(
+  validate_distribute_withdraw(
     tp,
     group_policy(),
     0,
@@ -1429,8 +1425,6 @@ test distribute_round__accepts_final_round_drains_to_reserve() {
     [1],
     [0],
     2,
-    treasury_datum,
-    utxo_ref,
     tx,
   )
 }
@@ -1515,7 +1509,7 @@ test distribute_round__accepts_transition_to_default() {
     validity_range: interval.after(0),
   }
 
-  validate_distribute_treasury(
+  validate_distribute_withdraw(
     tp,
     group_policy(),
     0,
@@ -1524,20 +1518,30 @@ test distribute_round__accepts_transition_to_default() {
     [1],
     [0],
     2,
-    treasury_datum,
-    utxo_ref,
     tx,
   )
 }
 
-// fail: expect TreasuryState crashes when datum is PenaltyState
+// fail: a SPENT member treasury that is not TreasuryState must crash the round
+// (count_active_members rejects a non-TreasuryState contributing input). The fault now
+// lives on the on-chain INPUT datum (the validator reads it there, not from an argument).
 test distribute_round__rejects_penalty_state_datum() fail {
-  let (tx, _, utxo) = setup_distribute_round()
-  let penalty_datum = PenaltyState {
-    group_reference_tokenname: group_ref_tn(),
-    member_reference_tokenname: member_tn(),
-  }
-  validate_distribute_treasury(
+  let (tx, _, _) = setup_distribute_round()
+  let Transaction { inputs, .. } = tx
+  expect Some(group_in) = list.at(inputs, 0)
+  expect Some(old_t_in) = list.at(inputs, 1)
+  let penalty_datum =
+    PenaltyState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: member_tn(),
+    }
+  let bad_t_in =
+    Input {
+      ..old_t_in,
+      output: Output { ..old_t_in.output, datum: InlineDatum(penalty_datum) },
+    }
+  let bad_tx = Transaction { ..tx, inputs: [group_in, bad_t_in] }
+  validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -1546,16 +1550,14 @@ test distribute_round__rejects_penalty_state_datum() fail {
     [1],
     [0],
     2,
-    penalty_datum,
-    utxo,
-    tx,
+    bad_tx,
   )
 }
 
 // Treasury output retains full input ADA despite contribution round — balance_deducted fails
-test distribute_round__rejects_no_ada_reduction() {
+test distribute_round__rejects_no_ada_reduction() fail {
   let tp = treasury_policy()
-  let (tx, datum, utxo) = setup_distribute_round()
+  let (tx, _, _) = setup_distribute_round()
 
   let Transaction { inputs, outputs, validity_range, .. } = tx
   // outputs[0] is the treasury out — replace with one that keeps the full input ADA
@@ -1576,7 +1578,7 @@ test distribute_round__rejects_no_ada_reduction() {
     validity_range,
   }
 
-  !validate_distribute_treasury(
+  validate_distribute_withdraw(
     tp,
     group_policy(),
     0,
@@ -1585,16 +1587,14 @@ test distribute_round__rejects_no_ada_reduction() {
     [1],
     [0],
     2,
-    datum,
-    utxo,
     bad_tx,
   )
 }
 
 // Treasury output datum has stale rounds_paid (0 instead of 1) — output_datum_correct fails
-test distribute_round__rejects_wrong_datum_update() {
+test distribute_round__rejects_wrong_datum_update() fail {
   let tp = treasury_policy()
-  let (tx, datum, utxo) = setup_distribute_round()
+  let (tx, _, _) = setup_distribute_round()
 
   let Transaction { inputs, outputs, validity_range, .. } = tx
   expect Some(old_treasury_out) = list.at(outputs, 0)
@@ -1613,7 +1613,7 @@ test distribute_round__rejects_wrong_datum_update() {
     validity_range,
   }
 
-  !validate_distribute_treasury(
+  validate_distribute_withdraw(
     tp,
     group_policy(),
     0,
@@ -1622,16 +1622,14 @@ test distribute_round__rejects_wrong_datum_update() {
     [1],
     [0],
     2,
-    datum,
-    utxo,
     bad_tx,
   )
 }
 
 // Borrower output at a script address instead of a wallet — borrower_at_correct_wallet fails
-test distribute_round__rejects_borrower_output_at_script() {
+test distribute_round__rejects_borrower_output_at_script() fail {
   let tp = treasury_policy()
-  let (tx, datum, utxo) = setup_distribute_round()
+  let (tx, _, _) = setup_distribute_round()
 
   let Transaction { inputs, outputs, validity_range, .. } = tx
   expect Some(old_borrower_out) = list.at(outputs, 2)
@@ -1648,7 +1646,7 @@ test distribute_round__rejects_borrower_output_at_script() {
     validity_range,
   }
 
-  !validate_distribute_treasury(
+  validate_distribute_withdraw(
     tp,
     group_policy(),
     0,
@@ -1657,8 +1655,6 @@ test distribute_round__rejects_borrower_output_at_script() {
     [1],
     [0],
     2,
-    datum,
-    utxo,
     bad_tx,
   )
 }
@@ -1722,7 +1718,7 @@ test distribute_round__rejects_when_borrower_absent() fail {
   }
 
   // list.find_map returns None → expect Some(borrower_cred) crashes
-  validate_distribute_treasury(
+  validate_distribute_withdraw(
     tp,
     group_policy(),
     0,
@@ -1731,26 +1727,24 @@ test distribute_round__rejects_when_borrower_absent() fail {
     [1],
     [0],
     2,
-    wrong_slot_datum,
-    treasury_utxo_ref(),
     tx,
   )
 }
 
-// Duplicate output indices: [0, 0] not strictly ascending — indices_in_ascending_order fails
-test distribute_round__rejects_duplicate_output_index() {
-  let (tx, datum, utxo) = setup_distribute_round()
-  !validate_distribute_treasury(
+// Duplicate index pair (1,0),(1,0): the multi-UTxO indexer requires strictly ascending,
+// one-to-one indices and that every spent treasury input is covered exactly once. A
+// duplicate pair leaves a leftover after the single treasury input is consumed → reject.
+test distribute_round__rejects_duplicate_output_index() fail {
+  let (tx, _, _) = setup_distribute_round()
+  validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
     0,
     1,
-    [1],
+    [1, 1],
     [0, 0],
     2,
-    datum,
-    utxo,
     tx,
   )
 }
@@ -1758,7 +1752,7 @@ test distribute_round__rejects_duplicate_output_index() {
 // rounds_paid != round_number — member_at_correct_round fails.
 // round_number=1, current_slot=1%3=1 → treasury input must have assigned_slot=1 so
 // the borrower search doesn't crash before member_at_correct_round is checked.
-test distribute_round__rejects_wrong_round_number() {
+test distribute_round__rejects_wrong_round_number() fail {
   let tp = treasury_policy()
   let gp = group_policy()
 
@@ -1819,7 +1813,7 @@ test distribute_round__rejects_wrong_round_number() {
   }
 
   // round_number=1 but rounds_paid=0 → member_at_correct_round = False → returns False
-  !validate_distribute_treasury(
+  validate_distribute_withdraw(
     tp,
     group_policy(),
     1,
@@ -1828,16 +1822,14 @@ test distribute_round__rejects_wrong_round_number() {
     [1],
     [0],
     2,
-    datum,
-    treasury_utxo_ref(),
     tx,
   )
 }
 
 // Group output has stale last_distributed_round (-1 instead of 0) — group_round_incremented fails
-test distribute_round__rejects_unchanged_group_round() {
+test distribute_round__rejects_unchanged_group_round() fail {
   let tp = treasury_policy()
-  let (tx, datum, utxo) = setup_distribute_round()
+  let (tx, _, _) = setup_distribute_round()
 
   let Transaction { inputs, outputs, validity_range, .. } = tx
   expect Some(treasury_out) = list.at(outputs, 0)
@@ -1860,7 +1852,7 @@ test distribute_round__rejects_unchanged_group_round() {
     validity_range,
   }
 
-  !validate_distribute_treasury(
+  validate_distribute_withdraw(
     tp,
     group_policy(),
     0,
@@ -1869,8 +1861,6 @@ test distribute_round__rejects_unchanged_group_round() {
     [1],
     [0],
     2,
-    datum,
-    utxo,
     bad_tx,
   )
 }
@@ -1956,9 +1946,9 @@ test distribute_round__pull_accepts_earmark() {
     pull_earmark_datum(2_000_000),
     treasury_value(),
   )
-  let (tx, datum, utxo) = pull_distribute_tx(out)
+  let (tx, _, _) = pull_distribute_tx(out)
   // borrower_output_index is irrelevant under Pull (pass 0).
-  validate_distribute_treasury(
+  validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -1967,17 +1957,15 @@ test distribute_round__pull_accepts_earmark() {
     [1],
     [0],
     0,
-    datum,
-    utxo,
     tx,
   )
 }
 
 // Pull: rejected if the earmark is missing (claimable not credited).
-test distribute_round__pull_rejects_missing_earmark() {
+test distribute_round__pull_rejects_missing_earmark() fail {
   let out = test_treasury_output(pull_earmark_datum(0), treasury_value())
-  let (tx, datum, utxo) = pull_distribute_tx(out)
-  !validate_distribute_treasury(
+  let (tx, _, _) = pull_distribute_tx(out)
+  validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -1986,20 +1974,18 @@ test distribute_round__pull_rejects_missing_earmark() {
     [1],
     [0],
     0,
-    datum,
-    utxo,
     tx,
   )
 }
 
 // Pull: rejected if the pot value is not credited into the treasury (balance only -fee,
 // Push-style 3M instead of the net-unchanged 5M the earmark requires).
-test distribute_round__pull_rejects_value_not_credited() {
+test distribute_round__pull_rejects_value_not_credited() fail {
   let short_value = assets.from_lovelace(3_000_000)
     |> assets.merge(assets.from_asset(treasury_policy(), member_tn(), 1))
   let out = test_treasury_output(pull_earmark_datum(2_000_000), short_value)
-  let (tx, datum, utxo) = pull_distribute_tx(out)
-  !validate_distribute_treasury(
+  let (tx, _, _) = pull_distribute_tx(out)
+  validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -2008,8 +1994,6 @@ test distribute_round__pull_rejects_value_not_credited() {
     [1],
     [0],
     0,
-    datum,
-    utxo,
     tx,
   )
 }
@@ -2094,8 +2078,8 @@ test distribute_round__token_group_accepts_conserved_ada() {
     token_pull_earmark_datum(),
     token_treasury_value(2000),
   )
-  let (tx, datum, utxo) = token_pull_distribute_tx(out)
-  validate_distribute_treasury(
+  let (tx, _, _) = token_pull_distribute_tx(out)
+  validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -2104,8 +2088,6 @@ test distribute_round__token_group_accepts_conserved_ada() {
     [1],
     [0],
     0,
-    datum,
-    utxo,
     tx,
   )
 }
@@ -2114,13 +2096,13 @@ test distribute_round__token_group_accepts_conserved_ada() {
 // change. The contribution TOKEN is still conserved (2000 unchanged) and the earmark is
 // correct, so EVERY other check passes — only ada_reserve_conserved catches the skim.
 // Pre-fix this returned True (the lovelace was unpinned); the guard now rejects it.
-test distribute_round__token_group_rejects_ada_skim() {
+test distribute_round__token_group_rejects_ada_skim() fail {
   let skim_value = assets.from_lovelace(1_400_000)
     |> assets.merge(assets.from_asset(treasury_policy(), member_tn(), 1))
     |> assets.merge(assets.from_asset(token_policy(), token_name(), 2000))
   let out = test_treasury_output(token_pull_earmark_datum(), skim_value)
-  let (tx, datum, utxo) = token_pull_distribute_tx(out)
-  !validate_distribute_treasury(
+  let (tx, _, _) = token_pull_distribute_tx(out)
+  validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -2129,8 +2111,6 @@ test distribute_round__token_group_rejects_ada_skim() {
     [1],
     [0],
     0,
-    datum,
-    utxo,
     tx,
   )
 }
@@ -2231,11 +2211,11 @@ fn two_member_distribute(
 // so the borrower receives 1 × contribution_fee (2M) — the reduced pot — and the round
 // still completes rather than stalling.
 test distribute_round__accepts_prorata_with_defaulter() {
-  let (tx, datum, utxo) = two_member_distribute(
+  let (tx, _, _) = two_member_distribute(
     test_insufficient_collateral_state(),
     True,
   )
-  validate_distribute_treasury(
+  validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -2244,8 +2224,6 @@ test distribute_round__accepts_prorata_with_defaulter() {
     [1],
     [0],
     2,
-    datum,
-    utxo,
     tx,
   )
 }
@@ -2306,7 +2284,7 @@ test distribute_round__rejects_excluded_member() fail {
     outputs: [a_out, group_output, test_borrower_output()],
     validity_range: interval.after(0),
   }
-  validate_distribute_treasury(
+  validate_distribute_withdraw(
     tp,
     group_policy(),
     0,
@@ -2315,8 +2293,6 @@ test distribute_round__rejects_excluded_member() fail {
     [1],
     [0],
     2,
-    a_datum,
-    utxo_ref,
     tx,
   )
 }
@@ -2324,11 +2300,11 @@ test distribute_round__rejects_excluded_member() fail {
 // Anti-dodge: a healthy member (TreasuryState) cannot be parked as a reference input to
 // avoid contributing — count_active_members rejects a TreasuryState found in references.
 test distribute_round__rejects_healthy_member_referenced() fail {
-  let (tx, datum, utxo) = two_member_distribute(
+  let (tx, _, _) = two_member_distribute(
     build_treasury_state(1, group_ref_tn(), 0),
     True,
   )
-  validate_distribute_treasury(
+  validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -2337,8 +2313,6 @@ test distribute_round__rejects_healthy_member_referenced() fail {
     [1],
     [0],
     2,
-    datum,
-    utxo,
     tx,
   )
 }
@@ -3904,8 +3878,8 @@ fn next_cycle_setup(
 
 // Re-funded member (5M >= floor 2M) resets into the new cycle.
 test next_cycle__accepts_refunded_member() {
-  let (tx, datum, utxo) = next_cycle_setup(treasury_value())
-  validate_next_cycle_treasury(
+  let (tx, _, _) = next_cycle_setup(treasury_value())
+  validate_next_cycle_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -3916,26 +3890,23 @@ test next_cycle__accepts_refunded_member() {
     // treasury_input_indices
     [0],
     // treasury_output_indices
-    datum,
-    utxo,
     tx,
   )
 }
 
-// [M2] Under-funded member (1M < floor 2M) cannot enter the next cycle.
-test next_cycle__rejects_underfunded_restart() {
+// [M2] Under-funded member (1M < floor 2M) cannot enter the next cycle. The re-funding
+// guard is per-input (inside the indexer fold), so it rejects by failing → `fail` test.
+test next_cycle__rejects_underfunded_restart() fail {
   let thin_value = assets.from_lovelace(1_000_000)
     |> assets.merge(assets.from_asset(treasury_policy(), member_tn(), 1))
-  let (tx, datum, utxo) = next_cycle_setup(thin_value)
-  !validate_next_cycle_treasury(
+  let (tx, _, _) = next_cycle_setup(thin_value)
+  validate_next_cycle_withdraw(
     treasury_policy(),
     group_policy(),
     0,
     1,
     [1],
     [0],
-    datum,
-    utxo,
     tx,
   )
 }

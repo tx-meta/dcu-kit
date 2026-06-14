@@ -1,18 +1,20 @@
 use aiken/collection/list
-use cardano/address.{Script}
+use aiken_design_patterns/stake_validator
+use cardano/address.{Credential, Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/settings.{read_settings}
 use dcu/treasury.{
-  ClaimPayout, ClaimPenalty, Contribute, DistributeRound, ExitGroup, ExtendGrace,
-  JoinGroup, NextCycle, TerminateDefault, TreasuryDatum, TreasuryRedeemer,
+  ClaimPayout, ClaimPenalty, Contribute, DistributeRound, DistributeWithdraw,
+  ExitGroup, ExtendGrace, JoinGroup, NextCycle, NextCycleWithdraw,
+  TerminateDefault, TreasuryDatum, TreasuryRedeemer, TreasuryWithdrawRedeemer,
   UpdatePayout,
 } as treasury_types
 use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
-  validate_contribute, validate_distribute_treasury, validate_exit_treasury,
-  validate_extend_grace, validate_join_treasury, validate_next_cycle_treasury,
+  validate_contribute, validate_distribute_withdraw, validate_exit_treasury,
+  validate_extend_grace, validate_join_treasury, validate_next_cycle_withdraw,
   validate_terminate_default, validate_update_payout,
 }
 
@@ -89,42 +91,21 @@ validator treasury(settings_policy: PolicyId) {
     let settings = read_settings(reference_inputs, settings_policy)
 
     when redeemer is {
-      DistributeRound {
-        round_number,
-        group_ref_input_index,
-        group_output_index,
-        treasury_input_indices,
-        treasury_output_indices,
-        borrower_output_index,
-      } -> {
-        // [security]: self-reference — own UTxO must appear in treasury_input_indices,
-        // preventing cross-UTxO attacks where a different treasury's UTxO is substituted.
-        expect
-          list.any(
-            treasury_input_indices,
-            fn(idx) {
-              when list.at(inputs, idx) is {
-                Some(i) -> i.output_reference == utxo
-                None -> False
-              }
-            },
-          )
-
-        validate_distribute_treasury(
-          // [security]: own policy_id derived from UTxO's script credential
+      DistributeRound { withdrawal_index } ->
+        // [security]: withdraw-zero coupling. The heavy round validation runs exactly once
+        // in this validator's `withdraw` handler; each treasury spend only asserts that a
+        // withdrawal from the treasury's OWN stake credential is present. A script-credential
+        // withdrawal always triggers that handler, and the handler's multi-UTxO indexer
+        // requires EVERY spent treasury UTxO to be covered — so substituting/excluding this
+        // UTxO is rejected there (the completeness the old per-input self-reference + index
+        // list used to provide is now enforced globally). There is exactly one withdrawal per
+        // credential, so whichever withdraw redeemer is present fully validates this round.
+        stake_validator.validate_withdraw_minimal(
+          // own policy_id derived from UTxO's script credential = our own stake credential
           policy_id_from_utxo(inputs, utxo),
-          settings.group_policy,
-          round_number,
-          group_ref_input_index,
-          group_output_index,
-          treasury_input_indices,
-          treasury_output_indices,
-          borrower_output_index,
-          treasury_datum,
-          utxo,
-          self,
+          self.withdrawals,
+          withdrawal_index,
         )
-      }
 
       ExitGroup {
         group_ref_input_index,
@@ -244,36 +225,15 @@ validator treasury(settings_policy: PolicyId) {
         )
       }
 
-      NextCycle {
-        group_input_index,
-        group_output_index,
-        treasury_input_indices,
-        treasury_output_indices,
-      } -> {
-        // [security]: self-reference — own UTxO must appear in treasury_input_indices
-        expect
-          list.any(
-            treasury_input_indices,
-            fn(idx) {
-              when list.at(inputs, idx) is {
-                Some(i) -> i.output_reference == utxo
-                None -> False
-              }
-            },
-          )
-
-        validate_next_cycle_treasury(
+      NextCycle { withdrawal_index } ->
+        // [security]: withdraw-zero coupling (see DistributeRound). The heavy reset validation
+        // runs once in the `withdraw` handler; the indexer there requires every spent treasury
+        // UTxO to be covered, so excluding/substituting an input is rejected globally.
+        stake_validator.validate_withdraw_minimal(
           policy_id_from_utxo(inputs, utxo),
-          settings.group_policy,
-          group_input_index,
-          group_output_index,
-          treasury_input_indices,
-          treasury_output_indices,
-          treasury_datum,
-          utxo,
-          self,
+          self.withdrawals,
+          withdrawal_index,
         )
-      }
 
       ClaimPayout {
         group_ref_input_index,
@@ -320,8 +280,66 @@ validator treasury(settings_policy: PolicyId) {
     }
   }
 
-  // [security]: else branch must fail — prevents unauthorized staking withdrawals
-  // and governance votes from the treasury script address.
+  // WITHDRAW-ZERO: the once-per-tx home of the heavy round validation. Spending N
+  // treasury UTxOs re-runs the spend handler N times; routing the global member-set
+  // logic through a single 0-ADA withdrawal from the treasury's own stake credential
+  // executes it ONCE (O(N³) → ~O(N)). The treasury is self-coupled: the staking
+  // script hash == the spending script hash == own_policy_id.
+  withdraw(
+    redeemer: TreasuryWithdrawRedeemer,
+    credential: Credential,
+    self: Transaction,
+  ) {
+    // [security]: the staking credential being withdrawn from IS the treasury script
+    // (self-coupled). Its hash is own_policy_id — used for the trusted-group binding and
+    // to identify this treasury's own spend inputs in the multi-UTxO indexer.
+    expect Script(own_policy_id) = credential
+
+    // Trusted protocol policies from the settings UTxO (authenticated by the singleton
+    // settings NFT) — same trust anchor the spend handlers use.
+    let settings = read_settings(self.reference_inputs, settings_policy)
+
+    when redeemer is {
+      DistributeWithdraw {
+        round_number,
+        group_ref_input_index,
+        group_output_index,
+        treasury_input_indices,
+        treasury_output_indices,
+        borrower_output_index,
+      } ->
+        validate_distribute_withdraw(
+          own_policy_id,
+          settings.group_policy,
+          round_number,
+          group_ref_input_index,
+          group_output_index,
+          treasury_input_indices,
+          treasury_output_indices,
+          borrower_output_index,
+          self,
+        )
+
+      NextCycleWithdraw {
+        group_input_index,
+        group_output_index,
+        treasury_input_indices,
+        treasury_output_indices,
+      } ->
+        validate_next_cycle_withdraw(
+          own_policy_id,
+          settings.group_policy,
+          group_input_index,
+          group_output_index,
+          treasury_input_indices,
+          treasury_output_indices,
+          self,
+        )
+    }
+  }
+
+  // [security]: else branch must fail — prevents unauthorized governance votes,
+  // certificate publications, and proposals from the treasury script credential.
   else(_) {
     fail
   }

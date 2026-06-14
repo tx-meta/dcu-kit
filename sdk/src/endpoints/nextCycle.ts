@@ -4,6 +4,7 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   UTxO,
+  validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { effectiveScriptRefs } from "../core/scripts.js";
@@ -13,6 +14,7 @@ import {
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  TreasuryWithdrawRedeemer,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -225,7 +227,14 @@ export const unsignedNextCycleTxProgram = (
       inputs: [adminUtxo, groupUtxo],
     };
 
-    const treasuryRedeemer: RedeemerBuilder = {
+    // Withdraw-zero: each treasury spend carries only the constant coupling redeemer; the
+    // heavy reset validation runs once in the treasury `withdraw` handler (NextCycleWithdraw).
+    const treasurySpendRedeemer = Data.to(
+      { NextCycle: { withdrawal_index: 0n } },
+      TreasuryRedeemer,
+    );
+
+    const nextCycleWithdrawRedeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (indices: bigint[]) => {
         // indices[0] = admin, indices[1] = group, indices[2..] = treasury inputs
@@ -233,18 +242,23 @@ export const unsignedNextCycleTxProgram = (
         const treasuryOutIndices = treasuryIndices.map((_, i) => BigInt(i + 1));
         return Data.to(
           {
-            NextCycle: {
+            NextCycleWithdraw: {
               group_input_index: indices[1],
               group_output_index: 0n,
               treasury_input_indices: treasuryIndices,
               treasury_output_indices: treasuryOutIndices,
             },
           },
-          TreasuryRedeemer,
+          TreasuryWithdrawRedeemer,
         );
       },
       inputs: allInputs,
     };
+
+    const treasuryRewardAddress = validatorToRewardAddress(
+      lucid.config().network!,
+      treasuryValidator.spendTreasury,
+    );
 
     const baseTxNoValidators = lucid
       .newTx()
@@ -252,8 +266,9 @@ export const unsignedNextCycleTxProgram = (
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom(
         resetEntries.map((e) => e.utxo),
-        treasuryRedeemer,
-      );
+        treasurySpendRedeemer,
+      )
+      .withdraw(treasuryRewardAddress, 0n, nextCycleWithdrawRedeemer);
 
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
     const baseTx =

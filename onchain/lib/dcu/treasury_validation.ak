@@ -1,5 +1,6 @@
 use aiken/collection/dict
 use aiken/collection/list
+use aiken_design_patterns/multi_utxo_indexer
 use cardano/address.{Script, VerificationKey}
 use cardano/assets.{PolicyId, Value, ada_policy_id}
 use cardano/transaction.{
@@ -12,8 +13,7 @@ use dcu/treasury.{
 }
 use dcu/treasury_utils.{
   ada_reserve_conserved, contributable_in, count_active_members,
-  find_group_token_name, indices_in_ascending_order, member_has_user_token,
-  treasury_output_clean,
+  find_group_token_name, member_has_user_token, treasury_output_clean,
 }
 use dcu/utils.{find_own_input, get_lower_bound, only_allowed_policies}
 
@@ -269,7 +269,18 @@ pub fn validate_claim_penalty_mint(own_policy_id: PolicyId, mint: Value) -> Bool
 //                           reduced by contribution_fee in the contribution asset
 // [spec DistributeRound 8]: own output at script address with membership token
 // [security]: treasury_input_indices and treasury_output_indices strictly ascending
-pub fn validate_distribute_treasury(
+// WITHDRAW-ZERO: this is the once-per-tx withdraw handler logic. The treasury
+// validator is self-coupled (staking hash == spending hash == own_policy_id): the
+// `spend` branch for DistributeRound asserts this withdrawal ran, and ALL the heavy
+// per-member work happens here exactly once instead of N times (O(N³) → ~O(N)).
+//
+// Behaviourally identical to the old per-input spend logic: the global checks
+// (trusted group binding, group-round increment, pro-rata pot, borrower presence +
+// Push payout) run once; the per-input checks (round gate, balance deduction, ICS
+// transition, clean output, ADA reserve) run for EVERY treasury input via
+// `multi_utxo_indexer.one_to_one_no_redeemer`, which also enforces ascending
+// one-to-one indices and that every spent treasury UTxO is covered.
+pub fn validate_distribute_withdraw(
   own_policy_id: PolicyId,
   trusted_group_policy: PolicyId,
   round_number: Int,
@@ -278,37 +289,14 @@ pub fn validate_distribute_treasury(
   treasury_input_indices: List<Int>,
   treasury_output_indices: List<Int>,
   borrower_output_index: Int,
-  datum: TreasuryDatum,
-  utxo: OutputReference,
   tx: Transaction,
 ) -> Bool {
   let Transaction { inputs, outputs, reference_inputs, .. } = tx
-
-  // [spec DistributeRound 1]: datum must be TreasuryState
-  // Capture assigned_slot and member_payment_credential so they can be carried
-  // into DefaultState — required for recovery back to TreasuryState via Contribute.
-  expect  
-      TreasuryState {
-        member_reference_tokenname,
-        group_reference_tokenname,
-        assigned_slot,
-        member_payment_credential,
-        rounds_paid,
-        claimable_balance,
-      }
-    = datum
-
-  // [spec DistributeRound 2]: member hasn't been processed for this round yet
-  let member_at_correct_round = rounds_paid == round_number
 
   // [spec DistributeRound 3]: group spending input with GroupDatum
   expect Some(group_input) = list.at(inputs, group_ref_input_index)
   expect InlineDatum(group_datum_data) = group_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
-
-  // [security]: strictly ascending indices — prevents duplicate-index attacks
-  let indices_valid = indices_in_ascending_order(treasury_input_indices)
-  let output_indices_valid = indices_in_ascending_order(treasury_output_indices)
 
   // [spec DistributeRound 4]: group output has last_distributed_round = round_number
   expect Some(group_output) = list.at(outputs, group_output_index)
@@ -380,122 +368,15 @@ pub fn validate_distribute_treasury(
   )
   let total_payout = active_members * group.contribution_fee
 
-  // [spec DistributeRound 7]: find own corresponding output (matched by own UTxO reference)
-  expect Some(own_output_index) = list.find_map(
-    list.zip(treasury_input_indices, treasury_output_indices),
-    fn(pair) {
-      let (in_idx, out_idx) = pair
-      when list.at(inputs, in_idx) is {
-        Some(ti) ->
-          if ti.output_reference == utxo {
-            Some(out_idx)
-          } else {
-            None
-          }
-        None -> None
-      }
-    },
-  )
-
-  expect Some(own_output) = list.at(outputs, own_output_index)
-  expect InlineDatum(output_datum_data) = own_output.datum
-  expect output_datum: TreasuryDatum = output_datum_data
-
-  // [spec DistributeRound 7b]: balance reduced by contribution_fee in contribution asset.
-  // Measured on the contributable balance (excludes the ADA reserve): the -fee conservation
-  // is reserve-invariant (the reserve cancels on both sides), while the ICS threshold below
-  // correctly fires on *spendable* shortfall and the final round lands contributable at 0
-  // with min_ada_reserve still carrying the token.
-  expect Some(own_input) = find_own_input(inputs, utxo)
-  let input_bal = contributable_in(
-    own_input.output.value,
-    group.contribution_fee_policyid,
-    group.contribution_fee_assetname,
-  )
-  let output_bal = contributable_in(
-    own_output.value,
-    group.contribution_fee_policyid,
-    group.contribution_fee_assetname,
-  )
-
-  // Payout mode + borrower identity for THIS treasury. Under Pull the pot is earmarked
-  // into the borrower's OWN treasury (this UTxO, if it is the scheduled member) rather
-  // than paid to a wallet. is_borrower_treasury is decided purely from immutable datum
-  // (assigned_slot) vs the group-derived effective_slot, so it cannot be spoofed.
   let is_pull = group.payout_mode == Pull
-  let is_borrower_treasury = assigned_slot == effective_slot
-
-  // [spec DistributeRound 7b]: balance change in the contribution asset.
-  //   - every member is debited contribution_fee (their own contribution this round)
-  //   - under Pull, the borrower's own treasury is ALSO credited total_payout (the pot
-  //     physically accumulates here; conservation pins all other treasuries to -fee, so
-  //     the released fees can only land here — no skim possible)
-  let balance_deducted = if is_pull && is_borrower_treasury {
-    output_bal == input_bal - group.contribution_fee + total_payout
-  } else {
-    output_bal == input_bal - group.contribution_fee
-  }
-
-  // [spec DistributeRound 7a]: output datum transitions to DefaultState
-  // only when post-round balance is below threshold AND there are future rounds remaining.
-  // On the final round (round_number + 1 == num_rounds) a zero-balance member stays
-  // in TreasuryState so they can exit via the standard mature-exit burn path.
+  // [spec DistributeRound 7a]: final round suppresses ICS so a drained member can mature-exit.
   let is_last_round = round_number + 1 == group.num_rounds
-  let transition_to_ics = output_bal < group.contribution_fee && !is_last_round
   let current_time = get_lower_bound(tx)
-
-  let output_datum_correct = if transition_to_ics {
-    output_datum == DefaultState {
-      group_reference_tokenname,
-      member_reference_tokenname,
-      grace_expires_at: current_time + group.grace_period_length,
-      grace_extensions_used: 0,
-      rounds_paid: round_number + 1,
-      assigned_slot,
-      member_payment_credential,
-      // [carry-forward]: a defaulting member is always a non-borrower (the borrower's
-      // balance rises by total_payout, so it can never fall below the fee), so the
-      // earmark carries through unchanged. The funds remain in this UTxO's value.
-      claimable_balance,
-    }
-  } else {
-    expect  
-        TreasuryState {
-          rounds_paid: output_rounds_paid,
-          claimable_balance: output_claimable_balance,
-          ..
-        }
-      = output_datum
-    // [security]: claimable_balance is pinned. Under Push (and every non-borrower under
-    // Pull) it is preserved exactly — without this a caller could inflate their own earmark
-    // and later drain it via ClaimPayout. Under Pull the borrower's OWN treasury accrues
-    // exactly total_payout (matching the value credited in balance_deducted above).
-    // (A nonzero claimable on a member who instead transitions to DefaultState is carried
-    // into that state's claimable_balance field — see the transition branch above.)
-    let expected_claimable = if is_pull && is_borrower_treasury {
-      claimable_balance + total_payout
-    } else {
-      claimable_balance
-    }
-    output_rounds_paid == round_number + 1 && output_claimable_balance == expected_claimable
-  }
-
-  // [spec DistributeRound 8]: own output at script address with membership token
-  // [security]: output at treasury script, holds exactly the membership token, and
-  // carries only ADA + own policy + the group's contribution asset (no merge/skim).
-  let treasury_output_ok = treasury_output_clean(
-    own_output,
-    own_policy_id,
-    member_reference_tokenname,
-    group.contribution_fee_policyid,
-  )
 
   // [spec DistributeRound 6c]: PUSH only — borrower output at scheduled member's wallet,
   //   receiving at least total_payout in the contribution asset. Under PULL there is no
-  //   wallet output; the pot is earmarked into the borrower's own treasury (enforced via
-  //   balance_deducted + output_datum_correct above when this UTxO is the borrower's), so
-  //   these checks are skipped. borrower_cred is still computed above, which also guards
-  //   that the scheduled borrower is present among the contributing inputs.
+  //   wallet output; the pot is earmarked into the borrower's own treasury (enforced per
+  //   input below when this UTxO is the borrower's), so these checks are skipped.
   let borrower_payout_valid = if is_pull {
     True
   } else {
@@ -512,26 +393,144 @@ pub fn validate_distribute_treasury(
     borrower_at_correct_wallet? && borrower_receives_total?
   }
 
+  // Per-input transition checks, folded over EVERY treasury input↔output pair exactly
+  // once. one_to_one_no_redeemer enforces ascending one-to-one indices (subsuming the
+  // old indices_in_ascending_order checks) AND that every spent treasury UTxO is covered.
+  // The closure returns Bool; a violation makes the indexer fail (crash), so per-input
+  // negative tests must use `fail`, not `!`.
+  let io_pairs =
+    list.map(
+      list.zip(treasury_input_indices, treasury_output_indices),
+      fn(p) {
+        let (i, o) = p
+        Pair(i, o)
+      },
+    )
+  let per_input_valid =
+    multi_utxo_indexer.one_to_one_no_redeemer(
+      io_pairs,
+      own_policy_id,
+      inputs,
+      outputs,
+      fn(_in_idx, own_input, _out_idx, own_output) {
+        // [spec DistributeRound 1]: input datum must be TreasuryState. Carries
+        // assigned_slot + member_payment_credential into any DefaultState transition.
+        expect InlineDatum(in_datum_data) = own_input.output.datum
+        expect TreasuryState {
+          member_reference_tokenname,
+          group_reference_tokenname,
+          assigned_slot,
+          member_payment_credential,
+          rounds_paid,
+          claimable_balance,
+        } = in_datum_data
+
+        // [spec DistributeRound 2]: member hasn't been processed for this round yet
+        let member_at_correct_round = rounds_paid == round_number
+
+        // [spec DistributeRound 7]: own output datum
+        expect InlineDatum(output_datum_data) = own_output.datum
+        expect output_datum: TreasuryDatum = output_datum_data
+
+        // [spec DistributeRound 7b]: contributable balance (excludes ADA reserve), so the
+        // -fee conservation is reserve-invariant and the ICS threshold fires on spendable
+        // shortfall; final round lands contributable at 0 with the reserve carrying the token.
+        let input_bal =
+          contributable_in(
+            own_input.output.value,
+            group.contribution_fee_policyid,
+            group.contribution_fee_assetname,
+          )
+        let output_bal =
+          contributable_in(
+            own_output.value,
+            group.contribution_fee_policyid,
+            group.contribution_fee_assetname,
+          )
+
+        // is_borrower_treasury is decided purely from immutable datum (assigned_slot) vs the
+        // group-derived effective_slot, so it cannot be spoofed.
+        let is_borrower_treasury = assigned_slot == effective_slot
+
+        // [spec DistributeRound 7b]: every member debited contribution_fee; under Pull the
+        // borrower's OWN treasury is also credited total_payout (conservation pins all other
+        // treasuries to -fee, so released fees can only land here — no skim possible).
+        let balance_deducted =
+          if is_pull && is_borrower_treasury {
+            output_bal == input_bal - group.contribution_fee + total_payout
+          } else {
+            output_bal == input_bal - group.contribution_fee
+          }
+
+        // [spec DistributeRound 7a]: ICS transition only below threshold AND not last round.
+        let transition_to_ics =
+          output_bal < group.contribution_fee && !is_last_round
+
+        let output_datum_correct =
+          if transition_to_ics {
+            output_datum == DefaultState {
+              group_reference_tokenname,
+              member_reference_tokenname,
+              grace_expires_at: current_time + group.grace_period_length,
+              grace_extensions_used: 0,
+              rounds_paid: round_number + 1,
+              assigned_slot,
+              member_payment_credential,
+              // [carry-forward]: a defaulter is always a non-borrower (borrower balance rises
+              // by total_payout, never below fee), so the earmark carries through unchanged.
+              claimable_balance,
+            }
+          } else {
+            expect TreasuryState {
+              rounds_paid: output_rounds_paid,
+              claimable_balance: output_claimable_balance,
+              ..
+            } = output_datum
+            // [security]: claimable_balance is pinned. Under Push (and every non-borrower
+            // under Pull) preserved exactly — else a caller could inflate their own earmark
+            // and later drain it via ClaimPayout. Under Pull the borrower's OWN treasury
+            // accrues exactly total_payout (matching balance_deducted above).
+            let expected_claimable =
+              if is_pull && is_borrower_treasury {
+                claimable_balance + total_payout
+              } else {
+                claimable_balance
+              }
+            output_rounds_paid == round_number + 1 && output_claimable_balance == expected_claimable
+          }
+
+        // [spec DistributeRound 8]: clean output at treasury script with membership token —
+        // exactly the membership token + only ADA + own policy + contribution asset (no skim).
+        let treasury_output_ok =
+          treasury_output_clean(
+            own_output,
+            own_policy_id,
+            member_reference_tokenname,
+            group.contribution_fee_policyid,
+          )
+
+        and {
+          member_at_correct_round?,
+          balance_deducted?,
+          output_datum_correct?,
+          treasury_output_ok?,
+          // [security]: token groups — output keeps ≥ input lovelace; without this a
+          // permissionless cranker could skim the min-ADA reserve. No-op for ADA groups.
+          ada_reserve_conserved(
+            own_input.output.value,
+            own_output.value,
+            group.contribution_fee_policyid,
+          )?,
+        }
+      },
+    )
+
   and {
-    member_at_correct_round?,
     borrower_present?,
-    indices_valid?,
-    output_indices_valid?,
     group_round_incremented?,
     group_output_valid?,
-    output_datum_correct?,
-    treasury_output_ok?,
-    balance_deducted?,
-    // [security]: token groups — output keeps ≥ the input's lovelace. The -fee
-    // conservation above measures the contribution TOKEN, leaving lovelace unpinned;
-    // without this a permissionless cranker could skim the min-ADA reserve. No-op for
-    // ADA groups (lovelace is the contribution asset, already pinned by balance_deducted).
-    ada_reserve_conserved(
-      own_input.output.value,
-      own_output.value,
-      group.contribution_fee_policyid,
-    )?,
     borrower_payout_valid?,
+    per_input_valid?,
   }
 }
 
@@ -1175,30 +1174,22 @@ pub fn validate_extend_grace(
 // [spec NextCycle 5]: own output datum: rounds_paid=0, is_deferred=False, all else frozen
 // [spec NextCycle 6]: output ADA unchanged; output at script address with membership token
 // [security]: treasury_input_indices and treasury_output_indices strictly ascending
-pub fn validate_next_cycle_treasury(
+// WITHDRAW-ZERO: once-per-tx NextCycle validation (see validate_distribute_withdraw for the
+// pattern). Behaviourally identical to the old per-input spend logic — the global checks
+// (trusted group binding, group reset) run once; the per-input checks (cycle-complete gate,
+// datum reset, value preservation, M2 re-funding floor, script output) run for EVERY treasury
+// input via multi_utxo_indexer.one_to_one_no_redeemer, which also enforces ascending
+// one-to-one indices and full coverage of the spent treasury set.
+pub fn validate_next_cycle_withdraw(
   own_policy_id: PolicyId,
   trusted_group_policy: PolicyId,
   group_input_index: Int,
   group_output_index: Int,
   treasury_input_indices: List<Int>,
   treasury_output_indices: List<Int>,
-  datum: TreasuryDatum,
-  utxo: OutputReference,
   tx: Transaction,
 ) -> Bool {
   let Transaction { inputs, outputs, .. } = tx
-
-  // [spec NextCycle 1]: datum must be TreasuryState
-  expect  
-      TreasuryState {
-        group_reference_tokenname,
-        member_reference_tokenname,
-        assigned_slot,
-        rounds_paid,
-        member_payment_credential,
-        claimable_balance,
-      }
-    = datum
 
   // [spec NextCycle 3]: group spending input with GroupDatum
   expect Some(group_input) = list.at(inputs, group_input_index)
@@ -1210,85 +1201,95 @@ pub fn validate_next_cycle_treasury(
   expect InlineDatum(group_datum_data) = group_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
 
-  // [spec NextCycle 2]: this member's cycle is complete
-  let member_cycle_complete = rounds_paid == group.num_rounds
-
   // [spec NextCycle 4]: group output confirms reset
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(go_data) = group_output.datum
   expect GroupCip68Datum { extra: updated_group, .. } = go_data
   let group_reset = !updated_group.is_started && updated_group.last_distributed_round == -1
 
-  // [security]: strictly ascending indices
-  let indices_valid = indices_in_ascending_order(treasury_input_indices)
-  let output_indices_valid = indices_in_ascending_order(treasury_output_indices)
+  // Per-input reset checks, folded over EVERY treasury input↔output pair exactly once.
+  // The indexer enforces ascending one-to-one indices and full coverage; a violation
+  // makes it fail (crash), so per-input negative tests use `fail`, not `!`.
+  let io_pairs =
+    list.map(
+      list.zip(treasury_input_indices, treasury_output_indices),
+      fn(p) {
+        let (i, o) = p
+        Pair(i, o)
+      },
+    )
+  let per_input_valid =
+    multi_utxo_indexer.one_to_one_no_redeemer(
+      io_pairs,
+      own_policy_id,
+      inputs,
+      outputs,
+      fn(_in_idx, own_input, _out_idx, own_output) {
+        // [spec NextCycle 1]: input datum must be TreasuryState
+        expect InlineDatum(in_datum_data) = own_input.output.datum
+        expect TreasuryState {
+          group_reference_tokenname,
+          member_reference_tokenname,
+          assigned_slot,
+          rounds_paid,
+          member_payment_credential,
+          claimable_balance,
+        } = in_datum_data
 
-  // [spec NextCycle 5]: find own output via UTxO reference
-  expect Some(own_output_index) = list.find_map(
-    list.zip(treasury_input_indices, treasury_output_indices),
-    fn(pair) {
-      let (in_idx, out_idx) = pair
-      when list.at(inputs, in_idx) is {
-        Some(ti) ->
-          if ti.output_reference == utxo {
-            Some(out_idx)
-          } else {
-            None
+        // [spec NextCycle 2]: this member's cycle is complete
+        let member_cycle_complete = rounds_paid == group.num_rounds
+
+        // [spec NextCycle 5]: own output datum
+        expect InlineDatum(output_datum_data) = own_output.datum
+        expect output_datum: TreasuryDatum = output_datum_data
+
+        // [spec NextCycle 5]: reset rounds_paid; all other fields frozen. claimable_balance
+        // is preserved — an unclaimed earmark is durable across cycles (value_preserved below
+        // also keeps the funds physically in the treasury).
+        let expected_datum =
+          TreasuryState {
+            group_reference_tokenname,
+            member_reference_tokenname,
+            assigned_slot,
+            rounds_paid: 0,
+            member_payment_credential,
+            claimable_balance,
           }
-        None -> None
-      }
-    },
-  )
+        let datum_correct = output_datum == expected_datum
 
-  expect Some(own_output) = list.at(outputs, own_output_index)
-  expect InlineDatum(output_datum_data) = own_output.datum
-  expect output_datum: TreasuryDatum = output_datum_data
+        // [spec NextCycle 6]: full value preserved — NextCycle only resets datum counters;
+        // no distribution happens here, so no asset (ADA or contribution token) may move.
+        let value_preserved = own_output.value == own_input.output.value
 
-  // [spec NextCycle 5]: reset rounds_paid; all other fields frozen.
-  // claimable_balance is preserved — an unclaimed earmark is durable across cycles
-  // (value_preserved below also keeps the funds physically in the treasury).
-  let expected_datum = TreasuryState {
-    group_reference_tokenname,
-    member_reference_tokenname,
-    assigned_slot,
-    rounds_paid: 0,
-    member_payment_credential,
-    claimable_balance,
-  }
-  let datum_correct = output_datum == expected_datum
+        // [spec NextCycle 7 / M2]: re-funding guard — a member cannot enter a new cycle
+        // under-collateralized. The treasury must hold at least the JoinGroup collateral floor
+        // (contribution_fee × collateral_rounds) in the contribution asset. Value is preserved
+        // here, so a depleted member must top up via Contribute BEFORE NextCycle; the round is
+        // atomic over all members, so one underfunded member blocks the restart.
+        let refunded =
+          contributable_in(
+            own_output.value,
+            group.contribution_fee_policyid,
+            group.contribution_fee_assetname,
+          ) >= group.contribution_fee * group.collateral_rounds
 
-  // [spec NextCycle 6]: full value preserved — NextCycle only resets datum counters;
-  // no distribution happens here, so no asset (ADA or contribution token) may move.
-  expect Some(own_input) = find_own_input(inputs, utxo)
-  let value_preserved = own_output.value == own_input.output.value
+        // Output at script address with membership token (retention implied by value_preserved).
+        let output_at_script =
+          own_output.address.payment_credential == Script(own_policy_id)
 
-  // [spec NextCycle 7 / M2]: re-funding guard — a member cannot enter a new cycle
-  // under-collateralized. The treasury must hold at least the same collateral floor that
-  // JoinGroup enforces (contribution_fee × collateral_rounds) in the contribution asset.
-  // Because value is preserved here, a depleted member must top up via Contribute BEFORE
-  // NextCycle. NextCycle is atomic over all members, so one underfunded member blocks the
-  // restart until everyone is re-funded — the cycle never begins under-collateralized.
-  let refunded = contributable_in(
-    own_output.value,
-    group.contribution_fee_policyid,
-    group.contribution_fee_assetname,
-  ) >= group.contribution_fee * group.collateral_rounds
+        and {
+          member_cycle_complete?,
+          datum_correct?,
+          value_preserved?,
+          refunded?,
+          output_at_script?,
+        }
+      },
+    )
 
-  // Output at script address with membership token
-  let output_at_script = own_output.address.payment_credential == Script(
-    own_policy_id,
-  )
-
-  // token retention is implied by value_preserved (output value == input value).
   and {
-    member_cycle_complete?,
     group_reset?,
-    indices_valid?,
-    output_indices_valid?,
-    datum_correct?,
-    value_preserved?,
-    refunded?,
-    output_at_script?,
+    per_input_valid?,
   }
 }
 

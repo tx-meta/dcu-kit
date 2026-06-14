@@ -327,31 +327,44 @@ async function main(): Promise<void> {
     `  Size : ${GRN}${commas(sizeRemaining)} bytes remaining${RST}  ${DIM}(${(100 - sizePct).toFixed(1)}% free)${RST}`,
   );
 
-  // Scale headroom estimate for distributePayout growth
-  if (redeemers.some((r) => hashToName[r.script_hash] === "treasury")) {
-    const treasuryRedeemers = redeemers.filter(
-      (r) => hashToName[r.script_hash] === "treasury" && r.purpose === "spend",
+  // Scale measurement for distribute / next-cycle (WITHDRAW-ZERO model).
+  //
+  // With withdraw-zero, the member-count-scaling cost lives in the SINGLE treasury
+  // REWARD (withdrawal) redeemer — the per-member treasury SPEND redeemers are now O(1)
+  // coupling checks. That reward redeemer runs `count_active_members`, which is O(N²), so
+  // its cost grows super-linearly: DO NOT linearly extrapolate from one tx. To find the
+  // real max_members cap, run distribute at 2–3 increasing group sizes and watch where the
+  // reward redeemer's Mem/CPU crosses ~80–90%. The member count of THIS tx ≈ the number of
+  // treasury spend redeemers.
+  const treasurySpends = redeemers.filter(
+    (r) => hashToName[r.script_hash] === "treasury" && r.purpose === "spend",
+  );
+  const treasuryReward = redeemers.find(
+    (r) => hashToName[r.script_hash] === "treasury" && r.purpose === "reward",
+  );
+  if (treasuryReward) {
+    const rMem = Number(treasuryReward.unit_mem);
+    const rCpu = Number(treasuryReward.unit_steps);
+    const rMemPct = (rMem / PROTOCOL.MEM_MAX) * 100;
+    const rCpuPct = (rCpu / PROTOCOL.CPU_MAX) * 100;
+    console.log(
+      `\n  ${BLD}Scale measurement (withdraw-zero):${RST}  members in this tx ≈ ${GRN}${treasurySpends.length}${RST}`,
     );
-    if (treasuryRedeemers.length >= 2) {
-      const perMemberCpu =
-        treasuryRedeemers.reduce((s, r) => s + Number(r.unit_steps), 0) /
-        treasuryRedeemers.length;
-      const perMemberMem =
-        treasuryRedeemers.reduce((s, r) => s + Number(r.unit_mem), 0) /
-        treasuryRedeemers.length;
-      const maxByCpu = Math.floor(cpuRemaining / perMemberCpu);
-      const maxByMem = Math.floor(memRemaining / perMemberMem);
-      const maxAdditional = Math.min(maxByCpu, maxByMem);
-      console.log(
-        `\n  ${BLD}Scale estimate:${RST}  This tx processed ${treasuryRedeemers.length} member(s).`,
-      );
-      console.log(
-        `  Budget allows ~${GRN}${maxAdditional} more member(s)${RST} before hitting the limit`,
-      );
-      console.log(
-        `  ${DIM}(max ~${treasuryRedeemers.length + maxAdditional} members per distribute tx at current script size)${RST}`,
-      );
-    }
+    console.log(
+      `  The single REWARD (withdraw) redeemer carries the O(N²) round logic:`,
+    );
+    console.log(
+      `  Mem  ${commas(rMem).padStart(15)} / ${commas(PROTOCOL.MEM_MAX)}  ${bar(rMemPct)} ${pctStr(rMemPct)}`,
+    );
+    console.log(
+      `  CPU  ${commas(rCpu).padStart(15)} / ${commas(PROTOCOL.CPU_MAX)}  ${bar(rCpuPct)} ${pctStr(rCpuPct)}`,
+    );
+    console.log(
+      `  ${DIM}Cost is super-linear (O(N²)) — run 2–3 sizes to locate the real max_members cap;${RST}`,
+    );
+    console.log(
+      `  ${DIM}pin the on-chain cap (group.ak max_group_members) safely below the crossover.${RST}`,
+    );
   }
 
   console.log(`\n${DOUBLE}\n`);

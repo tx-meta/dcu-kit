@@ -75,7 +75,8 @@ pub fn gen_valid_group_datum() {
   let grace_period_length <- fuzz.and_then(fuzz.int_at_least(0))
   let creator_bond <- fuzz.and_then(fuzz.int_at_least(0))
   let interval_length <- fuzz.and_then(fuzz.int_at_least(1))
-  let max_members <- fuzz.and_then(fuzz.int_at_least(1))
+  // Within the protocol ceiling (max_group_members = 20) so generated datums stay VALID.
+  let max_members <- fuzz.and_then(fuzz.int_between(1, 20))
   let collateral_rounds <- fuzz.and_then(fuzz.int_between(1, max_members))
   let creator_payment_credential <- fuzz.and_then(fuzz.bytearray_fixed(28))
 

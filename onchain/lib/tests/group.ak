@@ -4,8 +4,9 @@ use cardano/assets
 use cardano/transaction.{Input, Output, OutputReference}
 use dcu/cip68
 use dcu/group.{
-  GroupCip68Datum, GroupDatum, validate_close_group, validate_create_group,
-  validate_exit_group, validate_join_group, validate_update_group,
+  GroupCip68Datum, GroupDatum, max_group_members, validate_close_group,
+  validate_create_group, validate_exit_group, validate_join_group,
+  validate_update_group,
 }
 use tests/common
 use tests/fuzzers.{gen_group_datum, gen_valid_group_datum}
@@ -927,8 +928,36 @@ test create_group__rejects_collateral_rounds_above_max_members() {
     |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
 
   let base_datum = common.test_group_datum(policy_id)
-  // max_members is 30 in test_group_datum; 31 exceeds it.
-  let datum = GroupDatum { ..base_datum, collateral_rounds: 31 }
+  // max_members is 20 in test_group_datum; 21 exceeds it.
+  let datum = GroupDatum { ..base_datum, collateral_rounds: 21 }
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// [scale] max_members above the protocol ceiling (max_group_members) is rejected, so a
+// group can never be created whose distribute / next-cycle tx would be unsubmittable.
+test create_group__rejects_max_members_above_ceiling() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  // One above the ceiling — every other field is valid, so only the cap check fails.
+  let datum = GroupDatum { ..base_datum, max_members: max_group_members + 1 }
   let output_value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
   let output = common.test_script_utxo(
@@ -975,7 +1004,7 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
   // validate_create_group, otherwise the "valid" branch below can assert True on a datum
   // the validator actually rejects. (member_token_names, version and name are pinned valid
   // by the harness — gen_group_datum sets member_token_names: [], cip68_with sets version/name.)
-  let is_invalid = datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.creator_bond < 0 || datum.grace_period_length < 0 || datum.interval_length <= 0 || datum.num_rounds != 0 || datum.max_members <= 0 || datum.member_count != 0 || !datum.is_active || datum.is_started || datum.start_time != 0 || datum.last_distributed_round != -1 || datum.collateral_rounds < 1 || datum.collateral_rounds > datum.max_members || bytearray.length(
+  let is_invalid = datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.creator_bond < 0 || datum.grace_period_length < 0 || datum.interval_length <= 0 || datum.num_rounds != 0 || datum.max_members <= 0 || datum.max_members > max_group_members || datum.member_count != 0 || !datum.is_active || datum.is_started || datum.start_time != 0 || datum.last_distributed_round != -1 || datum.collateral_rounds < 1 || datum.collateral_rounds > datum.max_members || bytearray.length(
     datum.creator_payment_credential,
   ) != 28
 
@@ -1628,6 +1657,32 @@ test member_join__accepts_second_member() {
   let mint = assets.from_asset(tp, #"aabb", 1)
 
   validate_join_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
+}
+
+// [scale] Join is rejected once member_count has reached max_members — the group cannot
+// grow past its cap (and create-group bounds max_members <= max_group_members), keeping the
+// distribute / next-cycle tx within budget. Only under_cap fails; all other checks pass.
+test member_join__rejects_at_max_members() {
+  let policy_id = common.test_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let tp = treasury_policy_id()
+
+  // test_group_datum has max_members = 20; a group already at 20 cannot accept another join.
+  let group_in = group_input_with_count(policy_id, ref_tn, 20)
+  let group_out = group_output_with_names(policy_id, ref_tn, 21, [#"aabb"])
+  let mint = assets.from_asset(tp, #"aabb", 1)
+
+  !validate_join_group(
     policy_id,
     tp,
     ref_tn,

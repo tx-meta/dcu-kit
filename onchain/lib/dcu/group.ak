@@ -7,6 +7,19 @@ use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use dcu/cip68
 use dcu/utils.{get_lower_bound, output_holds_only_own}
 
+/// Protocol-wide ceiling on members per group, enforced at create-group (a group cannot
+/// declare a larger max_members) and at join (member_count can never reach it).
+///
+/// Bound by the distribute / next-cycle transaction budget: after the withdraw-zero change
+/// the heavy round logic runs once in the treasury `withdraw` handler, but `count_active_members`
+/// is still O(N²), so per-tx mem grows ~quadratically. Measured `count_active` mem (real UPLC):
+/// N=20 ≈ 6.77M of the 14M per-tx limit, leaving headroom for the per-input fold; N=30 ≈ 13.73M
+/// (unsafe). 20 is a CONSERVATIVE starting cap covering typical chamas (5–30 real-world).
+/// FINALISE on Preprod: run distribute at increasing sizes and read the treasury REWARD
+/// (withdraw) redeemer's Mem/CPU via `pnpm run inspect-tx` (sdk/examples/inspect-tx.ts);
+/// raise/lower this constant to sit safely below the crossover. See [[scale-ceiling-findings]].
+pub const max_group_members: Int = 20
+
 /// CIP-68 wrapper for the group (100) reference token datum.
 /// Wallets resolve the group name by reading metadata["name"] from this datum.
 /// `extra` holds all protocol state; metadata and version are preserved unchanged
@@ -293,6 +306,9 @@ pub fn validate_create_group(
     (datum.num_rounds == 0)?,
     // [spec CreateGroup 11a]: max_members must be > 0
     (datum.max_members > 0)?,
+    // [spec CreateGroup 11b / scale]: max_members must not exceed the protocol ceiling, so
+    // a group can never grow past a submittable distribute/next-cycle tx. See max_group_members.
+    (datum.max_members <= max_group_members)?,
     (datum.member_count == 0)?,
     (datum.member_token_names == [])?,
     datum.is_active?,
@@ -555,8 +571,14 @@ pub fn validate_join_group(
   // [security]: output holds only ADA + own policy
   let output_clean_value = output_holds_only_own(group_output.value, policy_id)
 
+  // [spec Join 0b / scale]: the group cannot exceed its own max_members. With the cap also
+  // bounded at create-group (max_members <= max_group_members), this keeps every group's
+  // distribute / next-cycle tx within the protocol budget.
+  let under_cap = current.member_count < current.max_members
+
   and {
     not_started?,
+    under_cap?,
     treasury_minting?,
     member_not_duplicate?,
     (group_output.address == group_input.output.address)?,

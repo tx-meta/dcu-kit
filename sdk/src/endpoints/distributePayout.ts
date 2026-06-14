@@ -7,6 +7,7 @@ import {
   Assets,
   toUnit,
   credentialToAddress,
+  validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { effectiveScriptRefs } from "../core/scripts.js";
@@ -16,6 +17,7 @@ import {
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  TreasuryWithdrawRedeemer,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -289,7 +291,15 @@ export const unsignedDistributePayoutTxProgram = (
       inputs: [groupUtxo],
     };
 
-    const treasuryRedeemer: RedeemerBuilder = {
+    // Withdraw-zero: each treasury spend carries only a constant coupling redeemer pointing
+    // at the single withdrawal (index 0 in tx.withdrawals). The heavy round validation runs
+    // once in the treasury `withdraw` handler via the DistributeWithdraw redeemer below.
+    const treasurySpendRedeemer = Data.to(
+      { DistributeRound: { withdrawal_index: 0n } },
+      TreasuryRedeemer,
+    );
+
+    const distributeWithdrawRedeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (indices: bigint[]) => {
         const groupIdx = indices[0];
@@ -297,7 +307,7 @@ export const unsignedDistributePayoutTxProgram = (
         const treasuryOutIndices = treasuryIndices.map((_, i) => BigInt(i + 1));
         return Data.to(
           {
-            DistributeRound: {
+            DistributeWithdraw: {
               round_number: roundNumber,
               group_ref_input_index: groupIdx,
               group_output_index: 0n,
@@ -306,11 +316,18 @@ export const unsignedDistributePayoutTxProgram = (
               borrower_output_index: borrowerOutputIndex,
             },
           },
-          TreasuryRedeemer,
+          TreasuryWithdrawRedeemer,
         );
       },
       inputs: allInputs,
     };
+
+    // The treasury's own stake credential (self-coupled withdraw-zero). Must be registered
+    // on-chain (done at deploy time). A 0-ADA withdrawal here triggers the `withdraw` handler.
+    const treasuryRewardAddress = validatorToRewardAddress(
+      lucid.config().network!,
+      treasuryValidator.spendTreasury,
+    );
 
     // Build the transaction: group output first, then treasury outputs, then borrower
     const baseTxNoValidators = lucid
@@ -318,8 +335,9 @@ export const unsignedDistributePayoutTxProgram = (
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom(
         memberStates.map((s) => s.utxo),
-        treasuryRedeemer,
-      );
+        treasurySpendRedeemer,
+      )
+      .withdraw(treasuryRewardAddress, 0n, distributeWithdrawRedeemer);
 
     // Use reference scripts when provided — avoids including ~15KB of script bytes
     // inline, keeping the tx under Cardano's 16,384-byte size limit.

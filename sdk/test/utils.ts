@@ -68,7 +68,8 @@ export const createDefaultGroupDatum = (
   // num_rounds is 0 at creation — assigned to member_count at startGroup.
   // Required by validate_create_group (num_rounds == 0 check).
   num_rounds: 0n,
-  max_members: 30n,
+  // Within the protocol ceiling (max_group_members = 20). Was 30 before the scale cap.
+  max_members: 20n,
   member_count: 0n,
   is_active: true,
   is_started: false,

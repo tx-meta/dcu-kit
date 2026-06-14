@@ -12,12 +12,22 @@ platform = "github"
 
 [[dependencies]]
 name = "aiken-lang/stdlib"
-version = "v3.0.0"
+version = "v3.1.0"
 source = "github"
 
 [[dependencies]]
 name = "aiken-lang/fuzz"
 version = "v2.2.0"
+source = "github"
+
+[[dependencies]]
+name = "anastasia-labs/aiken-design-patterns"
+version = "v1.7.0"
+source = "github"
+
+[[dependencies]]
+name = "keyan-m/aiken-scott-utils"
+version = "v1.4.0"
 source = "github"
 
 [config]
