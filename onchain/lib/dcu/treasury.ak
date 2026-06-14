@@ -103,13 +103,6 @@ pub type TreasuryRedeemer {
     treasury_input_index: Int,
     treasury_output_index: Int,
   }
-  // Resets a treasury UTxO after all rounds have been distributed, preparing
-  // it for the next rotation cycle. Must be called atomically with the group
-  // NextCycle handler (group is spent in the same tx and output shows reset).
-  // Withdraw-zero coupling: the heavy reset validation runs once in the `withdraw`
-  // handler (NextCycleWithdraw); each spend only asserts that withdrawal is present
-  // (at withdrawal_index in tx.withdrawals).
-  NextCycle { withdrawal_index: Int }
   // Pull mode: member withdraws their earmarked payout (claimable_balance) to any
   // address. Auth is possession of the member (222) token — bearer model, so a member
   // who lost their original wallet can still claim from a new one holding the token.
@@ -140,9 +133,9 @@ pub type TreasuryRedeemer {
 
 /// Treasury Withdraw-Validator Redeemer (the "withdraw-zero" coupling).
 ///
-/// Round operations (DistributeRound, NextCycle) spend N member treasury UTxOs in
-/// one tx. Running the global member-set validation in the per-input `spend` handler
-/// re-executes it N times → O(N³). Instead, that heavy logic runs ONCE here in the
+/// DistributeRound spends N member treasury UTxOs in one tx. Running the global member-set
+/// validation in the per-input `spend` handler re-executes it N times → O(N³). Instead, that
+/// heavy logic runs ONCE here in the
 /// treasury `withdraw` handler (triggered by a 0-ADA reward withdrawal from the
 /// treasury's own stake credential), and each `spend` only asserts this withdrawal is
 /// present. The treasury validator is self-coupled: the staking script hash == the
@@ -162,13 +155,5 @@ pub type TreasuryWithdrawRedeemer {
     treasury_input_indices: List<Int>,
     treasury_output_indices: List<Int>,
     borrower_output_index: Int,
-  }
-  // Validates a complete NextCycle reset in one pass: trusted group binding, group reset,
-  // and every treasury input↔output cycle-complete/reset/value/re-funding transition.
-  NextCycleWithdraw {
-    group_input_index: Int,
-    group_output_index: Int,
-    treasury_input_indices: List<Int>,
-    treasury_output_indices: List<Int>,
   }
 }

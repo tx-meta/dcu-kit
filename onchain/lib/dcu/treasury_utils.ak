@@ -3,7 +3,7 @@ use aiken/collection/list
 use cardano/address.{Script}
 use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
 use cardano/transaction.{InlineDatum, Input, Output}
-use dcu/treasury.{DefaultState, PenaltyState, TreasuryDatum, TreasuryState}
+use dcu/treasury.{DefaultState, TreasuryDatum}
 use dcu/utils.{only_allowed_policies}
 
 // ─── Min-ADA reserve ──────────────────────────────────────────────────────────
@@ -119,17 +119,6 @@ pub fn find_group_token_name(group_input: Input) -> AssetName {
   group_token_name
 }
 
-// indices_in_ascending_order
-// Verifies that a list of integer indices is strictly ascending.
-// Prevents duplicate-index attacks where the same UTxO is listed twice.
-pub fn indices_in_ascending_order(indices: List<Int>) -> Bool {
-  when indices is {
-    [] -> True
-    [_] -> True
-    [a, b, ..rest] -> a < b && indices_in_ascending_order([b, ..rest])
-  }
-}
-
 // count_default_outputs
 // Counts how many of the given output indices carry a DefaultState datum. DistributeRound
 // uses this to decrement the group's cached active_member_count by exactly the number of
@@ -153,55 +142,6 @@ pub fn count_default_outputs(
           }
         }
         None -> acc
-      }
-    },
-  )
-}
-
-// count_active_members
-// Enforces the COMPLETE member set for a distribution round and returns the number of
-// contributors. Every name in `member_token_names` must be held by exactly one of:
-//   - a SPENDING input whose datum is TreasuryState           → contributing (counted)
-//   - a REFERENCE input whose datum is DefaultState/PenaltyState → defaulter (not counted)
-// Any member that is missing, or mis-classified (e.g. a healthy TreasuryState parked as a
-// reference input to dodge contributing), fails via `expect`/`fail`. This closes the
-// partial-set attack: a caller cannot advance a round while silently excluding healthy
-// members. The pro-rata pot for the round is `contribution_fee * active_members`.
-pub fn count_active_members(
-  member_token_names: List<AssetName>,
-  treasury_policy_id: PolicyId,
-  inputs: List<Input>,
-  reference_inputs: List<Input>,
-) -> Int {
-  list.foldl(
-    member_token_names,
-    0,
-    fn(name, acc) {
-      let holds = fn(i: Input) {
-        assets.quantity_of(i.output.value, treasury_policy_id, name) == 1
-      }
-      when list.find(inputs, holds) is {
-        // Member is a spending input → must be TreasuryState (contributing this round).
-        Some(member_input) -> {
-          expect InlineDatum(d) = member_input.output.datum
-          expect member_datum: TreasuryDatum = d
-          when member_datum is {
-            TreasuryState { .. } -> acc + 1
-            _ -> fail @"spent member treasury must be TreasuryState in a round"
-          }
-        }
-        // Not spent → must be referenced as a genuine defaulter.
-        None -> {
-          expect Some(ref_input) = list.find(reference_inputs, holds)
-          expect InlineDatum(d) = ref_input.output.datum
-          expect ref_datum: TreasuryDatum = d
-          when ref_datum is {
-            DefaultState { .. } -> acc
-            PenaltyState { .. } -> acc
-            TreasuryState { .. } ->
-              fail @"healthy member must contribute, not be referenced"
-          }
-        }
       }
     },
   )

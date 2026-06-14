@@ -1,4 +1,3 @@
-use aiken/builtin
 use aiken/collection/list
 use aiken/interval
 use cardano/address.{Address, Script, VerificationKey}
@@ -11,12 +10,12 @@ use dcu/group.{GroupCip68Datum, GroupDatum, Pull, Push}
 use dcu/treasury.{
   DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
 }
-use dcu/treasury_utils.{count_active_members, min_ada_reserve}
+use dcu/treasury_utils.{min_ada_reserve}
 use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
   validate_contribute, validate_distribute_withdraw, validate_exit_treasury,
-  validate_extend_grace, validate_join_treasury, validate_next_cycle_withdraw,
-  validate_terminate_default, validate_update_payout,
+  validate_extend_grace, validate_join_treasury, validate_terminate_default,
+  validate_update_payout,
 }
 use tests/common
 
@@ -3890,109 +3889,6 @@ test claim_payout__rejects_over_withdrawal() {
   )
 }
 
-// ─── NextCycle (cycle reset + M2 re-funding guard) ────────────────────────────
-
-// A completed 2-round cycle being reset. The member's treasury (rounds_paid == num_rounds)
-// resets to rounds_paid 0; the group flips is_started -> False, last_distributed_round -> -1.
-// Caller supplies the treasury value so the re-funding guard can be exercised.
-fn next_cycle_setup(
-  treasury_val: assets.Value,
-) -> (Transaction, TreasuryDatum, OutputReference) {
-  let gp = group_policy()
-
-  let group_datum = GroupDatum {
-    ..test_group_datum(),
-    num_rounds: 2,
-    is_started: True,
-    last_distributed_round: 1,
-    member_token_names: [member_tn()],
-  }
-  let group_in_value = assets.from_lovelace(2_000_000)
-    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
-  let group_input = Input {
-    output_reference: OutputReference {
-      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
-      output_index: 0,
-    },
-    output: Output {
-      address: Address {
-        payment_credential: Script(gp),
-        stake_credential: None,
-      },
-      value: group_in_value,
-      datum: InlineDatum(cip68_with_group(group_datum)),
-      reference_script: None,
-    },
-  }
-  let group_output = Output {
-    address: Address { payment_credential: Script(gp), stake_credential: None },
-    value: group_in_value,
-    datum: InlineDatum(
-      cip68_with_group(
-        GroupDatum {
-          ..group_datum,
-          is_started: False,
-          last_distributed_round: -1,
-        },
-      ),
-    ),
-    reference_script: None,
-  }
-
-  // Treasury input: cycle complete (rounds_paid == num_rounds == 2).
-  let in_datum = build_treasury_state(0, group_ref_tn(), 2)
-  let utxo_ref = treasury_utxo_ref()
-  let treasury_in = test_treasury_input(
-    utxo_ref,
-    test_treasury_output(in_datum, treasury_val),
-  )
-  // Output: counters reset; value preserved.
-  let out_datum = build_treasury_state(0, group_ref_tn(), 0)
-  let treasury_out = test_treasury_output(out_datum, treasury_val)
-
-  let tx = Transaction {
-    ..transaction.placeholder,
-    inputs: [group_input, treasury_in],
-    outputs: [treasury_out, group_output],
-  }
-  (tx, in_datum, utxo_ref)
-}
-
-// Re-funded member (5M >= floor 2M) resets into the new cycle.
-test next_cycle__accepts_refunded_member() {
-  let (tx, _, _) = next_cycle_setup(treasury_value())
-  validate_next_cycle_withdraw(
-    treasury_policy(),
-    group_policy(),
-    0,
-    // group_input_index
-    1,
-    // group_output_index
-    [1],
-    // treasury_input_indices
-    [0],
-    // treasury_output_indices
-    tx,
-  )
-}
-
-// [M2] Under-funded member (1M < floor 2M) cannot enter the next cycle. The re-funding
-// guard is per-input (inside the indexer fold), so it rejects by failing → `fail` test.
-test next_cycle__rejects_underfunded_restart() fail {
-  let thin_value = assets.from_lovelace(1_000_000)
-    |> assets.merge(assets.from_asset(treasury_policy(), member_tn(), 1))
-  let (tx, _, _) = next_cycle_setup(thin_value)
-  validate_next_cycle_withdraw(
-    treasury_policy(),
-    group_policy(),
-    0,
-    1,
-    [1],
-    [0],
-    tx,
-  )
-}
-
 // ─── validate_terminate_default (B2) ──────────────────────────────────────────
 // Admin removes a member stuck in DefaultState after their grace window has expired.
 // The membership token is burned, member_count decrements, and the forfeited collateral
@@ -4348,72 +4244,3 @@ test terminate_default__rejects_fake_group_script() fail {
   )
 }
 
-// ─── Scale benchmark: distribute cost driver ─────────────────────────────────
-// count_active_members is the dominant cost in distribute: O(N^2) per call (folds
-// N member names, each list.find over ~N inputs), and the treasury spend validator
-// runs ONCE PER treasury input (N times) → per-tx cost ~ N * O(N^2). These tests
-// report mem/cpu for a single count_active_members call at various N (via `aiken
-// check`); per-tx cost ≈ N * the reported figure. Building the N inputs is O(N),
-// negligible vs the O(N^2) call at these sizes, so the figure slightly OVERstates
-// the validator cost → conservative ceiling.
-
-fn bench_member_names(n: Int) -> List<assets.AssetName> {
-  list.map(list.range(0, n - 1), fn(i) { builtin.cons_bytearray(i, #"") })
-}
-
-fn bench_inputs(names: List<assets.AssetName>) -> List<Input> {
-  let tp = treasury_policy()
-  list.indexed_map(
-    names,
-    fn(i, name) {
-      test_treasury_input(
-        OutputReference {
-          transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
-          output_index: i,
-        },
-        test_treasury_output(
-          build_treasury_state(i, group_ref_tn(), 0),
-          assets.from_lovelace(min_ada_reserve)
-            |> assets.merge(assets.from_asset(tp, name, 1)),
-        ),
-      )
-    },
-  )
-}
-
-fn bench_count(n: Int) -> Int {
-  let names = bench_member_names(n)
-  count_active_members(names, treasury_policy(), bench_inputs(names), [])
-}
-
-test bench_count_active_n10() {
-  bench_count(10) == 10
-}
-
-test bench_count_active_n20() {
-  bench_count(20) == 20
-}
-
-test bench_count_active_n30() {
-  bench_count(30) == 30
-}
-
-test bench_count_active_n40() {
-  bench_count(40) == 40
-}
-
-test bench_count_active_n5() {
-  bench_count(5) == 5
-}
-
-test bench_count_active_n6() {
-  bench_count(6) == 6
-}
-
-test bench_count_active_n7() {
-  bench_count(7) == 7
-}
-
-test bench_count_active_n8() {
-  bench_count(8) == 8
-}

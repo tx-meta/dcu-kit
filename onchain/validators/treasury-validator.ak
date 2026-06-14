@@ -7,15 +7,14 @@ use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/settings.{read_settings}
 use dcu/treasury.{
   ClaimPayout, ClaimPenalty, Contribute, DistributeRound, DistributeWithdraw,
-  ExitGroup, ExtendGrace, JoinGroup, NextCycle, NextCycleWithdraw,
-  TerminateDefault, TreasuryDatum, TreasuryRedeemer, TreasuryWithdrawRedeemer,
-  UpdatePayout,
+  ExitGroup, ExtendGrace, JoinGroup, TerminateDefault, TreasuryDatum,
+  TreasuryRedeemer, TreasuryWithdrawRedeemer, UpdatePayout,
 } as treasury_types
 use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
   validate_contribute, validate_distribute_withdraw, validate_exit_treasury,
-  validate_extend_grace, validate_join_treasury, validate_next_cycle_withdraw,
-  validate_terminate_default, validate_update_payout,
+  validate_extend_grace, validate_join_treasury, validate_terminate_default,
+  validate_update_payout,
 }
 
 // treasury(account_policy_id)
@@ -225,16 +224,6 @@ validator treasury(settings_policy: PolicyId) {
         )
       }
 
-      NextCycle { withdrawal_index } ->
-        // [security]: withdraw-zero coupling (see DistributeRound). The heavy reset validation
-        // runs once in the `withdraw` handler; the indexer there requires every spent treasury
-        // UTxO to be covered, so excluding/substituting an input is rejected globally.
-        stake_validator.validate_withdraw_minimal(
-          policy_id_from_utxo(inputs, utxo),
-          self.withdrawals,
-          withdrawal_index,
-        )
-
       ClaimPayout {
         group_ref_input_index,
         member_input_index,
@@ -299,43 +288,27 @@ validator treasury(settings_policy: PolicyId) {
     // settings NFT) — same trust anchor the spend handlers use.
     let settings = read_settings(self.reference_inputs, settings_policy)
 
-    when redeemer is {
-      DistributeWithdraw {
-        round_number,
-        group_ref_input_index,
-        group_output_index,
-        treasury_input_indices,
-        treasury_output_indices,
-        borrower_output_index,
-      } ->
-        validate_distribute_withdraw(
-          own_policy_id,
-          settings.group_policy,
-          round_number,
-          group_ref_input_index,
-          group_output_index,
-          treasury_input_indices,
-          treasury_output_indices,
-          borrower_output_index,
-          self,
-        )
-
-      NextCycleWithdraw {
-        group_input_index,
-        group_output_index,
-        treasury_input_indices,
-        treasury_output_indices,
-      } ->
-        validate_next_cycle_withdraw(
-          own_policy_id,
-          settings.group_policy,
-          group_input_index,
-          group_output_index,
-          treasury_input_indices,
-          treasury_output_indices,
-          self,
-        )
-    }
+    // DistributeWithdraw is the only withdraw redeemer (NextCycleWithdraw was removed with the
+    // continuous-round model), so destructure it directly.
+    let DistributeWithdraw {
+      round_number,
+      group_ref_input_index,
+      group_output_index,
+      treasury_input_indices,
+      treasury_output_indices,
+      borrower_output_index,
+    } = redeemer
+    validate_distribute_withdraw(
+      own_policy_id,
+      settings.group_policy,
+      round_number,
+      group_ref_input_index,
+      group_output_index,
+      treasury_input_indices,
+      treasury_output_indices,
+      borrower_output_index,
+      self,
+    )
   }
 
   // [security]: else branch must fail — prevents unauthorized governance votes,

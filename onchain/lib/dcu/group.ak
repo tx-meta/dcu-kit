@@ -160,16 +160,6 @@ pub type GroupSpendRedeemer {
     group_output_index: Int,
     round_number: Int,
   }
-  // Resets the group for another rotation cycle after all rounds are distributed.
-  // Members remain in the group; their treasury UTxOs are reset by the treasury
-  // validator's NextCycle handler. Members must re-deposit via Contribute before
-  // creator calls StartGroup again.
-  NextCycle {
-    group_ref_token_name: AssetName,
-    admin_input_index: Int,
-    group_input_index: Int,
-    group_output_index: Int,
-  }
 }
 
 // cip68_name_key: UTF-8 bytes for the string "name" — the standard CIP-68 display name key.
@@ -887,89 +877,6 @@ pub fn validate_distribute_group(
     time_valid?,
     round_number_valid?,
     active_count_bounded?,
-    (group_output.address == group_input.output.address)?,
-    (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
-      Pair(group_ref_token_name, 1),
-    ])?,
-    output_clean_value?,
-    (updated_cip68 == expected)?,
-    (out_ada >= in_ada)?,
-  }
-}
-
-// validate_next_cycle_group
-// ─────────────────────────────────────────────────────────────────────────────
-// NOTE: self-reference check enforced at entry point.
-//
-// Resets the group for another rotation cycle after all rounds are distributed.
-// Members remain in the group and re-deposit via Contribute before the admin
-// calls StartGroup again.
-//
-// [spec NextCycle 1]: group input holds the ref token
-// [spec NextCycle 2]: admin input holds the user (222) token
-// [spec NextCycle 3]: group must be started and active
-// [spec NextCycle 4]: all rounds complete: last_distributed_round + 1 == num_rounds
-// [spec NextCycle 5]: group output: is_started=False, last_distributed_round=-1,
-//                     num_rounds=0, start_time=0; all other fields frozen
-// [security NextCycle]: ADA must not decrease; output holds only ADA + own policy
-pub fn validate_next_cycle_group(
-  policy_id: PolicyId,
-  group_ref_token_name: AssetName,
-  admin_input_index: Int,
-  group_input_index: Int,
-  group_output_index: Int,
-  inputs: List<Input>,
-  outputs: List<Output>,
-) -> Bool {
-  let (group_input, GroupCip68Datum { metadata, version, extra: current }) = load_group_input(
-    inputs,
-    group_input_index,
-    policy_id,
-    group_ref_token_name,
-  )
-
-  let user_token_name = cip68.convert_ref_to_user_token(group_ref_token_name)
-  expect Some(admin_input) = list.at(inputs, admin_input_index)
-  let admin_authorized = assets.quantity_of(
-    admin_input.output.value,
-    policy_id,
-    user_token_name,
-  ) == 1
-
-  // [spec NextCycle 3]: group must be started and active
-  let group_started = current.is_started
-  let group_active = current.is_active
-
-  // [spec NextCycle 4]: all rounds have been distributed
-  let all_rounds_done = current.last_distributed_round + 1 == current.num_rounds
-
-  expect Some(group_output) = list.at(outputs, group_output_index)
-  expect InlineDatum(output_datum_data) = group_output.datum
-  expect updated_cip68: GroupCip68Datum = output_datum_data
-
-  // [spec NextCycle 5]: reset cycle fields; metadata and version preserved
-  let expected = GroupCip68Datum {
-    metadata,
-    version,
-    extra: GroupDatum {
-      ..current,
-      is_started: False,
-      last_distributed_round: -1,
-      num_rounds: 0,
-      start_time: 0,
-    },
-  }
-
-  let in_ada = assets.lovelace_of(group_input.output.value)
-  let out_ada = assets.lovelace_of(group_output.value)
-
-  let output_clean_value = output_holds_only_own(group_output.value, policy_id)
-
-  and {
-    admin_authorized?,
-    group_started?,
-    group_active?,
-    all_rounds_done?,
     (group_output.address == group_input.output.address)?,
     (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
       Pair(group_ref_token_name, 1),
