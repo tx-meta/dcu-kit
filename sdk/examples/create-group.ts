@@ -2,7 +2,7 @@ import {
   CreateGroupConfig,
   GroupDatum,
   assetNameLabels,
-} from "@tx-meta/dcu-sdk";
+} from "@tx-meta/dcu-kit";
 import { getAddressDetails } from "@lucid-evolution/lucid";
 import { loadSdk } from "./sdk.js";
 import {
@@ -138,7 +138,7 @@ async function main() {
   };
 
   console.log("Building transaction...");
-  const tx = await sdk.createGroup(lucid, config).unsafeRun();
+  const { tx } = await sdk.createGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `@tx-meta/dcu-sdk` are documented here. The format follows
+All notable changes to `@tx-meta/dcu-kit` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to semantic
 versioning. Migration steps for every breaking change live in [`MIGRATION.md`](./MIGRATION.md).
 

@@ -23,7 +23,7 @@ When executed, the SDK constructs a transaction that:
 
 ```ts
 import { OutRef } from "@lucid-evolution/lucid";
-import { GroupDatum } from "@tx-meta/dcu-sdk";
+import { GroupDatum } from "@tx-meta/dcu-kit";
 
 export type CreateGroupConfig = {
   /** Display name shown by wallets — written into metadata["name"]. */
@@ -65,7 +65,7 @@ All numeric fields are `bigint`; time values are POSIX milliseconds. Several fie
 **Example:**
 
 ```ts
-import { GroupDatum } from "@tx-meta/dcu-sdk";
+import { GroupDatum } from "@tx-meta/dcu-kit";
 
 const groupDatum: GroupDatum = {
   contribution_fee:           5_000_000n,      // 5 ADA per round
@@ -97,7 +97,7 @@ const groupDatum: GroupDatum = {
 ## Usage
 
 ```ts
-import { createDcuSdk } from "@tx-meta/dcu-sdk";
+import { createDcuSdk } from "@tx-meta/dcu-kit";
 
 const sdk = createDcuSdk(settingsPolicy);
 

@@ -20,7 +20,7 @@ Critical financial parameters (fees, `interval_length`, collateral/payout policy
 ## Configuration
 
 ```ts
-import { GroupDatum } from "@tx-meta/dcu-sdk";
+import { GroupDatum } from "@tx-meta/dcu-kit";
 
 export type UpdateGroupConfig = {
   /** 28-byte token suffix of the group. */
@@ -34,7 +34,7 @@ export type UpdateGroupConfig = {
 ## Usage
 
 ```ts
-import { createDcuSdk } from "@tx-meta/dcu-sdk";
+import { createDcuSdk } from "@tx-meta/dcu-kit";
 
 const sdk = createDcuSdk(settingsPolicy);
 

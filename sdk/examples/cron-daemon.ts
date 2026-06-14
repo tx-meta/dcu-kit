@@ -41,7 +41,7 @@ import {
   GroupCip68Datum,
   assetNameLabels,
   DcuSdk,
-} from "@tx-meta/dcu-sdk";
+} from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import { loadState, ExampleState } from "./state.js";
 import { logError } from "./context.js";

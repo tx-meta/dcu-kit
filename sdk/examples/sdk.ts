@@ -16,7 +16,7 @@
  *   3. pnpm run create-group / create-account / join-group / ...
  */
 
-import { createDcuSdk, DcuSdk } from "@tx-meta/dcu-sdk";
+import { createDcuSdk, DcuSdk } from "@tx-meta/dcu-kit";
 import { loadState } from "./state.js";
 
 /**

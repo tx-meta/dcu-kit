@@ -19,7 +19,7 @@ import {
   accountPolicyId,
   assetNameLabels,
   GroupCip68Datum,
-} from "@tx-meta/dcu-sdk";
+} from "@tx-meta/dcu-kit";
 import { Data, UTxO } from "@lucid-evolution/lucid";
 import { loadSdk } from "./sdk.js";
 import {

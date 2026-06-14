@@ -1,6 +1,6 @@
 # Migration Guide
 
-Breaking-change migration notes for `@tx-meta/dcu-sdk`, newest first. Each section
+Breaking-change migration notes for `@tx-meta/dcu-kit`, newest first. Each section
 lists what changed, why, and the before/after edit. Because the DCU validators are
 unparameterized-per-version, **any release that changes a validator hash requires a
 fresh `deploy-scripts` run** — stale reference scripts make txs fail on-chain with
@@ -60,11 +60,11 @@ endpoint set once per deployment with `createDcuSdk(settingsPolicy)`.
 
 ```ts
 // Before — static imports
-import { joinGroup } from "@tx-meta/dcu-sdk";
+import { joinGroup } from "@tx-meta/dcu-kit";
 await joinGroup(lucid, config).unsafeRun();
 
 // After — bind to the deployment's settings policy
-import { createDcuSdk } from "@tx-meta/dcu-sdk";
+import { createDcuSdk } from "@tx-meta/dcu-kit";
 const sdk = createDcuSdk(settingsPolicy); // settingsPolicy from initialize-settings
 await sdk.joinGroup(lucid, config).unsafeRun();
 ```
@@ -116,7 +116,7 @@ The group reference-token datum is a 3-field CIP-68 wrapper
 const group = Data.from(utxo.datum!, GroupDatum);
 
 // After — decode the wrapper, then read .extra
-import { parseGroupCip68Datum } from "@tx-meta/dcu-sdk";
+import { parseGroupCip68Datum } from "@tx-meta/dcu-kit";
 const parts = await parseGroupCip68Datum(utxo.datum).pipe(/* run */);
 const group = parts.groupDatum; // the GroupDatum
 // Display name lives in the wrapper's metadata:

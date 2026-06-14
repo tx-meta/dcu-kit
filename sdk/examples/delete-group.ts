@@ -10,7 +10,7 @@
  *   2. Auto-discovery — scans admin wallet for a group admin token (222 prefix)
  */
 
-import { DeleteGroupConfig, assetNameLabels } from "@tx-meta/dcu-sdk";
+import { DeleteGroupConfig, assetNameLabels } from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,

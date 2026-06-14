@@ -17,7 +17,7 @@
  * join-group, start-group, and all distribute-payout rounds first.
  */
 
-import { NextCycleConfig, accountPolicyId } from "@tx-meta/dcu-sdk";
+import { NextCycleConfig, accountPolicyId } from "@tx-meta/dcu-kit";
 import { UTxO } from "@lucid-evolution/lucid";
 import { loadSdk } from "./sdk.js";
 import {

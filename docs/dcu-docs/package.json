@@ -10,7 +10,7 @@
     "postinstall": "fumadocs-mdx"
   },
   "dependencies": {
-    "@tx-meta/dcu-sdk": "link:../../sdk",
+    "@tx-meta/dcu-kit": "link:../../sdk",
     "@shikijs/twoslash": "^4.0.2",
     "@takumi-rs/image-response": "^0.72.0",
     "fumadocs-core": "16.6.17",

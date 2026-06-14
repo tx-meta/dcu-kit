@@ -57,7 +57,7 @@ export type CreateAccountConfig = {
  *
  * @example
  * ```ts
-import { createAccount } from "@tx-meta/dcu-sdk";
+import { createAccount } from "@tx-meta/dcu-kit";
 
 // Minimal — both fields default to wallet address
 const program = createAccount(lucid, { selected_out_ref: utxo });

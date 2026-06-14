@@ -23,7 +23,7 @@ createAccount → createGroup → joinGroup (×N) → startGroup
 `createAccount` is a standalone import; every group/treasury endpoint below comes from `createDcuSdk(settingsPolicy)`. Endpoint configs identify positions by their permanent CIP-68 **token suffix**, not by UTxO references.
 
 ```ts
-import { createDcuSdk } from "@tx-meta/dcu-sdk";
+import { createDcuSdk } from "@tx-meta/dcu-kit";
 const sdk = createDcuSdk(settingsPolicy);
 ```
 
@@ -34,7 +34,7 @@ const sdk = createDcuSdk(settingsPolicy);
 Every participant establishes an on-chain identity before interacting with any group.
 
 ```ts
-import { createAccount } from "@tx-meta/dcu-sdk";
+import { createAccount } from "@tx-meta/dcu-kit";
 
 // Any UTxO you own — used as entropy for CIP-68 token-name derivation.
 const [utxo] = await lucid.wallet().getUtxos();

@@ -11,7 +11,7 @@
  * contribute). Reads groupTokenSuffix + the member's account suffix from state.json.
  */
 
-import { TerminateDefaultConfig, accountPolicyId } from "@tx-meta/dcu-sdk";
+import { TerminateDefaultConfig, accountPolicyId } from "@tx-meta/dcu-kit";
 import { UTxO } from "@lucid-evolution/lucid";
 import { loadSdk } from "./sdk.js";
 import {

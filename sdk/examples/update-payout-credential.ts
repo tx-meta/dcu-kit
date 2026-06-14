@@ -20,7 +20,7 @@
 import {
   UpdatePayoutCredentialConfig,
   accountPolicyId,
-} from "@tx-meta/dcu-sdk";
+} from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,

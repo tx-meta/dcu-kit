@@ -13,7 +13,7 @@ import {
   ExitGroupConfig,
   accountPolicyId,
   assetNameLabels,
-} from "@tx-meta/dcu-sdk";
+} from "@tx-meta/dcu-kit";
 import { UTxO } from "@lucid-evolution/lucid";
 import { loadSdk } from "./sdk.js";
 import {

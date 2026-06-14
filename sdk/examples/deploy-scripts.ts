@@ -26,7 +26,7 @@
  */
 
 import { Effect } from "effect";
-import { deployScripts, verifyDeployment } from "@tx-meta/dcu-sdk";
+import { deployScripts, verifyDeployment } from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,

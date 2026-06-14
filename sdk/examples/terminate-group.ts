@@ -8,7 +8,7 @@
  * Requires a PenaltyState treasury UTxO to exist — run exit-group.ts (early exit) first.
  */
 
-import { TerminateGroupConfig, accountPolicyId } from "@tx-meta/dcu-sdk";
+import { TerminateGroupConfig, accountPolicyId } from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,

@@ -15,9 +15,9 @@ importers:
       '@lucid-evolution/lucid':
         specifier: 0.4.31
         version: 0.4.31(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)
-      '@tx-meta/dcu-sdk':
-        specifier: file:../dcu-sdk-0.2.6.tgz
-        version: file:../dcu-sdk-0.2.6.tgz(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)
+      '@tx-meta/dcu-kit':
+        specifier: file:../dcu-kit-0.2.6.tgz
+        version: file:../dcu-kit-0.2.6.tgz(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
@@ -718,8 +718,8 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@tx-meta/dcu-sdk@file:../dcu-sdk-0.2.6.tgz':
-    resolution: {integrity: sha512-m8HJUskEs93M9uJuQ/Br38mo7LRkOx8buOkA7RrhVgOGmCg1vAF/n4BTiIXShyBTCUm/yRUnpTsnwidJe395jA==, tarball: file:../dcu-sdk-0.2.6.tgz}
+  '@tx-meta/dcu-kit@file:../dcu-kit-0.2.6.tgz':
+    resolution: {integrity: sha512-1g3SWPIkC58PyFY1NAcq9PVASzWtH12OUP/7gO1EeHo0zEjSlzRcyoKl6dxwnx+Wy2EdQqYWqFc8gSh0VcvmOw==, tarball: file:../dcu-kit-0.2.6.tgz}
     version: 0.2.6
 
   '@types/estree@1.0.8':
@@ -1991,7 +1991,7 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@tx-meta/dcu-sdk@file:../dcu-sdk-0.2.6.tgz(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)':
+  '@tx-meta/dcu-kit@file:../dcu-kit-0.2.6.tgz(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)':
     dependencies:
       '@lucid-evolution/lucid': 0.4.31(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)
       '@noble/hashes': 1.8.0

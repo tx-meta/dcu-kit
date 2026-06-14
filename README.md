@@ -1,7 +1,7 @@
 # DCU Toolkit: Decentralized Credit Unions Infrastructure
 
-[![CI](https://github.com/txmeta/dcu-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/txmeta/dcu-toolkit/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@tx-meta/dcu-sdk)](https://www.npmjs.com/package/@tx-meta/dcu-sdk)
+[![CI](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@tx-meta/dcu-kit)](https://www.npmjs.com/package/@tx-meta/dcu-kit)
 
 An open-source **developer toolkit** for building cooperative finance applications on Cardano. The DCU Toolkit provides the foundational infrastructure to digitize and automate community-based savings groups (Chamas, SACCOs, Tontines).
 
@@ -28,7 +28,7 @@ Standalone scripts and demonstration code showing how to bundle the on-chain and
 ## Quick Start
 
 ```sh
-npm install @tx-meta/dcu-sdk
+npm install @tx-meta/dcu-kit
 ```
 
 Refer to the [SDK README](sdk/README.md) for the full integration guide and API overview.
