@@ -351,9 +351,7 @@ export const unsignedExitGroupTxProgram = (
     const withValidators =
       scriptRefs.treasury || scriptRefs.group
         ? afterPath.readFrom(
-            [scriptRefs.treasury, scriptRefs.group].filter(
-              Boolean,
-            ) as UTxO[],
+            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
           )
         : afterPath.attach
             .MintingPolicy(treasuryValidator.mintTreasury)

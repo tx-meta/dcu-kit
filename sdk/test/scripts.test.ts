@@ -9,7 +9,7 @@ import {
 } from "../src/core/scripts.js";
 
 // The resolver only inspects truthiness of treasury/group, so a minimal cast suffices.
-const utxo = (tag: string): UTxO => ({ tag } as unknown as UTxO);
+const utxo = (tag: string): UTxO => ({ tag }) as unknown as UTxO;
 
 afterEach(() => clearReferenceScripts());
 

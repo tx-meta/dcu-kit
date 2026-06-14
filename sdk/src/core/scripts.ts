@@ -121,11 +121,7 @@ export const verifyReferenceScripts = (
   refs: ScriptRefs,
 ): Effect.Effect<void, ReferenceScriptMismatchError> =>
   Effect.gen(function* () {
-    const checks: Array<[
-      "treasury" | "group",
-      UTxO | undefined,
-      string,
-    ]> = [
+    const checks: Array<["treasury" | "group", UTxO | undefined, string]> = [
       ["treasury", refs.treasury, protocol.treasuryPolicyId],
       ["group", refs.group, protocol.groupPolicyId],
     ];

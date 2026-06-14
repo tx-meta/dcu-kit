@@ -313,9 +313,7 @@ export const unsignedJoinGroupTxProgram = (
     const withValidators =
       scriptRefs.treasury || scriptRefs.group
         ? withFee.readFrom(
-            [scriptRefs.treasury, scriptRefs.group].filter(
-              Boolean,
-            ) as UTxO[],
+            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
           )
         : withFee.attach
             .MintingPolicy(treasuryValidator.mintTreasury)

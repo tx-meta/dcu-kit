@@ -110,9 +110,8 @@ export const getGroupMetadata = (source: {
  * @example
  * const name = getGroupName(parts); // "Savings Club" | undefined
  */
-export const getGroupName = (source: {
-  metadata: Data;
-}): string | undefined => getGroupMetadata(source)["name"];
+export const getGroupName = (source: { metadata: Data }): string | undefined =>
+  getGroupMetadata(source)["name"];
 
 /**
  * Decodes the CIP-68 display metadata of a group into the standard `name` and

@@ -139,15 +139,15 @@ export const createAccountTestCase = (
 
     const { tx: createAccountTx, accountTokenSuffix } =
       yield* unsignedCreateAccountTxProgram(lucid, accountConfig).pipe(
-      Effect.timeout("60 seconds"),
-      Effect.catchTag("TimeoutException", () =>
-        Effect.fail(
-          new SetupError({
-            message: "createAccount completeProgram timed out",
-          }),
+        Effect.timeout("60 seconds"),
+        Effect.catchTag("TimeoutException", () =>
+          Effect.fail(
+            new SetupError({
+              message: "createAccount completeProgram timed out",
+            }),
+          ),
         ),
-      ),
-    );
+      );
     const txHash = yield* signAndSubmit(createAccountTx);
     yield* advanceBlock(context.emulator);
 
@@ -306,7 +306,11 @@ export const createGroupTestCase = (
     };
 
     const { tx: createGroupTx, groupTokenSuffix } =
-      yield* unsignedCreateGroupTxProgram(context.protocol!, lucid, groupConfig);
+      yield* unsignedCreateGroupTxProgram(
+        context.protocol!,
+        lucid,
+        groupConfig,
+      );
     const txHash = yield* signAndSubmit(createGroupTx);
     yield* advanceBlock(context.emulator);
 

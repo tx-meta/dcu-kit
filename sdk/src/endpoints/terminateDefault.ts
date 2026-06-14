@@ -252,9 +252,7 @@ export const unsignedTerminateDefaultTxProgram = (
     const withValidators =
       scriptRefs.treasury || scriptRefs.group
         ? baseTx.readFrom(
-            [scriptRefs.treasury, scriptRefs.group].filter(
-              Boolean,
-            ) as UTxO[],
+            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
           )
         : baseTx.attach
             .MintingPolicy(treasuryValidator.mintTreasury)

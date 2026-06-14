@@ -345,9 +345,7 @@ export const unsignedDistributePayoutTxProgram = (
     const baseTx =
       scriptRefs.treasury || scriptRefs.group
         ? baseTxNoValidators.readFrom(
-            [scriptRefs.treasury, scriptRefs.group].filter(
-              Boolean,
-            ) as UTxO[],
+            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
           )
         : baseTxNoValidators.attach
             .SpendingValidator(groupValidator.spendGroup)
