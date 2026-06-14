@@ -1404,6 +1404,65 @@ test distribute_round__accepts_valid_round() {
   )
 }
 
+// Continuous rounds: round_number == num_rounds is the first round of CYCLE 2 — the old
+// per-cycle cap would have rejected it. effective_slot = round_number % num_rounds wraps to 0,
+// and the boundary suppresses ICS so the (drained-to-reserve) member stays TreasuryState.
+test distribute_round__accepts_second_cycle_round() {
+  let tp = treasury_policy()
+  let gp = group_policy()
+
+  // num_rounds = 1; last_distributed_round = 0, so round_number = 1 (== num_rounds).
+  let group_datum =
+    GroupDatum {
+      ..test_group_datum(),
+      num_rounds: 1,
+      is_started: True,
+      last_distributed_round: 0,
+      active_member_count: 1,
+      member_token_names: [member_tn()],
+    }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: group_in_value,
+      datum: InlineDatum(cip68_with_group(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: group_in_value,
+    datum: InlineDatum(
+      cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 1 }),
+    ),
+    reference_script: None,
+  }
+  // Member ready for round 1 (rounds_paid == 1); after the round, rounds_paid == 2.
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(build_treasury_state(0, group_ref_tn(), 1), treasury_value()),
+  )
+  let treasury_out = test_treasury_output(
+    build_treasury_state(0, group_ref_tn(), 2),
+    assets.from_lovelace(min_ada_reserve + 3_000_000)
+      |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+  )
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, treasury_in],
+    outputs: [treasury_out, group_output, test_borrower_output()],
+    validity_range: interval.after(0),
+  }
+
+  validate_distribute_withdraw(tp, group_policy(), 1, 0, 1, [1], [0], 2, tx)
+}
+
 // [B3] Final-round min-ADA: a member funded to exactly the round's fee enters the last
 // round with contributable == fee, is debited fee, and lands at contributable == 0 while
 // min_ada_reserve still carries the membership token. The output stays TreasuryState
