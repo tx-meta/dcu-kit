@@ -253,13 +253,17 @@ export const GroupSpendRedeemerSchema = Data.Enum([
   Data.Object({
     // Lost-member recovery: swaps the membership registry entry old (N) -> new (N')
     // when a member's identity is rotated by treasury ExecuteRecovery in the same tx.
-    // member_count and active_member_count frozen.
+    // member_count and active_member_count frozen. The treasury indices couple this
+    // registry edit to a genuine rotation: the named treasury input must hold N and
+    // the named treasury output must hold N'.
     RecoverMember: Data.Object({
       group_ref_token_name: Data.Bytes(),
       group_input_index: Data.Integer(),
       group_output_index: Data.Integer(),
       old_member_token_name: Data.Bytes(),
       new_member_token_name: Data.Bytes(),
+      treasury_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
     }),
   }),
 ]);

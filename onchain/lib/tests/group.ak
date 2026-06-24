@@ -6,7 +6,7 @@ use dcu/cip68
 use dcu/group.{
   GroupCip68Datum, GroupDatum, max_group_members, validate_close_group,
   validate_create_group, validate_exit_group, validate_join_group,
-  validate_recover_group, validate_update_group,
+  validate_recover_group, validate_recover_member, validate_update_group,
 }
 use dcu/treasury.{DefaultState, TreasuryState}
 use tests/common
@@ -2107,6 +2107,392 @@ test member_recover__rejects_no_real_recovery() fail {
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
   let (inputs, outputs) = recover_setup(policy_id, tp, ref_tn, 1, False)
   validate_recover_group(policy_id, tp, ref_tn, 0, 0, 1, 1, inputs, outputs)
+}
+
+// ─── validate_recover_member (RecoverMember registry swap N -> N') ──────────
+
+// Generic treasury UTxO holding `member_tn` (datum content is irrelevant to the
+// group-side coupling check — only token presence under treasury_policy_id matters).
+fn treasury_utxo_holding(tp: assets.PolicyId, member_tn: ByteArray) -> Output {
+  common.test_script_utxo(
+    tp,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(tp, member_tn, 1)),
+    DefaultState {
+      group_reference_tokenname: member_tn,
+      member_reference_tokenname: member_tn,
+      grace_expires_at: 0,
+      grace_extensions_used: 0,
+      rounds_paid: 0,
+      assigned_slot: 0,
+      member_payment_credential: common.test_pkh(),
+      claimable_balance: 0,
+    },
+  )
+}
+
+// Builds the full input/output set for a RecoverMember test:
+//   group: member_token_names = in_names -> out_names (member_count/active frozen at `count`)
+//   treasury: input holds old_tn (if include_old_treasury_input), output holds new_tn
+//             (if include_new_treasury_output)
+fn recover_member_setup(
+  policy_id: assets.PolicyId,
+  tp: assets.PolicyId,
+  ref_tn: ByteArray,
+  count: Int,
+  in_names: List<ByteArray>,
+  out_names: List<ByteArray>,
+  old_tn: ByteArray,
+  new_tn: ByteArray,
+  include_old_treasury_input: Bool,
+  include_new_treasury_output: Bool,
+) -> (List<Input>, List<Output>) {
+  let base = common.test_group_datum(policy_id)
+  let in_datum =
+    GroupDatum {
+      ..base,
+      member_count: count,
+      active_member_count: count,
+      member_token_names: in_names,
+    }
+  let out_datum =
+    GroupDatum {
+      ..base,
+      member_count: count,
+      active_member_count: count,
+      member_token_names: out_names,
+    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = if include_old_treasury_input {
+    treasury_utxo_holding(tp, old_tn)
+  } else {
+    // No token under old_tn — coupling lookup at treasury_input_index fails.
+    treasury_utxo_holding(tp, #"deadbeef")
+  }
+  let treasury_out = if include_new_treasury_output {
+    treasury_utxo_holding(tp, new_tn)
+  } else {
+    // No token under new_tn — coupling lookup at treasury_output_index fails.
+    treasury_utxo_holding(tp, #"deadbeef")
+  }
+  (
+    [group_in, common.test_input(placeholder_treasury_ref(), treasury_in)],
+    [group_out, treasury_out],
+  )
+}
+
+fn placeholder_treasury_ref() -> OutputReference {
+  OutputReference {
+    transaction_id: #"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    output_index: 0,
+  }
+}
+
+test recover_member__swaps_registry_N_to_Nprime() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let (inputs, outputs) =
+    recover_member_setup(
+      policy_id,
+      tp,
+      ref_tn,
+      2,
+      [#"aabb", #"ccdd"],
+      [#"ccdd", #"eeff"],
+      #"aabb",
+      #"eeff",
+      True,
+      True,
+    )
+  validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    inputs,
+    outputs,
+  )
+}
+
+test recover_member__rejects_when_N_absent() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  // N (#"9999") is not in the input registry at all.
+  let (inputs, outputs) =
+    recover_member_setup(
+      policy_id,
+      tp,
+      ref_tn,
+      2,
+      [#"aabb", #"ccdd"],
+      [#"ccdd", #"eeff"],
+      #"9999",
+      #"eeff",
+      True,
+      True,
+    )
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"9999",
+    #"eeff",
+    1,
+    1,
+    inputs,
+    outputs,
+  )
+}
+
+test recover_member__rejects_when_Nprime_already_member() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  // N' (#"ccdd") already sits in the input registry — collision.
+  let (inputs, outputs) =
+    recover_member_setup(
+      policy_id,
+      tp,
+      ref_tn,
+      2,
+      [#"aabb", #"ccdd"],
+      [#"ccdd", #"ccdd"],
+      #"aabb",
+      #"ccdd",
+      True,
+      True,
+    )
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"ccdd",
+    1,
+    1,
+    inputs,
+    outputs,
+  )
+}
+
+test recover_member__rejects_member_count_change() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = common.test_group_datum(policy_id)
+  let in_datum =
+    GroupDatum {
+      ..base,
+      member_count: 2,
+      active_member_count: 2,
+      member_token_names: [#"aabb", #"ccdd"],
+    }
+  // member_count bumped to 3 alongside the otherwise-correct registry swap.
+  let out_datum =
+    GroupDatum {
+      ..base,
+      member_count: 3,
+      active_member_count: 2,
+      member_token_names: [#"ccdd", #"eeff"],
+    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = common.test_input(
+    placeholder_treasury_ref(),
+    treasury_utxo_holding(tp, #"aabb"),
+  )
+  let treasury_out = treasury_utxo_holding(tp, #"eeff")
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    [group_in, treasury_in],
+    [group_out, treasury_out],
+  )
+}
+
+test recover_member__rejects_active_count_change() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = common.test_group_datum(policy_id)
+  let in_datum =
+    GroupDatum {
+      ..base,
+      member_count: 2,
+      active_member_count: 2,
+      member_token_names: [#"aabb", #"ccdd"],
+    }
+  // active_member_count dropped to 1 alongside the otherwise-correct registry swap.
+  let out_datum =
+    GroupDatum {
+      ..base,
+      member_count: 2,
+      active_member_count: 1,
+      member_token_names: [#"ccdd", #"eeff"],
+    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = common.test_input(
+    placeholder_treasury_ref(),
+    treasury_utxo_holding(tp, #"aabb"),
+  )
+  let treasury_out = treasury_utxo_holding(tp, #"eeff")
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    [group_in, treasury_in],
+    [group_out, treasury_out],
+  )
+}
+
+test recover_member__rejects_other_field_mutation() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = common.test_group_datum(policy_id)
+  let in_datum =
+    GroupDatum {
+      ..base,
+      member_count: 2,
+      active_member_count: 2,
+      member_token_names: [#"aabb", #"ccdd"],
+    }
+  // penalty_fee silently changed alongside the otherwise-correct registry swap.
+  let out_datum =
+    GroupDatum {
+      ..base,
+      member_count: 2,
+      active_member_count: 2,
+      member_token_names: [#"ccdd", #"eeff"],
+      penalty_fee: base.penalty_fee + 1,
+    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = common.test_input(
+    placeholder_treasury_ref(),
+    treasury_utxo_holding(tp, #"aabb"),
+  )
+  let treasury_out = treasury_utxo_holding(tp, #"eeff")
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    [group_in, treasury_in],
+    [group_out, treasury_out],
+  )
+}
+
+test recover_member__rejects_missing_treasury_rotation() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  // Neither the treasury input holds N, nor the treasury output holds N' — no rotation.
+  let (inputs, outputs) =
+    recover_member_setup(
+      policy_id,
+      tp,
+      ref_tn,
+      2,
+      [#"aabb", #"ccdd"],
+      [#"ccdd", #"eeff"],
+      #"aabb",
+      #"eeff",
+      False,
+      False,
+    )
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    inputs,
+    outputs,
+  )
 }
 
 // Exit: group output member_count not decremented → rejected

@@ -184,13 +184,18 @@ pub type GroupSpendRedeemer {
   }
   // Lost-member recovery: swaps the membership registry entry old (N) -> new (N') when a
   // member's identity is rotated by treasury ExecuteRecovery in the same tx. member_count and
-  // active_member_count frozen.
+  // active_member_count frozen. The treasury indices couple this registry edit to a genuine
+  // rotation: the named treasury input must hold N and the named treasury output must hold N'.
   RecoverMember {
     group_ref_token_name: AssetName,
     group_input_index: Int,
     group_output_index: Int,
     old_member_token_name: AssetName,
     new_member_token_name: AssetName,
+    // The member's treasury UTxO holding N (being rotated away).
+    treasury_input_index: Int,
+    // The rotated treasury UTxO holding N'.
+    treasury_output_index: Int,
   }
 }
 
@@ -1004,6 +1009,120 @@ pub fn validate_recover_group(
     recovery_same_member?,
     (group_output.address == group_input.output.address)?,
     (assets.quantity_of(group_output.value, policy_id, group_ref_token_name) == 1)?,
+    output_clean_value?,
+    (updated_cip68 == expected)?,
+    (out_ada >= in_ada)?,
+  }
+}
+
+// validate_recover_member
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE: self-reference check enforced at entry point.
+//
+// Group-side half of lost-member identity rotation: swaps the membership registry
+// entry old (N) -> new (N') when the treasury-side ExecuteRecovery (quorum + timelock +
+// veto, Task 2.6 — not yet implemented) rotates the member's account token in the same
+// tx. This handler does NOT re-check authority; it only couples the registry edit to a
+// genuine treasury rotation via token presence, so the registry can never be edited
+// without a real recovery actually happening.
+//
+// [spec RecoverMember 1]: group input holds the ref token
+// [spec RecoverMember 2]: N must be present in the input registry
+// [spec RecoverMember 3]: N' must NOT already be present in the input registry (no collision)
+// [spec RecoverMember 4]: output registry == input registry with N removed and N' appended;
+//                         member_count, active_member_count, and every other field frozen;
+//                         metadata and version preserved
+// [spec RecoverMember 5]: treasury input at treasury_input_index holds exactly 1 of N
+//                         under treasury_policy_id
+// [spec RecoverMember 6]: treasury output at treasury_output_index holds exactly 1 of N'
+//                         under treasury_policy_id
+// [security]: group output at same script address, holds exactly the ref token, ADA not decreased
+pub fn validate_recover_member(
+  policy_id: PolicyId,
+  treasury_policy_id: PolicyId,
+  group_ref_token_name: AssetName,
+  group_input_index: Int,
+  group_output_index: Int,
+  old_member_token_name: AssetName,
+  new_member_token_name: AssetName,
+  treasury_input_index: Int,
+  treasury_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
+) -> Bool {
+  // [spec RecoverMember 1]: group input holds the ref token
+  let (group_input, GroupCip68Datum { metadata, version, extra: current }) = load_group_input(
+    inputs,
+    group_input_index,
+    policy_id,
+    group_ref_token_name,
+  )
+
+  // [spec RecoverMember 2]: N must exist in the current registry — otherwise there is
+  // nothing to rotate away from.
+  let old_present = list.any(
+    current.member_token_names,
+    fn(n) { n == old_member_token_name },
+  )
+
+  // [spec RecoverMember 3]: N' must not already be a member — prevents collapsing two
+  // distinct identities into one registry slot.
+  let new_absent = !list.any(
+    current.member_token_names,
+    fn(n) { n == new_member_token_name },
+  )
+
+  // [spec RecoverMember 4]: registry swap — remove N, append N'; every other field frozen.
+  let swapped_names = list.concat(
+    list.filter(current.member_token_names, fn(n) { n != old_member_token_name }),
+    [new_member_token_name],
+  )
+
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect InlineDatum(output_datum_data) = group_output.datum
+  expect updated_cip68: GroupCip68Datum = output_datum_data
+  let expected = GroupCip68Datum {
+    metadata,
+    version,
+    extra: GroupDatum { ..current, member_token_names: swapped_names },
+  }
+
+  // [spec RecoverMember 5]: the member's treasury UTxO holding N is a spending input —
+  // ties the registry edit to the rotation that is actually moving the old identity out.
+  expect Some(treasury_in) = list.at(inputs, treasury_input_index)
+  let treasury_in_holds_old = assets.quantity_of(
+    treasury_in.output.value,
+    treasury_policy_id,
+    old_member_token_name,
+  ) == 1
+
+  // [spec RecoverMember 6]: the rotated treasury UTxO holding N' is produced in the same
+  // tx. Note: producing this output legitimately requires the treasury ExecuteRecovery path
+  // (Task 2.6), which enforces quorum + timelock + veto — this handler only checks token
+  // presence and deliberately does not duplicate that authority check.
+  expect Some(treasury_out) = list.at(outputs, treasury_output_index)
+  let treasury_out_holds_new = assets.quantity_of(
+    treasury_out.value,
+    treasury_policy_id,
+    new_member_token_name,
+  ) == 1
+
+  // [security]: ADA must not decrease; output at same script with ref token; clean value
+  let in_ada = assets.lovelace_of(group_input.output.value)
+  let out_ada = assets.lovelace_of(group_output.value)
+  let output_clean_value = output_holds_only_own(group_output.value, policy_id)
+
+  and {
+    old_present?,
+    new_absent?,
+    treasury_in_holds_old?,
+    treasury_out_holds_new?,
+    (group_output.address == group_input.output.address)?,
+    // [security]: output retains EXACTLY the ref (100) token — prevents account-merge
+    // when a second group UTxO is updated in the same tx (Multiple Satisfaction).
+    (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
+      Pair(group_ref_token_name, 1),
+    ])?,
     output_clean_value?,
     (updated_cip68 == expected)?,
     (out_ada >= in_ada)?,

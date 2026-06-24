@@ -8,7 +8,8 @@ use dcu/group.{
   GroupMintRedeemer, GroupSpendRedeemer, Join, Recover, RecoverMember,
   StartGroup, UpdateGroup, validate_close_group, validate_create_group,
   validate_distribute_group, validate_exit_group, validate_join_group,
-  validate_recover_group, validate_start_group, validate_update_group,
+  validate_recover_group, validate_recover_member, validate_start_group,
+  validate_update_group,
 }
 
 validator group_validator(treasury_policy_id: PolicyId) {
@@ -212,8 +213,33 @@ validator group_validator(treasury_policy_id: PolicyId) {
         )
       }
 
-      // Lost-member recovery rotation: real validation lands in Task 2.2.
-      RecoverMember { .. } -> fail
+      RecoverMember {
+        group_ref_token_name,
+        group_input_index,
+        group_output_index,
+        old_member_token_name,
+        new_member_token_name,
+        treasury_input_index,
+        treasury_output_index,
+      } -> {
+        // [security]: self-reference — group_input_index must resolve to this UTxO
+        expect Some(group_input) = list.at(inputs, group_input_index)
+        expect group_input.output_reference == utxo
+
+        validate_recover_member(
+          policy_id,
+          treasury_policy_id,
+          group_ref_token_name,
+          group_input_index,
+          group_output_index,
+          old_member_token_name,
+          new_member_token_name,
+          treasury_input_index,
+          treasury_output_index,
+          inputs,
+          outputs,
+        )
+      }
     }
   }
 
