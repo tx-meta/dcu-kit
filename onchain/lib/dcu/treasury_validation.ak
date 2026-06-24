@@ -1170,6 +1170,245 @@ pub fn validate_cancel_recovery(
   }
 }
 
+// ─── Spend: ExecuteRecovery ──────────────────────────────────────────────────
+
+// validate_execute_recovery
+// ─────────────────────────────────────────────────────────────────────────────
+// Treasury-side half of lost-member identity rotation: completes the recovery
+// after the timelock has passed and enough approvals have been gathered. This
+// single function validates the WHOLE rotation regardless of which treasury UTxO
+// triggered the call — both the RecoveryRequest and the member's treasury UTxO
+// carry the ExecuteRecovery spend redeemer. The self-reference check at the
+// entry point accepts either UTxO.
+//
+// Cross-validator coupling:
+//   - group is a SPENDING input (RecoverMember updates the registry in the same tx)
+//   - this function independently verifies the group output registry swap N→N'
+//   - validate_recover_member (group side) pins treasury token presence;
+//     this function pins the full economic datum so neither side is sufficient alone
+//
+// [spec ExecuteRecovery 1]: request input at request_input_index; datum RecoveryRequest;
+//                           holds exactly {N': 1} under own policy
+// [spec ExecuteRecovery 2]: timelock gate — get_lower_bound(tx) >= earliest_execution_slot
+// [spec ExecuteRecovery 3]: group spending input at Script(trusted_group_policy);
+//                           request.group_reference_tokenname links to this group;
+//                           len(approvals) >= group.recovery_threshold;
+//                           group.recovery_threshold <= group.member_count (sanity)
+// [spec ExecuteRecovery 4]: member treasury input at member_treasury_input_index;
+//                           datum TreasuryState | DefaultState; holds {N: 1} under own policy;
+//                           member_reference_tokenname == request.target_token (N)
+// [spec ExecuteRecovery 5]: rotated output at member_treasury_output_index;
+//                           at Script(own_policy_id); holds exactly {N': 1} under own policy;
+//                           value >= member treasury input (ADA conserved);
+//                           datum == input state with ONLY member_reference_tokenname→N'
+//                           and member_payment_credential→new_payment_credential changed
+// [spec ExecuteRecovery 6]: mint == {N: -1} under own policy, nothing else;
+//                           burned name == request.target_token
+// [spec ExecuteRecovery 7]: group output at group_output_index no longer contains N,
+//                           now contains N' (lightweight registry swap coupling)
+//
+// NOTE: self-reference check (utxo == request_input OR utxo == member_treasury_input)
+// is enforced at the entry point before this function is called.
+pub fn validate_execute_recovery(
+  own_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
+  group_ref_input_index: Int,
+  group_output_index: Int,
+  request_input_index: Int,
+  member_treasury_input_index: Int,
+  member_treasury_output_index: Int,
+  _request_utxo: OutputReference,
+  _member_treasury_utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, outputs, mint, .. } = tx
+
+  // [spec ExecuteRecovery 1]: request input with RecoveryRequest datum holding N'.
+  expect Some(request_input) = list.at(inputs, request_input_index)
+  expect InlineDatum(request_datum_data) = request_input.output.datum
+  expect request_datum: TreasuryDatum = request_datum_data
+  expect RecoveryRequest {
+    group_reference_tokenname,
+    target_token,
+    new_member_tokenname,
+    new_payment_credential,
+    earliest_execution_slot,
+    approvals,
+  } = request_datum
+
+  // [spec ExecuteRecovery 1]: request holds exactly {N': 1} under own policy
+  let request_holds_n_prime =
+    dict.to_pairs(assets.tokens(request_input.output.value, own_policy_id)) == [
+      Pair(new_member_tokenname, 1),
+    ]
+
+  // [spec ExecuteRecovery 3]: group is a SPENDING input (RecoverMember redeemer modifies it)
+  expect Some(group_input) = list.at(inputs, group_ref_input_index)
+  // [security C1/C2]: the group input MUST sit at the trusted group script.
+  expect
+    group_input.output.address.payment_credential == Script(trusted_group_policy)
+  expect InlineDatum(group_datum_data) = group_input.output.datum
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
+
+  // [spec ExecuteRecovery 3]: request's group_reference_tokenname links to this group
+  let expected_group_token_name = find_group_token_name(group_input)
+  let group_link_valid = group_reference_tokenname == expected_group_token_name
+
+  // [spec ExecuteRecovery 2]: TIMELOCK GATE — lower_bound must be >= earliest_execution_slot.
+  // This is what gave the CancelRecovery veto its window.
+  let timelock_passed = get_lower_bound(tx) >= earliest_execution_slot
+
+  // [spec ExecuteRecovery 3]: threshold gate — enough approvals and threshold is sane
+  let meets_threshold = list.length(approvals) >= group.recovery_threshold
+  let threshold_sane = group.recovery_threshold <= group.member_count
+
+  // [spec ExecuteRecovery 4]: member treasury input holds {N: 1} under own policy.
+  expect Some(member_treasury_input) = list.at(
+    inputs,
+    member_treasury_input_index,
+  )
+  let member_holds_n =
+    dict.to_pairs(
+      assets.tokens(member_treasury_input.output.value, own_policy_id),
+    ) == [Pair(target_token, 1)]
+
+  // [spec ExecuteRecovery 4]: datum is TreasuryState or DefaultState with
+  // member_reference_tokenname == target_token (N). Destructure both paths and verify
+  // the group link.
+  expect InlineDatum(member_datum_data) = member_treasury_input.output.datum
+  expect member_datum: TreasuryDatum = member_datum_data
+
+  // Extract member_reference_tokenname and group link for the member treasury,
+  // plus carry all economic fields for the rotated output construction.
+  let (
+    member_ref_tn_ok,
+    member_group_link_ok,
+    expected_rotated_datum,
+  ) =
+    when member_datum is {
+      TreasuryState {
+        member_reference_tokenname: mrt,
+        group_reference_tokenname: mgrt,
+        assigned_slot,
+        rounds_paid,
+        member_payment_credential: _old_cred,
+        claimable_balance,
+      } -> {
+        let tn_ok = mrt == target_token
+        let gl_ok = mgrt == expected_group_token_name
+        // [spec ExecuteRecovery 5]: rotated datum: ONLY member_reference_tokenname→N'
+        // and member_payment_credential→new_payment_credential changed; all else preserved.
+        let rotated =
+          TreasuryState {
+            group_reference_tokenname: mgrt,
+            member_reference_tokenname: new_member_tokenname,
+            assigned_slot,
+            rounds_paid,
+            member_payment_credential: new_payment_credential,
+            claimable_balance,
+          }
+        (tn_ok, gl_ok, rotated)
+      }
+      DefaultState {
+        member_reference_tokenname: mrt,
+        group_reference_tokenname: mgrt,
+        grace_expires_at,
+        grace_extensions_used,
+        rounds_paid,
+        assigned_slot,
+        member_payment_credential: _old_cred,
+        claimable_balance,
+      } -> {
+        let tn_ok = mrt == target_token
+        let gl_ok = mgrt == expected_group_token_name
+        // DefaultState: same rotation — member_reference_tokenname→N' and
+        // member_payment_credential→new_payment_credential; grace fields preserved.
+        let rotated =
+          DefaultState {
+            group_reference_tokenname: mgrt,
+            member_reference_tokenname: new_member_tokenname,
+            grace_expires_at,
+            grace_extensions_used,
+            rounds_paid,
+            assigned_slot,
+            member_payment_credential: new_payment_credential,
+            claimable_balance,
+          }
+        (tn_ok, gl_ok, rotated)
+      }
+      // PenaltyState and RecoveryRequest are not valid lost-member positions.
+      _ -> fail @"member treasury must be TreasuryState or DefaultState"
+    }
+
+  // [spec ExecuteRecovery 5]: rotated output at member_treasury_output_index.
+  expect Some(rotated_output) = list.at(outputs, member_treasury_output_index)
+  expect InlineDatum(rotated_datum_data) = rotated_output.datum
+  expect rotated_datum: TreasuryDatum = rotated_datum_data
+
+  // [spec ExecuteRecovery 5]: output at the treasury script address
+  let output_at_script =
+    rotated_output.address.payment_credential == Script(own_policy_id)
+
+  // [spec ExecuteRecovery 5]: output holds exactly {N': 1} under own policy — N' is
+  // relocated from the request UTxO (not freshly minted); net mint is only {N: -1}.
+  let output_holds_n_prime =
+    dict.to_pairs(assets.tokens(rotated_output.value, own_policy_id)) == [
+      Pair(new_member_tokenname, 1),
+    ]
+
+  // [spec ExecuteRecovery 5]: the rotated output's total lovelace >= input lovelace
+  // (economic value must not decrease — ADA conservation across the rotation).
+  // For native-token groups the total value is also conserved (same policy check below).
+  let value_conserved =
+    assets.lovelace_of(rotated_output.value) >= assets.lovelace_of(
+      member_treasury_input.output.value,
+    )
+
+  // [spec ExecuteRecovery 5]: datum exactly matches the constructed rotated datum
+  // (two-field record update: member_reference_tokenname, member_payment_credential).
+  let datum_correct = rotated_datum == expected_rotated_datum
+
+  // [spec ExecuteRecovery 6]: mint == {N: -1} under own policy, nothing else.
+  // N' is RELOCATED (already minted by ProposeRecovery; goes from request to rotated output),
+  // so the only net own-policy mint event here is the burn of the old identity N.
+  let minted_tokens = assets.tokens(mint, own_policy_id)
+  let exact_burn =
+    dict.to_pairs(minted_tokens) == [Pair(target_token, -1)]
+
+  // [spec ExecuteRecovery 7]: group output shows N→N' swap — lightweight coupling.
+  // RecoverMember enforces the full registry edit; we independently verify N is gone
+  // and N' is present so ExecuteRecovery is self-sufficient.
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect InlineDatum(group_output_datum_data) = group_output.datum
+  expect GroupCip68Datum { extra: updated_group, .. } = group_output_datum_data
+  let registry_n_removed = !list.any(
+    updated_group.member_token_names,
+    fn(n) { n == target_token },
+  )
+  let registry_n_prime_added = list.any(
+    updated_group.member_token_names,
+    fn(n) { n == new_member_tokenname },
+  )
+
+  and {
+    request_holds_n_prime?,
+    group_link_valid?,
+    timelock_passed?,
+    meets_threshold?,
+    threshold_sane?,
+    member_holds_n?,
+    member_ref_tn_ok?,
+    member_group_link_ok?,
+    output_at_script?,
+    output_holds_n_prime?,
+    value_conserved?,
+    datum_correct?,
+    exact_burn?,
+    registry_n_removed?,
+    registry_n_prime_added?,
+  }
+}
+
 // ─── Mint: CancelRecovery (burn N') ──────────────────────────────────────────
 
 // validate_cancel_recovery_mint

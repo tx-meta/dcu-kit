@@ -5,9 +5,10 @@ use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
 }
 use dcu/group.{GroupCip68Datum, GroupDatum, Push}
-use dcu/treasury.{RecoveryRequest, TreasuryDatum}
+use dcu/treasury.{DefaultState, RecoveryRequest, TreasuryDatum, TreasuryState}
 use dcu/treasury_validation.{
-  validate_approve_recovery, validate_cancel_recovery, validate_propose_recovery,
+  validate_approve_recovery, validate_cancel_recovery, validate_execute_recovery,
+  validate_propose_recovery,
 }
 use tests/common
 
@@ -1343,4 +1344,573 @@ test cancel_recovery__rejects_extra_mint_or_burn() {
       validity_range: interval.after(0),
     }
   !call_cancel(tx)
+}
+
+// ─── ExecuteRecovery tests ─────────────────────────────────────────────────────
+//
+// ExecuteRecovery is the treasury-side half of the lost-member identity rotation.
+// It runs on BOTH spent treasury UTxOs (the RecoveryRequest and the member's
+// treasury UTxO) and validates the full rotation in one global function.
+//
+// Layout (canonical index set for the happy-path tx):
+//   inputs[0]  = group spending input (RecoverMember redeemer)
+//   inputs[1]  = RecoveryRequest UTxO  (holds N', datum RecoveryRequest)
+//   inputs[2]  = member treasury UTxO  (holds N,  datum TreasuryState or DefaultState)
+//   outputs[0] = group output          (registry N→N' swapped)
+//   outputs[1] = rotated treasury      (holds N', datum TreasuryState with N→N', new cred)
+//
+// Redeemer indices (ExecuteRecovery):
+//   group_ref_input_index       = 0
+//   group_output_index          = 0
+//   request_input_index         = 1
+//   member_treasury_input_index = 2
+//   member_treasury_output_index= 1
+
+// ─── ExecuteRecovery fixture helpers ──────────────────────────────────────────
+
+// Earliest execution slot used in all execute tests.
+fn earliest_slot() -> Int {
+  259_200_000
+}
+
+// A request datum with full approvals (threshold = 1, so approver_a alone qualifies).
+fn execute_request_datum() -> TreasuryDatum {
+  RecoveryRequest {
+    group_reference_tokenname: group_ref_tn(),
+    target_token: target_tn(),
+    new_member_tokenname: new_member_tn(),
+    new_payment_credential: recoveree_pkh(),
+    earliest_execution_slot: earliest_slot(),
+    approvals: [approver_a_tn()],
+  }
+}
+
+// OutputReference for the RecoveryRequest UTxO (distinct from previous fixtures).
+fn exec_request_ref() -> OutputReference {
+  OutputReference {
+    transaction_id: #"4444444444444444444444444444444444444444444444444444444444444444",
+    output_index: 0,
+  }
+}
+
+// OutputReference for the member treasury UTxO.
+fn exec_member_treasury_ref() -> OutputReference {
+  OutputReference {
+    transaction_id: #"5555555555555555555555555555555555555555555555555555555555555555",
+    output_index: 0,
+  }
+}
+
+// The RecoveryRequest spending input (holds N').
+fn exec_request_input() -> Input {
+  let tp = treasury_policy()
+  let value =
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value,
+      datum: InlineDatum(execute_request_datum()),
+      reference_script: None,
+    }
+  Input { output_reference: exec_request_ref(), output }
+}
+
+// A normal TreasuryState member UTxO (the lost member's position, holds N).
+fn member_treasury_datum() -> TreasuryDatum {
+  TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: target_tn(),
+    assigned_slot: 1,
+    rounds_paid: 2,
+    member_payment_credential: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    claimable_balance: 500_000,
+  }
+}
+
+fn exec_member_treasury_input() -> Input {
+  let tp = treasury_policy()
+  let value =
+    assets.from_lovelace(4_000_000)
+      |> assets.merge(assets.from_asset(tp, target_tn(), 1))
+  let output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value,
+      datum: InlineDatum(member_treasury_datum()),
+      reference_script: None,
+    }
+  Input { output_reference: exec_member_treasury_ref(), output }
+}
+
+// Group datum with recovery_threshold = 1 (1 approval needed), 3 members.
+fn exec_group_datum() -> GroupDatum {
+  GroupDatum { ..test_group_datum(), recovery_threshold: 1, member_count: 3 }
+}
+
+fn exec_group_cip68_datum() -> GroupCip68Datum {
+  GroupCip68Datum {
+    metadata: [Pair(#"6e616d65", "Test Group")],
+    version: 1,
+    extra: exec_group_datum(),
+  }
+}
+
+// OutputReference for the group UTxO.
+fn exec_group_ref() -> OutputReference {
+  OutputReference {
+    transaction_id: #"6666666666666666666666666666666666666666666666666666666666666666",
+    output_index: 0,
+  }
+}
+
+// Group spending input (RecoverMember redeemer — so it is in tx.inputs, not reference_inputs).
+fn exec_group_input() -> Input {
+  let gp = group_policy()
+  let value =
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let output =
+    Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value,
+      datum: InlineDatum(exec_group_cip68_datum()),
+      reference_script: None,
+    }
+  Input { output_reference: exec_group_ref(), output }
+}
+
+// Group output with the registry swapped N→N'.
+fn exec_group_output() -> Output {
+  let gp = group_policy()
+  let value =
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let swapped_datum =
+    GroupCip68Datum {
+      ..exec_group_cip68_datum(),
+      extra: GroupDatum {
+        ..exec_group_datum(),
+        member_token_names: [approver_a_tn(), approver_b_tn(), new_member_tn()],
+      },
+    }
+  Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value,
+    datum: InlineDatum(swapped_datum),
+    reference_script: None,
+  }
+}
+
+// The expected rotated treasury output: holds N', same economic fields but
+// member_reference_tokenname → N' and member_payment_credential → new_payment_credential.
+fn rotated_treasury_output() -> Output {
+  let tp = treasury_policy()
+  // Same lovelace and value as the member treasury input (4_000_000 lovelace + N').
+  // N' comes from the request UTxO and moves into this output; N is burned.
+  let value =
+    assets.from_lovelace(4_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let rotated_datum =
+    TreasuryState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: new_member_tn(),
+      assigned_slot: 1,
+      rounds_paid: 2,
+      member_payment_credential: recoveree_pkh(),
+      claimable_balance: 500_000,
+    }
+  Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value,
+    datum: InlineDatum(rotated_datum),
+    reference_script: None,
+  }
+}
+
+// Burn of N only (N' is relocated from request, not freshly minted here).
+fn execute_mint() -> assets.Value {
+  assets.from_asset(treasury_policy(), target_tn(), -1)
+}
+
+// Helper: the canonical happy-path tx where the timelock has passed.
+fn valid_execute_tx() -> Transaction {
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [exec_group_input(), exec_request_input(), exec_member_treasury_input()],
+    reference_inputs: [],
+    outputs: [exec_group_output(), rotated_treasury_output()],
+    mint: execute_mint(),
+    extra_signatories: [],
+    // lower_bound == earliest_slot() — exactly at the timelock, should pass
+    validity_range: interval.after(earliest_slot()),
+  }
+}
+
+// Canonical call helper (matches the canonical index layout above).
+fn call_execute(tx: Transaction) -> Bool {
+  validate_execute_recovery(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    1,
+    2,
+    1,
+    exec_request_ref(),
+    exec_member_treasury_ref(),
+    tx,
+  )
+}
+
+// ─── Happy path: TreasuryState ────────────────────────────────────────────────
+
+// Baseline: timelock passed, approval count >= threshold, N burned, N' relocated,
+// economic fields preserved, payment credential rotated to new_payment_credential.
+test execute_recovery__rotates_after_timelock_at_threshold() {
+  call_execute(valid_execute_tx())
+}
+
+// ─── Happy path: DefaultState ─────────────────────────────────────────────────
+
+// The lost member's treasury is in DefaultState (grace window). The rotation still
+// completes: all DefaultState fields preserved, member_payment_credential updated.
+test execute_recovery__rotates_from_default_state() {
+  let tp = treasury_policy()
+  let default_datum =
+    DefaultState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: target_tn(),
+      grace_expires_at: 999_999_999,
+      grace_extensions_used: 1,
+      rounds_paid: 2,
+      assigned_slot: 1,
+      member_payment_credential: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      claimable_balance: 500_000,
+    }
+  let default_input_value =
+    assets.from_lovelace(4_000_000)
+      |> assets.merge(assets.from_asset(tp, target_tn(), 1))
+  let default_input =
+    Input {
+      output_reference: exec_member_treasury_ref(),
+      output: Output {
+        address: Address { payment_credential: Script(tp), stake_credential: None },
+        value: default_input_value,
+        datum: InlineDatum(default_datum),
+        reference_script: None,
+      },
+    }
+  let rotated_default_output_value =
+    assets.from_lovelace(4_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let rotated_default_datum =
+    DefaultState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: new_member_tn(),
+      grace_expires_at: 999_999_999,
+      grace_extensions_used: 1,
+      rounds_paid: 2,
+      assigned_slot: 1,
+      member_payment_credential: recoveree_pkh(),
+      claimable_balance: 500_000,
+    }
+  let rotated_default_output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value: rotated_default_output_value,
+      datum: InlineDatum(rotated_default_datum),
+      reference_script: None,
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      inputs: [exec_group_input(), exec_request_input(), default_input],
+      outputs: [exec_group_output(), rotated_default_output],
+    }
+  call_execute(tx)
+}
+
+// ─── Negative: timelock not yet passed ────────────────────────────────────────
+
+// Lower bound is 1 ms before the earliest_execution_slot — must reject.
+test execute_recovery__rejects_before_timelock() {
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      validity_range: interval.after(earliest_slot() - 1),
+    }
+  !call_execute(tx)
+}
+
+// ─── Negative: below threshold ────────────────────────────────────────────────
+
+// Only 0 approvals in the request (threshold=1) — must reject.
+test execute_recovery__rejects_below_threshold() {
+  let tp = treasury_policy()
+  let no_approval_request_datum =
+    RecoveryRequest {
+      group_reference_tokenname: group_ref_tn(),
+      target_token: target_tn(),
+      new_member_tokenname: new_member_tn(),
+      new_payment_credential: recoveree_pkh(),
+      earliest_execution_slot: earliest_slot(),
+      approvals: [],
+    }
+  let request_value =
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let bad_request_input =
+    Input {
+      output_reference: exec_request_ref(),
+      output: Output {
+        address: Address { payment_credential: Script(tp), stake_credential: None },
+        value: request_value,
+        datum: InlineDatum(no_approval_request_datum),
+        reference_script: None,
+      },
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      inputs: [exec_group_input(), bad_request_input, exec_member_treasury_input()],
+    }
+  !call_execute(tx)
+}
+
+// ─── Negative: threshold above member_count ───────────────────────────────────
+
+// Group has member_count=3 but recovery_threshold=4 — sanity check must reject.
+test execute_recovery__rejects_threshold_above_member_count() {
+  let gp = group_policy()
+  let bad_group_datum =
+    GroupDatum { ..exec_group_datum(), recovery_threshold: 4 }
+  let bad_group_cip68 =
+    GroupCip68Datum { ..exec_group_cip68_datum(), extra: bad_group_datum }
+  let bad_group_input =
+    Input {
+      output_reference: exec_group_ref(),
+      output: Output {
+        address: Address { payment_credential: Script(gp), stake_credential: None },
+        value: assets.from_lovelace(2_000_000)
+          |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+        datum: InlineDatum(bad_group_cip68),
+        reference_script: None,
+      },
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      inputs: [bad_group_input, exec_request_input(), exec_member_treasury_input()],
+    }
+  !call_execute(tx)
+}
+
+// ─── Negative: economic field mutation ────────────────────────────────────────
+
+// The output changes rounds_paid — the rotation must preserve all economic fields exactly.
+test execute_recovery__rejects_economic_field_mutation() {
+  let tp = treasury_policy()
+  let mutated_datum =
+    TreasuryState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: new_member_tn(),
+      assigned_slot: 1,
+      // rounds_paid incremented — NOT allowed; rotation freezes all economic fields
+      rounds_paid: 99,
+      member_payment_credential: recoveree_pkh(),
+      claimable_balance: 500_000,
+    }
+  let mutated_output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value: assets.from_lovelace(4_000_000)
+        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+      datum: InlineDatum(mutated_datum),
+      reference_script: None,
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      outputs: [exec_group_output(), mutated_output],
+    }
+  !call_execute(tx)
+}
+
+// ─── Negative: wrong payment credential ────────────────────────────────────────
+
+// Output carries an attacker's PKH instead of request.new_payment_credential.
+test execute_recovery__rejects_wrong_payment_credential() {
+  let tp = treasury_policy()
+  let attacker_pkh = #"abababababababababababababababababababababababababababab00"
+  let wrong_cred_datum =
+    TreasuryState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: new_member_tn(),
+      assigned_slot: 1,
+      rounds_paid: 2,
+      member_payment_credential: attacker_pkh,
+      claimable_balance: 500_000,
+    }
+  let wrong_output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value: assets.from_lovelace(4_000_000)
+        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+      datum: InlineDatum(wrong_cred_datum),
+      reference_script: None,
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      outputs: [exec_group_output(), wrong_output],
+    }
+  !call_execute(tx)
+}
+
+// ─── Negative: N not burned ────────────────────────────────────────────────────
+
+// No mint in the tx — N is not burned, so the old identity persists.
+test execute_recovery__rejects_n_not_burned() {
+  let tx = Transaction { ..valid_execute_tx(), mint: assets.zero }
+  !call_execute(tx)
+}
+
+// ─── Negative: wrong token burned ─────────────────────────────────────────────
+
+// N' is burned instead of N — the burn must specifically target the old token name.
+test execute_recovery__rejects_wrong_token_burned() {
+  let wrong_burn = assets.from_asset(treasury_policy(), new_member_tn(), -1)
+  let tx = Transaction { ..valid_execute_tx(), mint: wrong_burn }
+  !call_execute(tx)
+}
+
+// ─── Negative: output holds wrong identity token ───────────────────────────────
+
+// The rotated output holds N (old identity) instead of N' — the swap is not honoured.
+test execute_recovery__rejects_output_wrong_identity() {
+  let tp = treasury_policy()
+  // Correct datum but wrong VALUE token (N instead of N').
+  let rotated_datum =
+    TreasuryState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: new_member_tn(),
+      assigned_slot: 1,
+      rounds_paid: 2,
+      member_payment_credential: recoveree_pkh(),
+      claimable_balance: 500_000,
+    }
+  let wrong_output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value: assets.from_lovelace(4_000_000)
+        |> assets.merge(assets.from_asset(tp, target_tn(), 1)),
+      datum: InlineDatum(rotated_datum),
+      reference_script: None,
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      outputs: [exec_group_output(), wrong_output],
+    }
+  !call_execute(tx)
+}
+
+// ─── Negative: balance skim ─────────────────────────────────────────────────────
+
+// Output ADA is 1 lovelace less than input ADA — economic value must be conserved.
+test execute_recovery__rejects_balance_skim() {
+  let tp = treasury_policy()
+  let rotated_datum =
+    TreasuryState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: new_member_tn(),
+      assigned_slot: 1,
+      rounds_paid: 2,
+      member_payment_credential: recoveree_pkh(),
+      claimable_balance: 500_000,
+    }
+  let skimmed_output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      // 1 lovelace less than the 4_000_000 in exec_member_treasury_input
+      value: assets.from_lovelace(3_999_999)
+        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+      datum: InlineDatum(rotated_datum),
+      reference_script: None,
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      outputs: [exec_group_output(), skimmed_output],
+    }
+  !call_execute(tx)
+}
+
+// ─── Negative: foreign-group member treasury ──────────────────────────────────
+
+// The member treasury UTxO links to a DIFFERENT group (group_reference_tokenname
+// does not match the group being spent) — must reject.
+test execute_recovery__rejects_foreign_group_member_treasury() {
+  let tp = treasury_policy()
+  let foreign_group_tn =
+    #"ffffffffffffffffffffffffffffffffffffffffffffffffffffaaaa"
+  let foreign_member_datum =
+    TreasuryState {
+      group_reference_tokenname: foreign_group_tn,
+      member_reference_tokenname: target_tn(),
+      assigned_slot: 1,
+      rounds_paid: 2,
+      member_payment_credential: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      claimable_balance: 500_000,
+    }
+  let foreign_treasury_input =
+    Input {
+      output_reference: exec_member_treasury_ref(),
+      output: Output {
+        address: Address { payment_credential: Script(tp), stake_credential: None },
+        value: assets.from_lovelace(4_000_000)
+          |> assets.merge(assets.from_asset(tp, target_tn(), 1)),
+        datum: InlineDatum(foreign_member_datum),
+        reference_script: None,
+      },
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      inputs: [exec_group_input(), exec_request_input(), foreign_treasury_input],
+    }
+  !call_execute(tx)
+}
+
+// ─── Negative: missing registry swap ──────────────────────────────────────────
+
+// Group output registry still contains N and lacks N' — the swap was not performed.
+test execute_recovery__rejects_missing_registry_swap() {
+  let gp = group_policy()
+  // Group output datum with the OLD registry (N still present, N' absent).
+  let unswapped_group_datum =
+    GroupCip68Datum {
+      ..exec_group_cip68_datum(),
+      extra: GroupDatum {
+        ..exec_group_datum(),
+        // N (target_tn) still in registry — not swapped
+        member_token_names: [target_tn(), approver_a_tn(), approver_b_tn()],
+      },
+    }
+  let unswapped_group_output =
+    Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(unswapped_group_datum),
+      reference_script: None,
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      outputs: [unswapped_group_output, rotated_treasury_output()],
+    }
+  !call_execute(tx)
 }
