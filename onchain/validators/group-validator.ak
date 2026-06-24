@@ -5,10 +5,10 @@ use cardano/assets.{PolicyId}
 use cardano/transaction.{OutputReference, Transaction}
 use dcu/group.{
   BurnGroup, CloseGroup, CreateGroup, Distribute, Exit, GroupCip68Datum,
-  GroupMintRedeemer, GroupSpendRedeemer, Join, Recover, StartGroup, UpdateGroup,
-  validate_close_group, validate_create_group, validate_distribute_group,
-  validate_exit_group, validate_join_group, validate_recover_group,
-  validate_start_group, validate_update_group,
+  GroupMintRedeemer, GroupSpendRedeemer, Join, Recover, RecoverMember,
+  StartGroup, UpdateGroup, validate_close_group, validate_create_group,
+  validate_distribute_group, validate_exit_group, validate_join_group,
+  validate_recover_group, validate_start_group, validate_update_group,
 }
 
 validator group_validator(treasury_policy_id: PolicyId) {
@@ -211,6 +211,9 @@ validator group_validator(treasury_policy_id: PolicyId) {
           outputs,
         )
       }
+
+      // Lost-member recovery rotation: real validation lands in Task 2.2.
+      RecoverMember { .. } -> fail
     }
   }
 

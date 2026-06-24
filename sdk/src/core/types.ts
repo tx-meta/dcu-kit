@@ -250,6 +250,18 @@ export const GroupSpendRedeemerSchema = Data.Enum([
       treasury_output_index: Data.Integer(),
     }),
   }),
+  Data.Object({
+    // Lost-member recovery: swaps the membership registry entry old (N) -> new (N')
+    // when a member's identity is rotated by treasury ExecuteRecovery in the same tx.
+    // member_count and active_member_count frozen.
+    RecoverMember: Data.Object({
+      group_ref_token_name: Data.Bytes(),
+      group_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      old_member_token_name: Data.Bytes(),
+      new_member_token_name: Data.Bytes(),
+    }),
+  }),
 ]);
 
 export type GroupSpendRedeemer = Data.Static<typeof GroupSpendRedeemerSchema>;
@@ -294,6 +306,20 @@ export const TreasuryDatumSchema = Data.Enum([
        * the member can still ClaimPayout it. 0 under Push.
        */
       claimable_balance: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    // Pending lost-member recovery. Authenticated by holding exactly the freshly-minted
+    // treasury-side token `new_member_tokenname` (N') — same pattern as a treasury UTxO
+    // holding its membership token. Consumed by ApproveRecovery (re-created with one more
+    // approval), CancelRecovery (veto), or ExecuteRecovery (rotates the lost member's position).
+    RecoveryRequest: Data.Object({
+      group_reference_tokenname: Data.Bytes(),
+      target_token: Data.Bytes(),
+      new_member_tokenname: Data.Bytes(),
+      new_payment_credential: Data.Bytes(),
+      earliest_execution_slot: Data.Integer(),
+      approvals: Data.Array(Data.Bytes()),
     }),
   }),
 ]);
@@ -373,6 +399,35 @@ export const TreasuryRedeemerSchema = Data.Enum([
       group_output_index: Data.Integer(),
       admin_input_index: Data.Integer(),
       treasury_input_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ProposeRecovery: Data.Object({
+      group_ref_input_index: Data.Integer(),
+      request_output_index: Data.Integer(),
+      approver_input_indices: Data.Array(Data.Integer()),
+    }),
+  }),
+  Data.Object({
+    ApproveRecovery: Data.Object({
+      group_ref_input_index: Data.Integer(),
+      request_input_index: Data.Integer(),
+      request_output_index: Data.Integer(),
+      approver_input_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    CancelRecovery: Data.Object({
+      request_input_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ExecuteRecovery: Data.Object({
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      request_input_index: Data.Integer(),
+      member_treasury_input_index: Data.Integer(),
+      member_treasury_output_index: Data.Integer(),
     }),
   }),
 ]);

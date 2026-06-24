@@ -51,6 +51,18 @@ pub type TreasuryDatum {
     // Push. The earmarked funds themselves stay in this UTxO's value either way.
     claimable_balance: Int,
   }
+  // Pending lost-member recovery. Authenticated by holding exactly the freshly-minted
+  // treasury-side token `new_member_tokenname` (N') — same pattern as a treasury UTxO
+  // holding its membership token. Consumed by ApproveRecovery (re-created with one more
+  // approval), CancelRecovery (veto), or ExecuteRecovery (rotates the lost member's position).
+  RecoveryRequest {
+    group_reference_tokenname: AssetName,
+    target_token: AssetName,
+    new_member_tokenname: AssetName,
+    new_payment_credential: ByteArray,
+    earliest_execution_slot: Int,
+    approvals: List<AssetName>,
+  }
 }
 
 /// Treasury Validator Redeemer
@@ -128,6 +140,25 @@ pub type TreasuryRedeemer {
     admin_input_index: Int,
     // Self-reference — the defaulter's DefaultState treasury UTxO.
     treasury_input_index: Int,
+  }
+  ProposeRecovery {
+    group_ref_input_index: Int,
+    request_output_index: Int,
+    approver_input_indices: List<Int>,
+  }
+  ApproveRecovery {
+    group_ref_input_index: Int,
+    request_input_index: Int,
+    request_output_index: Int,
+    approver_input_index: Int,
+  }
+  CancelRecovery { request_input_index: Int }
+  ExecuteRecovery {
+    group_ref_input_index: Int,
+    group_output_index: Int,
+    request_input_index: Int,
+    member_treasury_input_index: Int,
+    member_treasury_output_index: Int,
   }
 }
 

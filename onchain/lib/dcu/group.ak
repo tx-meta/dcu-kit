@@ -182,6 +182,16 @@ pub type GroupSpendRedeemer {
     treasury_input_index: Int,
     treasury_output_index: Int,
   }
+  // Lost-member recovery: swaps the membership registry entry old (N) -> new (N') when a
+  // member's identity is rotated by treasury ExecuteRecovery in the same tx. member_count and
+  // active_member_count frozen.
+  RecoverMember {
+    group_ref_token_name: AssetName,
+    group_input_index: Int,
+    group_output_index: Int,
+    old_member_token_name: AssetName,
+    new_member_token_name: AssetName,
+  }
 }
 
 // cip68_name_key: UTF-8 bytes for the string "name" — the standard CIP-68 display name key.

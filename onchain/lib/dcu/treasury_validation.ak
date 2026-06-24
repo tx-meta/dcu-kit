@@ -9,7 +9,8 @@ use cardano/transaction.{
 use dcu/cip68
 use dcu/group.{GroupCip68Datum, GroupDatum, Pull}
 use dcu/treasury.{
-  DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
+  DefaultState, PenaltyState, RecoveryRequest, TreasuryDatum, TreasuryState,
+  max_grace_extensions,
 }
 use dcu/treasury_utils.{
   ada_reserve_conserved, contributable_in, count_default_outputs,
@@ -903,6 +904,7 @@ pub fn validate_contribute(
     DefaultState { member_reference_tokenname, group_reference_tokenname, .. } ->
       (member_reference_tokenname, group_reference_tokenname)
     PenaltyState { .. } -> fail @"PenaltyState cannot receive contributions"
+    RecoveryRequest { .. } -> fail @"RecoveryRequest cannot receive contributions"
   }
 
   // [spec Contribute 2]: member auth
@@ -994,6 +996,8 @@ pub fn validate_contribute(
       }
 
     PenaltyState { .. } -> False
+
+    RecoveryRequest { .. } -> fail @"RecoveryRequest cannot receive contributions"
   }
 
   // [spec Contribute 5]: output at treasury script, exact membership token, clean value
