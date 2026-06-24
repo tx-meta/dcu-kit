@@ -6,6 +6,30 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+### Cluster A — flexible admin authority + lost-member recovery
+
+**Immutable-contract change → new hashes** (group `ade13889…`, treasury `a5e00e3b…`; account unchanged).
+Not yet deployed — Preprod redeploy + external audit remain the gates.
+
+#### Added
+- **Multisig admin (SDK-only, no validator change).** `buildMultisig(signers, M)` builds a native
+  `atLeast M of N` script; `assignAdmin(groupTokenSuffix, destinationAddress)` moves the group admin (222)
+  token to it (or to a VK delegate). All 6 admin ops (`startGroup`, `updateGroup`, `deleteGroup`,
+  `extendGraceWindow`, `terminateDefault`, `terminateGroup`) accept an optional `adminScript` to spend a
+  script-held admin token. The single-VK admin path is unchanged.
+- **Lost-member recovery** — a member who loses their account token recovers via member quorum:
+  `proposeRecovery` → `approveRecovery` (async, to threshold) → wait out the timelock → `executeRecovery`
+  rotates the member's identity to a new account token; `cancelRecovery` is the veto. Two new group datum
+  fields (`recovery_threshold`, `recovery_timelock`); a `RecoveryRequest` treasury datum variant; four
+  treasury redeemers + a group `RecoverMember` redeemer (all appended — Constr indices stable).
+
+#### Changed
+- **Reference scripts are now required** for `joinGroup`/`startGroup`/`contribute` and all recovery
+  operations — the recovery logic grew the treasury validator past the 26000-byte inline tx-size limit.
+  Deploy with `deployScripts` and pass `scriptRefs`. (`scriptRefs` added to `startGroup` + `contribute`.)
+- **Treasury continuation outputs now pin the full address** (stake credential included), closing a latent
+  staking-reward skim on permissionless distribute (AIK-4).
+
 ## [0.3.0] - 2026-06-15
 
 Continuous round model — the ROSCA now cycles indefinitely with one cheap distribute per
