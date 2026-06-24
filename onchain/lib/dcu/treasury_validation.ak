@@ -298,8 +298,12 @@ pub fn validate_propose_recovery(
     ..
   } = tx
 
-  // [spec ProposeRecovery 1]: group reference input at the trusted group script
-  expect Some(group_input) = list.at(inputs, group_ref_input_index)
+  // [spec ProposeRecovery 1]: group reference input at the trusted group script.
+  // The group is read-only here — ProposeRecovery does not modify the registry (that
+  // happens at ExecuteRecovery via the group's RecoverMember redeemer), so the group
+  // CANNOT be a spending input (no group redeemer validates a propose). It must be a
+  // reference input; group_ref_input_index indexes into reference_inputs.
+  expect Some(group_input) = list.at(reference_inputs, group_ref_input_index)
   expect
     group_input.output.address.payment_credential == Script(
       trusted_group_policy,

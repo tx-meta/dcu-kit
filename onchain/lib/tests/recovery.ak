@@ -218,8 +218,9 @@ fn test_request_output(datum: TreasuryDatum) -> Output {
   }
 }
 
-// Builds a baseline valid ProposeRecovery transaction: group ref input at index 0,
-// recoveree + approver_a signed inputs, request output at index 0. validity_range
+// Builds a baseline valid ProposeRecovery transaction: group at reference_inputs
+// index 0 (read-only — ProposeRecovery never spends the group), recoveree +
+// approver_a signed spending inputs, request output at index 0. validity_range
 // lower bound = 0 so earliest_execution_slot == 0 + recovery_timelock (259_200_000).
 fn valid_tx() -> Transaction {
   let group_input = test_group_input()
@@ -233,7 +234,8 @@ fn valid_tx() -> Transaction {
 
   Transaction {
     ..transaction.placeholder,
-    inputs: [group_input, recoveree, approver_a],
+    inputs: [recoveree, approver_a],
+    reference_inputs: [group_input],
     outputs: [request_output],
     mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
     extra_signatories: [recoveree_pkh(), approver_a_pkh()],
@@ -246,14 +248,15 @@ fn valid_tx() -> Transaction {
 test propose_recovery__accepts_valid() {
   let tx = valid_tx()
 
-  // group_ref_input_index=0, request_output_index=0, approver_input_indices=[2]
+  // group_ref_input_index=0 (reference_inputs), request_output_index=0,
+  // approver_input_indices=[1] (approver_a in inputs)
   validate_propose_recovery(
     treasury_policy(),
     account_policy(),
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
@@ -274,7 +277,8 @@ test propose_recovery__accepts_valid_two_approvals() {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, approver_a, approver_b],
+      inputs: [recoveree, approver_a, approver_b],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       extra_signatories: [recoveree_pkh(), approver_a_pkh(), approver_b_pkh()],
@@ -287,7 +291,7 @@ test propose_recovery__accepts_valid_two_approvals() {
     group_policy(),
     0,
     0,
-    [2, 3],
+    [1, 2],
     tx,
   )
 }
@@ -314,7 +318,8 @@ test propose_recovery__rejects_target_not_in_registry() {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, approver_a],
+      inputs: [recoveree, approver_a],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       extra_signatories: [recoveree_pkh(), approver_a_pkh()],
@@ -327,7 +332,7 @@ test propose_recovery__rejects_target_not_in_registry() {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
@@ -365,7 +370,8 @@ test propose_recovery__rejects_new_token_already_member() {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, approver_a],
+      inputs: [recoveree, approver_a],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), approver_b_tn(), 1),
       extra_signatories: [recoveree_pkh(), approver_a_pkh()],
@@ -378,7 +384,7 @@ test propose_recovery__rejects_new_token_already_member() {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
@@ -398,7 +404,8 @@ test propose_recovery__rejects_recoveree_not_signed() {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, approver_a],
+      inputs: [recoveree, approver_a],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       // recoveree_pkh() deliberately omitted
@@ -412,7 +419,7 @@ test propose_recovery__rejects_recoveree_not_signed() {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
@@ -433,7 +440,8 @@ test propose_recovery__rejects_approver_not_signed() fail {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, approver_a],
+      inputs: [recoveree, approver_a],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       // approver_a_pkh() deliberately omitted — only the recoveree signed
@@ -447,7 +455,7 @@ test propose_recovery__rejects_approver_not_signed() fail {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
@@ -468,7 +476,8 @@ test propose_recovery__rejects_approver_not_member() {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, non_member_input],
+      inputs: [recoveree, non_member_input],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       extra_signatories: [recoveree_pkh(), non_member_pkh],
@@ -481,7 +490,7 @@ test propose_recovery__rejects_approver_not_member() {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
@@ -501,7 +510,8 @@ test propose_recovery__rejects_duplicate_approval() {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, approver_a],
+      inputs: [recoveree, approver_a],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       extra_signatories: [recoveree_pkh(), approver_a_pkh()],
@@ -514,7 +524,7 @@ test propose_recovery__rejects_duplicate_approval() {
     group_policy(),
     0,
     0,
-    [2, 2],
+    [1, 1],
     tx,
   )
 }
@@ -534,7 +544,8 @@ test propose_recovery__rejects_target_in_approvals() {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, target_as_approver],
+      inputs: [recoveree, target_as_approver],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       extra_signatories: [recoveree_pkh(), approver_a_pkh()],
@@ -547,7 +558,7 @@ test propose_recovery__rejects_target_in_approvals() {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
@@ -576,7 +587,8 @@ test propose_recovery__rejects_wrong_earliest_execution_slot() {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, approver_a],
+      inputs: [recoveree, approver_a],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       extra_signatories: [recoveree_pkh(), approver_a_pkh()],
@@ -589,7 +601,7 @@ test propose_recovery__rejects_wrong_earliest_execution_slot() {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
@@ -622,7 +634,8 @@ test propose_recovery__rejects_new_payment_credential_not_recoveree() {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, approver_a],
+      inputs: [recoveree, approver_a],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       extra_signatories: [recoveree_pkh(), approver_a_pkh()],
@@ -635,7 +648,7 @@ test propose_recovery__rejects_new_payment_credential_not_recoveree() {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
@@ -655,7 +668,7 @@ test propose_recovery__rejects_extra_mint() {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     bad_tx,
   )
 }
@@ -671,7 +684,7 @@ test propose_recovery__rejects_wrong_mint_name() {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     bad_tx,
   )
 }
@@ -702,7 +715,8 @@ test propose_recovery__rejects_request_not_at_script() {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, approver_a],
+      inputs: [recoveree, approver_a],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       extra_signatories: [recoveree_pkh(), approver_a_pkh()],
@@ -715,7 +729,7 @@ test propose_recovery__rejects_request_not_at_script() {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
@@ -728,7 +742,7 @@ test propose_recovery__rejects_request_datum_mismatch() {
   let recoveree = recoveree_input()
   let approver_a = approver_a_input()
 
-  // Datum claims TWO approvals; only one (approver_a, index 2) is actually
+  // Datum claims TWO approvals; only one (approver_a, index 1) is actually
   // verified by approver_input_indices below.
   let inflated_approvals = [approver_a_tn(), approver_b_tn()]
   let request_output = test_request_output(
@@ -738,7 +752,8 @@ test propose_recovery__rejects_request_datum_mismatch() {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, approver_a],
+      inputs: [recoveree, approver_a],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       extra_signatories: [recoveree_pkh(), approver_a_pkh()],
@@ -751,7 +766,7 @@ test propose_recovery__rejects_request_datum_mismatch() {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
@@ -772,7 +787,8 @@ test propose_recovery__rejects_fake_group_script() fail {
   let tx =
     Transaction {
       ..transaction.placeholder,
-      inputs: [group_input, recoveree, approver_a],
+      inputs: [recoveree, approver_a],
+      reference_inputs: [group_input],
       outputs: [request_output],
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
       extra_signatories: [recoveree_pkh(), approver_a_pkh()],
@@ -785,7 +801,7 @@ test propose_recovery__rejects_fake_group_script() fail {
     group_policy(),
     0,
     0,
-    [2],
+    [1],
     tx,
   )
 }
