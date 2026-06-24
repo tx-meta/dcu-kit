@@ -63,6 +63,15 @@ export const buildMultisig = (
     );
   }
 
+  if (!Number.isInteger(required)) {
+    return Effect.fail(
+      new ConfigurationError({
+        configKey: "required",
+        message: `required must be an integer, got ${required}`,
+      }),
+    );
+  }
+
   if (required < 1) {
     return Effect.fail(
       new ConfigurationError({

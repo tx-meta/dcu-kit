@@ -8,6 +8,13 @@ const KEY_A = "a".repeat(56);
 const KEY_B = "b".repeat(56);
 const KEY_C = "c".repeat(56);
 
+// Golden hash: the exact policyHash (native script hash) buildMultisig produces for
+// an `atLeast 2 of [KEY_A, KEY_B, KEY_C]` script. The script is opaque CBOR, so this
+// pins the M/N structure — any inversion of `required` vs `signers.length` (e.g. a
+// 3-of-3 or a different member order) changes the hash and fails this assertion.
+const GOLDEN_2_OF_3_HASH =
+  "dcc7bc8d59c400a2a699f1756e4a18ae92c900ea173cab2f92c24290";
+
 const makeTestLucid = () =>
   Effect.promise(async () => {
     const acct = generateEmulatorAccount({ lovelace: 5_000_000n });
@@ -37,6 +44,10 @@ describe("buildMultisig", () => {
     // policyHash is a 28-byte / 56-hex-char script hash
     expect(result.policyHash).toHaveLength(56);
     expect(result.policyHash).toMatch(/^[0-9a-f]+$/);
+
+    // Golden-hash assertion: pins the exact atLeast-2-of-3 structure. Catches any
+    // M/N inversion without deserialising the opaque script CBOR.
+    expect(result.policyHash).toBe(GOLDEN_2_OF_3_HASH);
   });
 
   it("policyHash is deterministic for identical inputs", async () => {
@@ -74,6 +85,21 @@ describe("buildMultisig", () => {
     const result = await Effect.runPromise(
       Effect.either(
         buildMultisig(lucid, { signers: [KEY_A, KEY_B], required: 0 }),
+      ),
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left._tag).toBe("ConfigurationError");
+    }
+  });
+
+  it("fails when required is non-integer", async () => {
+    const lucid = await Effect.runPromise(makeTestLucid());
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        buildMultisig(lucid, { signers: [KEY_A, KEY_B, KEY_C], required: 1.5 }),
       ),
     );
 
