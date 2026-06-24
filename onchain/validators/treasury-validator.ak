@@ -7,14 +7,14 @@ use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/settings.{read_settings}
 use dcu/treasury.{
   ClaimPayout, ClaimPenalty, Contribute, DistributeRound, DistributeWithdraw,
-  ExitGroup, ExtendGrace, JoinGroup, TerminateDefault, TreasuryDatum,
-  TreasuryRedeemer, TreasuryWithdrawRedeemer, UpdatePayout,
+  ExitGroup, ExtendGrace, JoinGroup, ProposeRecovery, TerminateDefault,
+  TreasuryDatum, TreasuryRedeemer, TreasuryWithdrawRedeemer, UpdatePayout,
 } as treasury_types
 use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
   validate_contribute, validate_distribute_withdraw, validate_exit_treasury,
-  validate_extend_grace, validate_join_treasury, validate_terminate_default,
-  validate_update_payout,
+  validate_extend_grace, validate_join_treasury, validate_propose_recovery,
+  validate_terminate_default, validate_update_payout,
 }
 
 // treasury(account_policy_id)
@@ -68,6 +68,26 @@ validator treasury(settings_policy: PolicyId) {
       ClaimPenalty { .. } -> validate_claim_penalty_mint(policy_id, mint)
       ExitGroup { .. } -> validate_claim_penalty_mint(policy_id, mint)
       TerminateDefault { .. } -> validate_claim_penalty_mint(policy_id, mint)
+
+      ProposeRecovery {
+        group_ref_input_index,
+        request_output_index,
+        approver_input_indices,
+      } -> {
+        // Trusted protocol policies from the settings UTxO (same trust anchor as
+        // JoinGroup) — account_policy authenticates approver/recoveree tokens,
+        // group_policy authenticates the trusted group reference input.
+        let settings = read_settings(reference_inputs, settings_policy)
+        validate_propose_recovery(
+          policy_id,
+          settings.account_policy,
+          settings.group_policy,
+          group_ref_input_index,
+          request_output_index,
+          approver_input_indices,
+          tx,
+        )
+      }
 
       // All other redeemers are spend-only — reject at mint
       _ -> fail

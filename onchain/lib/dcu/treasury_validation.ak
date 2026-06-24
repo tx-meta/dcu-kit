@@ -8,6 +8,10 @@ use cardano/transaction.{
 }
 use dcu/cip68
 use dcu/group.{GroupCip68Datum, GroupDatum, Pull}
+use dcu/recovery.{
+  approvals_are_distinct, approvals_are_registry_members,
+  collect_signed_approvals, recoveree_signed_for_token,
+}
 use dcu/treasury.{
   DefaultState, PenaltyState, RecoveryRequest, TreasuryDatum, TreasuryState,
   max_grace_extensions,
@@ -228,6 +232,191 @@ pub fn validate_join_treasury(
     member_authorized?,
     member_cred_matches?,
     user_token_at_wallet?,
+  }
+}
+
+// ─── Mint: ProposeRecovery ──────────────────────────────────────────────────
+
+// validate_propose_recovery
+// ─────────────────────────────────────────────────────────────────────────────
+// Opens a lost-member recovery: a member quorum (signature-based, NOT mere
+// reference presence) authorises rotating a lost member's identity to a new
+// Account-222 token N' that the recoveree controls. Mints exactly 1 token
+// under own (treasury) policy named N' and locks it in a fresh RecoveryRequest
+// UTxO at the treasury script — authenticated by holding N', the same pattern
+// a live treasury UTxO uses for its membership token. Approve/Cancel/Execute
+// (Tasks 2.4/2.5/2.6) consume this request; the quorum THRESHOLD is checked at
+// Execute, not here — propose only requires len(approvals) >= 1 so async
+// approvals (one signer per tx) are possible.
+//
+// [spec ProposeRecovery 1]: group reference input at group_ref_input_index sits at the
+//                           trusted group script; unwrap GroupDatum for recovery_timelock
+//                           and the member registry (member_token_names)
+// [spec ProposeRecovery 2]: target_token (the lost member, read from the request output's
+//                           own datum) must be a real registry member
+// [spec ProposeRecovery 3a]: new_member_tokenname (N', read from the request output's own
+//                            datum) must NOT already be a member — no collision with an
+//                            existing identity
+// [spec ProposeRecovery 3b]: the recoveree controls N' — an input or reference input
+//                            holds exactly 1 of N' under account_policy_id at a VK
+//                            address whose PKH signed (proves control, not mere mention)
+// [spec ProposeRecovery 4]: earliest_execution_slot (read from the request output's own
+//                           datum) is RECOMPUTED here as get_lower_bound(tx) +
+//                           group.recovery_timelock — never trusted from the datum as
+//                           given, so the veto window cannot be forged
+// [spec ProposeRecovery 5]: every approver_input_indices entry resolves to an input that
+//                           holds exactly 1 Account-222 token under account_policy_id at a
+//                           VK address whose PKH is in tx.extra_signatories (genuinely
+//                           SIGNED — reference-input presence alone proves existence, not
+//                           consent, and is rejected)
+// [spec ProposeRecovery 5b]: every approval is a registry member; all approvals distinct
+//                            (no double-counting one signer); target_token is NOT among
+//                            the approvals (the lost member cannot vouch for itself);
+//                            at least 1 approval (threshold enforced at Execute, not here)
+// [spec ProposeRecovery 6]: exactly 1 token minted under own policy, name == N', nothing
+//                           else minted under own policy
+// [spec ProposeRecovery 7]: request output at request_output_index sits at the treasury
+//                           script, holds exactly {N': 1} + only ADA, and carries a
+//                           RecoveryRequest datum equal to the values validated above —
+//                           including approvals == EXACTLY the derived signed-approval set
+//                           and group_reference_tokenname == the actual group input's token
+pub fn validate_propose_recovery(
+  own_policy_id: PolicyId,
+  account_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
+  group_ref_input_index: Int,
+  request_output_index: Int,
+  approver_input_indices: List<Int>,
+  tx: Transaction,
+) -> Bool {
+  let Transaction {
+    inputs,
+    reference_inputs,
+    outputs,
+    mint,
+    extra_signatories,
+    ..
+  } = tx
+
+  // [spec ProposeRecovery 1]: group reference input at the trusted group script
+  expect Some(group_input) = list.at(inputs, group_ref_input_index)
+  expect
+    group_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
+  expect InlineDatum(group_datum_data) = group_input.output.datum
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
+
+  // The proposed request's fields all come from the request output's OWN datum —
+  // the redeemer carries no parallel copies to compare against (single source of
+  // truth), so every field below is read once here and then checked/recomputed.
+  expect Some(request_output) = list.at(outputs, request_output_index)
+  expect InlineDatum(request_datum_data) = request_output.datum
+  expect request_datum: TreasuryDatum = request_datum_data
+  expect RecoveryRequest {
+    target_token,
+    new_member_tokenname,
+    new_payment_credential,
+    earliest_execution_slot,
+    approvals: _approvals,
+    ..
+  } = request_datum
+
+  // [spec ProposeRecovery 2]: the lost member must be a real registry member
+  let target_in_registry = list.any(
+    group.member_token_names,
+    fn(n) { n == target_token },
+  )
+
+  // [spec ProposeRecovery 3a]: N' must not already be a member (no collision)
+  let new_not_member = !list.any(
+    group.member_token_names,
+    fn(n) { n == new_member_tokenname },
+  )
+
+  // [spec ProposeRecovery 3b]: the recoveree controls N' — searched across spending
+  // AND reference inputs (the redeemer carries no dedicated index for this input;
+  // the recoveree need not spend anything to prove control). recoveree_signed_for_token
+  // only returns True for a VK-address input holding exactly 1 of N' whose PKH signed.
+  let recoveree_holds_new_identity = recoveree_signed_for_token(
+    list.concat(inputs, reference_inputs),
+    new_member_tokenname,
+    account_policy_id,
+    extra_signatories,
+  )
+
+  // [spec ProposeRecovery 4]: the timelock is FIXED here from the trusted group's
+  // recovery_timelock and the tx's own lower bound — never trusted from the datum as
+  // given. This is what makes the later veto window un-forgeable: a proposer cannot
+  // shorten the window by writing a smaller earliest_execution_slot into the output.
+  let current_time = get_lower_bound(tx)
+  let expected_earliest_execution_slot = current_time + group.recovery_timelock
+  let timelock_correct = earliest_execution_slot == expected_earliest_execution_slot
+
+  // [spec ProposeRecovery 5]: every approver index resolves to a genuinely SIGNED
+  // Account-222 holder — collect_signed_approvals crashes (via signed_account_token_name)
+  // on any index whose input is unsigned, at a script address, or not a clean single
+  // account-token holder. A successful call proves every entry is a real signature.
+  let derived_approvals = collect_signed_approvals(
+    inputs,
+    approver_input_indices,
+    account_policy_id,
+    extra_signatories,
+  )
+
+  // [spec ProposeRecovery 5b]: approvals must be genuine quorum members, distinct, and
+  // exclude the lost member's own token (self-vouch). At least 1 required; the M-of-N
+  // threshold itself is checked at Execute (async approvals allowed).
+  let approvals_valid_members = approvals_are_registry_members(
+    derived_approvals,
+    group.member_token_names,
+  )
+  let approvals_distinct = approvals_are_distinct(derived_approvals)
+  let target_not_self_vouching = !list.any(
+    derived_approvals,
+    fn(a) { a == target_token },
+  )
+  let at_least_one_approval = list.length(derived_approvals) >= 1
+
+  // [spec ProposeRecovery 6]: exactly 1 token minted under own policy, named N'
+  let minted_tokens = assets.tokens(mint, own_policy_id)
+  let exact_mint = dict.get(minted_tokens, new_member_tokenname) == Some(1) && dict.size(
+    minted_tokens,
+  ) == 1
+
+  // [spec ProposeRecovery 7]: the request output's datum must equal EXACTLY the
+  // values validated above — group_reference_tokenname links to the ACTUAL group
+  // input (not an arbitrary caller-supplied value), and approvals equals EXACTLY
+  // the derived signed-approval set (a caller cannot claim approvals beyond what
+  // was actually signature-verified above).
+  let datum_correct =
+    request_datum == RecoveryRequest {
+      group_reference_tokenname: find_group_token_name(group_input),
+      target_token,
+      new_member_tokenname,
+      new_payment_credential,
+      earliest_execution_slot,
+      approvals: derived_approvals,
+    }
+
+  and {
+    target_in_registry?,
+    new_not_member?,
+    recoveree_holds_new_identity?,
+    timelock_correct?,
+    approvals_valid_members?,
+    approvals_distinct?,
+    target_not_self_vouching?,
+    at_least_one_approval?,
+    datum_correct?,
+    exact_mint?,
+    (request_output.address.payment_credential == Script(own_policy_id))?,
+    // [spec ProposeRecovery 7]: exact token check — output holds EXACTLY {N': 1}
+    (dict.to_pairs(assets.tokens(request_output.value, own_policy_id)) == [
+      Pair(new_member_tokenname, 1),
+    ])?,
+    // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
+    only_allowed_policies(request_output.value, [ada_policy_id, own_policy_id])?,
   }
 }
 
