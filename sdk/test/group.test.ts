@@ -597,6 +597,7 @@ describe("VK-default admin (regression)", () => {
             groupTokenSuffix,
             accountTokenSuffix: memberAccountTokenSuffix,
             currentTime,
+            scriptRefs: context.scriptRefs,
           },
         );
         yield* signAndSubmit(exitTx);

@@ -669,6 +669,7 @@ describe("Treasury Endpoints", () => {
             groupTokenSuffix,
             accountTokenSuffix,
             currentTime,
+            scriptRefs: base.context.scriptRefs,
           },
         );
         const txHash = yield* signAndSubmit(txBuilder);
@@ -1048,6 +1049,7 @@ describe("Treasury Endpoints", () => {
             groupTokenSuffix,
             accountTokenSuffix: user1TokenSuffix,
             currentTime: BigInt(context.emulator!.now()),
+            scriptRefs: context.scriptRefs,
           },
         );
         yield* signAndSubmit(joinUser1Tx);
@@ -1156,6 +1158,7 @@ describe("Treasury Endpoints", () => {
             groupTokenSuffix,
             memberAccountTokenSuffix: user1TokenSuffix,
             currentTime: BigInt(context.emulator!.now()),
+            scriptRefs: context.scriptRefs,
           },
         );
         const terminateHash = yield* signAndSubmit(terminateTx);
@@ -1230,6 +1233,7 @@ describe("Treasury Endpoints", () => {
             groupTokenSuffix,
             accountTokenSuffix: user1TokenSuffix,
             currentTime: BigInt(context.emulator!.now()),
+            scriptRefs: context.scriptRefs,
           },
         );
         yield* signAndSubmit(joinUser1Tx);
@@ -1271,6 +1275,7 @@ describe("Treasury Endpoints", () => {
             groupTokenSuffix,
             accountTokenSuffix: user1TokenSuffix,
             topUpAmount: 2_000_000n, // raw 2M + 2M = 4M → contributable 2M ≥ 2M fee
+            scriptRefs: context.scriptRefs,
           },
         );
         const recoverHash = yield* signAndSubmit(recoverTx);

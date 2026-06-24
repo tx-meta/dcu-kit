@@ -378,6 +378,10 @@ export type JoinGroupTestParams = {
   groupUtxo: UTxO;
   accountUtxo: UTxO;
   userSeed: string;
+  // Defaults to context.scriptRefs (deployed once per emulator context — see
+  // test/context.ts) so join txs stay well under the inline size limit. Pass
+  // `null` to force the inline-attach path for a specific test.
+  scriptRefs?: JoinGroupConfig["scriptRefs"] | null;
 };
 
 export const joinGroupTestCase = (
@@ -386,7 +390,7 @@ export const joinGroupTestCase = (
 ): Effect.Effect<JoinGroupResult, Error, never> =>
   Effect.gen(function* () {
     const { lucid } = context;
-    const { groupUtxo, accountUtxo, userSeed } = params;
+    const { groupUtxo, accountUtxo, userSeed, scriptRefs } = params;
 
     selectWalletFromSeed(lucid, userSeed);
 
@@ -409,6 +413,8 @@ export const joinGroupTestCase = (
       groupTokenSuffix,
       accountTokenSuffix,
       currentTime,
+      scriptRefs:
+        scriptRefs === null ? undefined : scriptRefs ?? context.scriptRefs,
     };
 
     const joinTx = yield* unsignedJoinGroupTxProgram(
@@ -426,6 +432,10 @@ export type StartGroupTestParams = {
   groupUtxo: UTxO;
   adminSeed?: string;
   currentTime?: bigint;
+  // Defaults to context.scriptRefs (deployed once per emulator context — see
+  // test/context.ts) so start txs stay well under the inline size limit. Pass
+  // `null` to force the inline-attach path for a specific test.
+  scriptRefs?: StartGroupConfig["scriptRefs"] | null;
 };
 
 export const startGroupTestCase = (
@@ -434,7 +444,7 @@ export const startGroupTestCase = (
 ): Effect.Effect<{ txHash: string }, Error, never> =>
   Effect.gen(function* () {
     const { lucid, users } = context;
-    const { groupUtxo, adminSeed, currentTime } = params;
+    const { groupUtxo, adminSeed, currentTime, scriptRefs } = params;
 
     selectWalletFromSeed(lucid, adminSeed ?? users.admin.seedPhrase);
 
@@ -449,6 +459,8 @@ export const startGroupTestCase = (
     const startConfig: StartGroupConfig = {
       groupTokenSuffix,
       currentTime: currentTimeFinal,
+      scriptRefs:
+        scriptRefs === null ? undefined : scriptRefs ?? context.scriptRefs,
     };
 
     const startTx = yield* unsignedStartGroupTxProgram(
@@ -465,6 +477,10 @@ export const startGroupTestCase = (
 export type DistributePayoutTestParams = {
   groupUtxo: UTxO;
   callerSeed: string;
+  // Defaults to context.scriptRefs (deployed once per emulator context — see
+  // test/context.ts) so distribute txs stay well under the inline size limit.
+  // Pass `null` to force the inline-attach path for a specific test.
+  scriptRefs?: DistributePayoutConfig["scriptRefs"] | null;
 };
 
 export const distributePayoutTestCase = (
@@ -473,7 +489,7 @@ export const distributePayoutTestCase = (
 ): Effect.Effect<DistributePayoutResult, Error, never> =>
   Effect.gen(function* () {
     const { lucid } = context;
-    const { groupUtxo, callerSeed } = params;
+    const { groupUtxo, callerSeed, scriptRefs } = params;
 
     selectWalletFromSeed(lucid, callerSeed);
 
@@ -482,7 +498,11 @@ export const distributePayoutTestCase = (
       context.protocol!.groupPolicyId,
       assetNameLabels.prefix100,
     );
-    const payoutConfig: DistributePayoutConfig = { groupTokenSuffix };
+    const payoutConfig: DistributePayoutConfig = {
+      groupTokenSuffix,
+      scriptRefs:
+        scriptRefs === null ? undefined : scriptRefs ?? context.scriptRefs,
+    };
 
     const payoutTx = yield* unsignedDistributePayoutTxProgram(
       context.protocol!,
@@ -510,6 +530,10 @@ export type ExitGroupTestParams = {
   groupUtxo: UTxO;
   accountUtxo: UTxO;
   userSeed: string;
+  // Defaults to context.scriptRefs (deployed once per emulator context — see
+  // test/context.ts) so exit txs stay well under the inline size limit. Pass
+  // `null` to force the inline-attach path for a specific test.
+  scriptRefs?: ExitGroupConfig["scriptRefs"] | null;
 };
 
 export const exitGroupTestCase = (
@@ -518,7 +542,7 @@ export const exitGroupTestCase = (
 ): Effect.Effect<ExitGroupResult, Error, never> =>
   Effect.gen(function* () {
     const { lucid } = context;
-    const { groupUtxo, accountUtxo, userSeed } = params;
+    const { groupUtxo, accountUtxo, userSeed, scriptRefs } = params;
 
     selectWalletFromSeed(lucid, userSeed);
 
@@ -540,6 +564,8 @@ export const exitGroupTestCase = (
       groupTokenSuffix,
       accountTokenSuffix,
       currentTime,
+      scriptRefs:
+        scriptRefs === null ? undefined : scriptRefs ?? context.scriptRefs,
     };
 
     const exitTx = yield* unsignedExitGroupTxProgram(

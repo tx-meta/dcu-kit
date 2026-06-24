@@ -723,6 +723,7 @@ describe("script-held admin ops", () => {
           currentTime,
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
+          scriptRefs: context.scriptRefs,
         });
         const txHash = yield* signMultisigAndSubmit(tx, [pkA, pkB]);
         yield* advanceBlock(context.emulator);
@@ -786,6 +787,7 @@ describe("script-held admin ops", () => {
           currentTime,
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
+          scriptRefs: context.scriptRefs,
         });
         // Build succeeded (member IS in DefaultState past grace); 1-of-2 signing must be
         // rejected by the native-script quorum check.
@@ -845,6 +847,7 @@ describe("script-held admin ops", () => {
           groupTokenSuffix,
           accountTokenSuffix: memberAccountTokenSuffix,
           currentTime,
+          scriptRefs: context.scriptRefs,
         });
         yield* signAndSubmit(exitTx);
         yield* advanceBlock(context.emulator);
@@ -916,6 +919,7 @@ describe("script-held admin ops", () => {
           groupTokenSuffix,
           accountTokenSuffix: memberAccountTokenSuffix,
           currentTime,
+          scriptRefs: context.scriptRefs,
         });
         yield* signAndSubmit(exitTx);
         yield* advanceBlock(context.emulator);

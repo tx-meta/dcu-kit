@@ -9,6 +9,7 @@ import {
   Maestro,
   Network,
   PROTOCOL_PARAMETERS_DEFAULT,
+  UTxO,
   validatorToAddress,
   validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
@@ -21,6 +22,10 @@ import {
   Protocol,
   settingsTokenName,
 } from "../src/core/validators/constants.js";
+import {
+  GROUP_REF_LOVELACE,
+  TREASURY_REF_LOVELACE,
+} from "../src/admin/deployScripts.js";
 import { ProtocolSettings } from "../src/core/types.js";
 
 export type OnChainNetwork = Extract<
@@ -49,6 +54,11 @@ export type LucidContext = {
   // policy (env) rather than minting one; the emulator path always sets it.
   protocol?: Protocol;
   settingsUnit?: string;
+  // Reference-script UTxOs for the treasury/group validators, deployed once during
+  // emulator setup (mirrors the admin `deployScripts` flow). Lets size-sensitive
+  // endpoint tests (join/start/recovery) pass `scriptRefs` instead of inlining the
+  // ~12-15 KB validator bytes. Undefined on live-network contexts (no auto-deploy).
+  scriptRefs?: { treasury: UTxO; group: UTxO };
 };
 
 export type Provider = "Emulator" | "Maestro" | "Blockfrost" | "Kupmios";
@@ -161,6 +171,72 @@ const deployEmulatorSettings = (
     return { protocol, settingsUnit };
   });
 
+// Deploy the treasury + group validators as permanent reference-script UTxOs at the
+// always-fails address, mirroring the admin `deployScripts` flow (src/admin/deployScripts.ts)
+// but using emulator-native submit + awaitBlock instead of live-network awaitTx/indexer
+// polling. One UTxO per validator — each carries its own script (no witness, so the
+// deploy tx itself never approaches the size limit) and is later resolved via `.readFrom()`
+// by size-sensitive endpoint tests (join/start/recovery) instead of inlining the bytecode.
+// Must run with the admin wallet selected (the funding wallet for both deploy txs).
+const deployEmulatorScriptRefs = (
+  lucid: LucidEvolution,
+  emulator: Emulator,
+  protocol: Protocol,
+): Effect.Effect<{ treasury: UTxO; group: UTxO }, never, never> =>
+  Effect.gen(function* () {
+    const { treasuryValidator, groupValidator } = protocol;
+    const deployAddress = validatorToAddress(
+      "Custom",
+      alwaysFailsValidator.elseAlwaysFails,
+    );
+
+    const treasuryTx = yield* Effect.promise(() =>
+      lucid
+        .newTx()
+        .pay.ToAddressWithData(
+          deployAddress,
+          { kind: "inline", value: Data.void() },
+          { lovelace: TREASURY_REF_LOVELACE },
+          { type: "PlutusV3", script: treasuryValidator.mintTreasury.script },
+        )
+        .complete(),
+    );
+    const treasurySigned = yield* Effect.promise(() =>
+      treasuryTx.sign.withWallet().complete(),
+    );
+    const treasuryTxHash = yield* Effect.promise(() => treasurySigned.submit());
+    emulator.awaitBlock(1);
+
+    const groupTx = yield* Effect.promise(() =>
+      lucid
+        .newTx()
+        .pay.ToAddressWithData(
+          deployAddress,
+          { kind: "inline", value: Data.void() },
+          { lovelace: GROUP_REF_LOVELACE },
+          { type: "PlutusV3", script: groupValidator.spendGroup.script },
+        )
+        .complete(),
+    );
+    const groupSigned = yield* Effect.promise(() =>
+      groupTx.sign.withWallet().complete(),
+    );
+    const groupTxHash = yield* Effect.promise(() => groupSigned.submit());
+    emulator.awaitBlock(1);
+
+    const deployUtxos = yield* Effect.promise(() =>
+      lucid.utxosAt(deployAddress),
+    );
+    const treasury = deployUtxos.find((u) => u.txHash === treasuryTxHash);
+    const group = deployUtxos.find((u) => u.txHash === groupTxHash);
+    if (!treasury || !group)
+      return yield* Effect.die(
+        new Error("Reference-script UTxOs not found after emulator deploy"),
+      );
+
+    return { treasury, group };
+  });
+
 const makeEmulatorContext = (seedAssets?: Record<string, bigint>) =>
   Effect.gen(function* () {
     const generate = () =>
@@ -192,6 +268,14 @@ const makeEmulatorContext = (seedAssets?: Record<string, bigint>) =>
       admin.seedPhrase,
     );
 
+    // Deploy treasury + group reference scripts once (admin wallet still selected from
+    // deployEmulatorSettings) — exposed as context.scriptRefs for size-sensitive endpoints.
+    const scriptRefs = yield* deployEmulatorScriptRefs(
+      lucid,
+      emulator,
+      protocol,
+    );
+
     return {
       lucid,
       users: {
@@ -202,6 +286,7 @@ const makeEmulatorContext = (seedAssets?: Record<string, bigint>) =>
       emulator,
       protocol,
       settingsUnit,
+      scriptRefs,
     } as LucidContext;
   });
 

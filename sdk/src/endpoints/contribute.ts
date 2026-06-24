@@ -4,8 +4,10 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   toUnit,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import {
   GroupDatum,
   GroupSpendRedeemer,
@@ -50,6 +52,15 @@ export type ContributeConfig = {
   groupTokenSuffix: string;
   accountTokenSuffix: string;
   topUpAmount: bigint; // extra units of the contribution asset to add to the treasury UTxO
+  // Reference script UTxOs (from deploy-scripts). When provided, the validator
+  // script bytes are resolved from the on-chain UTxO rather than included inline,
+  // keeping the transaction well under the 16KB Cardano size limit. Only the
+  // DefaultState recovery path spends the group validator; the plain top-up path
+  // only ever needs `treasury`.
+  scriptRefs?: {
+    treasury?: UTxO;
+    group?: UTxO;
+  };
 };
 
 export const unsignedContributeTxProgram = (
@@ -213,7 +224,7 @@ export const unsignedContributeTxProgram = (
         inputs: [groupUtxo, treasuryUtxo],
       };
 
-      const tx = yield* lucid
+      const baseTx = lucid
         .newTx()
         .collectFrom([accountUtxo])
         .collectFrom([treasuryUtxo], contributeRedeemer)
@@ -235,9 +246,23 @@ export const unsignedContributeTxProgram = (
           treasuryAddress,
           { kind: "inline", value: Data.to(outputDatum, TreasuryDatum) },
           outputAssets,
-        )
-        .attach.SpendingValidator(treasuryValidator.spendTreasury)
-        .attach.SpendingValidator(groupValidator.spendGroup)
+        );
+
+      // Use reference scripts when provided — avoids including ~12KB of script bytes
+      // inline, keeping the tx under Cardano's 16,384-byte size limit.
+      const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+      const withValidators =
+        scriptRefs.treasury || scriptRefs.group
+          ? baseTx.readFrom(
+              [scriptRefs.treasury, scriptRefs.group].filter(
+                Boolean,
+              ) as UTxO[],
+            )
+          : baseTx.attach
+              .SpendingValidator(treasuryValidator.spendTreasury)
+              .attach.SpendingValidator(groupValidator.spendGroup);
+
+      const tx = yield* withValidators
         .readFrom([settingsUtxo])
         .completeProgram(
           lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
@@ -280,7 +305,7 @@ export const unsignedContributeTxProgram = (
       inputs: [accountUtxo, treasuryUtxo],
     };
 
-    const tx = yield* lucid
+    const baseTopUpTx = lucid
       .newTx()
       .collectFrom([accountUtxo])
       .collectFrom([treasuryUtxo], redeemer)
@@ -290,8 +315,16 @@ export const unsignedContributeTxProgram = (
         treasuryAddress,
         { kind: "inline", value: Data.to(outputDatum, TreasuryDatum) },
         outputAssets,
-      )
-      .attach.SpendingValidator(treasuryValidator.spendTreasury)
+      );
+
+    // Use a reference script when provided — avoids including ~8KB of script bytes
+    // inline, keeping the tx under Cardano's 16,384-byte size limit.
+    const topUpScriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const withTopUpValidator = topUpScriptRefs.treasury
+      ? baseTopUpTx.readFrom([topUpScriptRefs.treasury])
+      : baseTopUpTx.attach.SpendingValidator(treasuryValidator.spendTreasury);
+
+    const tx = yield* withTopUpValidator
       .readFrom([settingsUtxo])
       .completeProgram(
         lucid.config().network === "Custom" ? { localUPLCEval: false } : {},

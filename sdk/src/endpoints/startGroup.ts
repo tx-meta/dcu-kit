@@ -4,8 +4,10 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   Script,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -46,6 +48,13 @@ export type StartGroupConfig = {
   /** Optional destination for returning the admin 222 token after script-admin spend.
    *  Defaults to the current admin UTxO address, preserving multisig delegation. */
   adminReturnAddress?: string;
+  // Reference script UTxOs (from deploy-scripts). When provided, the validator
+  // script bytes are resolved from the on-chain UTxO rather than included inline,
+  // keeping the transaction well under the 16KB Cardano size limit.
+  scriptRefs?: {
+    treasury?: UTxO; // UTxO with scriptRef for treasury validator
+    group?: UTxO; // UTxO with scriptRef for group validator
+  };
 };
 
 export const unsignedStartGroupTxProgram = (
@@ -148,13 +157,22 @@ export const unsignedStartGroupTxProgram = (
         groupUtxo.assets,
       )
       .pay.ToAddress(adminTokenReturnAddress, adminTokenReturnAssets)
-      .attach.SpendingValidator(groupValidator.spendGroup)
       .addSigner(adminAddress)
       .validFrom(Number(now));
 
+    // Use reference scripts when provided — avoids including ~12KB of script bytes
+    // inline, keeping the tx under Cardano's 16,384-byte size limit.
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const withValidators =
+      scriptRefs.treasury || scriptRefs.group
+        ? baseTx.readFrom(
+            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
+          )
+        : baseTx.attach.SpendingValidator(groupValidator.spendGroup);
+
     const withAdminWitness = adminScript
-      ? baseTx.attach.SpendingValidator(adminScript)
-      : baseTx;
+      ? withValidators.attach.SpendingValidator(adminScript)
+      : withValidators;
 
     const withSigners = (adminSignerKeyHashes ?? []).reduce(
       (t, kh) => t.addSignerKey(kh),
