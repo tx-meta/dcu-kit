@@ -59,6 +59,22 @@ import {
   unsignedAssignAdminTxProgram,
   AssignAdminConfig,
 } from "./assignAdmin.js";
+import {
+  unsignedProposeRecoveryTxProgram,
+  ProposeRecoveryConfig,
+} from "./proposeRecovery.js";
+import {
+  unsignedApproveRecoveryTxProgram,
+  ApproveRecoveryConfig,
+} from "./approveRecovery.js";
+import {
+  unsignedCancelRecoveryTxProgram,
+  CancelRecoveryConfig,
+} from "./cancelRecovery.js";
+import {
+  unsignedExecuteRecoveryTxProgram,
+  ExecuteRecoveryConfig,
+} from "./executeRecovery.js";
 
 // ─── Account create/update (settings-independent — account validator is a root) ──
 
@@ -151,6 +167,18 @@ export const createDcuSdk = (settingsPolicy: string) => {
 
     assignAdmin: (lucid: LucidEvolution, config: AssignAdminConfig) =>
       makeReturn(unsignedAssignAdminTxProgram(protocol, lucid, config)),
+
+    proposeRecovery: (lucid: LucidEvolution, config: ProposeRecoveryConfig) =>
+      makeReturn(unsignedProposeRecoveryTxProgram(protocol, lucid, config)),
+
+    approveRecovery: (lucid: LucidEvolution, config: ApproveRecoveryConfig) =>
+      makeReturn(unsignedApproveRecoveryTxProgram(protocol, lucid, config)),
+
+    cancelRecovery: (lucid: LucidEvolution, config: CancelRecoveryConfig) =>
+      makeReturn(unsignedCancelRecoveryTxProgram(protocol, lucid, config)),
+
+    executeRecovery: (lucid: LucidEvolution, config: ExecuteRecoveryConfig) =>
+      makeReturn(unsignedExecuteRecoveryTxProgram(protocol, lucid, config)),
   };
 };
 
@@ -218,6 +246,15 @@ export const createDcuSession = (
       sdk.extendGraceWindow(lucid, config),
     claimPayout: (config: ClaimPayoutConfig) => sdk.claimPayout(lucid, config),
     assignAdmin: (config: AssignAdminConfig) => sdk.assignAdmin(lucid, config),
+
+    proposeRecovery: (config: ProposeRecoveryConfig) =>
+      sdk.proposeRecovery(lucid, config),
+    approveRecovery: (config: ApproveRecoveryConfig) =>
+      sdk.approveRecovery(lucid, config),
+    cancelRecovery: (config: CancelRecoveryConfig) =>
+      sdk.cancelRecovery(lucid, config),
+    executeRecovery: (config: ExecuteRecoveryConfig) =>
+      sdk.executeRecovery(lucid, config),
   };
 };
 

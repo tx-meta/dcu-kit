@@ -15,4 +15,8 @@ export * from "./updatePayoutCredential.js";
 export * from "./extendGraceWindow.js";
 export * from "./claimPayout.js";
 export * from "./assignAdmin.js";
+export * from "./proposeRecovery.js";
+export * from "./approveRecovery.js";
+export * from "./cancelRecovery.js";
+export * from "./executeRecovery.js";
 export * from "./programWrapper.js";
