@@ -1106,6 +1106,14 @@ pub fn validate_recover_member(
     treasury_policy_id,
     new_member_token_name,
   ) == 1
+  // [security]: the rotated treasury output must sit at the treasury script — token presence
+  // alone does not prove the rotated position landed inside the treasury contract (a token
+  // under treasury_policy_id can be held at any address). Pinning the address makes this
+  // handler self-sufficient rather than trusting the treasury ExecuteRecovery path (Task 2.6)
+  // to place the output correctly. Mirrors Recover's recovery_output_at_treasury.
+  let treasury_out_at_script = treasury_out.address.payment_credential == Script(
+    treasury_policy_id,
+  )
 
   // [security]: ADA must not decrease; output at same script with ref token; clean value
   let in_ada = assets.lovelace_of(group_input.output.value)
@@ -1117,6 +1125,7 @@ pub fn validate_recover_member(
     new_absent?,
     treasury_in_holds_old?,
     treasury_out_holds_new?,
+    treasury_out_at_script?,
     (group_output.address == group_input.output.address)?,
     // [security]: output retains EXACTLY the ref (100) token — prevents account-merge
     // when a second group UTxO is updated in the same tx (Multiple Satisfaction).

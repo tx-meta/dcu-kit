@@ -2495,6 +2495,77 @@ test recover_member__rejects_missing_treasury_rotation() {
   )
 }
 
+// The N'-bearing treasury output carries the right token but sits at a wallet (VK) address,
+// not the treasury script → token presence is satisfied but the rotated position never landed
+// inside the treasury contract → rejected.
+test recover_member__rejects_treasury_output_not_at_script() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = common.test_group_datum(policy_id)
+  let in_datum =
+    GroupDatum {
+      ..base,
+      member_count: 2,
+      active_member_count: 2,
+      member_token_names: [#"aabb", #"ccdd"],
+    }
+  let out_datum =
+    GroupDatum {
+      ..base,
+      member_count: 2,
+      active_member_count: 2,
+      member_token_names: [#"ccdd", #"eeff"],
+    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = common.test_input(
+    placeholder_treasury_ref(),
+    treasury_utxo_holding(tp, #"aabb"),
+  )
+  // Treasury output holds N' (#"eeff") but at a VerificationKey (wallet) address, not Script(tp).
+  let treasury_out = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(tp, #"eeff", 1)),
+    DefaultState {
+      group_reference_tokenname: #"eeff",
+      member_reference_tokenname: #"eeff",
+      grace_expires_at: 0,
+      grace_extensions_used: 0,
+      rounds_paid: 0,
+      assigned_slot: 0,
+      member_payment_credential: common.test_pkh(),
+      claimable_balance: 0,
+    },
+  )
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    [group_in, treasury_in],
+    [group_out, treasury_out],
+  )
+}
+
 // Exit: group output member_count not decremented → rejected
 test member_exit__rejects_member_count_not_decremented() {
   let policy_id = common.test_policy_id()
