@@ -1,7 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { Emulator, generateEmulatorAccount, Lucid, PROTOCOL_PARAMETERS_DEFAULT } from "@lucid-evolution/lucid";
-import { buildMultisig } from "../src/core/utils/index.js";
+import {
+  Emulator,
+  generateEmulatorAccount,
+  Lucid,
+  PROTOCOL_PARAMETERS_DEFAULT,
+} from "@lucid-evolution/lucid";
+import {
+  buildMultisig,
+  assetNameLabels,
+  selectWalletFromSeed,
+  signAndSubmit,
+} from "../src/core/utils/index.js";
+import { unsignedAssignAdminTxProgram } from "../src/endpoints/assignAdmin.js";
+import { setupBase, setupGroup } from "./setup.js";
+import { advanceBlock } from "./effects.js";
+import { extractTokenSuffix } from "./utils.js";
 
 // Three deterministic-looking payment key hashes (28 bytes = 56 hex chars each)
 const KEY_A = "a".repeat(56);
@@ -123,4 +138,66 @@ describe("buildMultisig", () => {
       expect(result.left._tag).toBe("ConfigurationError");
     }
   });
+});
+
+describe("assignAdmin", () => {
+  // TDD: this test was written RED (endpoint missing) before assignAdmin.ts existed.
+  // Verifies that the group 222 admin token moves from the VK wallet to a
+  // buildMultisig script address after calling assignAdmin.
+  it.effect(
+    "transfers the 222 admin token from wallet to a multisig script address",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context } = base;
+        const { lucid, users, emulator } = context;
+
+        // Create a group with the VK admin wallet; admin 222 token lands in admin wallet.
+        // setupGroup doesn't surface the suffix directly — extract it from adminUtxo.
+        const { adminUtxo } = yield* setupGroup(base);
+        const groupTokenSuffix = extractTokenSuffix(
+          adminUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix222,
+        );
+
+        // Build a 2-of-3 multisig — its address is the destination for assignAdmin.
+        const KEY_A = "a".repeat(56);
+        const KEY_B = "b".repeat(56);
+        const KEY_C = "c".repeat(56);
+        const multisig = yield* buildMultisig(lucid, {
+          signers: [KEY_A, KEY_B, KEY_C],
+          required: 2,
+        });
+
+        // Admin wallet still selected from setupGroup.
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+
+        const adminUnit =
+          context.protocol!.groupPolicyId +
+          assetNameLabels.prefix222 +
+          groupTokenSuffix;
+
+        const tx = yield* unsignedAssignAdminTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            destinationAddress: multisig.address,
+          },
+        );
+        const txHash = yield* signAndSubmit(tx);
+        yield* advanceBlock(emulator);
+
+        // The 222 admin token must now be at the multisig script address.
+        const multisigUtxos = yield* Effect.tryPromise(() =>
+          lucid.utxosAt(multisig.address),
+        );
+        const adminAtMultisig = multisigUtxos.find(
+          (u) => u.txHash === txHash && u.assets[adminUnit] === 1n,
+        );
+        expect(adminAtMultisig).toBeDefined();
+        expect(adminAtMultisig!.assets[adminUnit]).toBe(1n);
+      }),
+  );
 });

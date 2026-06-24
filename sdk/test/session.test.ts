@@ -32,6 +32,7 @@ describe("createDcuSession", () => {
       "updatePayoutCredential",
       "extendGraceWindow",
       "claimPayout",
+      "assignAdmin",
     ] as const;
     for (const m of methods) expect(typeof session[m]).toBe("function");
     // each bound method takes exactly its config — the lucid arg is gone

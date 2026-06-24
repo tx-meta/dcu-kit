@@ -55,6 +55,10 @@ import {
   unsignedClaimPayoutTxProgram,
   ClaimPayoutConfig,
 } from "./claimPayout.js";
+import {
+  unsignedAssignAdminTxProgram,
+  AssignAdminConfig,
+} from "./assignAdmin.js";
 
 // ─── Account create/update (settings-independent — account validator is a root) ──
 
@@ -144,6 +148,9 @@ export const createDcuSdk = (settingsPolicy: string) => {
 
     claimPayout: (lucid: LucidEvolution, config: ClaimPayoutConfig) =>
       makeReturn(unsignedClaimPayoutTxProgram(protocol, lucid, config)),
+
+    assignAdmin: (lucid: LucidEvolution, config: AssignAdminConfig) =>
+      makeReturn(unsignedAssignAdminTxProgram(protocol, lucid, config)),
   };
 };
 
@@ -210,6 +217,7 @@ export const createDcuSession = (
     extendGraceWindow: (config: ExtendGraceWindowConfig) =>
       sdk.extendGraceWindow(lucid, config),
     claimPayout: (config: ClaimPayoutConfig) => sdk.claimPayout(lucid, config),
+    assignAdmin: (config: AssignAdminConfig) => sdk.assignAdmin(lucid, config),
   };
 };
 
