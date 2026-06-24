@@ -149,6 +149,10 @@ export const GroupDatumSchema = Data.Object({
    * See {@link PayoutModeSchema}.
    */
   payout_mode: PayoutModeSchema,
+  /** M-of-N member approvals required to authorize a lost-member recovery (absolute count). */
+  recovery_threshold: Data.Integer(),
+  /** Recovery veto window in **POSIX milliseconds** (propose→execute delay). e.g. 259_200_000n = 3 days. */
+  recovery_timelock: Data.Integer(),
 });
 
 /**

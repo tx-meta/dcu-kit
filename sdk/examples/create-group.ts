@@ -113,6 +113,10 @@ async function main() {
     //       and withdrawn later via ClaimPayout — the lost-wallet-safe mode.
     // Set PAYOUT_MODE=Pull to create a Pull-mode group.
     payout_mode: process.env.PAYOUT_MODE === "Pull" ? "Pull" : "Push",
+    // Minimum approvals required to authorize a lost-member recovery (absolute count).
+    recovery_threshold: 1n,
+    // Veto window before a recovery proposal can execute (POSIX ms). 3 days default.
+    recovery_timelock: 259_200_000n,
 
     member_count: 0n,
     is_active: true,
