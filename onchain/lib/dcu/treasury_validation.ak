@@ -1357,11 +1357,36 @@ pub fn validate_execute_recovery(
     ]
 
   // [spec ExecuteRecovery 5]: the rotated output's total lovelace >= input lovelace
-  // (economic value must not decrease — ADA conservation across the rotation).
-  // For native-token groups the total value is also conserved (same policy check below).
+  // (ADA must not decrease — for an ADA-denominated group this also pins the
+  // contribution balance, since the contribution asset IS the lovelace).
   let value_conserved =
     assets.lovelace_of(rotated_output.value) >= assets.lovelace_of(
       member_treasury_input.output.value,
+    )
+
+  // [security]: the rotated output may hold ONLY ADA + own policy + the group's
+  // contribution asset — no foreign tokens can be smuggled in, and (paired with the
+  // contribution-conservation check below) no contribution tokens can be routed out.
+  let clean_output_value =
+    only_allowed_policies(
+      rotated_output.value,
+      [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
+    )
+
+  // [security]: for a NATIVE-TOKEN group the contribution balance is independent of
+  // lovelace, so value_conserved alone does NOT stop a drain of the member's
+  // contribution tokens. Pin the contributable balance exactly — rotation must not
+  // change the recovered member's economic position. For an ADA group this is a no-op
+  // beyond value_conserved (the lovelace floor already covers it).
+  let contribution_conserved =
+    contributable_in(
+      rotated_output.value,
+      group.contribution_fee_policyid,
+      group.contribution_fee_assetname,
+    ) == contributable_in(
+      member_treasury_input.output.value,
+      group.contribution_fee_policyid,
+      group.contribution_fee_assetname,
     )
 
   // [spec ExecuteRecovery 5]: datum exactly matches the constructed rotated datum
@@ -1379,6 +1404,11 @@ pub fn validate_execute_recovery(
   // RecoverMember enforces the full registry edit; we independently verify N is gone
   // and N' is present so ExecuteRecovery is self-sufficient.
   expect Some(group_output) = list.at(outputs, group_output_index)
+  // [security]: the group output must sit at the SAME script address as the group input —
+  // token presence alone does not prove the registry edit landed back at the group script.
+  // Mirrors validate_terminate_default; keeps the treasury side self-sufficient rather than
+  // relying solely on RecoverMember to place the group output correctly.
+  expect group_output.address == group_input.output.address
   expect InlineDatum(group_output_datum_data) = group_output.datum
   expect GroupCip68Datum { extra: updated_group, .. } = group_output_datum_data
   let registry_n_removed = !list.any(
@@ -1402,6 +1432,8 @@ pub fn validate_execute_recovery(
     output_at_script?,
     output_holds_n_prime?,
     value_conserved?,
+    clean_output_value?,
+    contribution_conserved?,
     datum_correct?,
     exact_burn?,
     registry_n_removed?,

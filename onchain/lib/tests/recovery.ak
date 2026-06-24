@@ -1914,3 +1914,224 @@ test execute_recovery__rejects_missing_registry_swap() {
     }
   !call_execute(tx)
 }
+
+// ─── Negative: native-token contribution-balance drain ─────────────────────────
+//
+// For a native-token group, the rotation must conserve the member's contribution
+// tokens exactly. A rotation that keeps ADA + N' but routes the contribution tokens
+// out is silent theft from the recovered member.
+
+// A distinct native policy used as the contribution asset (not ADA, not treasury/group/account).
+fn contribution_policy() -> assets.PolicyId {
+  #"cccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}
+
+fn contribution_assetname() -> assets.AssetName {
+  #"434f4e54524942"
+}
+
+// Native-token group: contribution_fee_policyid is a native token policy.
+fn native_group_datum() -> GroupDatum {
+  GroupDatum {
+    ..exec_group_datum(),
+    contribution_fee_policyid: contribution_policy(),
+    contribution_fee_assetname: contribution_assetname(),
+    contribution_fee: 50,
+  }
+}
+
+fn native_group_cip68_datum() -> GroupCip68Datum {
+  GroupCip68Datum {
+    metadata: [Pair(#"6e616d65", "Test Group")],
+    version: 1,
+    extra: native_group_datum(),
+  }
+}
+
+fn native_group_input() -> Input {
+  let gp = group_policy()
+  Input {
+    output_reference: exec_group_ref(),
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(native_group_cip68_datum()),
+      reference_script: None,
+    },
+  }
+}
+
+fn native_group_output() -> Output {
+  let gp = group_policy()
+  let swapped_datum =
+    GroupCip68Datum {
+      ..native_group_cip68_datum(),
+      extra: GroupDatum {
+        ..native_group_datum(),
+        member_token_names: [approver_a_tn(), approver_b_tn(), new_member_tn()],
+      },
+    }
+  Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+    datum: InlineDatum(swapped_datum),
+    reference_script: None,
+  }
+}
+
+// Member treasury holding ADA + N + 100 contribution tokens.
+fn native_member_treasury_input() -> Input {
+  let tp = treasury_policy()
+  Input {
+    output_reference: exec_member_treasury_ref(),
+    output: Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value: assets.from_lovelace(4_000_000)
+        |> assets.merge(assets.from_asset(tp, target_tn(), 1))
+        |> assets.merge(
+            assets.from_asset(
+              contribution_policy(),
+              contribution_assetname(),
+              100,
+            ),
+          ),
+      datum: InlineDatum(member_treasury_datum()),
+      reference_script: None,
+    },
+  }
+}
+
+fn native_rotated_datum() -> TreasuryDatum {
+  TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: new_member_tn(),
+    assigned_slot: 1,
+    rounds_paid: 2,
+    member_payment_credential: recoveree_pkh(),
+    claimable_balance: 500_000,
+  }
+}
+
+// Rotated output that DROPS the 100 contribution tokens — the drain.
+test execute_recovery__rejects_native_token_drain() {
+  let tp = treasury_policy()
+  let drained_output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      // ADA + N' preserved, contribution tokens GONE (routed out)
+      value: assets.from_lovelace(4_000_000)
+        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+      datum: InlineDatum(native_rotated_datum()),
+      reference_script: None,
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      inputs: [
+        native_group_input(),
+        exec_request_input(),
+        native_member_treasury_input(),
+      ],
+      outputs: [native_group_output(), drained_output],
+    }
+  !call_execute(tx)
+}
+
+// Control: a native-token rotation that PRESERVES the contribution tokens passes.
+test execute_recovery__accepts_native_token_preserved() {
+  let tp = treasury_policy()
+  let conserved_output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value: assets.from_lovelace(4_000_000)
+        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+        |> assets.merge(
+            assets.from_asset(
+              contribution_policy(),
+              contribution_assetname(),
+              100,
+            ),
+          ),
+      datum: InlineDatum(native_rotated_datum()),
+      reference_script: None,
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      inputs: [
+        native_group_input(),
+        exec_request_input(),
+        native_member_treasury_input(),
+      ],
+      outputs: [native_group_output(), conserved_output],
+    }
+  call_execute(tx)
+}
+
+// ─── Negative: group output at wrong address ──────────────────────────────────
+//
+// The group output carries the correct (swapped) datum but sits at a VK wallet
+// address instead of the group script — the treasury side must reject this without
+// relying on RecoverMember. Enforced via `expect` (hard crash), so `fail`-style.
+test execute_recovery__rejects_group_output_at_wrong_address() fail {
+  let swapped_datum =
+    GroupCip68Datum {
+      ..exec_group_cip68_datum(),
+      extra: GroupDatum {
+        ..exec_group_datum(),
+        member_token_names: [approver_a_tn(), approver_b_tn(), new_member_tn()],
+      },
+    }
+  let wrong_addr_group_output =
+    Output {
+      // VK wallet address, not the group script
+      address: Address {
+        payment_credential: VerificationKey(common.test_pkh()),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
+      datum: InlineDatum(swapped_datum),
+      reference_script: None,
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      outputs: [wrong_addr_group_output, rotated_treasury_output()],
+    }
+  call_execute(tx)
+}
+
+// ─── Negative: claimable_balance zeroed ───────────────────────────────────────
+//
+// Explicit high-value economic-field test: input claimable_balance 500_000 is
+// zeroed in the rotated output — the recovered member loses their earmarked payout.
+test execute_recovery__rejects_claimable_balance_zeroed() {
+  let tp = treasury_policy()
+  let zeroed_datum =
+    TreasuryState {
+      group_reference_tokenname: group_ref_tn(),
+      member_reference_tokenname: new_member_tn(),
+      assigned_slot: 1,
+      rounds_paid: 2,
+      member_payment_credential: recoveree_pkh(),
+      // claimable_balance zeroed — NOT allowed; the earmark must carry through
+      claimable_balance: 0,
+    }
+  let zeroed_output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value: assets.from_lovelace(4_000_000)
+        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+      datum: InlineDatum(zeroed_datum),
+      reference_script: None,
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      outputs: [exec_group_output(), zeroed_output],
+    }
+  !call_execute(tx)
+}
