@@ -6,16 +6,17 @@ use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/settings.{read_settings}
 use dcu/treasury.{
-  ApproveRecovery, ClaimPayout, ClaimPenalty, Contribute, DistributeRound,
-  DistributeWithdraw, ExitGroup, ExtendGrace, JoinGroup, ProposeRecovery,
-  TerminateDefault, TreasuryDatum, TreasuryRedeemer, TreasuryWithdrawRedeemer,
-  UpdatePayout,
+  ApproveRecovery, CancelRecovery, ClaimPayout, ClaimPenalty, Contribute,
+  DistributeRound, DistributeWithdraw, ExitGroup, ExtendGrace, JoinGroup,
+  ProposeRecovery, TerminateDefault, TreasuryDatum, TreasuryRedeemer,
+  TreasuryWithdrawRedeemer, UpdatePayout,
 } as treasury_types
 use dcu/treasury_validation.{
-  validate_approve_recovery, validate_claim_payout, validate_claim_penalty,
-  validate_claim_penalty_mint, validate_contribute, validate_distribute_withdraw,
-  validate_exit_treasury, validate_extend_grace, validate_join_treasury,
-  validate_propose_recovery, validate_terminate_default, validate_update_payout,
+  validate_approve_recovery, validate_cancel_recovery, validate_cancel_recovery_mint,
+  validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
+  validate_contribute, validate_distribute_withdraw, validate_exit_treasury,
+  validate_extend_grace, validate_join_treasury, validate_propose_recovery,
+  validate_terminate_default, validate_update_payout,
 }
 
 // treasury(account_policy_id)
@@ -89,6 +90,10 @@ validator treasury(settings_policy: PolicyId) {
           tx,
         )
       }
+
+      // CancelRecovery burns exactly N' (the authenticating token for the request).
+      // The spend handler confirms the burn name matches the request's datum N' (cross-check).
+      CancelRecovery { .. } -> validate_cancel_recovery_mint(policy_id, mint)
 
       // All other redeemers are spend-only — reject at mint
       _ -> fail
@@ -306,6 +311,24 @@ validator treasury(settings_policy: PolicyId) {
           request_input_index,
           request_output_index,
           approver_input_index,
+          utxo,
+          self,
+        )
+      }
+
+      CancelRecovery { request_input_index } -> {
+        // [security]: self-reference — request_input_index must resolve to own UTxO,
+        // preventing cross-UTxO attacks where a different RecoveryRequest is targeted.
+        // validate_cancel_recovery also asserts this internally.
+        expect Some(request_input) = list.at(inputs, request_input_index)
+        expect request_input.output_reference == utxo
+
+        // account_policy comes from settings so a forged account policy cannot
+        // substitute arbitrary tokens for the target-token or approver proof.
+        validate_cancel_recovery(
+          policy_id_from_utxo(inputs, utxo),
+          settings.account_policy,
+          request_input_index,
           utxo,
           self,
         )

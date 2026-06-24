@@ -1051,6 +1051,144 @@ pub fn validate_approve_recovery(
   }
 }
 
+// ─── Spend: CancelRecovery ───────────────────────────────────────────────────
+
+// validate_cancel_recovery
+// ─────────────────────────────────────────────────────────────────────────────
+// Destroys a pending RecoveryRequest and burns its authenticating token N'.
+// This is the VETO — the anti-theft escape that proves recovery ≠ theft.
+//
+// Authorization: EITHER path suffices (no timelock gate on either).
+//   (a) VETO by the real holder: some spending input holds the `target_token`
+//       under account_policy at a VK address whose PKH signed — proving the
+//       token is NOT lost. No extra preconditions: path (a) is available at ANY
+//       time, even right after ProposeRecovery, even with a full approvals set.
+//   (b) WITHDRAWAL by a proposer/approver: some spending input holds an account
+//       token whose name appears in the request's `approvals` list, at a VK
+//       address whose PKH signed — a member who vouched withdraws their support.
+//
+// Veto completeness guarantee: path (a) relies ONLY on `signed_account_token_name`
+// finding an input with target_token + a signed PKH. There is no timelock check,
+// no quorum requirement, no approval-set precondition. A malicious quorum proposing
+// against a token that is NOT lost is defeated by the genuine holder presenting and
+// signing that token in the cancellation tx — nothing else required.
+//
+// The spend handler confirms that the burn in tx.mint matches the request's own
+// `new_member_tokenname` (N'). The mint handler (CancelRecovery branch in
+// treasury-validator.ak) independently validates that exactly {N': -1} is burned
+// and nothing else minted under own policy, creating a bidirectional spend↔mint
+// cross-check: neither can be satisfied without the other confirming the same name.
+//
+// NOTE: self-reference check (own UTxO at request_input_index == utxo) is enforced
+// at the entry point before this function is called.
+//
+// [spec CancelRecovery 1]: datum is RecoveryRequest; destructure target_token, N', approvals
+// [spec CancelRecovery 2a]: path (a) — some input holds target_token under account_policy
+//                           at a VK address whose PKH ∈ extra_signatories
+// [spec CancelRecovery 2b]: path (b) — some input holds an account token whose name is in
+//                           approvals, at a VK address whose PKH ∈ extra_signatories
+// [spec CancelRecovery 3]: NO timelock gate — veto valid at any time
+// [spec CancelRecovery 4]: N' (new_member_tokenname) is burned (qty −1) under own policy,
+//                          confirmed by the spend handler cross-checking the mint value;
+//                          exact-one-burn enforced in the mint handler
+pub fn validate_cancel_recovery(
+  own_policy_id: PolicyId,
+  account_policy_id: PolicyId,
+  request_input_index: Int,
+  utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, mint, extra_signatories, .. } = tx
+
+  // [spec CancelRecovery 1]: self-reference confirmed at entry point; extract datum.
+  // Destructure only what we need — target_token, N', approvals.
+  expect Some(request_input) = list.at(inputs, request_input_index)
+  expect request_input.output_reference == utxo
+  expect InlineDatum(request_datum_data) = request_input.output.datum
+  expect request_datum: TreasuryDatum = request_datum_data
+  expect RecoveryRequest {
+    target_token,
+    new_member_tokenname,
+    approvals,
+    ..
+  } = request_datum
+
+  // [spec CancelRecovery 4]: spend↔mint cross-check — the burn must be EXACTLY
+  // {N': -1} under own policy, nothing else minted/burned. This is the bidirectional
+  // pin: the spend handler confirms the name matches the request's datum N' AND that
+  // no extra tokens are minted/burned under own policy. The mint handler independently
+  // enforces the same exact-one-burn shape, so both must agree.
+  let n_prime_burned =
+    dict.to_pairs(assets.tokens(mint, own_policy_id)) == [
+      Pair(new_member_tokenname, -1),
+    ]
+
+  // [spec CancelRecovery 2a/2b]: EITHER the real holder of target_token signs, OR a
+  // member from the approvals set signs. We scan tx.inputs for ANY input that satisfies
+  // one of the two paths — no dedicated input index (avoiding index-as-auth vulnerability).
+  //
+  // Path (a): input holds exactly 1 of target_token under account_policy_id at a VK
+  //           address whose PKH is in extra_signatories. Uses the same shape as
+  //           signed_account_token_name but as a scan, not a crash (we try path (b) next).
+  //
+  // Path (b): input holds exactly 1 of any account token whose name is in approvals,
+  //           at a VK address whose PKH is in extra_signatories.
+  let authorized =
+    list.any(
+      inputs,
+      fn(inp) {
+        when inp.output.address.payment_credential is {
+          VerificationKey(pkh) ->
+            if list.has(extra_signatories, pkh) {
+              // Check path (a): does this input hold exactly target_token?
+              let holds_target =
+                dict.to_pairs(
+                  assets.tokens(inp.output.value, account_policy_id),
+                ) == [Pair(target_token, 1)]
+              // Check path (b): does this input hold an account token in approvals?
+              let holds_approver_token =
+                when dict.to_pairs(
+                  assets.tokens(inp.output.value, account_policy_id),
+                ) is {
+                  [Pair(tn, 1)] -> list.has(approvals, tn)
+                  _ -> False
+                }
+              holds_target || holds_approver_token
+            } else {
+              False
+            }
+          _ -> False
+        }
+      },
+    )
+
+  // [spec CancelRecovery 3]: NO timelock gate — authorization is sufficient at any time.
+  // [spec CancelRecovery 4]: N' burned under own policy, cross-checked against datum.
+  and {
+    authorized?,
+    n_prime_burned?,
+  }
+}
+
+// ─── Mint: CancelRecovery (burn N') ──────────────────────────────────────────
+
+// validate_cancel_recovery_mint
+// ─────────────────────────────────────────────────────────────────────────────
+// Validates the CancelRecovery mint/burn: exactly one token is burned under own
+// policy (qty = -1) and no other tokens are minted or burned under own policy.
+// The spend handler confirms the burned token name matches this request's N'
+// (cross-check). This is the symmetric partner of validate_claim_penalty_mint —
+// same exact-one-burn shape, pinned to the N' name (done in the spend check above).
+//
+// [spec CancelRecovery mint 1]: exactly one token under own policy burned (qty = -1),
+//                               no other mints/burns under own policy.
+pub fn validate_cancel_recovery_mint(own_policy_id: PolicyId, mint: Value) -> Bool {
+  let minted_tokens = assets.tokens(mint, own_policy_id)
+  // Exactly one entry, with quantity -1 (mirrors validate_claim_penalty_mint shape).
+  expect [Pair(_, qty)] = dict.to_pairs(minted_tokens)
+  (qty == -1)?
+}
+
 // ─── Spend: ClaimPenalty ────────────────────────────────────────────────────
 
 // validate_spend_terminate_group

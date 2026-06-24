@@ -6,7 +6,9 @@ use cardano/transaction.{
 }
 use dcu/group.{GroupCip68Datum, GroupDatum, Push}
 use dcu/treasury.{RecoveryRequest, TreasuryDatum}
-use dcu/treasury_validation.{validate_approve_recovery, validate_propose_recovery}
+use dcu/treasury_validation.{
+  validate_approve_recovery, validate_cancel_recovery, validate_propose_recovery,
+}
 use tests/common
 
 // ─── Shared test helpers ──────────────────────────────────────────────────────
@@ -1112,4 +1114,233 @@ test approve_recovery__rejects_mint() {
       mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
     }
   !call_approve(bad_tx)
+}
+
+// ─── CancelRecovery tests ─────────────────────────────────────────────────────
+//
+// CancelRecovery is the VETO: it destroys a pending RecoveryRequest and burns the
+// authenticating N' token. Two authorization paths:
+//   (a) The real holder of the target token presents+signs it — proves the token is
+//       NOT lost. Valid at ANY time, including before earliest_execution_slot.
+//   (b) A member whose token name appears in the request's approvals list signs —
+//       a proposer or approver withdraws their support.
+//
+// Shared fixtures re-use the ApproveRecovery constants (treasury_policy, group_policy,
+// account_policy, token names, PKHs). The request used in these tests starts with
+// approvals = [approver_a_tn(), approver_b_tn()] so both (a) and (b) can be tested.
+
+// The RecoveryRequest spent by CancelRecovery (reuses request_ref() from ApproveRecovery).
+fn cancel_request_datum() -> TreasuryDatum {
+  RecoveryRequest {
+    group_reference_tokenname: group_ref_tn(),
+    target_token: target_tn(),
+    new_member_tokenname: new_member_tn(),
+    new_payment_credential: recoveree_pkh(),
+    earliest_execution_slot: 259_200_000,
+    approvals: [approver_a_tn(), approver_b_tn()],
+  }
+}
+
+fn cancel_request_input() -> Input {
+  let tp = treasury_policy()
+  let value =
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value,
+      datum: InlineDatum(cancel_request_datum()),
+      reference_script: None,
+    }
+  Input { output_reference: request_ref(), output }
+}
+
+// The exact burn: {N': -1} under own (treasury) policy, nothing else.
+fn n_prime_burn() -> assets.Value {
+  assets.from_asset(treasury_policy(), new_member_tn(), -1)
+}
+
+// Signed input for the target (the supposedly-lost token holder proves control).
+fn target_holder_input() -> Input {
+  // A DIFFERENT pkh from recoveree_pkh() to show path (a) doesn't need to be
+  // the recoveree who proposed; any entity holding target_tn() and signing works.
+  let holder_pkh = #"cccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  signed_account_input(holder_pkh, target_tn())
+}
+
+fn target_holder_pkh() -> ByteArray {
+  #"cccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}
+
+// Helper to call validate_cancel_recovery with canonical indices:
+//   request_input_index=0, account inputs in remaining positions.
+fn call_cancel(tx: Transaction) -> Bool {
+  validate_cancel_recovery(
+    treasury_policy(),
+    account_policy(),
+    0,
+    request_ref(),
+    tx,
+  )
+}
+
+// ─── Happy path (a): veto by real target-token holder ──────────────────────────
+
+// The genuine holder of target_tn() presents+signs it → request consumed, N' burned.
+test cancel_recovery__veto_by_signed_target_holder() {
+  let target_holder = target_holder_input()
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [cancel_request_input(), target_holder],
+      reference_inputs: [],
+      outputs: [],
+      mint: n_prime_burn(),
+      extra_signatories: [target_holder_pkh()],
+      validity_range: interval.after(0),
+    }
+  call_cancel(tx)
+}
+
+// ─── Happy path (b): withdrawal by a signed approver ─────────────────────────
+
+// approver_b is in the approvals list and signs → cancel accepted.
+test cancel_recovery__withdrawal_by_signed_approver() {
+  let approver_b = approver_b_input()
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [cancel_request_input(), approver_b],
+      reference_inputs: [],
+      outputs: [],
+      mint: n_prime_burn(),
+      extra_signatories: [approver_b_pkh()],
+      validity_range: interval.after(0),
+    }
+  call_cancel(tx)
+}
+
+// ─── Veto completeness: works before timelock, with full approvals ─────────────
+
+// lower_bound = 0 < earliest_execution_slot = 259_200_000.
+// The request already has a FULL approvals set ([approver_a_tn(), approver_b_tn()]).
+// The true target holder can still veto immediately — no timelock gate, no quorum
+// precondition on path (a).
+test cancel_recovery__veto_works_before_timelock() {
+  let target_holder = target_holder_input()
+  // validity_range lower bound deliberately set BEFORE the timelock
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [cancel_request_input(), target_holder],
+      reference_inputs: [],
+      outputs: [],
+      mint: n_prime_burn(),
+      extra_signatories: [target_holder_pkh()],
+      validity_range: interval.after(0),
+    }
+  call_cancel(tx)
+}
+
+// ─── Negative: random party cannot cancel ────────────────────────────────────
+
+// A signed party who holds an account token but is neither the target_token holder
+// nor in the approvals list → reject.
+test cancel_recovery__rejects_random_party() {
+  let non_member_pkh = #"dddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  let random_input = signed_account_input(non_member_pkh, non_member_tn())
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [cancel_request_input(), random_input],
+      reference_inputs: [],
+      outputs: [],
+      mint: n_prime_burn(),
+      extra_signatories: [non_member_pkh],
+      validity_range: interval.after(0),
+    }
+  !call_cancel(tx)
+}
+
+// ─── Negative: unsigned target holder ────────────────────────────────────────
+
+// Holds target_tn() but PKH is NOT in extra_signatories — bearer presence without
+// consent. signed_account_token_name crashes on this path → `fail` annotation.
+test cancel_recovery__rejects_unsigned_target_holder() fail {
+  let unsigned_holder = target_holder_input()
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [cancel_request_input(), unsigned_holder],
+      reference_inputs: [],
+      outputs: [],
+      mint: n_prime_burn(),
+      // PKH deliberately absent
+      extra_signatories: [],
+      validity_range: interval.after(0),
+    }
+  // If the crash is reached first (signed_account_token_name fails), test passes as `fail`.
+  // The boolean fallback also covers if we try path (b) and it returns False.
+  call_cancel(tx)
+}
+
+// ─── Negative: N' not burned ──────────────────────────────────────────────────
+
+// Target holder signs and is present, but mint has NO burn of N' → reject.
+test cancel_recovery__rejects_n_prime_not_burned() {
+  let target_holder = target_holder_input()
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [cancel_request_input(), target_holder],
+      reference_inputs: [],
+      outputs: [],
+      mint: assets.zero,
+      extra_signatories: [target_holder_pkh()],
+      validity_range: interval.after(0),
+    }
+  !call_cancel(tx)
+}
+
+// ─── Negative: wrong token burned ────────────────────────────────────────────
+
+// The burn is for `non_member_tn()` (a completely different token name) rather
+// than the request's `new_member_tokenname` (N') → reject.
+test cancel_recovery__rejects_wrong_token_burned() {
+  let target_holder = target_holder_input()
+  let wrong_burn = assets.from_asset(treasury_policy(), non_member_tn(), -1)
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [cancel_request_input(), target_holder],
+      reference_inputs: [],
+      outputs: [],
+      mint: wrong_burn,
+      extra_signatories: [target_holder_pkh()],
+      validity_range: interval.after(0),
+    }
+  !call_cancel(tx)
+}
+
+// ─── Negative: extra mint/burn alongside N' burn ──────────────────────────────
+
+// N' IS burned, but an additional token is also minted under own policy.
+// The exact-one-burn check must catch this.
+test cancel_recovery__rejects_extra_mint_or_burn() {
+  let target_holder = target_holder_input()
+  let extra_mint =
+    n_prime_burn()
+      |> assets.merge(assets.from_asset(treasury_policy(), non_member_tn(), 1))
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [cancel_request_input(), target_holder],
+      reference_inputs: [],
+      outputs: [],
+      mint: extra_mint,
+      extra_signatories: [target_holder_pkh()],
+      validity_range: interval.after(0),
+    }
+  !call_cancel(tx)
 }
