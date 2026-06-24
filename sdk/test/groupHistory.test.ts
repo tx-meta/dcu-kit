@@ -11,13 +11,12 @@ const GROUP_POLICY = "baf4af179a495f9fd4f1ec40cfd9a9969d61a777e1f15f9b8e9f9627";
 const SUFFIX = "bb420f8f447386b01baf4005b183d8f39eb95ffa09f139776aa39cbf";
 const REF_UNIT = `${GROUP_POLICY}${assetNameLabels.prefix100}${SUFFIX}`;
 
-// The actual inline-datum CBOR of Group A's create tx, captured from Blockfrost, with the new
-// active_member_count field (0 at creation) inserted after member_count to match the current
-// GroupDatum schema. Decodes to a GroupCip68Datum: name "Kiambu Land Chama", contribution_fee
-// 5_000_000. (Original Preprod CBOR predates active_member_count; the single `00` after the
-// member_count `00`, before is_active `d87a80`, is the added field.)
+// Synthetic fixture derived from the real Group A Preprod datum (name "Kiambu Land Chama",
+// contribution_fee 5_000_000). Re-encoded with Data.to(GroupCip68DatumSchema) to include
+// the two new Phase 0 fields (recovery_threshold=1, recovery_timelock=259_200_000) appended
+// at the end of GroupDatum. Verified round-trips correctly with the current schema.
 const REAL_DATUM_CBOR =
-  "d8799fbf4b6465736372697074696f6e5833536176696e6720746f20627579206120706c6f7420696e204b69616d627520e28094206d6f6e74686c7920726f746174696f6e446e616d65514b69616d6275204c616e64204368616d61ff01d8799f40401a004c4b4040401a001e848040401a001e8480001a004c4b401a000493e000050000d87a80d879800020581c4f98ff0132eb48622cef2482f1ecd5cfbdcc54373290ce3f0992f7f18001d87980ffff";
+  "d8799fbf4b6465736372697074696f6e5836536176696e6720746f20627579206120706c6f7420696e204b69616d627520c3a2c280c294206d6f6e74686c7920726f746174696f6e446e616d65514b69616d6275204c616e64204368616d61ff01d8799f40401a004c4b4040401a001e848040401a001e8480001a004c4b401a000493e000050000d87a80d879800020581c4f98ff0132eb48622cef2482f1ecd5cfbdcc54373290ce3f0992f7f18001d87980011a0f731400ffff";
 
 const TX_CREATE = "aa".repeat(32);
 const TX_UPDATE = "bb".repeat(32);
