@@ -96,30 +96,41 @@ pub fn approvals_are_registry_members(
 
 // recoveree_signed_for_token
 // ─────────────────────────────────────────────────────────────────────────────
-// True iff at least one of `inputs` (spending OR reference — the recoveree may
-// simply prove control without spending anything) holds exactly 1 of
-// `token_name` under `account_policy_id` at a VK address whose PKH is in
-// `extra_signatories`. This is the recoveree-control proof: the ProposeRecovery
-// redeemer carries no dedicated index for this input, so it must be found by
-// scanning rather than trusting a caller-supplied position — an attacker
-// cannot redirect this check to an unrelated signed input because the token
-// name itself must match N' (the proposed new identity), not just any account
-// token.
+// Returns Some(pkh) for the recoveree iff at least one of `inputs` (spending OR
+// reference — the recoveree may simply prove control without spending anything)
+// holds exactly 1 of `token_name` under `account_policy_id` at a VK address
+// whose PKH is in `extra_signatories`; the returned pkh is that VK address's
+// payment credential. None when no such input exists. This is the
+// recoveree-control proof: the ProposeRecovery redeemer carries no dedicated
+// index for this input, so it must be found by scanning rather than trusting a
+// caller-supplied position — an attacker cannot redirect this check to an
+// unrelated signed input because the token name itself must match N' (the
+// proposed new identity), not just any account token.
+//
+// Returning the pkh (not just a Bool) lets validate_propose_recovery BIND the
+// request's new_payment_credential to the recoveree's own signing key: holding
+// N' and signing only proves control of N', not that the payout address written
+// into the request is the recoveree's. Without this the quorum could route the
+// recovered member's future payouts to an arbitrary address.
 pub fn recoveree_signed_for_token(
   inputs: List<Input>,
   token_name: AssetName,
   account_policy_id: PolicyId,
   extra_signatories: List<VerificationKeyHash>,
-) -> Bool {
-  list.any(
+) -> Option<VerificationKeyHash> {
+  list.find_map(
     inputs,
     fn(input) {
       when input.output.address.payment_credential is {
         VerificationKey(pkh) ->
-          list.has(extra_signatories, pkh) && dict.to_pairs(
+          if list.has(extra_signatories, pkh) && dict.to_pairs(
             assets.tokens(input.output.value, account_policy_id),
-          ) == [Pair(token_name, 1)]
-        _ -> False
+          ) == [Pair(token_name, 1)] {
+            Some(pkh)
+          } else {
+            None
+          }
+        _ -> None
       }
     },
   )

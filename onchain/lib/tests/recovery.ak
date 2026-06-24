@@ -594,6 +594,52 @@ test propose_recovery__rejects_wrong_earliest_execution_slot() {
   )
 }
 
+// The recoveree genuinely holds N' and signs (proving control of N'), and the
+// quorum signs — but new_payment_credential is set to an attacker's PKH rather
+// than the recoveree's own signing key. Holding/signing N' does NOT authorise an
+// arbitrary payout address, so the recovered member's future Push payouts would
+// route to the attacker. Must reject: new_payment_credential is bound to the
+// recoveree's signing key.
+test propose_recovery__rejects_new_payment_credential_not_recoveree() {
+  let group_input = test_group_input()
+  let recoveree = recoveree_input()
+  let approver_a = approver_a_input()
+
+  let attacker_pkh = #"abababababababababababababababababababababababababababab00"
+  let approvals = [approver_a_tn()]
+  let datum =
+    RecoveryRequest {
+      group_reference_tokenname: group_ref_tn(),
+      target_token: target_tn(),
+      new_member_tokenname: new_member_tn(),
+      // Recoveree controls N' and signs, but the payout address is the attacker's
+      new_payment_credential: attacker_pkh,
+      earliest_execution_slot: 259_200_000,
+      approvals,
+    }
+  let request_output = test_request_output(datum)
+
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [group_input, recoveree, approver_a],
+      outputs: [request_output],
+      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+      extra_signatories: [recoveree_pkh(), approver_a_pkh()],
+      validity_range: interval.after(0),
+    }
+
+  !validate_propose_recovery(
+    treasury_policy(),
+    account_policy(),
+    group_policy(),
+    0,
+    0,
+    [2],
+    tx,
+  )
+}
+
 // ─── Negative: mint discipline ────────────────────────────────────────────────
 
 test propose_recovery__rejects_extra_mint() {

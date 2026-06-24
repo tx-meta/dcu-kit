@@ -337,13 +337,24 @@ pub fn validate_propose_recovery(
   // [spec ProposeRecovery 3b]: the recoveree controls N' — searched across spending
   // AND reference inputs (the redeemer carries no dedicated index for this input;
   // the recoveree need not spend anything to prove control). recoveree_signed_for_token
-  // only returns True for a VK-address input holding exactly 1 of N' whose PKH signed.
-  let recoveree_holds_new_identity = recoveree_signed_for_token(
+  // returns Some(pkh) only for a VK-address input holding exactly 1 of N' whose PKH
+  // signed; None otherwise. The returned pkh is the recoveree's own signing key, used
+  // below to bind new_payment_credential.
+  let recoveree_pkh = recoveree_signed_for_token(
     list.concat(inputs, reference_inputs),
     new_member_tokenname,
     account_policy_id,
     extra_signatories,
   )
+
+  // [spec ProposeRecovery 3c]: bind the recovered member's payout address to the
+  // recoveree's OWN signing key. Holding N' and signing only proves control of N',
+  // not that the new_payment_credential written into the request is the recoveree's —
+  // without this a malicious quorum could route the recovered member's future Push
+  // payouts to an attacker's address. The recovered member can still re-point it later
+  // via UpdatePayout, so this is a binding, not a limitation. None ⇒ no signed N'
+  // holder found ⇒ recoveree_controls_new_identity is False below.
+  let recoveree_controls_new_identity = recoveree_pkh == Some(new_payment_credential)
 
   // [spec ProposeRecovery 4]: the timelock is FIXED here from the trusted group's
   // recovery_timelock and the tx's own lower bound — never trusted from the datum as
@@ -402,7 +413,7 @@ pub fn validate_propose_recovery(
   and {
     target_in_registry?,
     new_not_member?,
-    recoveree_holds_new_identity?,
+    recoveree_controls_new_identity?,
     timelock_correct?,
     approvals_valid_members?,
     approvals_distinct?,
