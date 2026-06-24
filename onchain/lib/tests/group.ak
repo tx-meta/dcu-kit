@@ -1164,6 +1164,66 @@ test create_group__rejects_invalid_creator_payment_credential() {
   !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
 }
 
+// recovery_threshold == 0 — below the minimum of 1; must be rejected.
+test create_group__rejects_recovery_threshold_zero() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    recovery_threshold: 0,
+  }
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.merge(
+      assets.from_lovelace(2_000_000),
+      assets.from_asset(policy_id, ref_tn, 1),
+    ),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// recovery_threshold above max_members — cannot require more approvals than members; rejected.
+test create_group__rejects_recovery_threshold_above_max() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  // max_members is 20 in test_group_datum; 21 exceeds it.
+  let datum = GroupDatum {
+    ..base_datum,
+    recovery_threshold: base_datum.max_members + 1,
+  }
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.merge(
+      assets.from_lovelace(2_000_000),
+      assets.from_asset(policy_id, ref_tn, 1),
+    ),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
 // --- Security: fee currency freeze (is_critical_update with members) ---
 
 test update_group__rejects_fee_currency_change_with_members() {

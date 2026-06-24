@@ -54,6 +54,8 @@ pub fn gen_group_datum() {
       member_token_names: [],
       collateral_rounds,
       payout_mode: Push,
+      recovery_threshold: 1,
+      recovery_timelock: 259_200_000,
     },
   )
 }
@@ -110,6 +112,8 @@ pub fn gen_valid_group_datum() {
       member_token_names: [],
       collateral_rounds,
       payout_mode: Push,
+      recovery_threshold: 1,
+      recovery_timelock: 259_200_000,
     },
   )
 }

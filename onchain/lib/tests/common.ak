@@ -118,6 +118,8 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     member_token_names: [],
     collateral_rounds: 1,
     payout_mode: Push,
+    recovery_threshold: 1,
+    recovery_timelock: 259_200_000,
   }
 }
 

@@ -108,6 +108,13 @@ pub type GroupDatum {
   // Payout delivery mode (Push = direct wallet output; Pull = earmark + ClaimPayout).
   // Fixed at creation; frozen once any member has joined (critical field).
   payout_mode: PayoutMode,
+  // M-of-N member approvals required to authorize a lost-member recovery (absolute count,
+  // not a fraction — membership is dynamic). Validated `1 <= recovery_threshold <= max_members`
+  // at create and `<= member_count` at execute. Default: ceil(member_count/2).
+  recovery_threshold: Int,
+  // Mandatory delay (POSIX ms) between proposing a recovery and being allowed to execute it —
+  // the veto window in which the real holder can CancelRecovery. Default: 259_200_000 (3 days).
+  recovery_timelock: Int,
 }
 
 /// Group Validator Mint Redeemer
@@ -338,6 +345,9 @@ pub fn validate_create_group(
     // 1 = PerRound (default), max_members = FullUpfront, k = partial.
     (datum.collateral_rounds >= 1)?,
     (datum.collateral_rounds <= datum.max_members)?,
+    (datum.recovery_threshold >= 1)?,
+    (datum.recovery_threshold <= datum.max_members)?,
+    (datum.recovery_timelock >= 0)?,
   }
 }
 
