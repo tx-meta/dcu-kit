@@ -43,6 +43,9 @@ export type StartGroupConfig = {
   adminScript?: Script;
   /** Key hashes to declare as required signers (co-signers of adminScript). */
   adminSignerKeyHashes?: string[];
+  /** Optional destination for returning the admin 222 token after script-admin spend.
+   *  Defaults to the current admin UTxO address, preserving multisig delegation. */
+  adminReturnAddress?: string;
 };
 
 export const unsignedStartGroupTxProgram = (
@@ -120,7 +123,13 @@ export const unsignedStartGroupTxProgram = (
       inputs: [adminUtxo, groupUtxo],
     };
 
-    const { adminScript, adminSignerKeyHashes } = config;
+    const { adminScript, adminSignerKeyHashes, adminReturnAddress } = config;
+    const adminTokenReturnAddress = adminScript
+      ? adminReturnAddress ?? adminUtxo.address
+      : adminAddress;
+    const adminTokenReturnAssets = adminScript
+      ? adminUtxo.assets
+      : { [groupUserUnit]: 1n };
 
     const baseTx = lucid
       .newTx()
@@ -138,7 +147,7 @@ export const unsignedStartGroupTxProgram = (
         },
         groupUtxo.assets,
       )
-      .pay.ToAddress(adminAddress, { [groupUserUnit]: 1n })
+      .pay.ToAddress(adminTokenReturnAddress, adminTokenReturnAssets)
       .attach.SpendingValidator(groupValidator.spendGroup)
       .addSigner(adminAddress)
       .validFrom(Number(now));

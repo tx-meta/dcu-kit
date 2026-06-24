@@ -50,6 +50,9 @@ export type ExtendGraceWindowConfig = {
   adminScript?: Script;
   /** Key hashes to declare as required signers (co-signers of adminScript). */
   adminSignerKeyHashes?: string[];
+  /** Optional destination for returning the admin 222 token after script-admin spend.
+   *  Defaults to the current admin UTxO address, preserving multisig delegation. */
+  adminReturnAddress?: string;
 };
 
 export const unsignedExtendGraceWindowTxProgram = (
@@ -139,10 +142,10 @@ export const unsignedExtendGraceWindowTxProgram = (
       inputs: [adminUtxo, treasuryUtxo],
     };
 
-    const { adminScript, adminSignerKeyHashes } = config;
+    const { adminScript, adminSignerKeyHashes, adminReturnAddress } = config;
 
     // groupValidator is not needed here — group UTxO is a read-only reference input.
-    const baseTx = lucid
+    const baseTx0 = lucid
       .newTx()
       .collectFrom([adminUtxo])
       .collectFrom([treasuryUtxo], redeemer)
@@ -155,6 +158,13 @@ export const unsignedExtendGraceWindowTxProgram = (
       )
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
       .readFrom([settingsUtxo]);
+
+    const baseTx = adminScript
+      ? baseTx0.pay.ToAddress(
+          adminReturnAddress ?? adminUtxo.address,
+          adminUtxo.assets,
+        )
+      : baseTx0;
 
     const withAdminWitness = adminScript
       ? baseTx.attach.SpendingValidator(adminScript)

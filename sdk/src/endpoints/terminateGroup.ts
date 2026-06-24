@@ -39,6 +39,9 @@ export type TerminateGroupConfig = {
   adminScript?: Script;
   /** Key hashes to declare as required signers (co-signers of adminScript). */
   adminSignerKeyHashes?: string[];
+  /** Optional destination for returning the admin 222 token after script-admin spend.
+   *  Defaults to the current admin UTxO address, preserving multisig delegation. */
+  adminReturnAddress?: string;
 };
 
 // --- Endpoint ---
@@ -162,9 +165,9 @@ export const unsignedTerminateGroupTxProgram = (
     );
 
     const address = yield* getWalletAddress(lucid);
-    const { adminScript, adminSignerKeyHashes } = config;
+    const { adminScript, adminSignerKeyHashes, adminReturnAddress } = config;
 
-    const baseTx = lucid
+    const baseTx0 = lucid
       .newTx()
       .collectFrom([adminUtxo])
       .collectFrom([treasuryUtxo], treasurySpendRedeemer)
@@ -174,6 +177,13 @@ export const unsignedTerminateGroupTxProgram = (
       .attach.MintingPolicy(treasuryValidator.mintTreasury)
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
       .readFrom([settingsUtxo]);
+
+    const baseTx = adminScript
+      ? baseTx0.pay.ToAddress(
+          adminReturnAddress ?? adminUtxo.address,
+          adminUtxo.assets,
+        )
+      : baseTx0;
 
     const withAdminWitness = adminScript
       ? baseTx.attach.SpendingValidator(adminScript)
