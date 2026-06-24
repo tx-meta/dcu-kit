@@ -5,6 +5,7 @@ import {
   RedeemerBuilder,
   Assets,
   toUnit,
+  Script,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -34,6 +35,10 @@ import {
 export type TerminateGroupConfig = {
   groupTokenSuffix: string;
   memberAccountTokenSuffix: string;
+  /** Native-script witness when the admin 222 token is at a multisig address. */
+  adminScript?: Script;
+  /** Key hashes to declare as required signers (co-signers of adminScript). */
+  adminSignerKeyHashes?: string[];
 };
 
 // --- Endpoint ---
@@ -157,8 +162,9 @@ export const unsignedTerminateGroupTxProgram = (
     );
 
     const address = yield* getWalletAddress(lucid);
+    const { adminScript, adminSignerKeyHashes } = config;
 
-    const tx = yield* lucid
+    const baseTx = lucid
       .newTx()
       .collectFrom([adminUtxo])
       .collectFrom([treasuryUtxo], treasurySpendRedeemer)
@@ -167,7 +173,18 @@ export const unsignedTerminateGroupTxProgram = (
       .addSigner(address)
       .attach.MintingPolicy(treasuryValidator.mintTreasury)
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
-      .readFrom([settingsUtxo])
+      .readFrom([settingsUtxo]);
+
+    const withAdminWitness = adminScript
+      ? baseTx.attach.SpendingValidator(adminScript)
+      : baseTx;
+
+    const withSigners = (adminSignerKeyHashes ?? []).reduce(
+      (t, kh) => t.addSignerKey(kh),
+      withAdminWitness,
+    );
+
+    const tx = yield* withSigners
       .completeProgram(
         lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
       )

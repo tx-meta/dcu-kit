@@ -3,6 +3,7 @@ import {
   LucidEvolution,
   TxSignBuilder,
   RedeemerBuilder,
+  Script,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
@@ -38,6 +39,10 @@ import {
 export type StartGroupConfig = {
   groupTokenSuffix: string;
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, omit for live
+  /** Native-script witness when the admin 222 token is at a multisig address. */
+  adminScript?: Script;
+  /** Key hashes to declare as required signers (co-signers of adminScript). */
+  adminSignerKeyHashes?: string[];
 };
 
 export const unsignedStartGroupTxProgram = (
@@ -115,7 +120,9 @@ export const unsignedStartGroupTxProgram = (
       inputs: [adminUtxo, groupUtxo],
     };
 
-    const tx = yield* lucid
+    const { adminScript, adminSignerKeyHashes } = config;
+
+    const baseTx = lucid
       .newTx()
       .collectFrom([adminUtxo])
       .collectFrom([groupUtxo], redeemer)
@@ -134,7 +141,18 @@ export const unsignedStartGroupTxProgram = (
       .pay.ToAddress(adminAddress, { [groupUserUnit]: 1n })
       .attach.SpendingValidator(groupValidator.spendGroup)
       .addSigner(adminAddress)
-      .validFrom(Number(now))
+      .validFrom(Number(now));
+
+    const withAdminWitness = adminScript
+      ? baseTx.attach.SpendingValidator(adminScript)
+      : baseTx;
+
+    const withSigners = (adminSignerKeyHashes ?? []).reduce(
+      (t, kh) => t.addSignerKey(kh),
+      withAdminWitness,
+    );
+
+    const tx = yield* withSigners
       .completeProgram()
       .pipe(
         Effect.mapError(

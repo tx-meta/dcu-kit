@@ -4,6 +4,7 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   Assets,
+  Script,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
@@ -46,6 +47,13 @@ import { Protocol } from "../core/validators/constants.js";
 export type UpdateGroupConfig = {
   groupTokenSuffix: string;
   updatedDatum: GroupDatum;
+  /** When the admin 222 token is held at a native-script (multisig) address, supply the
+   *  Script here. The tx will attach the native-script witness so the UTxO is spendable.
+   *  Omit (or pass undefined) to use the default VK-wallet path — behaviour is unchanged. */
+  adminScript?: Script;
+  /** Key hashes of the co-signers required by adminScript (for addSignerKey). Only used
+   *  when adminScript is present. Callers should pass exactly the M hashes that will sign. */
+  adminSignerKeyHashes?: string[];
 };
 
 export const unsignedUpdateGroupTxProgram = (
@@ -107,7 +115,9 @@ export const unsignedUpdateGroupTxProgram = (
       inputs: [adminUtxo, groupUtxo],
     };
 
-    const tx = yield* lucid
+    const { adminScript, adminSignerKeyHashes } = config;
+
+    const baseTx = lucid
       .newTx()
       .collectFrom([adminUtxo])
       .collectFrom([groupUtxo], redeemer)
@@ -123,7 +133,21 @@ export const unsignedUpdateGroupTxProgram = (
         },
         groupAssets,
       )
-      .attach.SpendingValidator(groupValidator.spendGroup)
+      .attach.SpendingValidator(groupValidator.spendGroup);
+
+    // When adminScript is supplied the admin 222 token sits at a native-script address.
+    // Attach the native-script witness so Lucid can spend it, and declare the required
+    // signer key hashes so they appear in the tx required_signers field.
+    const withAdminWitness = adminScript
+      ? baseTx.attach.SpendingValidator(adminScript)
+      : baseTx;
+
+    const withSigners = (adminSignerKeyHashes ?? []).reduce(
+      (tx, kh) => tx.addSignerKey(kh),
+      withAdminWitness,
+    );
+
+    const tx = yield* withSigners
       .completeProgram()
       .pipe(
         Effect.mapError(

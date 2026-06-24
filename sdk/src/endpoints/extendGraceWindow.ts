@@ -4,6 +4,7 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   toUnit,
+  Script,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -45,6 +46,10 @@ import {
 export type ExtendGraceWindowConfig = {
   groupTokenSuffix: string;
   memberAccountTokenSuffix: string;
+  /** Native-script witness when the admin 222 token is at a multisig address. */
+  adminScript?: Script;
+  /** Key hashes to declare as required signers (co-signers of adminScript). */
+  adminSignerKeyHashes?: string[];
 };
 
 export const unsignedExtendGraceWindowTxProgram = (
@@ -134,8 +139,10 @@ export const unsignedExtendGraceWindowTxProgram = (
       inputs: [adminUtxo, treasuryUtxo],
     };
 
+    const { adminScript, adminSignerKeyHashes } = config;
+
     // groupValidator is not needed here — group UTxO is a read-only reference input.
-    const tx = yield* lucid
+    const baseTx = lucid
       .newTx()
       .collectFrom([adminUtxo])
       .collectFrom([treasuryUtxo], redeemer)
@@ -147,7 +154,18 @@ export const unsignedExtendGraceWindowTxProgram = (
         { lovelace: treasuryUtxo.assets.lovelace, [memberToken]: 1n },
       )
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
-      .readFrom([settingsUtxo])
+      .readFrom([settingsUtxo]);
+
+    const withAdminWitness = adminScript
+      ? baseTx.attach.SpendingValidator(adminScript)
+      : baseTx;
+
+    const withSigners = (adminSignerKeyHashes ?? []).reduce(
+      (t, kh) => t.addSignerKey(kh),
+      withAdminWitness,
+    );
+
+    const tx = yield* withSigners
       .completeProgram(
         lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
       )

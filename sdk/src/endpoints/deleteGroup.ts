@@ -5,6 +5,7 @@ import {
   RedeemerBuilder,
   Assets,
   Constr,
+  Script,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -37,6 +38,10 @@ import { Protocol } from "../core/validators/constants.js";
  */
 export type DeleteGroupConfig = {
   groupTokenSuffix: string;
+  /** Native-script witness when the admin 222 token is at a multisig address. */
+  adminScript?: Script;
+  /** Key hashes to declare as required signers (co-signers of adminScript). */
+  adminSignerKeyHashes?: string[];
 };
 
 export const unsignedDeleteGroupTxProgram = (
@@ -89,13 +94,26 @@ export const unsignedDeleteGroupTxProgram = (
       inputs: [adminUtxo, groupUtxo],
     };
 
-    const tx = yield* lucid
+    const { adminScript, adminSignerKeyHashes } = config;
+
+    const baseTx = lucid
       .newTx()
       .collectFrom([adminUtxo])
       .collectFrom([groupUtxo], spendRedeemer)
       .mintAssets(burnAssets, burnRedeemer)
       .attach.MintingPolicy(groupValidator.mintGroup)
-      .attach.SpendingValidator(groupValidator.spendGroup)
+      .attach.SpendingValidator(groupValidator.spendGroup);
+
+    const withAdminWitness = adminScript
+      ? baseTx.attach.SpendingValidator(adminScript)
+      : baseTx;
+
+    const withSigners = (adminSignerKeyHashes ?? []).reduce(
+      (t, kh) => t.addSignerKey(kh),
+      withAdminWitness,
+    );
+
+    const tx = yield* withSigners
       .completeProgram()
       .pipe(
         Effect.mapError(

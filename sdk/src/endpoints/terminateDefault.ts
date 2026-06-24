@@ -6,6 +6,7 @@ import {
   Assets,
   toUnit,
   UTxO,
+  Script,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { effectiveScriptRefs } from "../core/scripts.js";
@@ -47,6 +48,10 @@ export type TerminateDefaultConfig = {
     treasury?: UTxO;
     group?: UTxO;
   };
+  /** Native-script witness when the admin 222 token is at a multisig address. */
+  adminScript?: Script;
+  /** Key hashes to declare as required signers (co-signers of adminScript). */
+  adminSignerKeyHashes?: string[];
 };
 
 // --- Endpoint ---
@@ -259,7 +264,18 @@ export const unsignedTerminateDefaultTxProgram = (
             .attach.SpendingValidator(treasuryValidator.spendTreasury)
             .attach.SpendingValidator(groupValidator.spendGroup);
 
-    const tx = yield* withValidators
+    const { adminScript, adminSignerKeyHashes } = config;
+
+    const withAdminWitness = adminScript
+      ? withValidators.attach.SpendingValidator(adminScript)
+      : withValidators;
+
+    const withSigners = (adminSignerKeyHashes ?? []).reduce(
+      (t, kh) => t.addSignerKey(kh),
+      withAdminWitness,
+    );
+
+    const tx = yield* withSigners
       .readFrom([settingsUtxo])
       // Plain completeProgram (like exitGroup, which also spends the group + reads settings)
       // so local UPLC evaluation runs — the emulator then genuinely enforces the grace gate,
