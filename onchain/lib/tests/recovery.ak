@@ -6,7 +6,7 @@ use cardano/transaction.{
 }
 use dcu/group.{GroupCip68Datum, GroupDatum, Push}
 use dcu/treasury.{RecoveryRequest, TreasuryDatum}
-use dcu/treasury_validation.{validate_propose_recovery}
+use dcu/treasury_validation.{validate_approve_recovery, validate_propose_recovery}
 use tests/common
 
 // ─── Shared test helpers ──────────────────────────────────────────────────────
@@ -804,4 +804,312 @@ test propose_recovery__rejects_fake_group_script() fail {
     [1],
     tx,
   )
+}
+
+// ─── ApproveRecovery tests ────────────────────────────────────────────────────
+//
+// Shared fixture conventions (mirrors ProposeRecovery above):
+//   - treasury_policy / group_policy / account_policy from test_hash_01/02/03
+//   - group is a REFERENCE input (ApproveRecovery never spends the group)
+//   - the spent RecoveryRequest UTxO sits at Script(treasury_policy), holds N'
+//   - the approver is a spending input at a VK address whose PKH signed
+//
+// Starting state: the request has one existing approval (approver_a).
+// The new approver being tested is approver_b (a different registry member).
+
+// The RecoveryRequest UTxO being spent (output_reference used for self-reference).
+fn request_ref() -> OutputReference {
+  OutputReference {
+    transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+    output_index: 0,
+  }
+}
+
+// A RecoveryRequest datum with a caller-supplied approvals list.
+fn approve_request_datum(approvals: List<assets.AssetName>) -> TreasuryDatum {
+  RecoveryRequest {
+    group_reference_tokenname: group_ref_tn(),
+    target_token: target_tn(),
+    new_member_tokenname: new_member_tn(),
+    new_payment_credential: recoveree_pkh(),
+    earliest_execution_slot: 259_200_000,
+    approvals,
+  }
+}
+
+// The spent RecoveryRequest UTxO (at Script(treasury_policy), holding N').
+fn request_input_utxo(datum: TreasuryDatum) -> Input {
+  let tp = treasury_policy()
+  let value =
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let output =
+    Output {
+      address: Address { payment_credential: Script(tp), stake_credential: None },
+      value,
+      datum: InlineDatum(datum),
+      reference_script: None,
+    }
+  Input { output_reference: request_ref(), output }
+}
+
+// The continuing RecoveryRequest output.
+fn approve_request_output(datum: TreasuryDatum) -> Output {
+  let tp = treasury_policy()
+  let value =
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value,
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
+}
+
+// Builds a valid ApproveRecovery tx: group as reference input (index 0), the
+// request UTxO as spending input (index 0), approver_b as spending input (index 1).
+// The request begins with [approver_a_tn()] and grows to [approver_a_tn(), approver_b_tn()].
+fn valid_approve_tx() -> Transaction {
+  let existing_approvals = [approver_a_tn()]
+  let updated_approvals = [approver_a_tn(), approver_b_tn()]
+
+  let request_in = request_input_utxo(approve_request_datum(existing_approvals))
+  let approver_b = approver_b_input()
+  let request_out =
+    approve_request_output(approve_request_datum(updated_approvals))
+  let group_ref = test_group_input()
+
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [request_in, approver_b],
+    reference_inputs: [group_ref],
+    outputs: [request_out],
+    mint: assets.zero,
+    extra_signatories: [approver_b_pkh()],
+    validity_range: interval.after(0),
+  }
+}
+
+// Helper to call validate_approve_recovery with the canonical indices for valid_approve_tx:
+//   group_ref_input_index=0 (reference_inputs)
+//   request_input_index=0 (inputs — the RecoveryRequest UTxO)
+//   request_output_index=0 (outputs)
+//   approver_input_index=1 (inputs — approver_b)
+fn call_approve(tx: Transaction) -> Bool {
+  validate_approve_recovery(
+    treasury_policy(),
+    account_policy(),
+    group_policy(),
+    0,
+    0,
+    0,
+    1,
+    request_ref(),
+    tx,
+  )
+}
+
+// ─── Happy path ───────────────────────────────────────────────────────────────
+
+// Baseline: approver_b signs and their approval is appended; all other datum
+// fields frozen; N' preserved in the output; no mint.
+test approve_recovery__appends_distinct_approval() {
+  call_approve(valid_approve_tx())
+}
+
+// ─── Negative: approver auth ──────────────────────────────────────────────────
+
+// Account token present at a VK address BUT the PKH is NOT in extra_signatories —
+// reference-presence != approval. Must crash inside signed_account_token_name.
+test approve_recovery__rejects_unsigned_approver() fail {
+  let tx = valid_approve_tx()
+  let bad_tx = Transaction { ..tx, extra_signatories: [] }
+  call_approve(bad_tx)
+}
+
+// Signed input holds a token name that is NOT in the group registry.
+test approve_recovery__rejects_non_member_approver() {
+  let non_member_pkh = #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  let non_member_in = signed_account_input(non_member_pkh, non_member_tn())
+
+  let existing_approvals = [approver_a_tn()]
+  let updated_approvals = [approver_a_tn(), non_member_tn()]
+  let request_in =
+    request_input_utxo(approve_request_datum(existing_approvals))
+  let request_out =
+    approve_request_output(approve_request_datum(updated_approvals))
+
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [request_in, non_member_in],
+      reference_inputs: [test_group_input()],
+      outputs: [request_out],
+      mint: assets.zero,
+      extra_signatories: [non_member_pkh],
+      validity_range: interval.after(0),
+    }
+  !call_approve(tx)
+}
+
+// approver_a is already in existing_approvals — double-counting must be rejected.
+test approve_recovery__rejects_duplicate_approval() {
+  let existing_approvals = [approver_a_tn()]
+  let updated_approvals = [approver_a_tn(), approver_a_tn()]
+  let request_in =
+    request_input_utxo(approve_request_datum(existing_approvals))
+  let request_out =
+    approve_request_output(approve_request_datum(updated_approvals))
+
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [request_in, approver_a_input()],
+      reference_inputs: [test_group_input()],
+      outputs: [request_out],
+      mint: assets.zero,
+      extra_signatories: [approver_a_pkh()],
+      validity_range: interval.after(0),
+    }
+  !call_approve(tx)
+}
+
+// The target member's own account token is used as the approver — self-vouch, reject.
+test approve_recovery__rejects_target_as_approver() {
+  let existing_approvals: List<assets.AssetName> = []
+  let updated_approvals = [target_tn()]
+  let request_in =
+    request_input_utxo(approve_request_datum(existing_approvals))
+  let request_out =
+    approve_request_output(approve_request_datum(updated_approvals))
+  let target_as_approver = signed_account_input(approver_a_pkh(), target_tn())
+
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [request_in, target_as_approver],
+      reference_inputs: [test_group_input()],
+      outputs: [request_out],
+      mint: assets.zero,
+      extra_signatories: [approver_a_pkh()],
+      validity_range: interval.after(0),
+    }
+  !call_approve(tx)
+}
+
+// ─── Negative: datum mutation ─────────────────────────────────────────────────
+
+// The output datum changes a frozen field (target_token swapped) — all non-approvals
+// fields must be immutable.
+test approve_recovery__rejects_datum_mutation() {
+  let existing_approvals = [approver_a_tn()]
+  let updated_approvals = [approver_a_tn(), approver_b_tn()]
+  let request_in =
+    request_input_utxo(approve_request_datum(existing_approvals))
+  let mutated_out_datum =
+    RecoveryRequest {
+      group_reference_tokenname: group_ref_tn(),
+      target_token: non_member_tn(),
+      new_member_tokenname: new_member_tn(),
+      new_payment_credential: recoveree_pkh(),
+      earliest_execution_slot: 259_200_000,
+      approvals: updated_approvals,
+    }
+  let request_out = approve_request_output(mutated_out_datum)
+
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [request_in, approver_b_input()],
+      reference_inputs: [test_group_input()],
+      outputs: [request_out],
+      mint: assets.zero,
+      extra_signatories: [approver_b_pkh()],
+      validity_range: interval.after(0),
+    }
+  !call_approve(tx)
+}
+
+// ─── Negative: value skim ─────────────────────────────────────────────────────
+
+// N' is missing from the request output — the authenticating token must be preserved.
+test approve_recovery__rejects_value_skim() {
+  let existing_approvals = [approver_a_tn()]
+  let updated_approvals = [approver_a_tn(), approver_b_tn()]
+  let request_in =
+    request_input_utxo(approve_request_datum(existing_approvals))
+  let skimmed_value = assets.from_lovelace(2_000_000)
+  let skimmed_out =
+    Output {
+      address: Address {
+        payment_credential: Script(treasury_policy()),
+        stake_credential: None,
+      },
+      value: skimmed_value,
+      datum: InlineDatum(approve_request_datum(updated_approvals)),
+      reference_script: None,
+    }
+
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [request_in, approver_b_input()],
+      reference_inputs: [test_group_input()],
+      outputs: [skimmed_out],
+      mint: assets.zero,
+      extra_signatories: [approver_b_pkh()],
+      validity_range: interval.after(0),
+    }
+  !call_approve(tx)
+}
+
+// ─── Negative: address ───────────────────────────────────────────────────────
+
+// The request output sits at a VK wallet instead of Script(treasury_policy).
+test approve_recovery__rejects_request_not_at_script() {
+  let existing_approvals = [approver_a_tn()]
+  let updated_approvals = [approver_a_tn(), approver_b_tn()]
+  let request_in =
+    request_input_utxo(approve_request_datum(existing_approvals))
+  let tp = treasury_policy()
+  let value =
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let wallet_out =
+    Output {
+      address: Address {
+        payment_credential: VerificationKey(common.test_pkh()),
+        stake_credential: None,
+      },
+      value,
+      datum: InlineDatum(approve_request_datum(updated_approvals)),
+      reference_script: None,
+    }
+
+  let tx =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [request_in, approver_b_input()],
+      reference_inputs: [test_group_input()],
+      outputs: [wallet_out],
+      mint: assets.zero,
+      extra_signatories: [approver_b_pkh()],
+      validity_range: interval.after(0),
+    }
+  !call_approve(tx)
+}
+
+// ─── Negative: mint discipline ────────────────────────────────────────────────
+
+// Any mint under the treasury policy in an approve tx must be rejected —
+// ApproveRecovery neither mints nor burns.
+test approve_recovery__rejects_mint() {
+  let tx = valid_approve_tx()
+  let bad_tx =
+    Transaction {
+      ..tx,
+      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    }
+  !call_approve(bad_tx)
 }

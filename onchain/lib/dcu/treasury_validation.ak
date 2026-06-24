@@ -11,6 +11,7 @@ use dcu/group.{GroupCip68Datum, GroupDatum, Pull}
 use dcu/recovery.{
   approvals_are_distinct, approvals_are_registry_members,
   collect_signed_approvals, recoveree_signed_for_token,
+  signed_account_token_name,
 }
 use dcu/treasury.{
   DefaultState, PenaltyState, RecoveryRequest, TreasuryDatum, TreasuryState,
@@ -916,6 +917,137 @@ pub fn validate_exit_treasury(
       group_output_at_correct_address?,
       group_output_has_ref_token?,
     }
+  }
+}
+
+// ─── Spend: ApproveRecovery ──────────────────────────────────────────────────
+
+// validate_approve_recovery
+// ─────────────────────────────────────────────────────────────────────────────
+// Appends one more signed member approval to a pending RecoveryRequest. The
+// request UTxO is spent and re-created with `approvals ++ [new_approval]`.
+// Only the `approvals` field changes; every other field of the RecoveryRequest
+// datum is frozen. The treasury-side token N' is preserved in the output.
+//
+// [spec ApproveRecovery 1]: own input (at request_input_index) == utxo; datum is RecoveryRequest
+// [spec ApproveRecovery 2]: group reference input at group_ref_input_index at Script(group_policy);
+//                           request's group_reference_tokenname links to this group
+// [spec ApproveRecovery 3]: new approver is a registry member, not already in approvals, != target_token
+// [spec ApproveRecovery 4]: output datum == input datum with ONLY approvals extended by [new_approval]
+// [spec ApproveRecovery 5]: output at treasury script; holds exactly {N': 1} + only ADA; no mint under own policy
+pub fn validate_approve_recovery(
+  own_policy_id: PolicyId,
+  account_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
+  group_ref_input_index: Int,
+  request_input_index: Int,
+  request_output_index: Int,
+  approver_input_index: Int,
+  utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction {
+    inputs,
+    reference_inputs,
+    outputs,
+    mint,
+    extra_signatories,
+    ..
+  } = tx
+
+  // [spec ApproveRecovery 1]: self-reference — request_input_index must resolve to own UTxO
+  expect Some(request_input) = list.at(inputs, request_input_index)
+  expect request_input.output_reference == utxo
+  expect InlineDatum(request_datum_data) = request_input.output.datum
+  expect request_datum: TreasuryDatum = request_datum_data
+  expect RecoveryRequest {
+    group_reference_tokenname,
+    target_token,
+    new_member_tokenname,
+    new_payment_credential,
+    earliest_execution_slot,
+    approvals: existing_approvals,
+  } = request_datum
+
+  // [spec ApproveRecovery 2]: group at Script(trusted_group_policy) as a REFERENCE input
+  // (ApproveRecovery does not modify the group — it only reads the registry)
+  expect Some(group_input) = list.at(reference_inputs, group_ref_input_index)
+  expect
+    group_input.output.address.payment_credential == Script(trusted_group_policy)
+  expect InlineDatum(group_datum_data) = group_input.output.datum
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
+
+  // [spec ApproveRecovery 2b]: request's group_reference_tokenname links to this group
+  let group_link_valid =
+    group_reference_tokenname == find_group_token_name(group_input)
+
+  // [spec ApproveRecovery 3]: new approver via signed_account_token_name — must be at
+  // a VK address whose PKH signed, and hold exactly 1 account token. Crashes on
+  // unsigned/script-address/multi-token inputs (fail-fast, mirrors ProposeRecovery).
+  let new_approval =
+    signed_account_token_name(
+      inputs,
+      approver_input_index,
+      account_policy_id,
+      extra_signatories,
+    )
+
+  // [spec ApproveRecovery 3a]: approver must be a real registry member
+  let approver_is_member =
+    approvals_are_registry_members([new_approval], group.member_token_names)
+
+  // [spec ApproveRecovery 3b]: approver must NOT already appear in existing_approvals
+  let approver_not_duplicate = !list.has(existing_approvals, new_approval)
+
+  // [spec ApproveRecovery 3c]: approver must NOT be the target (no self-vouch)
+  let approver_not_target = new_approval != target_token
+
+  // [spec ApproveRecovery 4]: output datum == input datum with ONLY approvals extended.
+  // Expressed as a full record reconstruction so any additional future field cannot
+  // silently drift — the compiler will require every field to be explicitly specified.
+  let updated_approvals = list.concat(existing_approvals, [new_approval])
+  expect Some(request_output) = list.at(outputs, request_output_index)
+  expect InlineDatum(output_datum_data) = request_output.datum
+  expect output_datum: TreasuryDatum = output_datum_data
+  let datum_correct =
+    output_datum == RecoveryRequest {
+      group_reference_tokenname,
+      target_token,
+      new_member_tokenname,
+      new_payment_credential,
+      earliest_execution_slot,
+      approvals: updated_approvals,
+    }
+
+  // [spec ApproveRecovery 5a]: output at the treasury script address
+  let output_at_script =
+    request_output.address.payment_credential == Script(own_policy_id)
+
+  // [spec ApproveRecovery 5b]: output holds EXACTLY {N': 1} under own policy — no skim,
+  // no merge of a second token under this policy (exact token check).
+  let token_preserved =
+    dict.to_pairs(assets.tokens(request_output.value, own_policy_id)) == [
+      Pair(new_member_tokenname, 1),
+    ]
+
+  // [spec ApproveRecovery 5c]: output holds only ADA + own policy — prevents accumulation
+  let clean_output_value =
+    only_allowed_policies(request_output.value, [ada_policy_id, own_policy_id])
+
+  // [spec ApproveRecovery 5d]: no mint under own policy — ApproveRecovery neither mints
+  // nor burns; the N' token that authenticates the request persists untouched
+  let no_own_mint = dict.size(assets.tokens(mint, own_policy_id)) == 0
+
+  and {
+    group_link_valid?,
+    approver_is_member?,
+    approver_not_duplicate?,
+    approver_not_target?,
+    datum_correct?,
+    output_at_script?,
+    token_preserved?,
+    clean_output_value?,
+    no_own_mint?,
   }
 }
 

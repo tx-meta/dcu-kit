@@ -6,15 +6,16 @@ use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/settings.{read_settings}
 use dcu/treasury.{
-  ClaimPayout, ClaimPenalty, Contribute, DistributeRound, DistributeWithdraw,
-  ExitGroup, ExtendGrace, JoinGroup, ProposeRecovery, TerminateDefault,
-  TreasuryDatum, TreasuryRedeemer, TreasuryWithdrawRedeemer, UpdatePayout,
+  ApproveRecovery, ClaimPayout, ClaimPenalty, Contribute, DistributeRound,
+  DistributeWithdraw, ExitGroup, ExtendGrace, JoinGroup, ProposeRecovery,
+  TerminateDefault, TreasuryDatum, TreasuryRedeemer, TreasuryWithdrawRedeemer,
+  UpdatePayout,
 } as treasury_types
 use dcu/treasury_validation.{
-  validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
-  validate_contribute, validate_distribute_withdraw, validate_exit_treasury,
-  validate_extend_grace, validate_join_treasury, validate_propose_recovery,
-  validate_terminate_default, validate_update_payout,
+  validate_approve_recovery, validate_claim_payout, validate_claim_penalty,
+  validate_claim_penalty_mint, validate_contribute, validate_distribute_withdraw,
+  validate_exit_treasury, validate_extend_grace, validate_join_treasury,
+  validate_propose_recovery, validate_terminate_default, validate_update_payout,
 }
 
 // treasury(account_policy_id)
@@ -280,6 +281,32 @@ validator treasury(settings_policy: PolicyId) {
           group_output_index,
           admin_input_index,
           treasury_datum,
+          self,
+        )
+      }
+
+      ApproveRecovery {
+        group_ref_input_index,
+        request_input_index,
+        request_output_index,
+        approver_input_index,
+      } -> {
+        // [security]: self-reference — request_input_index must resolve to own UTxO,
+        // preventing cross-UTxO attacks where a different RecoveryRequest is substituted.
+        // validate_approve_recovery also asserts this internally; done here too for
+        // consistency with other spend handlers that assert then delegate.
+        expect Some(request_input) = list.at(inputs, request_input_index)
+        expect request_input.output_reference == utxo
+
+        validate_approve_recovery(
+          policy_id_from_utxo(inputs, utxo),
+          settings.account_policy,
+          settings.group_policy,
+          group_ref_input_index,
+          request_input_index,
+          request_output_index,
+          approver_input_index,
+          utxo,
           self,
         )
       }
