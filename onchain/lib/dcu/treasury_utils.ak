@@ -60,20 +60,22 @@ pub fn ada_reserve_conserved(
 
 // treasury_output_clean
 // The standard treasury-output guard, shared by handlers that produce a treasury
-// UTxO: it sits at the treasury script address, holds EXACTLY the one membership
-// token (exact check — blocks account-merge attacks), and carries no value beyond
-// ADA + own policy + the group's contribution asset.
+// UTxO: it holds EXACTLY the one membership token (exact check — blocks
+// account-merge attacks) and carries no value beyond ADA + own policy + the
+// group's contribution asset.
 //
-// [KNOWN-LATENT — AIK-4, MLabs #11, documented 2026-06-13]: this pins only the
-// payment_credential of the continuing output, NOT the full address. The stake
-// credential is therefore unconstrained — a tx builder could attach an arbitrary
-// stake credential to the continuing treasury output and redirect staking rewards
-// on the pooled/locked ADA. This is LATENT only: the offchain SDK builds treasury
-// UTxOs at enterprise (stakeless) addresses, so no rewards exist to redirect today.
-// Before enabling delegation of treasury ADA, change this (and the penalty/exit
-// output checks) to full-address equality `out.address == in.output.address`
-// (group outputs already do this). Decision (Harun, 2026-06-13): document, do not
-// alter immutable validators now.
+// ADDRESS NOTE (AIK-4 fix, 2026-06-24): address checking has been removed from
+// this function. Each caller is responsible for asserting the correct address:
+//
+//   CONTINUATION callers (DistributeRound, Contribute, UpdatePayout, ExtendGrace,
+//   ClaimPayout, ExitGroup penalty, ApproveRecovery request, ExecuteRecovery
+//   rotated output): assert `own_output.address == own_input.output.address`
+//   (full-address equality — closes the stake-credential drain; MLabs #11 / AIK-4).
+//
+//   CREATION callers (JoinGroup member treasury, ProposeRecovery request):
+//   assert `payment_credential == Script(own_policy_id)` with stake credential
+//   UNCONSTRAINED — the member self-builds their own UTxO (no third-party drain),
+//   and leaving stake free preserves the member's future delegation option.
 pub fn treasury_output_clean(
   own_output: Output,
   own_policy_id: PolicyId,
@@ -81,7 +83,6 @@ pub fn treasury_output_clean(
   contribution_fee_policyid: PolicyId,
 ) -> Bool {
   and {
-    own_output.address.payment_credential == Script(own_policy_id),
     dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
       Pair(member_reference_tokenname, 1),
     ],

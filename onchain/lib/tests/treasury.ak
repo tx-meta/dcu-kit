@@ -1,6 +1,6 @@
 use aiken/collection/list
 use aiken/interval
-use cardano/address.{Address, Script, VerificationKey}
+use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
@@ -242,6 +242,12 @@ fn test_treasury_output(datum: TreasuryDatum, value: assets.Value) -> Output {
     datum: InlineDatum(datum),
     reference_script: None,
   }
+}
+
+// Standard enterprise treasury address used in ExitGroup tests —
+// the address the spent treasury input has (stake credential = None).
+fn treasury_script_address() -> Address {
+  Address { payment_credential: Script(treasury_policy()), stake_credential: None }
 }
 
 // Treasury input wrapping an output
@@ -2503,6 +2509,7 @@ test exit_group__accepts_early_exit_with_penalty() {
     1,
     1,
     0,
+    treasury_script_address(),
     datum,
     tx,
   )
@@ -2558,6 +2565,7 @@ test exit_group__accepts_mature_exit_with_burn() {
     0,
     1,
     0,
+    treasury_script_address(),
     datum,
     tx,
   )
@@ -2593,6 +2601,7 @@ test exit_group__accepts_free_exit_after_full_cycle() {
     0,
     1,
     0,
+    treasury_script_address(),
     datum,
     tx,
   )
@@ -2628,6 +2637,7 @@ test exit_group__rejects_penalty_state_datum() fail {
     0,
     1,
     0,
+    treasury_script_address(),
     penalty_datum,
     tx,
   )
@@ -2689,6 +2699,7 @@ test exit_group__rejects_member_input_without_user_token() {
     1,
     1,
     0,
+    treasury_script_address(),
     datum,
     tx,
   )
@@ -2742,6 +2753,7 @@ test exit_group__rejects_mature_exit_without_burn() {
     0,
     1,
     0,
+    treasury_script_address(),
     datum,
     tx,
   )
@@ -2786,6 +2798,7 @@ test exit_group__rejects_early_exit_missing_penalty_fee() {
     1,
     1,
     0,
+    treasury_script_address(),
     datum,
     tx,
   )
@@ -2831,6 +2844,7 @@ test exit_group__accepts_member_reclaims_refund() {
     1,
     1,
     0,
+    treasury_script_address(),
     datum,
     tx,
   )
@@ -2896,6 +2910,7 @@ test exit_group__accepts_pre_cycle_exit_without_penalty() {
     0,
     1,
     0,
+    treasury_script_address(),
     datum,
     tx,
   )
@@ -2932,6 +2947,7 @@ test exit_group__rejects_in_cycle_burn_without_penalty() fail {
     0,
     1,
     0,
+    treasury_script_address(),
     datum,
     tx,
   )
@@ -2978,6 +2994,7 @@ test exit_group__rejects_early_exit_without_group_count_decrement() {
     1,
     1,
     0,
+    treasury_script_address(),
     datum,
     tx,
   )
@@ -3038,6 +3055,7 @@ test exit_group__rejects_wrong_group_link() {
     0,
     1,
     0,
+    treasury_script_address(),
     wrong_datum,
     tx,
   )
@@ -4300,6 +4318,253 @@ test terminate_default__rejects_fake_group_script() fail {
     0,
     0,
     1,
+    datum,
+    tx,
+  )
+}
+
+// ─── AIK-4 stake-credential drain negative tests ────────────────────────────
+//
+// Each test constructs a continuation output at the SAME payment credential as
+// the input (Script(treasury_policy())) but with an ATTACKER stake credential
+// added. The new full-address equality check must REJECT these.
+//
+// The attacker's stake key (a plausible-looking 28-byte PKH):
+fn attacker_pkh() -> ByteArray {
+  #"ababababababababababababababababababababababababababababababab"
+}
+
+// An address at the treasury payment credential BUT with the attacker's stake key.
+fn attacker_stake_address() -> Address {
+  Address {
+    payment_credential: Script(treasury_policy()),
+    stake_credential: Some(Inline(VerificationKey(attacker_pkh()))),
+  }
+}
+
+// ─── DistributeRound: attacker changes stake credential on continuing output ──
+// Uses `fail` annotation because multi_utxo_indexer crashes (via `expect`) on
+// per-input violations rather than returning False — see comment in validate_distribute.
+test distribute__rejects_treasury_output_stake_credential_change() fail {
+  let tp = treasury_policy()
+  let (tx, _, _) = setup_distribute_round()
+
+  // The happy-path tx has the treasury output at index 0. Replace it with an
+  // output at the attacker's staked address — correct payment cred, wrong stake.
+  let Transaction { outputs, .. } = tx
+  expect Some(treasury_out) = list.at(outputs, 0)
+  let attacker_out = Output { ..treasury_out, address: attacker_stake_address() }
+  let bad_outputs = [attacker_out, ..list.drop(outputs, 1)]
+  let bad_tx = Transaction { ..tx, outputs: bad_outputs }
+
+  validate_distribute_withdraw(tp, group_policy(), 0, 0, 1, [1], [0], 2, bad_tx)
+}
+
+// ─── Contribute: attacker changes stake credential on continuing output ───────
+test contribute__rejects_output_stake_credential_change() {
+  let tp = treasury_policy()
+
+  let datum = test_treasury_state(0)
+  let in_value = treasury_value()
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, in_value),
+  )
+  let member_input = test_member_input()
+
+  // Same value as the valid top-up (7M), but output is at attacker_stake_address
+  let out_value = assets.from_lovelace(min_ada_reserve + 7_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let attacker_out = Output {
+    address: attacker_stake_address(),
+    value: out_value,
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [member_input, treasury_in],
+    reference_inputs: [test_group_input()],
+    outputs: [attacker_out],
+  }
+
+  !validate_contribute(
+    tp,
+    account_policy(),
+    group_policy(),
+    0,
+    0,
+    0,
+    datum,
+    treasury_utxo_ref(),
+    tx,
+  )
+}
+
+// ─── UpdatePayout: attacker changes stake credential on continuing output ─────
+test update_payout__rejects_output_stake_credential_change() {
+  let tp = treasury_policy()
+
+  let datum = test_treasury_state(0)
+  let in_value = treasury_value()
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, in_value),
+  )
+  let member_input = test_member_input()
+
+  let expected_datum = TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: member_tn(),
+    assigned_slot: 0,
+    rounds_paid: 0,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
+  }
+  // Correct datum, correct value, BUT output at attacker_stake_address
+  let attacker_out = Output {
+    address: attacker_stake_address(),
+    value: in_value,
+    datum: InlineDatum(expected_datum),
+    reference_script: None,
+  }
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [member_input, treasury_in],
+    outputs: [attacker_out],
+  }
+
+  !validate_update_payout(
+    tp,
+    account_policy(),
+    0,
+    0,
+    datum,
+    treasury_utxo_ref(),
+    tx,
+  )
+}
+
+// ─── ExtendGrace: attacker changes stake credential on continuing output ──────
+test extend_grace__rejects_output_stake_credential_change() {
+  let tp = treasury_policy()
+
+  let datum = test_insufficient_collateral_state()
+  let in_value = treasury_value()
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, in_value),
+  )
+  let admin_input = test_admin_input()
+
+  let expected_datum = DefaultState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: member_tn(),
+    grace_expires_at: 6000,
+    grace_extensions_used: 1,
+    rounds_paid: 0,
+    assigned_slot: 0,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
+  }
+  // Correct datum + value, but attacker's stake credential
+  let attacker_out = Output {
+    address: attacker_stake_address(),
+    value: in_value,
+    datum: InlineDatum(expected_datum),
+    reference_script: None,
+  }
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [admin_input, treasury_in],
+    outputs: [attacker_out],
+  }
+
+  !validate_extend_grace(
+    tp,
+    group_policy(),
+    1000,
+    0,
+    0,
+    datum,
+    treasury_utxo_ref(),
+    tx,
+  )
+}
+
+// ─── ClaimPayout: attacker changes stake credential on continuing output ──────
+test claim_payout__rejects_output_stake_credential_change() {
+  let tp = treasury_policy()
+  // Continuation output at correct payment cred + ATTACKER stake cred.
+  // The withdrawal of 2M is correct, but the address is wrong.
+  let attacker_out = Output {
+    address: attacker_stake_address(),
+    value: claim_payout_value(5_000_000),
+    datum: InlineDatum(claim_payout_out_datum(0)),
+    reference_script: None,
+  }
+  let (base_tx, datum, utxo) =
+    claim_payout_setup(claim_payout_out_datum(0), claim_payout_value(5_000_000))
+  // Replace the output with the attacker version
+  let bad_tx = Transaction { ..base_tx, outputs: [attacker_out] }
+  !validate_claim_payout(
+    tp,
+    account_policy(),
+    group_policy(),
+    0,
+    1,
+    0,
+    datum,
+    utxo,
+    bad_tx,
+  )
+}
+
+// ─── ExitGroup penalty: attacker changes stake credential on penalty output ───
+test exit__rejects_penalty_output_stake_credential_change() {
+  let tp = treasury_policy()
+
+  // Started group, member mid-cycle → penalty path
+  let group_input = test_started_group_input(1)
+  let member_input = test_member_input()
+  let datum = test_treasury_state(0)
+
+  let penalty_datum = PenaltyState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: member_tn(),
+  }
+  let penalty_value = assets.from_lovelace(min_ada_reserve + 500_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+
+  // Correct content, BUT output has attacker stake key instead of input's enterprise address
+  let attacker_penalty_output = Output {
+    address: attacker_stake_address(),
+    value: penalty_value,
+    datum: InlineDatum(penalty_datum),
+    reference_script: None,
+  }
+
+  let group_out = test_group_output(0)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, member_input],
+    outputs: [attacker_penalty_output, group_out],
+    validity_range: interval.after(0),
+  }
+
+  !validate_exit_treasury(
+    tp,
+    account_policy(),
+    group_policy(),
+    0,
+    1,
+    1,
+    0,
+    treasury_script_address(),
     datum,
     tx,
   )

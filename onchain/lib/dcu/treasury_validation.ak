@@ -1,7 +1,7 @@
 use aiken/collection/dict
 use aiken/collection/list
 use aiken_design_patterns/multi_utxo_indexer
-use cardano/address.{Script, VerificationKey}
+use cardano/address.{Address, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value, ada_policy_id}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
@@ -718,8 +718,14 @@ pub fn validate_distribute_withdraw(
             output_rounds_paid == round_number + 1 && output_claimable_balance == expected_claimable
           }
 
+        // [AIK-4 fix]: full-address equality on the continuing treasury output — the stake
+        // credential is preserved from the input. A permissionless cranker (DistributeRound)
+        // cannot attach a different stake key to redirect staking rewards.
+        let address_preserved = own_output.address == own_input.output.address
+
         // [spec DistributeRound 8]: clean output at treasury script with membership token —
         // exactly the membership token + only ADA + own policy + contribution asset (no skim).
+        // Address check is handled above (address_preserved).
         let treasury_output_ok =
           treasury_output_clean(
             own_output,
@@ -733,6 +739,7 @@ pub fn validate_distribute_withdraw(
           member_at_correct_round?,
           balance_deducted?,
           output_datum_correct?,
+          address_preserved?,
           treasury_output_ok?,
           // [security]: token groups — output keeps ≥ input lovelace; without this a
           // permissionless cranker could skim the min-ADA reserve. No-op for ADA groups.
@@ -784,6 +791,7 @@ pub fn validate_exit_treasury(
   group_output_index: Int,
   member_input_index: Int,
   penalty_output_index: Int,
+  treasury_input_address: Address,
   datum: TreasuryDatum,
   tx: Transaction,
 ) -> Bool {
@@ -860,10 +868,10 @@ pub fn validate_exit_treasury(
       assets.tokens(penalty_output.value, own_policy_id),
     ) == [Pair(member_reference_tokenname, 1)]
 
-    // Penalty output is at the treasury script address
-    let penalty_at_script = penalty_output.address.payment_credential == Script(
-      own_policy_id,
-    )
+    // [AIK-4 fix]: full-address equality on the penalty output — the stake credential is
+    // preserved from the spent treasury input. The member self-initiates ExitGroup so no
+    // third-party drain is possible today, but this closes the gap symmetrically.
+    let penalty_at_script = penalty_output.address == treasury_input_address
 
     // Penalty output contains >= penalty_fee of the penalty asset, measured on the
     // contributable balance so an ADA penalty is genuine forfeiture above the min-ADA the
@@ -1019,9 +1027,9 @@ pub fn validate_approve_recovery(
       approvals: updated_approvals,
     }
 
-  // [spec ApproveRecovery 5a]: output at the treasury script address
-  let output_at_script =
-    request_output.address.payment_credential == Script(own_policy_id)
+  // [AIK-4 fix]: full-address equality — the request output's address must exactly
+  // match the input's address; stake credential is preserved from the input.
+  let output_at_script = request_output.address == request_input.output.address
 
   // [spec ApproveRecovery 5b]: output holds EXACTLY {N': 1} under own policy — no skim,
   // no merge of a second token under this policy (exact token check).
@@ -1345,9 +1353,9 @@ pub fn validate_execute_recovery(
   expect InlineDatum(rotated_datum_data) = rotated_output.datum
   expect rotated_datum: TreasuryDatum = rotated_datum_data
 
-  // [spec ExecuteRecovery 5]: output at the treasury script address
-  let output_at_script =
-    rotated_output.address.payment_credential == Script(own_policy_id)
+  // [AIK-4 fix]: full-address equality — the rotated output's address must exactly
+  // match the member treasury input's address; stake credential is preserved.
+  let output_at_script = rotated_output.address == member_treasury_input.output.address
 
   // [spec ExecuteRecovery 5]: output holds exactly {N': 1} under own policy — N' is
   // relocated from the request UTxO (not freshly minted); net mint is only {N: -1}.
@@ -1745,7 +1753,12 @@ pub fn validate_contribute(
     RecoveryRequest { .. } -> fail @"RecoveryRequest cannot receive contributions"
   }
 
-  // [spec Contribute 5]: output at treasury script, exact membership token, clean value
+  // [AIK-4 fix]: full-address equality — stake credential preserved from the input.
+  // The member calls Contribute on their own UTxO so no third-party can redirect, but
+  // this closes the gap symmetrically with all other continuation handlers.
+  let address_preserved = own_output.address == own_input.output.address
+
+  // [spec Contribute 5]: exact membership token, clean value (address is pinned above).
   let treasury_output_ok = treasury_output_clean(
     own_output,
     own_policy_id,
@@ -1757,6 +1770,7 @@ pub fn validate_contribute(
     member_authorized?,
     group_link_valid?,
     datum_correct?,
+    address_preserved?,
     treasury_output_ok?,
     balance_increased?,
     recovery_funded?,
@@ -1776,7 +1790,7 @@ pub fn validate_contribute(
 //                                   = member's current wallet pkh
 // [spec UpdatePayout 4]: output ADA unchanged; output at script with token
 pub fn validate_update_payout(
-  own_policy_id: PolicyId,
+  _own_policy_id: PolicyId,
   account_policy_id: PolicyId,
   member_input_index: Int,
   treasury_output_index: Int,
@@ -1831,10 +1845,10 @@ pub fn validate_update_payout(
   // no asset (ADA or contribution token) may move. Native-token-correct.
   let value_preserved = own_output.value == own_input.output.value
 
-  // Output at script address with membership token
-  let output_at_script = own_output.address.payment_credential == Script(
-    own_policy_id,
-  )
+  // [AIK-4 fix]: full-address equality — stake credential preserved from the input.
+  // value_preserved (own_output.value == own_input.output.value) already ensures the
+  // token and ADA are retained; we add the address pin for the stake credential.
+  let output_at_script = own_output.address == own_input.output.address
 
   // token retention is implied by value_preserved (output value == input value).
   and {
@@ -1859,7 +1873,7 @@ pub fn validate_update_payout(
 //                              grace_expires_at + grace_period_length, all else frozen
 // [spec ExtendGrace 5]: output ADA unchanged; output at script with token
 pub fn validate_extend_grace(
-  own_policy_id: PolicyId,
+  _own_policy_id: PolicyId,
   group_policy_id: PolicyId,
   grace_period_length: Int,
   admin_input_index: Int,
@@ -1922,10 +1936,9 @@ pub fn validate_extend_grace(
   // no asset (ADA or contribution token) may move. Native-token-correct.
   let value_preserved = own_output.value == own_input.output.value
 
-  // Output at script address with membership token
-  let output_at_script = own_output.address.payment_credential == Script(
-    own_policy_id,
-  )
+  // [AIK-4 fix]: full-address equality — stake credential preserved from the input.
+  // value_preserved already covers token/ADA; this pin covers the stake credential.
+  let output_at_script = own_output.address == own_input.output.address
 
   // token retention is implied by value_preserved (output value == input value).
   and {
@@ -2039,10 +2052,10 @@ pub fn validate_claim_payout(
   )
   let correct_withdrawal = output_bal == input_bal - claimable_balance
 
-  // [spec ClaimPayout 6]: output at script with the membership token and a clean value.
-  let output_at_script = own_output.address.payment_credential == Script(
-    own_policy_id,
-  )
+  // [AIK-4 fix / spec ClaimPayout 6]: full-address equality — stake credential preserved
+  // from the input. A member calls ClaimPayout on their own UTxO so no third-party can
+  // redirect, but this closes the gap symmetrically with all other continuation handlers.
+  let output_at_script = own_output.address == own_input.output.address
   let token_retained = dict.to_pairs(
     assets.tokens(own_output.value, own_policy_id),
   ) == [Pair(member_reference_tokenname, 1)]

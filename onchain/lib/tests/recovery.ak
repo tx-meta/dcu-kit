@@ -1,5 +1,5 @@
 use aiken/interval
-use cardano/address.{Address, Script, VerificationKey}
+use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
@@ -2132,6 +2132,83 @@ test execute_recovery__rejects_claimable_balance_zeroed() {
     Transaction {
       ..valid_execute_tx(),
       outputs: [exec_group_output(), zeroed_output],
+    }
+  !call_execute(tx)
+}
+
+// ─── AIK-4 stake-credential drain negative tests ────────────────────────────
+//
+// Attacker puts a stake key on a continuation recovery output. The full-address
+// equality check must reject it even when payment credential and datum are correct.
+
+fn attacker_pkh() -> ByteArray {
+  #"ababababababababababababababababababababababababababababababab"
+}
+
+fn attacker_stake_address(payment: assets.PolicyId) -> Address {
+  Address {
+    payment_credential: Script(payment),
+    stake_credential: Some(Inline(VerificationKey(attacker_pkh()))),
+  }
+}
+
+// ─── ApproveRecovery: attacker stake key on the continuing request output ─────
+test approve_recovery__rejects_request_output_stake_credential_change() {
+  let tp = treasury_policy()
+  let existing_approvals = [approver_a_tn()]
+  let updated_approvals = [approver_a_tn(), approver_b_tn()]
+
+  // Same datum and value as a valid approve, but at attacker's staked address
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let attacker_output = Output {
+    address: attacker_stake_address(tp),
+    value,
+    datum: InlineDatum(approve_request_datum(updated_approvals)),
+    reference_script: None,
+  }
+
+  let request_in = request_input_utxo(approve_request_datum(existing_approvals))
+  let approver_b = approver_b_input()
+  let group_ref = test_group_input()
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [request_in, approver_b],
+    reference_inputs: [group_ref],
+    outputs: [attacker_output],
+    mint: assets.zero,
+    extra_signatories: [approver_b_pkh()],
+    validity_range: interval.after(0),
+  }
+
+  !call_approve(tx)
+}
+
+// ─── ExecuteRecovery: attacker stake key on the rotated treasury output ───────
+test execute_recovery__rejects_rotated_output_stake_credential_change() {
+  let tp = treasury_policy()
+  // Same value and datum as the valid rotated output, but at attacker's staked address
+  let value = assets.from_lovelace(4_000_000)
+    |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let attacker_output = Output {
+    address: attacker_stake_address(tp),
+    value,
+    datum: InlineDatum(
+      TreasuryState {
+        group_reference_tokenname: group_ref_tn(),
+        member_reference_tokenname: new_member_tn(),
+        assigned_slot: 1,
+        rounds_paid: 2,
+        member_payment_credential: recoveree_pkh(),
+        claimable_balance: 500_000,
+      },
+    ),
+    reference_script: None,
+  }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      outputs: [exec_group_output(), attacker_output],
     }
   !call_execute(tx)
 }

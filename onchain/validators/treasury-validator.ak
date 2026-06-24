@@ -157,6 +157,7 @@ validator treasury(settings_policy: PolicyId) {
           group_output_index,
           member_input_index,
           penalty_output_index,
+          treasury_input.output.address,
           treasury_datum,
           self,
         )
