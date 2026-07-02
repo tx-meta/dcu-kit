@@ -1,7 +1,7 @@
 use aiken/collection/dict
 use aiken/collection/list
 use aiken/primitive/bytearray
-use cardano/address.{Script, VerificationKey}
+use cardano/address.{Credential, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use dcu/cip68
@@ -91,10 +91,11 @@ pub type GroupDatum {
   // Index of the last completed distribution round. -1 until Distribute runs.
   // Incremented atomically with each Distribute to enforce sequential processing.
   last_distributed_round: Int,
-  // 28-byte payment key hash of the group creator's wallet.
-  // Joining fees are paid directly to this credential at join time.
-  // Frozen as a critical field once any member has joined.
-  creator_payment_credential: ByteArray,
+  // Payment credential of the group creator — VerificationKey(pkh) for a wallet
+  // or Script(hash) for a multisig/contract. Joining fees are paid directly to
+  // this credential at join time, so a multisig-governed group can route fees to
+  // the multisig itself. Frozen as a critical field once any member has joined.
+  creator_payment_credential: Credential,
   // On-chain membership registry: one entry per active member, set to their treasury
   // token name (prefix_222 + account_suffix). Appended at Join, removed at
   // Exit. Invariant: list.length(member_token_names) == member_count.
@@ -354,8 +355,12 @@ pub fn validate_create_group(
     (datum.start_time == 0)?,
     // [spec CreateGroup 10c]: no rounds have run yet
     (datum.last_distributed_round == -1)?,
-    // [spec CreateGroup 13]: creator_payment_credential must be a valid 28-byte PKH
-    (bytearray.length(datum.creator_payment_credential) == 28)?,
+    // [spec CreateGroup 13]: creator_payment_credential carries a valid 28-byte hash,
+    // whether it is a wallet key (VerificationKey) or a multisig/contract (Script)
+    when datum.creator_payment_credential is {
+      VerificationKey(h) -> bytearray.length(h) == 28
+      Script(h) -> bytearray.length(h) == 28
+    }?,
     // [spec CreateGroup 16]: collateral_rounds in [1, max_members]
     // 1 = PerRound (default), max_members = FullUpfront, k = partial.
     (datum.collateral_rounds >= 1)?,

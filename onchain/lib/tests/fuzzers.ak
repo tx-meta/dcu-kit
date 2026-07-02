@@ -1,6 +1,22 @@
 use aiken/fuzz
+use cardano/address.{Script, VerificationKey}
 use dcu/account.{AccountDatum}
 use dcu/group.{GroupDatum, Push}
+
+// --- Credential Fuzzer ---
+// The creator credential may be a wallet key OR a script (multisig/contract);
+// fuzz both kinds so credential-dependent rules are exercised on each.
+pub fn gen_credential() {
+  let hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let is_script <- fuzz.and_then(fuzz.bool())
+  fuzz.constant(
+    if is_script {
+      Script(hash)
+    } else {
+      VerificationKey(hash)
+    },
+  )
+}
 
 // --- Group Datum Fuzzer ---
 
@@ -25,7 +41,7 @@ pub fn gen_group_datum() {
   let is_started <- fuzz.and_then(fuzz.bool())
   let start_time <- fuzz.and_then(fuzz.int())
   let last_distributed_round <- fuzz.and_then(fuzz.int())
-  let creator_payment_credential <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let creator_payment_credential <- fuzz.and_then(gen_credential())
   let collateral_rounds <- fuzz.and_then(fuzz.int())
 
   fuzz.constant(
@@ -82,7 +98,7 @@ pub fn gen_valid_group_datum() {
   // Within the protocol ceiling (max_group_members = 20) so generated datums stay VALID.
   let max_members <- fuzz.and_then(fuzz.int_between(1, 20))
   let collateral_rounds <- fuzz.and_then(fuzz.int_between(1, max_members))
-  let creator_payment_credential <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let creator_payment_credential <- fuzz.and_then(gen_credential())
 
   fuzz.constant(
     GroupDatum {

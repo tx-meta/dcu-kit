@@ -114,7 +114,7 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     // start_time = 0; tests simulating active cycle should set this explicitly
     start_time: 0,
     last_distributed_round: -1,
-    creator_payment_credential: test_pkh(),
+    creator_payment_credential: VerificationKey(test_pkh()),
     member_token_names: [],
     collateral_rounds: 1,
     payout_mode: Push,

@@ -95,7 +95,7 @@ fn test_group_datum() -> GroupDatum {
     is_started: True,
     start_time: 0,
     last_distributed_round: -1,
-    creator_payment_credential: common.test_pkh(),
+    creator_payment_credential: VerificationKey(common.test_pkh()),
     member_token_names: [target_tn(), approver_a_tn(), approver_b_tn()],
     collateral_rounds: 1,
     payout_mode: Push,

@@ -144,22 +144,20 @@ pub fn validate_join_treasury(
     group.contribution_fee_assetname,
   ) >= group.contribution_fee * group.collateral_rounds
 
-  // [spec JoinGroup 8]: if joining_fee > 0, admin wallet receives joining fee
+  // [spec JoinGroup 8]: if joining_fee > 0, the creator credential receives the fee.
+  // Credential equality — a VerificationKey wallet and a Script (multisig/contract)
+  // creator are both valid fee destinations; the datum's Credential decides which.
   let joining_fee_routed = if group.joining_fee == 0 {
     True
   } else {
     list.any(
       outputs,
       fn(o) {
-        when o.address.payment_credential is {
-          VerificationKey(pkh) ->
-            pkh == group.creator_payment_credential && assets.quantity_of(
-              o.value,
-              group.joining_fee_policyid,
-              group.joining_fee_assetname,
-            ) >= group.joining_fee
-          Script(_) -> False
-        }
+        o.address.payment_credential == group.creator_payment_credential && assets.quantity_of(
+          o.value,
+          group.joining_fee_policyid,
+          group.joining_fee_assetname,
+        ) >= group.joining_fee
       },
     )
   }

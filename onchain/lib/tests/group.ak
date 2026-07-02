@@ -1,5 +1,6 @@
 use aiken/fuzz
 use aiken/primitive/bytearray
+use cardano/address.{Script, VerificationKey}
 use cardano/assets
 use cardano/transaction.{Input, Output, OutputReference}
 use dcu/cip68
@@ -1031,9 +1032,12 @@ test prop_create_group_integrity(datum via gen_group_datum()) {
   // validate_create_group, otherwise the "valid" branch below can assert True on a datum
   // the validator actually rejects. (member_token_names, version and name are pinned valid
   // by the harness — gen_group_datum sets member_token_names: [], cip68_with sets version/name.)
-  let is_invalid = datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.creator_bond < 0 || datum.grace_period_length < 0 || datum.interval_length <= 0 || datum.num_rounds != 0 || datum.max_members <= 0 || datum.max_members > max_group_members || datum.member_count != 0 || !datum.is_active || datum.is_started || datum.start_time != 0 || datum.last_distributed_round != -1 || datum.collateral_rounds < 1 || datum.collateral_rounds > datum.max_members || bytearray.length(
-    datum.creator_payment_credential,
-  ) != 28
+  let is_invalid = datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.creator_bond < 0 || datum.grace_period_length < 0 || datum.interval_length <= 0 || datum.num_rounds != 0 || datum.max_members <= 0 || datum.max_members > max_group_members || datum.member_count != 0 || !datum.is_active || datum.is_started || datum.start_time != 0 || datum.last_distributed_round != -1 || datum.collateral_rounds < 1 || datum.collateral_rounds > datum.max_members || when
+    datum.creator_payment_credential
+  is {
+    VerificationKey(h) -> bytearray.length(h) != 28
+    Script(h) -> bytearray.length(h) != 28
+  }
 
   // The Property:
   // If the datum is invalid, validation MUST return False.
@@ -1144,7 +1148,70 @@ test create_group__rejects_invalid_creator_payment_credential() {
   // 27 bytes — one byte short of the required 28
   let datum = GroupDatum {
     ..common.test_group_datum(policy_id),
-    creator_payment_credential: #"aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbcc",
+    creator_payment_credential: VerificationKey(
+      #"aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbcc",
+    ),
+  }
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.merge(
+      assets.from_lovelace(2_000_000),
+      assets.from_asset(policy_id, ref_tn, 1),
+    ),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// creator_payment_credential as a 28-byte Script hash (multisig creator) — accepted.
+test create_group__accepts_script_creator_credential() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    creator_payment_credential: Script(common.test_pkh()),
+  }
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.merge(
+      assets.from_lovelace(2_000_000),
+      assets.from_asset(policy_id, ref_tn, 1),
+    ),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// creator_payment_credential as a SHORT Script hash (27 bytes) — rejected, same
+// 28-byte rule as the VerificationKey kind.
+test create_group__rejects_short_script_creator_credential() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    creator_payment_credential: Script(
+      #"aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbcc",
+    ),
   }
   let output = common.test_script_utxo(
     policy_id,

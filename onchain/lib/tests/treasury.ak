@@ -70,7 +70,7 @@ fn test_group_datum() -> GroupDatum {
     is_started: False,
     start_time: 0,
     last_distributed_round: -1,
-    creator_payment_credential: common.test_pkh(),
+    creator_payment_credential: VerificationKey(common.test_pkh()),
     member_token_names: [],
     collateral_rounds: 1,
     payout_mode: Push,
@@ -874,6 +874,152 @@ test join_group__accepts_joining_fee_routed_to_admin() {
   }
 
   validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
+}
+
+// joining_fee > 0 with a SCRIPT creator credential (multisig) — fee routed to the
+// script address passes. Credential equality accepts both kinds; the datum decides.
+test join_group__accepts_joining_fee_routed_to_script_creator() {
+  let tp = treasury_policy()
+
+  // The creator credential is a script hash (e.g. a native multisig). Distinct from
+  // every policy constant so no other output address can satisfy the fee check.
+  let multisig_hash = #"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  let group_datum_with_fee = GroupDatum {
+    ..test_group_datum(),
+    joining_fee: 1_000_000,
+    creator_payment_credential: Script(multisig_hash),
+  }
+  let gp = group_policy()
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(cip68_with_group(group_datum_with_fee)),
+      reference_script: None,
+    },
+  }
+  let member_input = test_member_input()
+
+  let datum = test_treasury_state(0)
+  let output_value = assets.from_lovelace(min_ada_reserve + 2_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_output = test_treasury_output(datum, output_value)
+  let group_out = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+    datum: InlineDatum(
+      cip68_with_group(
+        GroupDatum {
+          ..group_datum_with_fee,
+          member_count: 1,
+          active_member_count: 1,
+        },
+      ),
+    ),
+    reference_script: None,
+  }
+  // Fee output at the SCRIPT creator credential with >= joining_fee (1M)
+  let fee_output = Output {
+    address: Address {
+      payment_credential: Script(multisig_hash),
+      stake_credential: None,
+    },
+    value: assets.from_lovelace(1_000_000),
+    datum: NoDatum,
+    reference_script: None,
+  }
+  let mint = assets.from_asset(tp, member_tn(), 1)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, member_input],
+    outputs: [treasury_output, group_out, fee_output],
+    mint,
+    validity_range: interval.after(0),
+  }
+
+  validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
+}
+
+// Creator credential is Script(h) but the fee output pays VerificationKey(h) — the
+// SAME hash under the WRONG credential kind is a different credential and must fail.
+test join_group__rejects_joining_fee_wrong_credential_kind() {
+  let tp = treasury_policy()
+
+  let multisig_hash = #"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  let group_datum_with_fee = GroupDatum {
+    ..test_group_datum(),
+    joining_fee: 1_000_000,
+    creator_payment_credential: Script(multisig_hash),
+  }
+  let gp = group_policy()
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(cip68_with_group(group_datum_with_fee)),
+      reference_script: None,
+    },
+  }
+  let member_input = test_member_input()
+
+  let datum = test_treasury_state(0)
+  let output_value = assets.from_lovelace(min_ada_reserve + 2_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_output = test_treasury_output(datum, output_value)
+  let group_out = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+    datum: InlineDatum(
+      cip68_with_group(
+        GroupDatum {
+          ..group_datum_with_fee,
+          member_count: 1,
+          active_member_count: 1,
+        },
+      ),
+    ),
+    reference_script: None,
+  }
+  // Fee output at VerificationKey(multisig_hash) — same hash, wrong credential kind
+  let fee_output = Output {
+    address: Address {
+      payment_credential: VerificationKey(multisig_hash),
+      stake_credential: None,
+    },
+    value: assets.from_lovelace(1_000_000),
+    datum: NoDatum,
+    reference_script: None,
+  }
+  let mint = assets.from_asset(tp, member_tn(), 1)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, member_input],
+    outputs: [treasury_output, group_out, fee_output],
+    mint,
+    validity_range: interval.after(0),
+  }
+
+  !validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // Group is deactivated — group_active check fails
