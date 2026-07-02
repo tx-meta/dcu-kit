@@ -15,6 +15,10 @@ sdk/src/
 │   ├── <operationName>.ts            # one file per operation
 │   ├── programWrapper.ts             # makeReturn()-wrapped public API
 │   └── index.ts                      # re-exports all wrappers
+├── multisig/                         # standalone module — "@tx-meta/dcu-kit/multisig"
+│   ├── build.ts                      # buildMultisig (native atLeast M-of-N)
+│   ├── adminWitness.ts               # AdminAuthConfig, payAdminReturn, applyAdminWitness
+│   └── index.ts
 └── core/
     ├── errors.ts                     # error taxonomy — create first
     ├── types.ts                      # datum + redeemer schemas
@@ -31,6 +35,13 @@ sdk/src/
         ├── assets.ts                 # createCip68TokenNames, findCip68TokenPair
         └── utils.ts                  # parseSafeDatum
 ```
+
+**Module boundaries (enforced by review):** `core/` and `multisig/` NEVER import from
+`endpoints/`. Layering is `core` ← `multisig` ← `endpoints`. `multisig` and `core` are published
+as subpath exports (`@tx-meta/dcu-kit/multisig`, `@tx-meta/dcu-kit/core`) so other apps consume
+them without the ROSCA endpoints; keeping the boundary clean is what makes the future package
+split (coop-core / coop-multisig / coop-escrow / dcu-kit) mechanical.
+Check: `grep -rn "from \"../endpoints" src/core src/multisig` must return nothing.
 
 **Build order when starting a new project:**
 
