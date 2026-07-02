@@ -1,4 +1,4 @@
-import { Network, UTxO } from "@lucid-evolution/lucid";
+import { Network, Script, UTxO } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
   DcuValidators,
@@ -109,6 +109,7 @@ export const setupAccount = (
 export const setupGroup = (
   base: BaseSetup,
   datumOverride?: Partial<GroupDatum>,
+  opts?: { creatorScript?: Script },
 ): Effect.Effect<GroupSetupResult, Error, never> =>
   Effect.gen(function* () {
     const { lucid, users, emulator } = base.context;
@@ -117,6 +118,7 @@ export const setupGroup = (
     const { txHash, groupDatum } = yield* createGroupTestCase(base.context, {
       datumOverride,
       creatorSeed: users.admin.seedPhrase,
+      ...(opts?.creatorScript ? { creatorScript: opts.creatorScript } : {}),
     });
 
     yield* advanceBlock(emulator, 5);

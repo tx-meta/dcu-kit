@@ -36,6 +36,7 @@ import {
   parseSafeDatum,
   patchInlineDatum,
   parseGroupCip68Datum,
+  buildMultisig,
 } from "../src/core/utils/index.js";
 import { SetupError } from "../src/core/errors.js";
 import { accountPolicyId } from "../src/core/validators/constants.js";
@@ -676,6 +677,79 @@ describe("Treasury Endpoints", () => {
         );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
+      }),
+  );
+
+  // --- Positive: joinGroup routes joining_fee to a MULTISIG creator credential ---
+  // The creator credential is a Script (native multisig) hash; the SDK derives the fee
+  // address from the credential kind and the validator's credential-equality check
+  // accepts it. The fee must land at the multisig script address.
+  it.effect(
+    "should route joining_fee to a multisig script creator credential",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { lucid, users } = base.context;
+
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+        const multisig = yield* buildMultisig(lucid, {
+          signers: ["a".repeat(56), "b".repeat(56), "c".repeat(56)],
+          required: 2,
+        });
+
+        const { groupUtxo } = yield* setupGroup(
+          base,
+          {
+            joining_fee: 1_000_000n,
+            creator_payment_credential: {
+              Script: [multisig.policyHash] as [string],
+            },
+          },
+          { creatorScript: multisig.script },
+        );
+        const { userUtxo } = yield* setupAccount(base);
+        if (!userUtxo)
+          return yield* Effect.fail(
+            new SetupError({ message: "User UTxO not found" }),
+          );
+
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          base.context.protocol!.groupPolicyId,
+          assetNameLabels.prefix100,
+        );
+        const accountTokenSuffix = extractTokenSuffix(
+          userUtxo,
+          accountPolicyId,
+          assetNameLabels.prefix222,
+        );
+
+        const currentTime = base.context.emulator
+          ? BigInt(base.context.emulator.now())
+          : BigInt(Date.now()) - 120_000n;
+        const txBuilder = yield* unsignedJoinGroupTxProgram(
+          base.context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix,
+            currentTime,
+            scriptRefs: base.context.scriptRefs,
+          },
+        );
+        const txHash = yield* signAndSubmit(txBuilder);
+        expect(txHash).toHaveLength(64);
+        yield* advanceBlock(base.context.emulator);
+
+        // The joining fee must sit at the multisig script address.
+        const multisigUtxos = yield* Effect.tryPromise(() =>
+          lucid.utxosAt(multisig.address),
+        );
+        const feeUtxo = multisigUtxos.find(
+          (u) => u.txHash === txHash && u.assets.lovelace >= 1_000_000n,
+        );
+        expect(feeUtxo).toBeDefined();
       }),
   );
 

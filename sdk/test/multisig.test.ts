@@ -33,6 +33,7 @@ import {
 } from "./setup.js";
 import {
   createAccountTestCase,
+  createGroupTestCase,
   joinGroupTestCase,
   distributePayoutTestCase,
 } from "./actions.js";
@@ -421,6 +422,51 @@ describe("assignAdmin destination guard", () => {
         if (result._tag === "Left") {
           expect(result.left._tag).toBe("ConfigurationError");
         }
+      }),
+  );
+
+  it.effect(
+    "createGroup rejects a Script creator credential without creatorScript proof",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { lucid } = base.context;
+
+        const multisig = yield* buildMultisig(lucid, {
+          signers: ["a".repeat(56), "b".repeat(56)],
+          required: 2,
+        });
+
+        const err = yield* Effect.flip(
+          createGroupTestCase(base.context, {
+            datumOverride: {
+              creator_payment_credential: {
+                Script: [multisig.policyHash] as [string],
+              },
+            },
+            // creatorScript deliberately omitted — the guard must reject.
+          }),
+        );
+        expect((err as { _tag?: string })._tag).toBe("ConfigurationError");
+      }),
+  );
+
+  it.effect(
+    "createGroup rejects a protocol script hash as creator credential",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+
+        const err = yield* Effect.flip(
+          createGroupTestCase(base.context, {
+            datumOverride: {
+              creator_payment_credential: {
+                Script: [base.context.protocol!.groupPolicyId] as [string],
+              },
+            },
+          }),
+        );
+        expect((err as { _tag?: string })._tag).toBe("ConfigurationError");
       }),
   );
 

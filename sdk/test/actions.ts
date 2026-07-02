@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { UTxO } from "@lucid-evolution/lucid";
+import { Script, UTxO } from "@lucid-evolution/lucid";
 import {
   unsignedCreateAccountTxProgram,
   CreateAccountConfig,
@@ -270,6 +270,8 @@ export type CreateGroupTestParams = {
   creatorSeed?: string;
   groupName?: string;
   groupDescription?: string;
+  /** Proof script when the datum's creator_payment_credential is a Script credential. */
+  creatorScript?: Script;
 };
 
 export const createGroupTestCase = (
@@ -282,7 +284,8 @@ export const createGroupTestCase = (
 > =>
   Effect.gen(function* () {
     const { lucid, users } = context;
-    const { datumOverride, creatorSeed, groupName, groupDescription } = params;
+    const { datumOverride, creatorSeed, groupName, groupDescription, creatorScript } =
+      params;
 
     selectWalletFromSeed(lucid, creatorSeed ?? users.admin.seedPhrase);
 
@@ -297,6 +300,7 @@ export const createGroupTestCase = (
     const groupConfig: CreateGroupConfig = {
       groupName: groupName ?? "Test Group",
       ...(groupDescription !== undefined ? { groupDescription } : {}),
+      ...(creatorScript !== undefined ? { creatorScript } : {}),
       groupDatum,
       utxoToSpend: selectedUTxO,
     };
