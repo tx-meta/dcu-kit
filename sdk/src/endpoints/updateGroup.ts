@@ -4,9 +4,13 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   Assets,
-  Script,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import {
+  AdminAuthConfig,
+  applyAdminWitness,
+  payAdminReturn,
+} from "../multisig/index.js";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import {
   DcuError,
@@ -47,17 +51,7 @@ import { Protocol } from "../core/validators/constants.js";
 export type UpdateGroupConfig = {
   groupTokenSuffix: string;
   updatedDatum: GroupDatum;
-  /** When the admin 222 token is held at a native-script (multisig) address, supply the
-   *  Script here. The tx will attach the native-script witness so the UTxO is spendable.
-   *  Omit (or pass undefined) to use the default VK-wallet path — behaviour is unchanged. */
-  adminScript?: Script;
-  /** Key hashes of the co-signers required by adminScript (for addSignerKey). Only used
-   *  when adminScript is present. Callers should pass exactly the M hashes that will sign. */
-  adminSignerKeyHashes?: string[];
-  /** Optional destination for returning the admin 222 token after script-admin spend.
-   *  Defaults to the current admin UTxO address, preserving multisig delegation. */
-  adminReturnAddress?: string;
-};
+} & AdminAuthConfig;
 
 export const unsignedUpdateGroupTxProgram = (
   protocol: Protocol,
@@ -118,8 +112,6 @@ export const unsignedUpdateGroupTxProgram = (
       inputs: [adminUtxo, groupUtxo],
     };
 
-    const { adminScript, adminSignerKeyHashes, adminReturnAddress } = config;
-
     const baseTx0 = lucid
       .newTx()
       .collectFrom([adminUtxo])
@@ -138,23 +130,9 @@ export const unsignedUpdateGroupTxProgram = (
       )
       .attach.SpendingValidator(groupValidator.spendGroup);
 
-    const baseTx = adminScript
-      ? baseTx0.pay.ToAddress(
-          adminReturnAddress ?? adminUtxo.address,
-          adminUtxo.assets,
-        )
-      : baseTx0;
-
-    // When adminScript is supplied the admin 222 token sits at a native-script address.
-    // Attach the native-script witness so Lucid can spend it, and declare the required
-    // signer key hashes so they appear in the tx required_signers field.
-    const withAdminWitness = adminScript
-      ? baseTx.attach.SpendingValidator(adminScript)
-      : baseTx;
-
-    const withSigners = (adminSignerKeyHashes ?? []).reduce(
-      (tx, kh) => tx.addSignerKey(kh),
-      withAdminWitness,
+    const withSigners = applyAdminWitness(
+      payAdminReturn(baseTx0, config, adminUtxo),
+      config,
     );
 
     const tx = yield* withSigners

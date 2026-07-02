@@ -2,31 +2,32 @@ import type { Script, TxBuilder, UTxO } from "@lucid-evolution/lucid";
 
 /** Admin authority custody config shared by every admin-gated endpoint. */
 export type AdminAuthConfig = {
-  /** Native-script witness when the admin 222 token sits at a multisig address. */
+  /** When the admin 222 token is held at a native-script (multisig) address, supply the
+   *  Script here. The tx will attach the native-script witness so the UTxO is spendable.
+   *  Omit (or pass undefined) to use the default VK-wallet path — behaviour is unchanged. */
   adminScript?: Script;
-  /** Key hashes of the co-signers that will sign (declared via addSignerKey). */
+  /** Key hashes of the co-signers required by adminScript (for addSignerKey). Only used
+   *  when adminScript is present. Callers should pass exactly the M hashes that will sign. */
   adminSignerKeyHashes?: string[];
-  /** Destination for the admin 222 token after a script-admin spend.
-   *  Defaults to the admin UTxO's own address, preserving multisig custody. */
+  /** Optional destination for returning the admin 222 token after script-admin spend.
+   *  Defaults to the current admin UTxO address, preserving multisig delegation. */
   adminReturnAddress?: string;
 };
 
-/** Destination and value for returning the admin token after collecting adminUtxo.
- *  Script custody returns the FULL admin UTxO value to the script address so sibling
- *  assets never leak into the builder's change. VK custody returns just the admin
- *  unit; wallet change handles the rest. */
-export const adminTokenReturn = (
+/** Script-custody return output: pays the FULL admin UTxO value back to the script
+ *  address (or an explicit override) so sibling assets never leak into the builder's
+ *  change. No-op on the VK path — there the wallet's own change returns the token. */
+export const payAdminReturn = (
+  tx: TxBuilder,
   cfg: AdminAuthConfig,
   adminUtxo: UTxO,
-  adminUnit: string,
-  builderAddress: string,
-): { address: string; assets: Record<string, bigint> } =>
+): TxBuilder =>
   cfg.adminScript
-    ? {
-        address: cfg.adminReturnAddress ?? adminUtxo.address,
-        assets: adminUtxo.assets,
-      }
-    : { address: builderAddress, assets: { [adminUnit]: 1n } };
+    ? tx.pay.ToAddress(
+        cfg.adminReturnAddress ?? adminUtxo.address,
+        adminUtxo.assets,
+      )
+    : tx;
 
 /** Attaches the admin native-script witness and declares co-signer key hashes. */
 export const applyAdminWitness = (

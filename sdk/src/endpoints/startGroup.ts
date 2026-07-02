@@ -3,10 +3,10 @@ import {
   LucidEvolution,
   TxSignBuilder,
   RedeemerBuilder,
-  Script,
   UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { AdminAuthConfig, applyAdminWitness } from "../multisig/index.js";
 import { effectiveScriptRefs } from "../core/scripts.js";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
@@ -41,13 +41,6 @@ import {
 export type StartGroupConfig = {
   groupTokenSuffix: string;
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, omit for live
-  /** Native-script witness when the admin 222 token is at a multisig address. */
-  adminScript?: Script;
-  /** Key hashes to declare as required signers (co-signers of adminScript). */
-  adminSignerKeyHashes?: string[];
-  /** Optional destination for returning the admin 222 token after script-admin spend.
-   *  Defaults to the current admin UTxO address, preserving multisig delegation. */
-  adminReturnAddress?: string;
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO rather than included inline,
   // keeping the transaction well under the 16KB Cardano size limit.
@@ -55,7 +48,7 @@ export type StartGroupConfig = {
     treasury?: UTxO; // UTxO with scriptRef for treasury validator
     group?: UTxO; // UTxO with scriptRef for group validator
   };
-};
+} & AdminAuthConfig;
 
 export const unsignedStartGroupTxProgram = (
   protocol: Protocol,
@@ -132,11 +125,10 @@ export const unsignedStartGroupTxProgram = (
       inputs: [adminUtxo, groupUtxo],
     };
 
-    const { adminScript, adminSignerKeyHashes, adminReturnAddress } = config;
-    const adminTokenReturnAddress = adminScript
-      ? adminReturnAddress ?? adminUtxo.address
+    const adminTokenReturnAddress = config.adminScript
+      ? config.adminReturnAddress ?? adminUtxo.address
       : adminAddress;
-    const adminTokenReturnAssets = adminScript
+    const adminTokenReturnAssets = config.adminScript
       ? adminUtxo.assets
       : { [groupUserUnit]: 1n };
 
@@ -170,14 +162,7 @@ export const unsignedStartGroupTxProgram = (
           )
         : baseTx.attach.SpendingValidator(groupValidator.spendGroup);
 
-    const withAdminWitness = adminScript
-      ? withValidators.attach.SpendingValidator(adminScript)
-      : withValidators;
-
-    const withSigners = (adminSignerKeyHashes ?? []).reduce(
-      (t, kh) => t.addSignerKey(kh),
-      withAdminWitness,
-    );
+    const withSigners = applyAdminWitness(withValidators, config);
 
     const tx = yield* withSigners
       .completeProgram()

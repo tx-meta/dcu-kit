@@ -4,9 +4,13 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   toUnit,
-  Script,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import {
+  AdminAuthConfig,
+  applyAdminWitness,
+  payAdminReturn,
+} from "../multisig/index.js";
 import {
   TreasuryDatum,
   TreasuryDatumSchema,
@@ -46,14 +50,7 @@ import {
 export type ExtendGraceWindowConfig = {
   groupTokenSuffix: string;
   memberAccountTokenSuffix: string;
-  /** Native-script witness when the admin 222 token is at a multisig address. */
-  adminScript?: Script;
-  /** Key hashes to declare as required signers (co-signers of adminScript). */
-  adminSignerKeyHashes?: string[];
-  /** Optional destination for returning the admin 222 token after script-admin spend.
-   *  Defaults to the current admin UTxO address, preserving multisig delegation. */
-  adminReturnAddress?: string;
-};
+} & AdminAuthConfig;
 
 export const unsignedExtendGraceWindowTxProgram = (
   protocol: Protocol,
@@ -142,8 +139,6 @@ export const unsignedExtendGraceWindowTxProgram = (
       inputs: [adminUtxo, treasuryUtxo],
     };
 
-    const { adminScript, adminSignerKeyHashes, adminReturnAddress } = config;
-
     // groupValidator is not needed here — group UTxO is a read-only reference input.
     const baseTx0 = lucid
       .newTx()
@@ -159,20 +154,9 @@ export const unsignedExtendGraceWindowTxProgram = (
       .attach.SpendingValidator(treasuryValidator.spendTreasury)
       .readFrom([settingsUtxo]);
 
-    const baseTx = adminScript
-      ? baseTx0.pay.ToAddress(
-          adminReturnAddress ?? adminUtxo.address,
-          adminUtxo.assets,
-        )
-      : baseTx0;
-
-    const withAdminWitness = adminScript
-      ? baseTx.attach.SpendingValidator(adminScript)
-      : baseTx;
-
-    const withSigners = (adminSignerKeyHashes ?? []).reduce(
-      (t, kh) => t.addSignerKey(kh),
-      withAdminWitness,
+    const withSigners = applyAdminWitness(
+      payAdminReturn(baseTx0, config, adminUtxo),
+      config,
     );
 
     const tx = yield* withSigners

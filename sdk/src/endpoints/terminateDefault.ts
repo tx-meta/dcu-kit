@@ -6,9 +6,13 @@ import {
   Assets,
   toUnit,
   UTxO,
-  Script,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import {
+  AdminAuthConfig,
+  applyAdminWitness,
+  payAdminReturn,
+} from "../multisig/index.js";
 import { effectiveScriptRefs } from "../core/scripts.js";
 import {
   TreasuryDatum,
@@ -48,14 +52,7 @@ export type TerminateDefaultConfig = {
     treasury?: UTxO;
     group?: UTxO;
   };
-  /** Native-script witness when the admin 222 token is at a multisig address. */
-  adminScript?: Script;
-  /** Key hashes to declare as required signers (co-signers of adminScript). */
-  adminSignerKeyHashes?: string[];
-  /** Optional destination for returning the admin 222 token after script-admin spend.
-   *  Defaults to the current admin UTxO address, preserving multisig delegation. */
-  adminReturnAddress?: string;
-};
+} & AdminAuthConfig;
 
 // --- Endpoint ---
 
@@ -255,12 +252,7 @@ export const unsignedTerminateDefaultTxProgram = (
       .mintAssets(burnAssets, mintBurnRedeemer)
       .validFrom(Number(now));
 
-    const baseTx = config.adminScript
-      ? baseTx0.pay.ToAddress(
-          config.adminReturnAddress ?? adminUtxo.address,
-          adminUtxo.assets,
-        )
-      : baseTx0;
+    const baseTx = payAdminReturn(baseTx0, config, adminUtxo);
 
     // Reference scripts when provided — avoids inlining ~12KB of validator bytes.
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
@@ -274,16 +266,7 @@ export const unsignedTerminateDefaultTxProgram = (
             .attach.SpendingValidator(treasuryValidator.spendTreasury)
             .attach.SpendingValidator(groupValidator.spendGroup);
 
-    const { adminScript, adminSignerKeyHashes } = config;
-
-    const withAdminWitness = adminScript
-      ? withValidators.attach.SpendingValidator(adminScript)
-      : withValidators;
-
-    const withSigners = (adminSignerKeyHashes ?? []).reduce(
-      (t, kh) => t.addSignerKey(kh),
-      withAdminWitness,
-    );
+    const withSigners = applyAdminWitness(withValidators, config);
 
     // Returning the script-held admin token to its script address adds an output that
     // forces coin selection to pull a fee input AFTER the RedeemerBuilder indices were
@@ -291,7 +274,9 @@ export const unsignedTerminateDefaultTxProgram = (
     // redeemers"). Pre-setting a minimum fee makes the first selection pass reserve that
     // input up front, keeping the selected-input indices stable. Only on the script path
     // so the VK-wallet path is unchanged. Excess over the real fee returns as change.
-    const withMinFee = adminScript ? withSigners.setMinFee(2_000_000n) : withSigners;
+    const withMinFee = config.adminScript
+      ? withSigners.setMinFee(2_000_000n)
+      : withSigners;
 
     const tx = yield* withMinFee
       .readFrom([settingsUtxo])
