@@ -8,7 +8,7 @@ use cardano/transaction.{
 }
 use dcu/cip68
 use dcu/group.{GroupCip68Datum, GroupDatum, Pull}
-use dcu/recovery.{
+use dcu/quorum.{
   approvals_are_distinct, approvals_are_registry_members,
   collect_signed_approvals, recoveree_signed_for_token,
   signed_account_token_name,

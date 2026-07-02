@@ -5,11 +5,13 @@ use cardano/address.{VerificationKey}
 use cardano/assets.{AssetName, PolicyId}
 use cardano/transaction.{Input}
 
-// ─── Recovery helpers (Cluster A — lost-member identity rotation) ────────────
+// ─── Quorum helpers — generic M-of-N token-holder signature primitives ───────
 //
-// Shared by ProposeRecovery (Task 2.3) and, going forward, ApproveRecovery /
-// ExecuteRecovery (Tasks 2.4/2.6): every operation that counts toward member
-// quorum must prove the SAME two facts about an input —
+// Consumed today by the lost-member recovery flow (Propose/Approve/Cancel/
+// ExecuteRecovery in treasury_validation.ak); designed as PRODUCT-AGNOSTIC
+// primitives — any validator that counts token-holder consent (e.g. the escrow
+// family's investor-quorum verifier) imports from here. Every operation that
+// counts toward a quorum must prove the SAME two facts about an input —
 //   1. it holds exactly 1 token of a given name under account_policy_id
 //      (the bearer Account-222 token identifies a real member), and
 //   2. the input sits at a VerificationKey address whose PKH is in
