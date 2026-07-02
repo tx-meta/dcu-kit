@@ -55,6 +55,25 @@ The group can then be re-created with the remaining members (fresh slots by join
 order). This create-anew flow is what the planned **Recommit** feature automates in
 place — reset at a boundary, re-open joining, fresh first-come-first-served slots.
 
+## Group size ceiling (measured)
+
+The distribute transaction validates every active member's treasury in one pass, so the
+per-transaction execution budget caps group size. Measured with real UPLC execution
+(`aiken check -m scale_probe`, full round validation):
+
+| Members | Memory (of 14M limit) | CPU (of 10B limit) |
+| --- | --- | --- |
+| 5 | 2.49M — 18% | 0.77B — 8% |
+| 10 | 4.50M — 32% | 1.39B — 14% |
+| 15 | 6.66M — 48% | 2.05B — 20% |
+| 20 | 8.97M — 64% | 2.76B — 28% |
+| 30 | 14.05M — over the limit | 4.31B — 43% |
+
+The protocol cap (`max_group_members = 20`) keeps the heaviest transaction at ~64% of
+the memory budget, leaving headroom for the per-input spend checks and network variance.
+Groups larger than ~20 need the batching/linked-list design tracked for a future major
+version.
+
 ## Operator guidance
 
 - Prefer **Pull mode**: a paused rotation never strands an already-earmarked payout —
