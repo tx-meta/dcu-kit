@@ -1,0 +1,74 @@
+---
+title: Distribute Crank Runbook
+description: Who runs payday, how to automate it, and what to do when a round won't run.
+---
+
+`distributePayout` is **permissionless** — the validator doesn't care who submits it,
+only that the round is due and correctly built. Someone still has to build and pay for
+that transaction each round. This page is the operations guide for that "crank".
+
+## Prerequisite: stake registration (one-time, per deployment)
+
+The distribute transaction includes a 0-ADA withdrawal from the **treasury script's own
+stake credential** (the withdraw-zero pattern that keeps big rounds inside the execution
+budget). That credential must be **registered once** before the first distribute of any
+deployment. The emulator test setup does this automatically; on Preprod/mainnet it is
+part of the deploy-scripts flow. If a distribute fails with a withdrawal/reward-account
+error, this registration is the first thing to check.
+
+## Who cranks — by payout mode
+
+### Pull mode (recommended default)
+
+Under Pull, the pot is earmarked into the borrower's own treasury and they withdraw it
+with `claimPayout`. This makes the crank problem mostly solve itself:
+
+- **The borrower is the natural cranker.** They are the one person motivated to run
+  `distributePayout` the moment their round opens — it credits their own earmark — and
+  they pay their own transaction fee. `claimPayout` then pulls the funds to any address
+  they choose.
+- Nobody else has to do anything on payday, and a late crank hurts no one: the round
+  simply runs when someone submits it (the time gate is a *not-before*, never an
+  expiry).
+
+### Push mode (opt-in, trusted groups)
+
+Under Push the pot pays the borrower's wallet directly, so someone must crank every
+round even when the borrower is passive. Options, in order of preference:
+
+1. **Hosted bot** (see below) run by the platform or group admin.
+2. **Admin cranks manually** on a schedule matching `interval_length`.
+3. **Any member** — the call is permissionless; the group chat "can someone run
+   round 4?" works fine as a protocol.
+
+## Funded-bot setup (Push groups, or as a Pull backstop)
+
+A crank bot is a small scheduled job with its own funded wallet:
+
+- **Wallet:** a dedicated key with enough ADA for fees (a distribute costs a normal
+  script-tx fee; ~5 ADA of standing balance per group is comfortable). It never holds
+  group funds — it only pays fees.
+- **When is a round due?** Read the group datum: round `r = last_distributed_round + 1`
+  is due once `now >= start_time + r * interval_length` and the group `is_started` and
+  `is_active`. Poll on a fraction of `interval_length` (e.g. every interval/10).
+- **Build and submit:** `distributePayout({ groupTokenSuffix, scriptRefs })` — pass the
+  deployment's reference scripts (mandatory; inline scripts exceed the tx size limit).
+- **Retry policy:** on failure, back off and retry a few times, then alert a human.
+  Distinguish the two expected failure classes below from real errors.
+
+## When a round won't run
+
+| Symptom | Cause | Action |
+| --- | --- | --- |
+| "No member found for current slot" | The round's borrower is in `DefaultState` (grace window) or their slot is vacant (they exited) | Grace: wait — the member tops up via `contribute`, or the admin `extendGraceWindow`s; rounds resume when they recover. Vacant slot: the rotation is permanently halted — see [Rotation, Exits & Halts](/docs/rotation-lifecycle) for the wind-down procedure |
+| Time-gate failure (lower bound too early) | Cranked before `start_time + r × interval_length` | Wait; the bot's due-check above prevents this |
+| Withdrawal/reward-account error | Treasury stake credential not registered on this network | Run the deploy-scripts registration step (prerequisite above) |
+| Script-hash mismatch on reference input | Stale reference scripts from a previous deployment | Re-run deploy-scripts; update the bot's `scriptRefs` (or `configureReferenceScripts`) |
+
+## Economics
+
+There is deliberately **no protocol crank fee** today. Under Pull the motivated party
+(the borrower) pays their own way; under Push the operator absorbs a normal tx fee per
+round, which is the hosting cost of offering Push. A protocol-level crank incentive is
+reserved for a future release if live data shows a liveness gap — adding one is a fee
+mechanism decision, not a safety fix.
