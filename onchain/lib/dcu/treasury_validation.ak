@@ -1198,8 +1198,10 @@ pub fn validate_cancel_recovery(
 // [spec ExecuteRecovery 2]: timelock gate — get_lower_bound(tx) >= earliest_execution_slot
 // [spec ExecuteRecovery 3]: group spending input at Script(trusted_group_policy);
 //                           request.group_reference_tokenname links to this group;
-//                           len(approvals) >= group.recovery_threshold;
-//                           group.recovery_threshold <= group.member_count (sanity)
+//                           len(approvals ∩ current registry) >= effective threshold,
+//                           where effective = max(1, min(recovery_threshold,
+//                           member_count - 1)) — exited approvers are discounted and a
+//                           shrunken group keeps a reachable quorum
 // [spec ExecuteRecovery 4]: member treasury input at member_treasury_input_index;
 //                           datum TreasuryState | DefaultState; holds {N: 1} under own policy;
 //                           member_reference_tokenname == request.target_token (N)
@@ -1264,9 +1266,28 @@ pub fn validate_execute_recovery(
   // This is what gave the CancelRecovery veto its window.
   let timelock_passed = get_lower_bound(tx) >= earliest_execution_slot
 
-  // [spec ExecuteRecovery 3]: threshold gate — enough approvals and threshold is sane
-  let meets_threshold = list.length(approvals) >= group.recovery_threshold
-  let threshold_sane = group.recovery_threshold <= group.member_count
+  // [spec ExecuteRecovery 3]: quorum gate. Approvals are re-checked against the
+  // CURRENT registry — a member who vouched and then exited no longer counts. The
+  // threshold is clamped to the achievable maximum (member_count - 1: every member
+  // except the lost one, who can never self-vouch), so a group that shrank below its
+  // configured threshold keeps a reachable quorum instead of permanently losing
+  // recovery. Floored at 1 — at least one signed current member is always required.
+  let valid_approvals =
+    list.filter(approvals, fn(a) { list.has(group.member_token_names, a) })
+  let max_achievable = group.member_count - 1
+  let clamped =
+    if group.recovery_threshold > max_achievable {
+      max_achievable
+    } else {
+      group.recovery_threshold
+    }
+  let effective_threshold =
+    if clamped < 1 {
+      1
+    } else {
+      clamped
+    }
+  let meets_threshold = list.length(valid_approvals) >= effective_threshold
 
   // [spec ExecuteRecovery 4]: member treasury input holds {N: 1} under own policy.
   expect Some(member_treasury_input) = list.at(
@@ -1431,7 +1452,6 @@ pub fn validate_execute_recovery(
     group_link_valid?,
     timelock_passed?,
     meets_threshold?,
-    threshold_sane?,
     member_holds_n?,
     member_ref_tn_ok?,
     member_group_link_ok?,

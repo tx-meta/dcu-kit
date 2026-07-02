@@ -1707,6 +1707,145 @@ test execute_recovery__rejects_threshold_above_member_count() {
   !call_execute(tx)
 }
 
+// ─── Threshold clamp: shrunken group keeps a reachable quorum ─────────────────
+
+// recovery_threshold == member_count (3): the lost member can never self-vouch, so at
+// most 2 approvals are achievable and the configured threshold is unreachable. The
+// clamp (min(threshold, member_count - 1), floored at 1) makes ALL remaining members
+// vouching sufficient — recovery is not permanently lost.
+test execute_recovery__accepts_shrunken_group_all_remaining_vouch() {
+  let tp = treasury_policy()
+  let gp = group_policy()
+  let full_quorum_request_datum =
+    RecoveryRequest {
+      group_reference_tokenname: group_ref_tn(),
+      target_token: target_tn(),
+      new_member_tokenname: new_member_tn(),
+      new_payment_credential: recoveree_pkh(),
+      earliest_execution_slot: earliest_slot(),
+      approvals: [approver_a_tn(), approver_b_tn()],
+    }
+  let request_input =
+    Input {
+      output_reference: exec_request_ref(),
+      output: Output {
+        address: Address { payment_credential: Script(tp), stake_credential: None },
+        value: assets.from_lovelace(2_000_000)
+          |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+        datum: InlineDatum(full_quorum_request_datum),
+        reference_script: None,
+      },
+    }
+  let strict_group_datum =
+    GroupDatum { ..exec_group_datum(), recovery_threshold: 3 }
+  let strict_group_input =
+    Input {
+      output_reference: exec_group_ref(),
+      output: Output {
+        address: Address { payment_credential: Script(gp), stake_credential: None },
+        value: assets.from_lovelace(2_000_000)
+          |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+        datum: InlineDatum(
+          GroupCip68Datum { ..exec_group_cip68_datum(), extra: strict_group_datum },
+        ),
+        reference_script: None,
+      },
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      inputs: [strict_group_input, request_input, exec_member_treasury_input()],
+    }
+  call_execute(tx)
+}
+
+// ─── Registry re-check: exited approvers are discounted ──────────────────────
+
+// The single approval came from a member whose token is NO LONGER in the registry
+// (they exited after vouching). Discounted, valid approvals drop to 0 — reject.
+test execute_recovery__rejects_exited_approver_below_threshold() {
+  let gp = group_policy()
+  let shrunk_group_datum =
+    GroupDatum {
+      ..exec_group_datum(),
+      member_count: 2,
+      member_token_names: [target_tn(), approver_b_tn()],
+    }
+  let shrunk_group_input =
+    Input {
+      output_reference: exec_group_ref(),
+      output: Output {
+        address: Address { payment_credential: Script(gp), stake_credential: None },
+        value: assets.from_lovelace(2_000_000)
+          |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+        datum: InlineDatum(
+          GroupCip68Datum { ..exec_group_cip68_datum(), extra: shrunk_group_datum },
+        ),
+        reference_script: None,
+      },
+    }
+  // Request approvals = [approver_a] — who exited (absent from the registry above).
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      inputs: [shrunk_group_input, exec_request_input(), exec_member_treasury_input()],
+    }
+  !call_execute(tx)
+}
+
+// One approver exited (discounted) but another approval remains from a current
+// member — quorum still met, rotation proceeds.
+test execute_recovery__accepts_with_exited_approver_discounted() {
+  let tp = treasury_policy()
+  let gp = group_policy()
+  let two_approval_request_datum =
+    RecoveryRequest {
+      group_reference_tokenname: group_ref_tn(),
+      target_token: target_tn(),
+      new_member_tokenname: new_member_tn(),
+      new_payment_credential: recoveree_pkh(),
+      earliest_execution_slot: earliest_slot(),
+      approvals: [approver_a_tn(), approver_b_tn()],
+    }
+  let request_input =
+    Input {
+      output_reference: exec_request_ref(),
+      output: Output {
+        address: Address { payment_credential: Script(tp), stake_credential: None },
+        value: assets.from_lovelace(2_000_000)
+          |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+        datum: InlineDatum(two_approval_request_datum),
+        reference_script: None,
+      },
+    }
+  // approver_a exited; approver_b is still a member. threshold=1 → [b] suffices.
+  let shrunk_group_datum =
+    GroupDatum {
+      ..exec_group_datum(),
+      member_count: 2,
+      member_token_names: [target_tn(), approver_b_tn()],
+    }
+  let shrunk_group_input =
+    Input {
+      output_reference: exec_group_ref(),
+      output: Output {
+        address: Address { payment_credential: Script(gp), stake_credential: None },
+        value: assets.from_lovelace(2_000_000)
+          |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+        datum: InlineDatum(
+          GroupCip68Datum { ..exec_group_cip68_datum(), extra: shrunk_group_datum },
+        ),
+        reference_script: None,
+      },
+    }
+  let tx =
+    Transaction {
+      ..valid_execute_tx(),
+      inputs: [shrunk_group_input, request_input, exec_member_treasury_input()],
+    }
+  call_execute(tx)
+}
+
 // ─── Negative: economic field mutation ────────────────────────────────────────
 
 // The output changes rounds_paid — the rotation must preserve all economic fields exactly.
