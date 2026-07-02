@@ -79,11 +79,14 @@ export const createDefaultGroupDatum = (
   // start_time MUST be 0 at creation — validate_create_group enforces (start_time == 0).
   // startGroup sets it to get_lower_bound(tx) when sealing membership.
   start_time: 0n,
-  // Fixed 28-byte test placeholder for creator_payment_credential.
+  // Fixed 28-byte test placeholder for creator_payment_credential (VK kind).
   // With joining_fee: 0n this field is unused by the treasury validator,
-  // but validate_create_group requires exactly 28 bytes (56 hex chars).
-  creator_payment_credential:
-    "a0a1a2a3a4a5a6a7a8a9b0b1b2b3b4b5b6b7b8b9c0c1c2c3c4c5c6c7",
+  // but validate_create_group requires a 28-byte hash (56 hex chars).
+  creator_payment_credential: {
+    VerificationKey: [
+      "a0a1a2a3a4a5a6a7a8a9b0b1b2b3b4b5b6b7b8b9c0c1c2c3c4c5c6c7",
+    ] as [string],
+  },
   member_token_names: [],
   // 1 = PerRound (traditional ROSCA, default). Set to max_members for FullUpfront,
   // or any k in [1, max_members] for partial collateral.

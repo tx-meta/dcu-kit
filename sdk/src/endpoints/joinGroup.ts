@@ -238,15 +238,20 @@ export const unsignedJoinGroupTxProgram = (
       treasuryValidator.spendTreasury,
     );
 
-    // Route joining_fee to admin wallet when non-zero.
-    // Aiken checks: list.any(outputs, o -> pkh == creator_payment_credential && qty >= joining_fee)
+    // Route joining_fee to the creator credential when non-zero.
+    // Aiken checks: list.any(outputs, o ->
+    //   o.address.payment_credential == creator_payment_credential && qty >= joining_fee)
+    // — the credential may be a wallet key OR a script (multisig); pay whichever it is.
     const network = lucid.config().network!;
+    const creatorCred = groupDatum.creator_payment_credential;
     const adminFeeAddress =
       groupDatum.joining_fee > 0n
-        ? credentialToAddress(network, {
-            type: "Key",
-            hash: groupDatum.creator_payment_credential,
-          })
+        ? credentialToAddress(
+            network,
+            "VerificationKey" in creatorCred
+              ? { type: "Key", hash: creatorCred.VerificationKey[0] }
+              : { type: "Script", hash: creatorCred.Script[0] },
+          )
         : null;
     const adminFeeAssets: Assets | null =
       groupDatum.joining_fee > 0n

@@ -8,6 +8,43 @@ cryptic script errors. Validator hashes for each release are tabled at the botto
 
 ---
 
+## `0.3.0` → Unreleased (Coop-SDK Phase 2)
+
+New validator hashes (group `269dde42…`, treasury `87782df0…`) — re-run `deploy-scripts`
+when this releases. One breaking SDK type change:
+
+### `creator_payment_credential` is now a `Credential`
+
+The field was a bare 28-byte PKH string; it is now a tagged credential so joining fees
+can route to a multisig or contract.
+
+```ts
+// Before
+groupDatum: { ...params, creator_payment_credential: creatorPkh }
+
+// After — wallet key (the common case)
+groupDatum: {
+  ...params,
+  creator_payment_credential: { VerificationKey: [creatorPkh] },
+}
+
+// After — multisig fee destination (pass the script as proof)
+const multisig = await buildMultisig(lucid, { signers, required }).unsafeRun();
+createGroup(lucid, {
+  ...config,
+  groupDatum: {
+    ...params,
+    creator_payment_credential: { Script: [multisig.policyHash] },
+  },
+  creatorScript: multisig.script,
+});
+```
+
+`createGroup` rejects a `Script` credential without a matching `creatorScript` (or
+`force: true`), and always rejects protocol script hashes as fee destinations.
+
+---
+
 ## `0.2.7` → `0.3.0`  ⭐ current release
 
 The **continuous round model**. The group cycles indefinitely; there is no per-cycle

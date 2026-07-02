@@ -639,7 +639,9 @@ describe("Treasury Endpoints", () => {
 
         const { groupUtxo } = yield* setupGroup(base, {
           joining_fee: 1_000_000n,
-          creator_payment_credential: adminPkh,
+          creator_payment_credential: {
+            VerificationKey: [adminPkh] as [string],
+          },
         });
         const { userUtxo } = yield* setupAccount(base);
         if (!userUtxo)

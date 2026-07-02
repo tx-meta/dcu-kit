@@ -6,8 +6,10 @@ import {
   RedeemerBuilder,
   Constr,
   Assets,
+  Script,
   toUnit,
   fromText,
+  validatorToScriptHash,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum } from "../core/types.js";
@@ -20,6 +22,7 @@ import {
   assetNameLabels,
 } from "../core/utils/index.js";
 import {
+  ConfigurationError,
   DcuError,
   TransactionBuildError,
   ValidatorNotFoundError,
@@ -49,6 +52,13 @@ export type CreateGroupConfig = {
   groupDescription?: string;
   groupDatum: GroupDatum;
   utxoToSpend: OutRef;
+  /** Required when `groupDatum.creator_payment_credential` is a `Script` credential:
+   *  the script whose hash must match it. Joining fees route to this credential
+   *  forever (frozen at first join), so the SDK requires proof the destination is
+   *  spendable — a typo'd or unspendable script hash would burn every fee. */
+  creatorScript?: Script;
+  /** Skips creator-credential verification (not recommended). */
+  force?: boolean;
 };
 
 export const unsignedCreateGroupTxProgram = (
@@ -61,13 +71,56 @@ export const unsignedCreateGroupTxProgram = (
   never
 > =>
   Effect.gen(function* () {
-    const { groupValidator, groupPolicyId } = protocol;
+    const { groupValidator, groupPolicyId, treasuryPolicyId, accountPolicyId } =
+      protocol;
     const { groupName, groupDescription, groupDatum, utxoToSpend } = config;
 
     if (!groupPolicyId)
       yield* Effect.fail(
         new ValidatorNotFoundError({ validatorName: "group.mint" }),
       );
+
+    // Creator-credential guard. The credential is the joining-fee destination and is
+    // frozen once anyone joins, so a Script credential must be proven spendable
+    // (creatorScript hash match) and must not be a protocol script — a protocol
+    // script's own continuation outputs would satisfy the on-chain fee check, silently
+    // voiding the fee.
+    const creatorCred = groupDatum.creator_payment_credential;
+    if (!config.force && "Script" in creatorCred) {
+      const hash = creatorCred.Script[0];
+      const protocolHashes = [
+        groupPolicyId,
+        treasuryPolicyId,
+        accountPolicyId,
+      ].filter(Boolean);
+      if (protocolHashes.includes(hash)) {
+        return yield* Effect.fail(
+          new ConfigurationError({
+            configKey: "creator_payment_credential",
+            message:
+              "creator credential must not be a protocol script hash — the protocol's own outputs would satisfy the joining-fee check",
+          }),
+        );
+      }
+      if (!config.creatorScript) {
+        return yield* Effect.fail(
+          new ConfigurationError({
+            configKey: "creatorScript",
+            message:
+              "creator credential is a script; pass creatorScript proving the fee destination is spendable, or force: true",
+          }),
+        );
+      }
+      if (validatorToScriptHash(config.creatorScript) !== hash) {
+        return yield* Effect.fail(
+          new ConfigurationError({
+            configKey: "creatorScript",
+            message:
+              "creatorScript hash does not match creator_payment_credential",
+          }),
+        );
+      }
+    }
 
     const address = yield* getWalletAddress(lucid);
     const groupAddress = yield* getScriptAddress(

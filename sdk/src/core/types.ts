@@ -71,6 +71,16 @@ export type ProtocolSettings = Data.Static<typeof ProtocolSettingsSchema>;
 export const ProtocolSettings =
   ProtocolSettingsSchema as unknown as ProtocolSettings;
 
+// --- Credential (mirrors Aiken's cardano/address.Credential) ---
+// VerificationKey(hash) = Constr(0, [bytes]) — a wallet payment key hash.
+// Script(hash)          = Constr(1, [bytes]) — a native/Plutus script hash (e.g. multisig).
+export const CredentialSchema = Data.Enum([
+  Data.Object({ VerificationKey: Data.Tuple([Data.Bytes()]) }),
+  Data.Object({ Script: Data.Tuple([Data.Bytes()]) }),
+]);
+export type CredentialD = Data.Static<typeof CredentialSchema>;
+export const CredentialD = CredentialSchema as unknown as CredentialD;
+
 export const GroupDatumSchema = Data.Object({
   /** Policy ID of the contribution asset. Empty string (`""`) means ADA (lovelace). */
   contribution_fee_policyid: Data.Bytes(),
@@ -134,8 +144,12 @@ export const GroupDatumSchema = Data.Object({
    * incremented atomically with each `distributeRound` call.
    */
   last_distributed_round: Data.Integer(),
-  /** 28-byte payment key hash of the group creator. Joining fees are routed here. */
-  creator_payment_credential: Data.Bytes(),
+  /**
+   * Payment credential of the group creator — `{ VerificationKey: [pkh] }` for a wallet
+   * or `{ Script: [hash] }` for a multisig/contract. Joining fees are routed here, so a
+   * multisig-governed group can receive fees at the multisig itself.
+   */
+  creator_payment_credential: CredentialSchema,
   /** On-chain membership registry — one CIP-68 token name per active member. */
   member_token_names: Data.Array(Data.Bytes()),
   /**

@@ -6,6 +6,33 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+### Coop-SDK Phase 1–2 — modular multisig, credential fee routing, recovery quorum hardening
+
+**Immutable-contract change → new hashes** (group `269dde42…`, treasury `87782df0…`; account and
+settings unchanged). Not yet deployed — Preprod redeploy + external audit remain the gates.
+
+#### Added
+- **Standalone multisig module** — `@tx-meta/dcu-kit/multisig` subpath export (`buildMultisig`,
+  `AdminAuthConfig`, `payAdminReturn`, `applyAdminWitness`); `@tx-meta/dcu-kit/core` also exported.
+  Existing import paths keep working.
+- **Joining fees can route to a multisig.** `creator_payment_credential` is now a `Credential`
+  (`{ VerificationKey: [pkh] }` or `{ Script: [hash] }`); the on-chain fee check matches the
+  credential, whichever kind it is. `createGroup` verifies a `Script` creator credential is
+  spendable (`creatorScript` proof) and rejects protocol script hashes.
+- **`assignAdmin` destination guard** — transferring the admin token to a script address now
+  requires `destinationScript` proving the address is spendable (`force: true` to override).
+- Docs: “Rotation, Exits & Halts” page — vacant-slot semantics and the wind-down procedure.
+
+#### Changed
+- **ExecuteRecovery quorum hardened**: approvals are re-checked against the current registry
+  (exited vouchers no longer count) and the threshold is clamped to
+  `max(1, min(recovery_threshold, member_count − 1))` — a group that shrank below its configured
+  threshold keeps a reachable quorum instead of permanently losing recovery.
+- **Continuation outputs preserve the spent input's full address** in every SDK-built
+  transaction (stake credential included), matching the on-chain full-address pins.
+- Quorum helpers moved to `dcu/quorum` on-chain (generic M-of-N token-holder signature
+  primitives; behavior unchanged).
+
 ### Cluster A — flexible admin authority + lost-member recovery
 
 **Immutable-contract change → new hashes** (group `ade13889…`, treasury `a5e00e3b…`; account unchanged).
