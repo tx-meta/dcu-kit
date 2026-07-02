@@ -22,7 +22,6 @@ import {
   TransactionBuildError,
 } from "../core/errors.js";
 import {
-  getScriptAddress,
   getWalletAddress,
   parseSafeDatum,
   parseGroupCip68Datum,
@@ -114,10 +113,6 @@ export const unsignedContributeTxProgram = (
     const groupDatum = groupCip68.groupDatum;
 
     const address = yield* getWalletAddress(lucid);
-    const treasuryAddress = yield* getScriptAddress(
-      lucid,
-      treasuryValidator.spendTreasury,
-    );
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
 
     // The contribution asset may be ADA (empty policy id → "lovelace") or a native token.
@@ -177,10 +172,6 @@ export const unsignedContributeTxProgram = (
       // RECOVERY (DefaultState → TreasuryState): the group is SPENT with the Recover redeemer so
       // it can bump active_member_count (which lives in the group datum). Output layout:
       // [0] group (active_member_count + 1), [1] treasury (recovered TreasuryState).
-      const groupAddress = yield* getScriptAddress(
-        lucid,
-        groupValidator.spendGroup,
-      );
       const updatedGroupDatum: GroupDatum = {
         ...groupDatum,
         active_member_count: groupDatum.active_member_count + 1n,
@@ -231,7 +222,7 @@ export const unsignedContributeTxProgram = (
         .collectFrom([groupUtxo], recoverRedeemer)
         .addSigner(address)
         .pay.ToContract(
-          groupAddress,
+          groupUtxo.address,
           {
             kind: "inline",
             value: buildGroupCip68Datum(
@@ -243,7 +234,7 @@ export const unsignedContributeTxProgram = (
           groupUtxo.assets,
         )
         .pay.ToContract(
-          treasuryAddress,
+          treasuryUtxo.address,
           { kind: "inline", value: Data.to(outputDatum, TreasuryDatum) },
           outputAssets,
         );
@@ -312,7 +303,7 @@ export const unsignedContributeTxProgram = (
       .readFrom([groupUtxo])
       .addSigner(address)
       .pay.ToContract(
-        treasuryAddress,
+        treasuryUtxo.address,
         { kind: "inline", value: Data.to(outputDatum, TreasuryDatum) },
         outputAssets,
       );

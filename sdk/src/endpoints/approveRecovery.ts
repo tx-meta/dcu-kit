@@ -14,7 +14,6 @@ import {
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
-  getScriptAddress,
   getWalletAddress,
   parseSafeDatum,
   patchInlineDatum,
@@ -114,10 +113,6 @@ export const unsignedApproveRecoveryTxProgram = (
     };
 
     const address = yield* getWalletAddress(lucid);
-    const treasuryAddress = yield* getScriptAddress(
-      lucid,
-      treasuryValidator.spendTreasury,
-    );
 
     const groupRefInputIndex = referenceInputIndex(
       [groupUtxo, settingsUtxo],
@@ -147,7 +142,7 @@ export const unsignedApproveRecoveryTxProgram = (
       .collectFrom([approverUtxo])
       .readFrom([groupUtxo])
       .pay.ToContract(
-        treasuryAddress,
+        requestUtxo.address,
         { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
         requestUtxo.assets,
       )

@@ -233,11 +233,6 @@ export const unsignedJoinGroupTxProgram = (
         ),
       inputs: [groupUtxo, accountUtxo],
     };
-
-    const groupAddress = yield* getScriptAddress(
-      lucid,
-      groupValidator.spendGroup,
-    );
     const treasuryAddress = yield* getScriptAddress(
       lucid,
       treasuryValidator.spendTreasury,
@@ -270,7 +265,7 @@ export const unsignedJoinGroupTxProgram = (
       .collectFrom([accountUtxo])
       .mintAssets(mintingAssets, treasuryRedeemer)
       .pay.ToContract(
-        groupAddress,
+        groupUtxo.address,
         {
           kind: "inline",
           value: buildGroupCip68Datum(

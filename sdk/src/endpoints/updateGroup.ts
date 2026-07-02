@@ -18,7 +18,6 @@ import {
   UtxoNotFoundError,
 } from "../core/errors.js";
 import {
-  getScriptAddress,
   parseGroupCip68Datum,
   buildGroupCip68Datum,
   patchInlineDatum,
@@ -70,7 +69,6 @@ export const unsignedUpdateGroupTxProgram = (
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const adminUtxo = yield* resolveUtxoByUnit(lucid, adminUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
-    const address = yield* getScriptAddress(lucid, groupValidator.spendGroup);
 
     const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
 
@@ -117,7 +115,7 @@ export const unsignedUpdateGroupTxProgram = (
       .collectFrom([adminUtxo])
       .collectFrom([groupUtxo], redeemer)
       .pay.ToContract(
-        address,
+        groupUtxo.address,
         {
           kind: "inline",
           value: buildGroupCip68Datum(

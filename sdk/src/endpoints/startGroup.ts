@@ -11,7 +11,6 @@ import { effectiveScriptRefs } from "../core/scripts.js";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
-  getScriptAddress,
   parseGroupCip68Datum,
   buildGroupCip68Datum,
   getWalletAddress,
@@ -100,11 +99,6 @@ export const unsignedStartGroupTxProgram = (
       active_member_count: groupDatum.member_count,
       start_time: now,
     };
-
-    const groupAddress = yield* getScriptAddress(
-      lucid,
-      groupValidator.spendGroup,
-    );
     const adminAddress = yield* getWalletAddress(lucid);
 
     // RedeemerBuilder resolves admin_input_index and group_input_index from sorted tx.inputs
@@ -137,7 +131,7 @@ export const unsignedStartGroupTxProgram = (
       .collectFrom([adminUtxo])
       .collectFrom([groupUtxo], redeemer)
       .pay.ToContract(
-        groupAddress,
+        groupUtxo.address,
         {
           kind: "inline",
           value: buildGroupCip68Datum(

@@ -21,7 +21,6 @@ import {
   TransactionBuildError,
 } from "../core/errors.js";
 import {
-  getScriptAddress,
   getWalletAddress,
   parseSafeDatum,
   parseGroupCip68Datum,
@@ -112,10 +111,6 @@ export const unsignedClaimPayoutTxProgram = (
     const groupDatum = groupCip68.groupDatum;
 
     const address = yield* getWalletAddress(lucid);
-    const treasuryAddress = yield* getScriptAddress(
-      lucid,
-      treasuryValidator.spendTreasury,
-    );
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
 
     // The contribution asset may be ADA (empty policy id → "lovelace") or a native token.
@@ -180,7 +175,7 @@ export const unsignedClaimPayoutTxProgram = (
       .readFrom([groupUtxo])
       .addSigner(address)
       .pay.ToContract(
-        treasuryAddress,
+        treasuryUtxo.address,
         { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
         outputAssets,
       )

@@ -23,7 +23,6 @@ import {
   TransactionBuildError,
 } from "../core/errors.js";
 import {
-  getScriptAddress,
   parseGroupCip68Datum,
   getWalletAddress,
   parseSafeDatum,
@@ -101,10 +100,6 @@ export const unsignedExtendGraceWindowTxProgram = (
 
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
     const address = yield* getWalletAddress(lucid);
-    const treasuryAddress = yield* getScriptAddress(
-      lucid,
-      treasuryValidator.spendTreasury,
-    );
 
     const updatedDatum: TreasuryDatum = {
       DefaultState: {
@@ -147,7 +142,7 @@ export const unsignedExtendGraceWindowTxProgram = (
       .readFrom([groupUtxo])
       .addSigner(address)
       .pay.ToContract(
-        treasuryAddress,
+        treasuryUtxo.address,
         { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
         { lovelace: treasuryUtxo.assets.lovelace, [memberToken]: 1n },
       )

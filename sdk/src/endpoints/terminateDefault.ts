@@ -220,10 +220,6 @@ export const unsignedTerminateDefaultTxProgram = (
     );
 
     const address = yield* getWalletAddress(lucid);
-    const groupAddress = yield* getScriptAddress(
-      lucid,
-      groupValidator.spendGroup,
-    );
 
     // Grace gate: the validator requires get_lower_bound(tx) > grace_expires_at. Match the
     // slot-aligned validFrom used by exitGroup/distribute so the lower bound is deterministic.
@@ -238,7 +234,7 @@ export const unsignedTerminateDefaultTxProgram = (
       .collectFrom([treasuryUtxo], treasurySpendRedeemer)
       .addSigner(address)
       .pay.ToContract(
-        groupAddress,
+        groupUtxo.address,
         {
           kind: "inline",
           value: buildGroupCip68Datum(

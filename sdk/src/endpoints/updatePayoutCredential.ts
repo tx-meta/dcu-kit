@@ -19,7 +19,6 @@ import {
   TransactionBuildError,
 } from "../core/errors.js";
 import {
-  getScriptAddress,
   getWalletAddress,
   parseSafeDatum,
   patchInlineDatum,
@@ -89,11 +88,6 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
     // so the SDK value must match the key that signs the transaction.
     const address = yield* getWalletAddress(lucid);
     const newPkh = paymentCredentialOf(address).hash;
-
-    const treasuryAddress = yield* getScriptAddress(
-      lucid,
-      treasuryValidator.spendTreasury,
-    );
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
 
     const updatedDatum: TreasuryDatum = {
@@ -122,7 +116,7 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
       .collectFrom([treasuryUtxo], redeemer)
       .addSigner(address)
       .pay.ToContract(
-        treasuryAddress,
+        treasuryUtxo.address,
         { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
         { lovelace: treasuryUtxo.assets.lovelace, [memberToken]: 1n },
       )

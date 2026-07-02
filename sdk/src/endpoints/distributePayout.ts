@@ -122,10 +122,6 @@ export const unsignedDistributePayoutTxProgram = (
       lucid,
       treasuryValidator.spendTreasury,
     );
-    const groupAddress = yield* getScriptAddress(
-      lucid,
-      groupValidator.spendGroup,
-    );
     const rawTreasuryUtxos = yield* Effect.tryPromise({
       try: () => lucid.utxosAt(treasuryAddress),
       catch: (e) =>
@@ -371,7 +367,7 @@ export const unsignedDistributePayoutTxProgram = (
             .attach.SpendingValidator(treasuryValidator.spendTreasury);
 
     const baseTxWithGroup = baseTx.pay.ToContract(
-      groupAddress,
+      groupUtxo.address,
       {
         kind: "inline",
         value: buildGroupCip68Datum(
@@ -449,7 +445,7 @@ export const unsignedDistributePayoutTxProgram = (
             ...(outputBal > 0n ? { [contributionUnit]: outputBal } : {}),
           };
       return tx.pay.ToContract(
-        treasuryAddress,
+        state.utxo.address,
         { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
         outAssets,
       );

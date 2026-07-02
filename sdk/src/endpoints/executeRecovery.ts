@@ -17,7 +17,6 @@ import {
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
-  getScriptAddress,
   parseGroupCip68Datum,
   buildGroupCip68Datum,
   getWalletAddress,
@@ -181,14 +180,6 @@ export const unsignedExecuteRecoveryTxProgram = (
     rotatedAssets[newMemberToken] = 1n;
 
     const address = yield* getWalletAddress(lucid);
-    const groupAddress = yield* getScriptAddress(
-      lucid,
-      groupValidator.spendGroup,
-    );
-    const treasuryAddress = yield* getScriptAddress(
-      lucid,
-      treasuryValidator.spendTreasury,
-    );
 
     const rawNow =
       config.currentTime !== undefined
@@ -274,7 +265,7 @@ export const unsignedExecuteRecoveryTxProgram = (
       .collectFrom([groupUtxo], recoverMemberRedeemer)
       .mintAssets(burnAssets, mintBurnRedeemer)
       .pay.ToContract(
-        groupAddress,
+        groupUtxo.address,
         {
           kind: "inline",
           value: buildGroupCip68Datum(
@@ -286,7 +277,7 @@ export const unsignedExecuteRecoveryTxProgram = (
         groupUtxo.assets,
       )
       .pay.ToContract(
-        treasuryAddress,
+        memberTreasuryUtxo.address,
         { kind: "inline", value: Data.to(rotatedDatum, TreasuryDatum) },
         rotatedAssets,
       )

@@ -298,10 +298,6 @@ export const unsignedExitGroupTxProgram = (
     );
 
     const address = yield* getWalletAddress(lucid);
-    const groupAddress = yield* getScriptAddress(
-      lucid,
-      groupValidator.spendGroup,
-    );
 
     const penaltyDatum: TreasuryDatum = {
       PenaltyState: {
@@ -319,7 +315,7 @@ export const unsignedExitGroupTxProgram = (
       .collectFrom([treasuryUtxo], treasurySpendRedeemer)
       .addSigner(address)
       .pay.ToContract(
-        groupAddress,
+        groupUtxo.address,
         {
           kind: "inline",
           value: buildGroupCip68Datum(
@@ -336,7 +332,7 @@ export const unsignedExitGroupTxProgram = (
     // appended AFTER the penalty/burn so it never shifts those indices.
     const withPenaltyOrBurn = isEarlyExit
       ? baseTx.pay.ToContract(
-          treasuryAddress,
+          treasuryUtxo.address,
           { kind: "inline", value: Data.to(penaltyDatum, TreasuryDatum) },
           penaltyAssets,
         )
