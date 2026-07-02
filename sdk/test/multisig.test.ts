@@ -141,6 +141,7 @@ const setupMultisigAdmin = (
     const assignTx = yield* unsignedAssignAdminTxProgram(context.protocol!, lucid, {
       groupTokenSuffix,
       destinationAddress: multisig.address,
+      destinationScript: multisig.script,
     });
     yield* signAndSubmit(assignTx);
     yield* advanceBlock(context.emulator);
@@ -326,6 +327,7 @@ describe("assignAdmin", () => {
           {
             groupTokenSuffix,
             destinationAddress: multisig.address,
+            destinationScript: multisig.script,
           },
         );
         const txHash = yield* signAndSubmit(tx);
@@ -340,6 +342,114 @@ describe("assignAdmin", () => {
         );
         expect(adminAtMultisig).toBeDefined();
         expect(adminAtMultisig!.assets[adminUnit]).toBe(1n);
+      }),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// assignAdmin destination guard: sending the 222 authority token to a script
+// address is a one-way door, so the sender must prove the script is spendable
+// (destinationScript hash == destination payment credential) or pass force.
+// ---------------------------------------------------------------------------
+
+describe("assignAdmin destination guard", () => {
+  it.effect(
+    "fails when destination is a script address without destinationScript",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context } = base;
+        const { lucid, users } = context;
+
+        const { adminUtxo } = yield* setupGroup(base);
+        const groupTokenSuffix = extractTokenSuffix(
+          adminUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix222,
+        );
+        const multisig = yield* buildMultisig(lucid, {
+          signers: ["a".repeat(56), "b".repeat(56)],
+          required: 2,
+        });
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+
+        const result = yield* Effect.either(
+          unsignedAssignAdminTxProgram(context.protocol!, lucid, {
+            groupTokenSuffix,
+            destinationAddress: multisig.address,
+          }),
+        );
+        expect(result._tag).toBe("Left");
+        if (result._tag === "Left") {
+          expect(result.left._tag).toBe("ConfigurationError");
+        }
+      }),
+  );
+
+  it.effect(
+    "fails when destinationScript hash does not match the destination address",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context } = base;
+        const { lucid, users } = context;
+
+        const { adminUtxo } = yield* setupGroup(base);
+        const groupTokenSuffix = extractTokenSuffix(
+          adminUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix222,
+        );
+        const multisig = yield* buildMultisig(lucid, {
+          signers: ["a".repeat(56), "b".repeat(56)],
+          required: 2,
+        });
+        const otherMultisig = yield* buildMultisig(lucid, {
+          signers: ["c".repeat(56), "d".repeat(56), "e".repeat(56)],
+          required: 3,
+        });
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+
+        const result = yield* Effect.either(
+          unsignedAssignAdminTxProgram(context.protocol!, lucid, {
+            groupTokenSuffix,
+            destinationAddress: multisig.address,
+            destinationScript: otherMultisig.script,
+          }),
+        );
+        expect(result._tag).toBe("Left");
+        if (result._tag === "Left") {
+          expect(result.left._tag).toBe("ConfigurationError");
+        }
+      }),
+  );
+
+  it.effect(
+    "force: true skips destination verification for a script address",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context } = base;
+        const { lucid, users } = context;
+
+        const { adminUtxo } = yield* setupGroup(base);
+        const groupTokenSuffix = extractTokenSuffix(
+          adminUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix222,
+        );
+        const multisig = yield* buildMultisig(lucid, {
+          signers: ["a".repeat(56), "b".repeat(56)],
+          required: 2,
+        });
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+
+        const tx = yield* unsignedAssignAdminTxProgram(context.protocol!, lucid, {
+          groupTokenSuffix,
+          destinationAddress: multisig.address,
+          force: true,
+        });
+        expect(tx).toBeDefined();
       }),
   );
 });

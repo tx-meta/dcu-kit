@@ -1,6 +1,16 @@
-import { LucidEvolution, TxSignBuilder } from "@lucid-evolution/lucid";
+import {
+  getAddressDetails,
+  LucidEvolution,
+  Script,
+  TxSignBuilder,
+  validatorToScriptHash,
+} from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { DcuError, TransactionBuildError } from "../core/errors.js";
+import {
+  ConfigurationError,
+  DcuError,
+  TransactionBuildError,
+} from "../core/errors.js";
 import { assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
 import { Protocol } from "../core/validators/constants.js";
 
@@ -15,6 +25,14 @@ import { Protocol } from "../core/validators/constants.js";
 export type AssignAdminConfig = {
   groupTokenSuffix: string;
   destinationAddress: string;
+  /** Required when destinationAddress is a script address: the script whose hash
+   *  must match the destination's payment credential. Proves the sender holds the
+   *  spending preimage of where the authority token is going — a script address
+   *  that nobody can spend from would lose admin authority permanently. */
+  destinationScript?: Script;
+  /** Skips destination verification. The transfer is a one-way door; only use
+   *  this when the destination script is intentionally not at hand. */
+  force?: boolean;
 };
 
 /**
@@ -43,6 +61,46 @@ export const unsignedAssignAdminTxProgram = (
   Effect.gen(function* () {
     const { groupPolicyId } = protocol;
     const { groupTokenSuffix, destinationAddress } = config;
+
+    if (!config.force) {
+      const details = yield* Effect.try({
+        try: () => getAddressDetails(destinationAddress),
+        catch: () =>
+          new ConfigurationError({
+            configKey: "destinationAddress",
+            message: `not a valid address: ${destinationAddress}`,
+          }),
+      });
+      const payCred = details.paymentCredential;
+      if (!payCred) {
+        return yield* Effect.fail(
+          new ConfigurationError({
+            configKey: "destinationAddress",
+            message: "address has no payment credential",
+          }),
+        );
+      }
+      if (payCred.type === "Script") {
+        if (!config.destinationScript) {
+          return yield* Effect.fail(
+            new ConfigurationError({
+              configKey: "destinationScript",
+              message:
+                "destination is a script address; pass destinationScript proving it is spendable, or force: true",
+            }),
+          );
+        }
+        if (validatorToScriptHash(config.destinationScript) !== payCred.hash) {
+          return yield* Effect.fail(
+            new ConfigurationError({
+              configKey: "destinationScript",
+              message:
+                "destinationScript hash does not match the destination address payment credential",
+            }),
+          );
+        }
+      }
+    }
 
     const adminUnit =
       groupPolicyId + assetNameLabels.prefix222 + groupTokenSuffix;
