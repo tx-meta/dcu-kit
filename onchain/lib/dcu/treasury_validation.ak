@@ -563,6 +563,17 @@ pub fn validate_distribute_withdraw(
   )
   let borrower_present = borrower_cred_opt != None
 
+  // [VACANT-SLOT SEMANTICS — documented 2026-07-02, structural fix = Cluster B Recommit]:
+  // borrower_present requires a TreasuryState member at this round's slot. Slots are fixed
+  // at startGroup and never re-packed, so any mid-lifetime exit (penalty exit,
+  // TerminateDefault, or a mature exit followed by continued cycling) leaves a permanently
+  // vacant slot. When the rotation reaches it, distribution HALTS at that round: a
+  // defaulting borrower blocks only for their grace window (Contribute-recovery /
+  // ExtendGrace / TerminateDefault release it), but an EXITED member's slot blocks
+  // forever. The escape hatch is admin wind-down: UpdateGroup is_active=False → members
+  // free-exit → CloseGroup. Cluster B's Recommit (fresh FCFS slots at a reset) is the
+  // structural fix; see docs/dcu-docs/rotation-lifecycle.md.
+
   // [spec DistributeRound 6c / D3]: PRO-RATA pot = contribution_fee × cached active_member_count
   // (O(1), replaces the O(N²) count_active_members fold). C4 anti-skim is preserved by two pins:
   //   (1) spent_set_complete — the spent treasury set size == active_member_count, and

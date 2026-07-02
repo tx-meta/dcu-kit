@@ -1,0 +1,66 @@
+---
+title: Rotation, Exits & Halts
+description: What happens to a group's payout rotation when members default or leave, and how to wind a group down.
+---
+
+This page explains what happens to a group's payout rotation when members default or
+leave, and the procedures that keep or wind a group down. It documents **current
+protocol behavior** (continuous-round model); the structural fix for vacant slots is
+the planned Recommit feature.
+
+## How the rotation works
+
+- `startGroup` seals membership and fixes the schedule: `num_rounds = member_count`,
+  and each member keeps the `assigned_slot` they got at join (first-come, first-served).
+- Rounds run indefinitely: round `r` pays the member whose slot is `r % num_rounds`.
+  A **cycle** is one full lap of `num_rounds` rounds.
+- `distributePayout` (permissionless) requires the round's borrower to be present as a
+  healthy (`TreasuryState`) member. **Slots are never re-packed after start.**
+
+## What blocks a round — and for how long
+
+| Situation at the borrower's slot | Effect on the rotation | Release valve |
+| --- | --- | --- |
+| Borrower is healthy | Round proceeds | — |
+| Borrower is in `DefaultState` (grace window) | Rounds **pause** at their turn | Member tops up (`contribute` recovery) — the ONLY valve that resumes rounds; `extendGraceWindow` (max 2) buys time for it |
+| Borrower **exited** (penalty exit, terminated via `terminateDefault`, or mature exit while the group keeps cycling) | Rounds **halt permanently** when the rotation reaches the vacant slot | None within the current cycle model — see wind-down below |
+
+<Callout title="terminateDefault vacates the slot" type="warn">
+Terminating the blocked borrower frees their collateral and the member count, but it
+**vacates the slot** — it converts a paused rotation into a permanently halted one.
+Use it when the group has decided to wind down, not as a way to resume rounds.
+</Callout>
+
+Key nuance on exits:
+
+- **Exit after their turn in the current cycle:** the remaining rounds of this cycle
+  don't need their slot, so the current cycle completes. The halt arrives next lap.
+- **Exit before their turn:** the halt arrives within the current cycle, so members who
+  haven't completed the cycle cannot free-exit (free exit requires a completed cycle) —
+  they either penalty-exit or wait for wind-down.
+
+## Wind-down procedure (the escape hatch)
+
+When a group has a vacant slot it cannot cycle past, the admin (single key or multisig)
+winds the group down cleanly. No funds are lost:
+
+1. `updateGroup` with `is_active: false` — deactivation is one-way and always allowed.
+2. Every member calls `exitGroup` — with the group inactive, all exits are **free**
+   (token burned, full remaining balance returned, no penalty).
+3. Admin claims any outstanding `PenaltyState` UTxOs (`terminateGroup`) and handles any
+   expired defaulters (`terminateDefault`).
+4. `deleteGroup` — burns the group tokens and returns the creator bond.
+
+The group can then be re-created with the remaining members (fresh slots by join
+order). This create-anew flow is what the planned **Recommit** feature automates in
+place — reset at a boundary, re-open joining, fresh first-come-first-served slots.
+
+## Operator guidance
+
+- Prefer **Pull mode**: a paused rotation never strands an already-earmarked payout —
+  `claimPayout` works regardless of later rounds.
+- Treat any exit mid-lifetime as a signal to plan a boundary: wind down at the end of
+  the current cycle (or recommit, once available).
+- A defaulting borrower is not an emergency: the grace ladder exists for exactly that,
+  and rounds resume as soon as the member tops back up. Termination, by contrast, is a
+  wind-down decision — it never restarts the rotation.
