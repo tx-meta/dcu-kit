@@ -56,6 +56,8 @@ export type CreateEscrowConfig = {
   assetName?: string;
   /** Refund destination + abort co-authority. Defaults to the wallet address. */
   funderAddress?: string;
+  /** Clock override (POSIX ms) — pass `emulator.now()` in emulator tests. */
+  currentTime?: bigint;
 };
 
 const MIN_ADA_BUFFER = 2_000_000n;
@@ -89,7 +91,7 @@ export const unsignedCreateEscrowTxProgram = (
         }),
       );
     }
-    const now = BigInt(Date.now());
+    const now = config.currentTime ?? BigInt(Date.now());
     if (expiry <= now + 120_000n) {
       return yield* Effect.fail(
         new ConfigurationError({

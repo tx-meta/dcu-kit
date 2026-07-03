@@ -48,6 +48,8 @@ export type ReleaseMilestoneConfig = {
   stateTokenName: string;
   /** Required when the verifier credential is a script hash. */
   verifierWitness?: PartyWitness;
+  /** Clock override (POSIX ms) — pass `emulator.now()` in emulator tests. */
+  currentTime?: bigint;
 };
 
 export const unsignedReleaseMilestoneTxProgram = (
@@ -70,7 +72,7 @@ export const unsignedReleaseMilestoneTxProgram = (
         }),
       );
     }
-    const now = BigInt(Date.now());
+    const now = config.currentTime ?? BigInt(Date.now());
     if (now >= datum.expiry) {
       return yield* Effect.fail(
         new ConfigurationError({

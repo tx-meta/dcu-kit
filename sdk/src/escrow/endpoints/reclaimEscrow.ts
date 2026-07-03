@@ -40,6 +40,8 @@ export type ReclaimEscrowConfig = {
   stateTokenName: string;
   /** Required when the funder credential is a script hash. */
   funderWitness?: PartyWitness;
+  /** Clock override (POSIX ms) — pass `emulator.now()` in emulator tests. */
+  currentTime?: bigint;
 };
 
 export const unsignedReclaimEscrowTxProgram = (
@@ -53,7 +55,7 @@ export const unsignedReclaimEscrowTxProgram = (
     );
     const stateUnit = escrowPolicyId + config.stateTokenName;
 
-    const now = BigInt(Date.now());
+    const now = config.currentTime ?? BigInt(Date.now());
     if (now <= datum.expiry) {
       return yield* Effect.fail(
         new ConfigurationError({
@@ -84,8 +86,10 @@ export const unsignedReclaimEscrowTxProgram = (
       inputs: [escrowUtxo],
     };
 
-    // Reclaim requires a pinned lower bound strictly above expiry.
-    const validFrom = Number(datum.expiry + 1n);
+    // Reclaim requires a pinned lower bound strictly above expiry. One full slot
+    // past it — ms-to-slot conversion floors, and a bound that floors back to
+    // exactly expiry fails the strict on-chain check.
+    const validFrom = Number(datum.expiry + 1_000n);
 
     const baseTx = lucid
       .newTx()
