@@ -3,3 +3,9 @@
 // `endpoints`, `multisig`, or DCU-specific modules.
 export * from "./types.js";
 export * from "./validators.js";
+export * from "./utils.js";
+export * from "./endpoints/createEscrow.js";
+export * from "./endpoints/releaseMilestone.js";
+export * from "./endpoints/reclaimEscrow.js";
+export * from "./endpoints/abortEscrow.js";
+export * from "./queries/getEscrowState.js";
