@@ -1,7 +1,7 @@
 {
   "name": "@tx-meta/dcu-kit",
   "version": "0.3.0",
-  "description": "Offchain SDK for DCU Toolkit — ROSCA protocol on Cardano",
+  "description": "Offchain SDK for DCU Toolkit \u2014 ROSCA protocol on Cardano",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "module",
@@ -17,6 +17,10 @@
     "./core": {
       "import": "./dist/core/index.js",
       "types": "./dist/core/index.d.ts"
+    },
+    "./escrow": {
+      "import": "./dist/escrow/index.js",
+      "types": "./dist/escrow/index.d.ts"
     }
   },
   "files": [
@@ -46,7 +50,7 @@
   ],
   "scripts": {
     "clean": "rimraf dist",
-    "build": "tsup src/index.ts src/multisig/index.ts src/core/index.ts --minify --format esm,cjs --dts --clean",
+    "build": "tsup src/index.ts src/multisig/index.ts src/core/index.ts src/escrow/index.ts --minify --format esm,cjs --dts --clean",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,md}\"",

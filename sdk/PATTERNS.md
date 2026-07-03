@@ -36,12 +36,14 @@ sdk/src/
         └── utils.ts                  # parseSafeDatum
 ```
 
-**Module boundaries (enforced by review):** `core/` and `multisig/` NEVER import from
-`endpoints/`. Layering is `core` ← `multisig` ← `endpoints`. `multisig` and `core` are published
-as subpath exports (`@tx-meta/dcu-kit/multisig`, `@tx-meta/dcu-kit/core`) so other apps consume
-them without the ROSCA endpoints; keeping the boundary clean is what makes the future package
-split (coop-core / coop-multisig / coop-escrow / dcu-kit) mechanical.
-Check: `grep -rn "from \"../endpoints" src/core src/multisig` must return nothing.
+**Module boundaries (enforced by review):** `core/`, `multisig/`, and `escrow/` NEVER import
+from `endpoints/`; `escrow/` imports only `core/` (it has its OWN blueprint — `src/escrow/
+plutus.json` from the standalone `escrow/` Aiken project, never the DCU one). Layering is
+`core` ← `multisig` / `escrow` ← `endpoints`. All three are published as subpath exports
+(`@tx-meta/dcu-kit/multisig`, `/core`, `/escrow`) so other apps consume them without the ROSCA
+endpoints; keeping the boundary clean is what makes the future package split
+(coop-core / coop-multisig / coop-escrow / dcu-kit) mechanical.
+Check: `grep -rn "from \"../endpoints" src/core src/multisig src/escrow` must return nothing.
 
 **Build order when starting a new project:**
 
