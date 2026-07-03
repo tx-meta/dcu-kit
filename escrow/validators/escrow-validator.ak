@@ -3,8 +3,8 @@ use cardano/address.{Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{OutputReference, Transaction}
 use escrow/escrow_validation.{
-  only_own_input, validate_burn_escrow, validate_create_escrow,
-  validate_release,
+  only_own_input, validate_abort, validate_burn_escrow, validate_create_escrow,
+  validate_reclaim, validate_release,
 }
 use escrow/types.{
   Abort, BurnEscrow, CreateEscrow, EscrowDatum, EscrowMintRedeemer,
@@ -59,9 +59,37 @@ validator escrow_validator {
         )
       }
 
-      // Implemented in the next task; unreachable until then.
-      Reclaim { .. } -> fail
-      Abort { .. } -> fail
+      Reclaim { escrow_input_index, refund_index } -> {
+        // [security]: self-reference — the indexed input must be the UTxO being spent
+        expect Some(own_input) = list.at(inputs, escrow_input_index)
+        expect own_input.output_reference == utxo
+        expect Script(policy_id) = own_input.output.address.payment_credential
+
+        only_own_input(policy_id, inputs) && validate_reclaim(
+          policy_id,
+          escrow_datum,
+          own_input,
+          refund_index,
+          outputs,
+          mint,
+          self,
+        )
+      }
+
+      Abort { escrow_input_index } -> {
+        // [security]: self-reference — the indexed input must be the UTxO being spent
+        expect Some(own_input) = list.at(inputs, escrow_input_index)
+        expect own_input.output_reference == utxo
+        expect Script(policy_id) = own_input.output.address.payment_credential
+
+        only_own_input(policy_id, inputs) && validate_abort(
+          policy_id,
+          escrow_datum,
+          own_input,
+          mint,
+          self,
+        )
+      }
     }
   }
 

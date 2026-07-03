@@ -127,6 +127,53 @@ pub fn validate_release(
   }
 }
 
+// [spec 3.5 Reclaim]: strictly after expiry the funder recovers the remaining
+// asset balance to their own full address; the state token burns.
+pub fn validate_reclaim(
+  policy_id: PolicyId,
+  datum: EscrowDatum,
+  own_input: Input,
+  refund_index: Int,
+  outputs: List<Output>,
+  mint: Value,
+  tx: Transaction,
+) -> Bool {
+  expect Finite(lower) = tx.validity_range.lower_bound.bound_type
+  expect [Pair(state_name, 1)] =
+    dict.to_pairs(assets.tokens(own_input.output.value, policy_id))
+  expect Some(refund) = list.at(outputs, refund_index)
+  let in_value = own_input.output.value
+  and {
+    (lower > datum.expiry)?,
+    credential_authorized(datum.funder.payment_credential, tx)?,
+    (refund.address == datum.funder)?,
+    (assets.quantity_of(refund.value, datum.asset_policy, datum.asset_name) >= assets.quantity_of(
+      in_value,
+      datum.asset_policy,
+      datum.asset_name,
+    ))?,
+    (assets.quantity_of(mint, policy_id, state_name) == -1)?,
+  }
+}
+
+// [spec 3.5 Abort]: funder AND beneficiary co-sign; distribution is free (the only
+// two economic parties agreed); the state token burns.
+pub fn validate_abort(
+  policy_id: PolicyId,
+  datum: EscrowDatum,
+  own_input: Input,
+  mint: Value,
+  tx: Transaction,
+) -> Bool {
+  expect [Pair(state_name, 1)] =
+    dict.to_pairs(assets.tokens(own_input.output.value, policy_id))
+  and {
+    credential_authorized(datum.funder.payment_credential, tx)?,
+    credential_authorized(datum.beneficiary.payment_credential, tx)?,
+    (assets.quantity_of(mint, policy_id, state_name) == -1)?,
+  }
+}
+
 // [security]: burn-only — every quantity of this policy negative, nothing minted.
 // The spend paths (Release final / Reclaim / Abort) enforce WHICH token burns.
 pub fn validate_burn_escrow(policy_id: PolicyId, mint: Value) -> Bool {
