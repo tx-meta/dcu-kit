@@ -13,7 +13,7 @@ use escrow/types.{
 
 validator escrow_validator {
   mint(redeemer: EscrowMintRedeemer, policy_id: PolicyId, tx: Transaction) {
-    let Transaction { inputs, outputs, mint, .. } = tx
+    let Transaction { inputs, outputs, mint, validity_range, .. } = tx
 
     when redeemer is {
       CreateEscrow { seed_input_index, escrow_output_index } ->
@@ -24,6 +24,7 @@ validator escrow_validator {
           inputs,
           outputs,
           mint,
+          validity_range,
         )
       BurnEscrow -> validate_burn_escrow(policy_id, mint)
     }

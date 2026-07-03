@@ -73,6 +73,7 @@ test prop_create__exact_funding_boundary(datum0 via gen_escrow_datum()) {
         [seed_input()],
         [escrow_output(escrow_policy(), datum, value)],
         mint,
+        range_before(datum.expiry - 1),
       )
     }
   accepts(funded) && !accepts(short)

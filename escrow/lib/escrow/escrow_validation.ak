@@ -1,12 +1,18 @@
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/interval.{Finite}
+use aiken/interval.{Finite, Interval}
 use aiken/primitive/bytearray
 use cardano/assets.{PolicyId, Value}
 use cardano/address.{Script, VerificationKey}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use escrow/credential.{credential_authorized, state_token_name}
 use escrow/types.{EscrowDatum}
+
+// Release cost is linear in the milestone-list length (~17K mem/tranche measured);
+// the cap keeps the longest schedule's release under ~2M mem of the 14M budget and
+// closes the griefing vector where an unreleasable schedule strands the beneficiary
+// until the funder reclaims at expiry.
+pub const max_milestones: Int = 100
 
 fn credential_hash_valid(cred) {
   when cred is {
@@ -29,6 +35,7 @@ pub fn validate_create_escrow(
   inputs: List<Input>,
   outputs: List<Output>,
   mint: Value,
+  validity_range: Interval,
 ) -> Bool {
   expect Some(seed) = list.at(inputs, seed_input_index)
   let name = state_token_name(seed.output_reference)
@@ -36,12 +43,17 @@ pub fn validate_create_escrow(
   expect Some(out) = list.at(outputs, escrow_output_index)
   expect InlineDatum(raw) = out.datum
   expect datum: EscrowDatum = raw
+  // The pinned upper bound proves creation strictly before expiry — an escrow can
+  // never be born already reclaimable.
+  expect Finite(upper) = validity_range.upper_bound.bound_type
   and {
     (minted_name == name)?,
     (out.address.payment_credential == Script(policy_id))?,
     (assets.quantity_of(out.value, policy_id, name) == 1)?,
     (datum.released_count == 0)?,
     (datum.milestones != [])?,
+    (list.length(datum.milestones) <= max_milestones)?,
+    (upper < datum.expiry)?,
     list.all(datum.milestones, fn(m) { m > 0 })?,
     (assets.quantity_of(out.value, datum.asset_policy, datum.asset_name) >= milestones_total(
       datum.milestones,
