@@ -487,7 +487,7 @@ pub fn validate_claim_penalty_mint(own_policy_id: PolicyId, mint: Value) -> Bool
 // one-to-one indices and that every spent treasury UTxO is covered.
 // Walks the group's parallel registry (names <-> slots) and returns the token name
 // paired with `target` slot, or None when the slot is vacant (its holder exited).
-fn find_name_for_slot(
+pub fn find_name_for_slot(
   names: List<AssetName>,
   slots: List<Int>,
   target: Int,

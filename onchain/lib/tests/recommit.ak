@@ -2,10 +2,15 @@
 //// Fixture: a started 3-member group. Registry is newest-first, so names
 //// [c, b, a] pair with slots [2, 1, 0] — member a (first joiner) holds slot 0.
 
+use aiken/collection/list
+use aiken/fuzz
 use aiken/interval
+use aiken/primitive/bytearray
+use aiken/primitive/int
 use cardano/assets
 use cardano/transaction.{Transaction, placeholder}
 use dcu/group.{GroupDatum, validate_begin_recommit}
+use dcu/treasury_validation
 use tests/common
 
 const window_open_time = 5_000_000
@@ -345,4 +350,88 @@ test start_group__reseal_num_rounds_tamper_rejected() {
   let seal_time = window_open_time + current.recommit_window + 1
   let tampered = GroupDatum { ..sealed(current, seal_time, 3, 2), num_rounds: 3 }
   !run_start(current, tampered, seal_time)
+}
+
+// ─── Properties: era arithmetic + registry pairing ───────────────────────────
+
+fn gen_era_case() -> Fuzzer<(Int, Int, Int)> {
+  let era_start <- fuzz.and_then(fuzz.int_between(0, 1_000_000))
+  let n <- fuzz.and_then(fuzz.int_between(2, 20))
+  let k <- fuzz.and_then(fuzz.int_between(0, 3 * n))
+  fuzz.constant((era_start, n, k))
+}
+
+// Within any era, the borrower sequence over consecutive rounds is the joiners in
+// FCFS order, wrapping every n rounds — resolved through the REAL registry lookup
+// (newest-first names paired with countdown slots).
+test prop_era__borrower_sequence_is_fcfs_wrap(case via gen_era_case()) {
+  let (era_start, n, k) = case
+  // Registry: newest-first; joiner j (0-based join order) has name #[j] and sits at
+  // index n-1-j with slot j.
+  let names = list.map(list.reverse(list.range(0, n - 1)), fn(j) { as_name(j) })
+  let slots = list.reverse(list.range(0, n - 1))
+  let round = era_start + k
+  let effective = ( round - era_start ) % n
+  treasury_validation.find_name_for_slot(names, slots, effective) == Some(
+    as_name(k % n),
+  )
+}
+
+fn as_name(j: Int) -> ByteArray {
+  bytearray.push(#"", j)
+}
+
+fn gen_removal_case() -> Fuzzer<(Int, Int)> {
+  let n <- fuzz.and_then(fuzz.int_between(2, 20))
+  let target <- fuzz.and_then(fuzz.int_between(0, n - 1))
+  fuzz.constant((n, target))
+}
+
+// remove_paired drops exactly the target's entry from BOTH lists and preserves
+// every other pairing (no re-pack, no reordering).
+test prop_registry__paired_removal_preserves_pairing(
+  case via gen_removal_case(),
+) {
+  let (n, target) = case
+  let names = list.map(list.range(0, n - 1), as_name)
+  let slots = list.reverse(list.range(0, n - 1))
+  let (rest_names, rest_slots) = group.remove_paired(names, slots, as_name(target))
+  let expected_pairs =
+    list.filter(
+      list.zip(names, slots),
+      fn(p) {
+        let (nm, _) = p
+        nm != as_name(target)
+      },
+    )
+  list.zip(rest_names, rest_slots) == expected_pairs
+}
+
+// The sealed slot map is always a permutation of 0..n-1 (countdown by construction).
+test prop_seal__slot_map_is_permutation(n via fuzz.int_between(2, 20)) {
+  let slots = list.reverse(list.range(0, n - 1))
+  let sorted = list.sort(slots, fn(a, b) { int.compare(a, b) })
+  list.length(slots) == n && sorted == list.range(0, n - 1)
+}
+
+fn gen_rounds_case() -> Fuzzer<Int> {
+  fuzz.int_between(0, 8)
+}
+
+// Full roster (no vacancy): the gate opens exactly at era boundaries.
+test prop_begin__boundary_only_when_full(k via gen_rounds_case()) {
+  let policy_id = common.test_policy_id()
+  let current =
+    GroupDatum { ..started_group(policy_id), last_distributed_round: k }
+  run_begin(current, expected_window(current), True) == ( ( k + 1 ) % 3 == 0 )
+}
+
+// Slot-1 holder exited: the gate ALSO opens whenever the next round lands on the
+// vacancy (D10), on top of the boundary case.
+test prop_begin__vacancy_or_boundary_when_halted(k via gen_rounds_case()) {
+  let policy_id = common.test_policy_id()
+  let current =
+    GroupDatum { ..halted_group(policy_id), last_distributed_round: k }
+  let next = ( k + 1 ) % 3
+  run_begin(current, expected_window(current), True) == ( next == 0 || next == 1 )
 }

@@ -685,7 +685,7 @@ pub fn validate_join_group(
 // Slots may be [] (pre-start or recommit window) — then only the name is removed and the
 // map stays []. Names are unique (double-join is prevented), so first-match removal is
 // equivalent to a filter but keeps the two lists positionally paired.
-fn remove_paired(
+pub fn remove_paired(
   names: List<AssetName>,
   slots: List<Int>,
   target: AssetName,
