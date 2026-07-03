@@ -211,6 +211,17 @@ pub type GroupSpendRedeemer {
     // The rotated treasury UTxO holding N'.
     treasury_output_index: Int,
   }
+  // Opens the opt-out reset window (Cluster B Recommit). Gated on every remaining member
+  // being clean AND (a completed lap OR the next round's slot being provably vacant — the
+  // halt case). Sets is_started=False (blocks distribute, re-opens joining, makes every
+  // exit free) and clears member_slots; StartGroup re-seals after recommit_window elapses.
+  // Appended LAST to keep the Constr indices of all existing variants stable.
+  BeginRecommit {
+    group_ref_token_name: AssetName,
+    admin_input_index: Int,
+    group_input_index: Int,
+    group_output_index: Int,
+  }
 }
 
 // cip68_name_key: UTF-8 bytes for the string "name" — the standard CIP-68 display name key.
@@ -878,6 +889,95 @@ pub fn validate_start_group(
     admin_authorized?,
     not_already_started?,
     enough_members?,
+    (group_output.address == group_input.output.address)?,
+    (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
+      Pair(group_ref_token_name, 1),
+    ])?,
+    output_clean_value?,
+    (updated_cip68 == expected)?,
+    (out_ada >= in_ada)?,
+  }
+}
+
+// validate_begin_recommit
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE: self-reference check enforced at entry point.
+//
+// Opens the opt-out reset window (Cluster B). From here the EXISTING rules do the
+// rest automatically: distribute is blocked (is_started gate), joining re-opens
+// (!is_started), and every member's exit is free (pre-start exit rule) — legitimate
+// because the gate below guarantees every remaining member is clean. StartGroup
+// re-seals with fresh FCFS slots and a new era once recommit_window has elapsed.
+//
+// [spec Recommit 4 gate 1]: group is started and active
+// [spec Recommit 4 gate 2]: active_member_count == member_count — nobody defaulting,
+//   and (lockstep invariant) everyone settled through last_distributed_round.
+//   The reset is never a defaulter escape hatch.
+// [spec Recommit 4 gate 3]: a completed lap of the current era, OR the next round's
+//   slot is absent from member_slots — the rotation is provably halted (D10) and no
+//   distribute can ever run again.
+// [spec Recommit 4 effect]: is_started=False; start_time carries the window-open time
+//   (tx lower bound; is_started disambiguates its meaning); member_slots cleared.
+//   Everything else — counters, registry, funds — unchanged.
+pub fn validate_begin_recommit(
+  policy_id: PolicyId,
+  group_ref_token_name: AssetName,
+  admin_input_index: Int,
+  group_input_index: Int,
+  group_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
+  tx: Transaction,
+) -> Bool {
+  let (group_input, GroupCip68Datum { metadata, version, extra: current }) = load_group_input(
+    inputs,
+    group_input_index,
+    policy_id,
+    group_ref_token_name,
+  )
+
+  // Admin holds the user (222) token — same authority that starts the group.
+  let admin_authorized = group_admin_authorized(
+    inputs,
+    admin_input_index,
+    policy_id,
+    group_ref_token_name,
+  )
+
+  let next_era_round = current.last_distributed_round + 1 - current.era_start_round
+  let at_boundary = next_era_round % current.num_rounds == 0
+  let next_slot = next_era_round % current.num_rounds
+  let slot_vacant = !list.has(current.member_slots, next_slot)
+
+  let current_time = get_lower_bound(tx)
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect InlineDatum(output_datum_data) = group_output.datum
+  expect updated_cip68: GroupCip68Datum = output_datum_data
+
+  let expected = GroupCip68Datum {
+    metadata,
+    version,
+    extra: GroupDatum {
+      ..current,
+      is_started: False,
+      start_time: current_time,
+      member_slots: [],
+    },
+  }
+
+  // [security]: ADA must not decrease
+  let in_ada = assets.lovelace_of(group_input.output.value)
+  let out_ada = assets.lovelace_of(group_output.value)
+
+  // [security]: output holds only ADA + own policy
+  let output_clean_value = output_holds_only_own(group_output.value, policy_id)
+
+  and {
+    admin_authorized?,
+    current.is_started?,
+    current.is_active?,
+    (current.active_member_count == current.member_count)?,
+    (at_boundary || slot_vacant)?,
     (group_output.address == group_input.output.address)?,
     (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
       Pair(group_ref_token_name, 1),
