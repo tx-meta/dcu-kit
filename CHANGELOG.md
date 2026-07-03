@@ -6,6 +6,37 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+### Coop-SDK Phase 5 — Recommit / cycle reset (Cluster B)
+
+**Immutable-contract change → new hashes** (group `0fb5601d…`, treasury `1a132ad6…`; account and
+settings unchanged). Not deployed — supersedes the Phase-2 bundle in the open hash window.
+
+#### Added
+- **Recommit window** (`beginRecommit` + extended `startGroup`): at a completed lap OR a
+  provable vacant-slot halt (every remaining member clean), the admin opens an opt-out reset
+  window — distribution pauses, joining re-opens, every exit is free for at least
+  `recommit_window` (new group field, default 3 days). `startGroup` re-seals with fresh
+  first-come-first-served slots and a new rotation era. The vacant-slot halt finally has a
+  release valve; wind-down becomes the fallback.
+- `GroupDatum` gains `member_slots` (authoritative slot map, parallel to the registry),
+  `era_start_round`, and `recommit_window`.
+
+#### Changed
+- **Slot ownership moved to the group datum.** `assigned_slot` is removed from
+  `TreasuryState`/`DefaultState`; the distribute borrower is resolved from the group registry
+  by token name. All rotation math (slot, round time gate, exit maturity, ICS lap boundary) is
+  era-relative; `round_number` stays monotonic across resets.
+- Joining now enters in lockstep (`rounds_paid = last_distributed_round + 1`), which also
+  admits members during a recommit window.
+- `RecoverMember`/`executeRecovery` swap the registry entry in place, preserving the member's
+  rotation turn.
+
+#### Fixed
+- **Pre-start slot collision**: join → join → exit → join used to hand the new member a
+  colliding slot and leave slot 0 permanently vacant, bricking the group at round 0. Slots are
+  now assigned at seal time, making the scenario structurally impossible.
+- ICS transitions after a re-seal fire at the correct era-relative rounds.
+
 ### Coop-SDK Phase 4 — milestone escrow (`@tx-meta/dcu-kit/escrow`)
 
 A new standalone product in the cooperative-finance family. Own Aiken project and blueprint

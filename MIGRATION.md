@@ -8,6 +8,39 @@ cryptic script errors. Validator hashes for each release are tabled at the botto
 
 ---
 
+## Unreleased (Coop-SDK Phase 5 — Recommit)
+
+New validator hashes (group `0fb5601d…`, treasury `1a132ad6…`) superseding the Phase-2
+bundle — re-run `deploy-scripts` when this releases. Two breaking datum changes
+(indexers and anything parsing raw datums must update):
+
+### `GroupDatum` gains three fields (appended — existing field order unchanged)
+
+```ts
+groupDatum: {
+  ...params,
+  member_slots: [],            // authoritative slot map; [] until startGroup seals
+  era_start_round: 0n,         // rotation era base; managed by startGroup
+  recommit_window: 259_200_000n, // opt-out window length (3 days); yours to configure
+}
+```
+
+### `assigned_slot` removed from `TreasuryState` and `DefaultState`
+
+The rotation slot lives in the group datum's `member_slots` (parallel to
+`member_token_names`). Constructor field positions after the removed slot SHIFT —
+re-derive any hand-decoded treasury datums. A member's slot is now read as:
+
+```ts
+const ix = groupDatum.member_token_names.indexOf(memberRefTokenName);
+const slot = ix >= 0 ? groupDatum.member_slots[ix] : undefined; // undefined pre-seal
+```
+
+`joinGroup` no longer computes a slot; fresh members enter with
+`rounds_paid = last_distributed_round + 1` (0 on a fresh group).
+
+---
+
 ## `0.3.0` → Unreleased (Coop-SDK Phase 2)
 
 New validator hashes (group `269dde42…`, treasury `87782df0…`) — re-run `deploy-scripts`

@@ -4,9 +4,9 @@ description: What happens to a group's payout rotation when members default or l
 ---
 
 This page explains what happens to a group's payout rotation when members default or
-leave, and the procedures that keep or wind a group down. It documents **current
-protocol behavior** (continuous-round model); the structural fix for vacant slots is
-the planned Recommit feature.
+leave, and the procedures that reset or wind a group down. It documents **current
+protocol behavior**: the continuous-round model plus the **Recommit** reset window
+(the structural fix for vacant slots).
 
 ## How the rotation works
 
@@ -23,12 +23,12 @@ the planned Recommit feature.
 | --- | --- | --- |
 | Borrower is healthy | Round proceeds | — |
 | Borrower is in `DefaultState` (grace window) | Rounds **pause** at their turn | Member tops up (`contribute` recovery) — the ONLY valve that resumes rounds; `extendGraceWindow` (max 2) buys time for it |
-| Borrower **exited** (penalty exit, terminated via `terminateDefault`, or mature exit while the group keeps cycling) | Rounds **halt permanently** when the rotation reaches the vacant slot | None within the current cycle model — see wind-down below |
+| Borrower **exited** (penalty exit, terminated via `terminateDefault`, or mature exit while the group keeps cycling) | Rounds **halt** when the rotation reaches the vacant slot | **`beginRecommit`** — the halt provably opens the reset gate (the vacancy is visible on the group datum); see the Recommit window below. Wind-down remains the fallback |
 
 <Callout title="terminateDefault vacates the slot" type="warn">
 Terminating the blocked borrower frees their collateral and the member count, but it
-**vacates the slot** — it converts a paused rotation into a permanently halted one.
-Use it when the group has decided to wind down, not as a way to resume rounds.
+**vacates the slot** — the rotation halts there until the group recommits (or winds
+down). It never resumes rounds by itself.
 </Callout>
 
 Key nuance on exits:
@@ -39,10 +39,29 @@ Key nuance on exits:
   haven't completed the cycle cannot free-exit (free exit requires a completed cycle) —
   they either penalty-exit or wait for wind-down.
 
-## Wind-down procedure (the escape hatch)
+## The Recommit window (reset in place)
 
-When a group has a vacant slot it cannot cycle past, the admin (single key or multisig)
-winds the group down cleanly. No funds are lost:
+When the rotation stands at a completed lap — or is halted at a vacant slot with every
+remaining member clean — the admin opens a **recommit window** (`beginRecommit`):
+
+1. **Distribution pauses and joining re-opens.** The group is temporarily un-sealed.
+2. **Every exit is free** during the window — leaving is simply not staying. Staying
+   costs nothing (opt-out, like a real chama between cycles). The window lasts at least
+   `recommit_window` (default 3 days) — that guaranteed exit period IS the consent
+   mechanism, so no votes are needed.
+3. **`startGroup` re-seals**: everyone still in the registry gets a fresh
+   first-come-first-served slot (join/stay order), and the rotation resumes on the same
+   monotonic round counter with a new era. Collateral never moves; unclaimed Pull
+   earmarks ride through untouched.
+
+The gate is objective and defaulter-proof: it only opens when `active_member_count ==
+member_count` (nobody mid-default — a reset is never an escape hatch from obligations),
+and only at a lap boundary or a provable halt.
+
+## Wind-down procedure (the fallback)
+
+If the group prefers to dissolve rather than reset, the admin winds it down cleanly.
+No funds are lost:
 
 1. `updateGroup` with `is_active: false` — deactivation is one-way and always allowed.
 2. Every member calls `exitGroup` — with the group inactive, all exits are **free**
@@ -51,9 +70,9 @@ winds the group down cleanly. No funds are lost:
    expired defaulters (`terminateDefault`).
 4. `deleteGroup` — burns the group tokens and returns the creator bond.
 
-The group can then be re-created with the remaining members (fresh slots by join
-order). This create-anew flow is what the planned **Recommit** feature automates in
-place — reset at a boundary, re-open joining, fresh first-come-first-served slots.
+The group can then be re-created from scratch — but in almost every case the Recommit
+window above achieves the same outcome in two transactions instead of N+3, keeping the
+group's identity and history intact.
 
 ## Group size ceiling (measured)
 
@@ -78,8 +97,8 @@ version.
 
 - Prefer **Pull mode**: a paused rotation never strands an already-earmarked payout —
   `claimPayout` works regardless of later rounds.
-- Treat any exit mid-lifetime as a signal to plan a boundary: wind down at the end of
-  the current cycle (or recommit, once available).
+- Treat any exit mid-lifetime as a signal to plan a boundary: recommit at the end of
+  the current lap (or at the halt itself — the gate opens either way).
 - A defaulting borrower is not an emergency: the grace ladder exists for exactly that,
-  and rounds resume as soon as the member tops back up. Termination, by contrast, is a
-  wind-down decision — it never restarts the rotation.
+  and rounds resume as soon as the member tops back up. Termination, by contrast,
+  vacates the slot — plan a recommit after it.
