@@ -199,6 +199,21 @@ pub type TreasuryRedeemer {
     reserve_input_index: Int,
     reserve_output_index: Int,
   }
+  // Wind-down reserve refund: rides a member's ExitGroup while the group is
+  // deactivated. Each exiting member may take at most floor(balance /
+  // pre-exit member_count) — self-adjusting equal split, remainders roll
+  // forward. Datum frozen. Spend-only redeemer.
+  ReserveRefund {
+    group_ref_input_index: Int,
+    group_output_index: Int,
+    exiting_treasury_input_index: Int,
+    reserve_input_index: Int,
+    reserve_output_index: Int,
+  }
+  // Closes the reserve UTxO in the deleteGroup tx: the group ref token and the
+  // reserve token burn together (member_count == 0). Residue leaves with the
+  // builder. Spend redeemer; at mint it validates the single-token burn.
+  ReserveClose { group_input_index: Int }
 }
 
 /// Treasury Withdraw-Validator Redeemer (the "withdraw-zero" coupling).

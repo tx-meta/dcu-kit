@@ -6,6 +6,7 @@ use cardano/transaction.{Transaction}
 use dcu/cip68
 use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/reserve.{
+  validate_reserve_close, validate_reserve_refund,
   validate_reserve_cover,
   group_reserve_minted, validate_create_reserve, validate_reserve_topup,
 }
@@ -686,4 +687,234 @@ test reserve_cover__rejects_without_token_burn() {
 // member_count kept (an ExecuteRecovery rotation shape) — cover cannot ride it.
 test reserve_cover__rejects_without_member_removal() {
   !run_cover(cover_tx(400, 2, cover_burn(), 1))
+}
+
+// ─── ReserveRefund (wind-down equal split) ────────────────────────────────────
+
+// Deactivated 2-member group; one member exits and takes their reserve share.
+fn refund_group_datum(member_count: Int) -> GroupDatum {
+  GroupDatum {
+    ..common.test_group_datum(group_policy()),
+    is_active: False,
+    member_count,
+    active_member_count: member_count,
+    member_token_names: [cover_member_tn()],
+  }
+}
+
+fn refund_group_input() {
+  common.test_input(
+    transaction.OutputReference {
+      transaction_id: #"6666666666666666666666666666666666666666666666666666666666666666",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      group_policy(),
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
+      wrap_group(refund_group_datum(2)),
+    ),
+  )
+}
+
+fn refund_group_output() {
+  common.test_script_utxo(
+    group_policy(),
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
+    wrap_group(refund_group_datum(1)),
+  )
+}
+
+fn refund_exiting_input() {
+  common.test_input(
+    transaction.OutputReference {
+      transaction_id: #"7777777777777777777777777777777777777777777777777777777777777777",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      treasury_policy(),
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(
+            assets.from_asset(treasury_policy(), cover_member_tn(), 1),
+          ),
+      treasury.TreasuryState {
+        group_reference_tokenname: group_ref_tn(),
+        member_reference_tokenname: cover_member_tn(),
+        rounds_paid: 3,
+        member_payment_credential: common.test_pkh(),
+        claimable_balance: 0,
+      },
+    ),
+  )
+}
+
+// inputs: group(0), exiting treasury(1), reserve(2); outputs: group(0), reserve(1).
+// Reserve holds 1000 contribution units; pre-exit member_count = 2 → share 500.
+fn refund_tx(taken: Int, active_group: Bool, standin_out: Int) -> Transaction {
+  let group_in = if active_group {
+    common.test_input(
+      transaction.OutputReference {
+        transaction_id: #"6666666666666666666666666666666666666666666666666666666666666666",
+        output_index: 0,
+      },
+      common.test_script_utxo(
+        group_policy(),
+        assets.from_lovelace(2_000_000)
+          |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
+        wrap_group(
+          GroupDatum { ..refund_group_datum(2), is_active: True },
+        ),
+      ),
+    )
+  } else {
+    refund_group_input()
+  }
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      group_in,
+      refund_exiting_input(),
+      reserve_input(0, reserve_create_value() |> assets.merge(contribution(1000))),
+    ],
+    outputs: [
+      refund_group_output(),
+      reserve_output(
+        group_ref_tn(),
+        standin_out,
+        reserve_create_value()
+          |> assets.merge(contribution(1000 - taken)),
+      ),
+    ],
+  }
+}
+
+fn run_refund(tx: Transaction) -> Bool {
+  validate_reserve_refund(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    1,
+    2,
+    1,
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+test reserve_refund__accepts_exact_share() {
+  run_refund(refund_tx(500, False, 0))
+}
+
+test reserve_refund__accepts_below_share() {
+  run_refund(refund_tx(499, False, 0))
+}
+
+test reserve_refund__rejects_above_share() {
+  !run_refund(refund_tx(501, False, 0))
+}
+
+// Voluntary exit while the group is ACTIVE takes nothing from the pot.
+test reserve_refund__rejects_active_group() {
+  !run_refund(refund_tx(500, True, 0))
+}
+
+// Datum frozen — the stand-in counter cannot move through a refund.
+test reserve_refund__rejects_standin_tamper() {
+  !run_refund(refund_tx(500, False, 1))
+}
+
+// Growth through this redeemer is fine to reject too: refund must be >= 0 is
+// covered by the top-up path being the only value-in door — a negative "refund"
+// (deposit) still validates the bound, so assert the frozen-datum + bound holds.
+test reserve_refund__rejects_negative_refund_with_tamper() {
+  // taking -100 (depositing) while tampering standin must fail
+  !run_refund(refund_tx(-100, False, 1))
+}
+
+// ─── ReserveClose (dies with the group) ───────────────────────────────────────
+
+// inputs: group(0), reserve(1). Mint burns group ref + user + reserve token.
+fn close_tx(
+  member_count: Int,
+  burn_group_ref: Bool,
+  burn_reserve: Bool,
+) -> Transaction {
+  let group_in = common.test_input(
+    transaction.OutputReference {
+      transaction_id: #"8888888888888888888888888888888888888888888888888888888888888888",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      group_policy(),
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
+      wrap_group(
+        GroupDatum {
+          ..common.test_group_datum(group_policy()),
+          is_active: False,
+          member_count,
+        },
+      ),
+    ),
+  )
+  let group_burn = if burn_group_ref {
+    assets.from_asset(group_policy(), group_ref_tn(), -1)
+      |> assets.merge(assets.from_asset(group_policy(), group_user_tn(), -1))
+  } else {
+    assets.zero
+  }
+  let reserve_burn = if burn_reserve {
+    assets.from_asset(treasury_policy(), reserve_tn(), -1)
+  } else {
+    assets.zero
+  }
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      group_in,
+      reserve_input(0, reserve_create_value() |> assets.merge(contribution(37))),
+    ],
+    outputs: [],
+    mint: group_burn |> assets.merge(reserve_burn),
+  }
+}
+
+fn run_close(tx: Transaction) -> Bool {
+  validate_reserve_close(
+    treasury_policy(),
+    group_policy(),
+    0,
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+test reserve_close__accepts_genuine_deletion() {
+  run_close(close_tx(0, True, True))
+}
+
+test reserve_close__rejects_with_members_left() {
+  !run_close(close_tx(1, True, True))
+}
+
+test reserve_close__rejects_without_group_burn() {
+  !run_close(close_tx(0, False, True))
+}
+
+test reserve_close__rejects_without_reserve_burn() {
+  !run_close(close_tx(0, True, False))
+}
+
+// ─── group_reserve_burned (deletion coupling) ─────────────────────────────────
+
+test group_reserve_burned__accepts_burn() {
+  let mint = assets.from_asset(treasury_policy(), reserve_tn(), -1)
+  reserve.group_reserve_burned(treasury_policy(), group_ref_tn(), mint)
+}
+
+test group_reserve_burned__rejects_missing_burn() {
+  let mint = assets.from_asset(group_policy(), group_ref_tn(), -1)
+  !reserve.group_reserve_burned(treasury_policy(), group_ref_tn(), mint)
 }

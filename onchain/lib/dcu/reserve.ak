@@ -11,8 +11,8 @@ use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference, Transaction}
 use dcu/cip68
 use dcu/group.{GroupCip68Datum, GroupDatum}
-use dcu/treasury.{DefaultState, ReserveState, TreasuryDatum}
-use dcu/treasury_utils.{contributable_in}
+use dcu/treasury.{DefaultState, ReserveState, TreasuryDatum, TreasuryState}
+use dcu/treasury_utils.{ada_reserve_conserved, contributable_in}
 use dcu/utils.{only_allowed_policies}
 
 // validate_create_reserve
@@ -365,6 +365,193 @@ pub fn validate_reserve_cover(
   }
 }
 
+// validate_reserve_refund
+// ─────────────────────────────────────────────────────────────────────────────
+// Wind-down equal-split refund, riding a member's ExitGroup:
+// [spec Reserve refund 1]: the bound group is a SPENDING input at the trusted
+//   script with is_active == False (wind-down only), and its output shows the
+//   exit (member_count decremented) — voluntary exits while active take nothing
+// [spec Reserve refund 2]: the exiting treasury input belongs to this group —
+//   the refund is tied to a genuine member exit, one member one share
+// [spec Reserve refund 3]: refund <= floor(balance / pre-exit member_count) in
+//   the contribution asset — self-adjusting equal split, remainders roll
+//   forward (the last exiter's bound is the full remaining balance)
+// [spec Reserve refund 4]: datum frozen, address/token pinned, no foreign assets
+pub fn validate_reserve_refund(
+  own_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
+  group_ref_input_index: Int,
+  group_output_index: Int,
+  exiting_treasury_input_index: Int,
+  reserve_input_index: Int,
+  reserve_output_index: Int,
+  utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, outputs, .. } = tx
+
+  // self-reference + identity
+  expect Some(reserve_in) = list.at(inputs, reserve_input_index)
+  expect reserve_in.output_reference == utxo
+  expect InlineDatum(in_datum_data) = reserve_in.output.datum
+  expect ReserveState {
+    group_reference_tokenname,
+    standin_rounds: standin_in,
+  }: TreasuryDatum = in_datum_data
+  let reserve_token_name = cip68.convert_ref_to_reserve_token(
+    group_reference_tokenname,
+  )
+  expect
+    assets.quantity_of(
+      reserve_in.output.value,
+      own_policy_id,
+      reserve_token_name,
+    ) == 1
+
+  // [spec Reserve refund 1]
+  expect Some(group_input) = list.at(inputs, group_ref_input_index)
+  expect
+    group_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
+  expect
+    assets.quantity_of(
+      group_input.output.value,
+      trusted_group_policy,
+      group_reference_tokenname,
+    ) == 1
+  expect InlineDatum(group_datum_data) = group_input.output.datum
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
+
+  expect Some(group_output) = list.at(outputs, group_output_index)
+  expect InlineDatum(group_out_data) = group_output.datum
+  expect GroupCip68Datum { extra: updated_group, .. } = group_out_data
+  let member_exited = updated_group.member_count == group.member_count - 1
+
+  // [spec Reserve refund 2]
+  expect Some(exiting_input) = list.at(inputs, exiting_treasury_input_index)
+  expect InlineDatum(exiting_datum_data) = exiting_input.output.datum
+  expect exiting_datum: TreasuryDatum = exiting_datum_data
+  let exiting_member_of_this_group = when exiting_datum is {
+    TreasuryState { group_reference_tokenname: b, .. } ->
+      b == group_reference_tokenname
+    DefaultState { group_reference_tokenname: b, .. } ->
+      b == group_reference_tokenname
+    _ -> False
+  }
+
+  // [spec Reserve refund 3]
+  let in_contributable = contributable_in(
+    reserve_in.output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
+  expect Some(reserve_out) = list.at(outputs, reserve_output_index)
+  expect InlineDatum(out_datum_data) = reserve_out.datum
+  expect ReserveState {
+    group_reference_tokenname: out_binding,
+    standin_rounds: standin_out,
+  }: TreasuryDatum = out_datum_data
+  let out_contributable = contributable_in(
+    reserve_out.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
+  let refund = in_contributable - out_contributable
+  let share_bound = in_contributable / group.member_count
+
+  and {
+    (!group.is_active)?,
+    member_exited?,
+    exiting_member_of_this_group?,
+    (refund >= 0)?,
+    (refund <= share_bound)?,
+    // [spec Reserve refund 4]
+    (out_binding == group_reference_tokenname)?,
+    (standin_out == standin_in)?,
+    (reserve_out.address == reserve_in.output.address)?,
+    (dict.to_pairs(assets.tokens(reserve_out.value, own_policy_id)) == [
+      Pair(reserve_token_name, 1),
+    ])?,
+    only_allowed_policies(
+      reserve_out.value,
+      [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
+    )?,
+    ada_reserve_conserved(
+      reserve_in.output.value,
+      reserve_out.value,
+      group.contribution_fee_policyid,
+    )?,
+  }
+}
+
+// validate_reserve_close
+// ─────────────────────────────────────────────────────────────────────────────
+// The reserve dies with its group:
+// [spec Reserve close 1]: the group input (trusted script, holding the bound
+//   ref token) has member_count == 0 and its ref token is BURNED in this tx —
+//   the deleteGroup shape (CloseGroup validates deactivation + admin + burns)
+// [spec Reserve close 2]: own mint burns exactly the reserve token
+// No continuation output — any residue leaves with the deletion builder.
+pub fn validate_reserve_close(
+  own_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
+  group_input_index: Int,
+  utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, mint, .. } = tx
+
+  // own input + identity
+  expect Some(reserve_in) = list.find(
+    inputs,
+    fn(i) { i.output_reference == utxo },
+  )
+  expect InlineDatum(in_datum_data) = reserve_in.output.datum
+  expect ReserveState { group_reference_tokenname, .. }: TreasuryDatum =
+    in_datum_data
+  let reserve_token_name = cip68.convert_ref_to_reserve_token(
+    group_reference_tokenname,
+  )
+  expect
+    assets.quantity_of(
+      reserve_in.output.value,
+      own_policy_id,
+      reserve_token_name,
+    ) == 1
+
+  // [spec Reserve close 1]
+  expect Some(group_input) = list.at(inputs, group_input_index)
+  expect
+    group_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
+  expect
+    assets.quantity_of(
+      group_input.output.value,
+      trusted_group_policy,
+      group_reference_tokenname,
+    ) == 1
+  expect InlineDatum(group_datum_data) = group_input.output.datum
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
+  let group_dissolving =
+    group.member_count == 0 && assets.quantity_of(
+      mint,
+      trusted_group_policy,
+      group_reference_tokenname,
+    ) == -1
+
+  // [spec Reserve close 2]
+  let reserve_burned = dict.to_pairs(assets.tokens(mint, own_policy_id)) == [
+    Pair(reserve_token_name, -1),
+  ]
+
+  and {
+    group_dissolving?,
+    reserve_burned?,
+  }
+}
+
 // group_reserve_minted
 // ─────────────────────────────────────────────────────────────────────────────
 // Group-side half of the create coupling (called next to validate_create_group in
@@ -386,4 +573,22 @@ pub fn group_reserve_minted(
     treasury_policy_id,
     cip68.convert_ref_to_reserve_token(group_ref_name),
   ) == 1
+}
+
+// group_reserve_burned
+// ─────────────────────────────────────────────────────────────────────────────
+// Group-side half of the close coupling (called next to validate_close_group in
+// the group validator's CloseGroup path): the reserve token for this group must
+// burn in the same tx — a deleted group can never leave an orphaned reserve
+// (whose top-up/refund paths would be unreachable without the group UTxO).
+pub fn group_reserve_burned(
+  treasury_policy_id: PolicyId,
+  group_ref_token_name: AssetName,
+  mint: Value,
+) -> Bool {
+  assets.quantity_of(
+    mint,
+    treasury_policy_id,
+    cip68.convert_ref_to_reserve_token(group_ref_token_name),
+  ) == -1
 }

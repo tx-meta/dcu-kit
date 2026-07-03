@@ -11,7 +11,7 @@ use dcu/group.{
   validate_exit_group, validate_join_group, validate_recover_group,
   validate_recover_member, validate_start_group, validate_update_group,
 }
-use dcu/reserve.{group_reserve_minted}
+use dcu/reserve.{group_reserve_burned, group_reserve_minted}
 
 validator group_validator(treasury_policy_id: PolicyId) {
   mint(redeemer: GroupMintRedeemer, policy_id: PolicyId, tx: Transaction) {
@@ -100,14 +100,23 @@ validator group_validator(treasury_policy_id: PolicyId) {
         expect Some(group_input) = list.at(inputs, group_input_index)
         expect group_input.output_reference == utxo
 
-        validate_close_group(
-          policy_id,
-          group_ref_token_name,
-          admin_input_index,
-          group_input_index,
-          inputs,
-          self.mint,
-        )
+        // [spec Reserve close]: the reserve token burns with the group — a
+        // deletion can never orphan the pot (its spend paths need the group).
+        and {
+          group_reserve_burned(
+            treasury_policy_id,
+            group_ref_token_name,
+            self.mint,
+          ),
+          validate_close_group(
+            policy_id,
+            group_ref_token_name,
+            admin_input_index,
+            group_input_index,
+            inputs,
+            self.mint,
+          ),
+        }
       }
 
       Join {

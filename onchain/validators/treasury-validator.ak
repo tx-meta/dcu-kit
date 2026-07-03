@@ -6,14 +6,15 @@ use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/settings.{read_settings}
 use dcu/reserve.{
-  validate_create_reserve, validate_reserve_cover, validate_reserve_topup,
+  validate_create_reserve, validate_reserve_close, validate_reserve_cover,
+  validate_reserve_refund, validate_reserve_topup,
 }
 use dcu/treasury.{
   ApproveRecovery, CancelRecovery, ClaimPayout, ClaimPenalty, Contribute,
   CreateReserve, DistributeRound, DistributeWithdraw, ExecuteRecovery, ExitGroup,
-  ExtendGrace, JoinGroup, ProposeRecovery, ReserveCover, ReserveTopUp,
-  TerminateDefault, TreasuryDatum, TreasuryRedeemer, TreasuryWithdrawRedeemer,
-  UpdatePayout,
+  ExtendGrace, JoinGroup, ProposeRecovery, ReserveClose, ReserveCover,
+  ReserveRefund, ReserveTopUp, TerminateDefault, TreasuryDatum,
+  TreasuryRedeemer, TreasuryWithdrawRedeemer, UpdatePayout,
 } as treasury_types
 use dcu/treasury_validation.{
   validate_approve_recovery, validate_cancel_recovery, validate_cancel_recovery_mint,
@@ -98,6 +99,10 @@ validator treasury(settings_policy: PolicyId) {
       // CancelRecovery burns exactly N' (the authenticating token for the request).
       // The spend handler confirms the burn name matches the request's datum N' (cross-check).
       CancelRecovery { .. } -> validate_cancel_recovery_mint(policy_id, mint)
+
+      // ReserveClose burns exactly the reserve token (the spend handler pins the
+      // deleteGroup shape and the burned name).
+      ReserveClose { .. } -> validate_claim_penalty_mint(policy_id, mint)
 
       // ExecuteRecovery burns exactly N (the lost member's old identity token).
       // N' is relocated from the request UTxO into the rotated output — not re-minted.
@@ -408,6 +413,37 @@ validator treasury(settings_policy: PolicyId) {
           defaulter_input_index,
           reserve_input_index,
           reserve_output_index,
+          utxo,
+          self,
+        )
+
+      ReserveRefund {
+        group_ref_input_index,
+        group_output_index,
+        exiting_treasury_input_index,
+        reserve_input_index,
+        reserve_output_index,
+      } ->
+        // Wind-down equal-split refund riding a member exit — bounds and
+        // pinning inside.
+        validate_reserve_refund(
+          policy_id_from_utxo(inputs, utxo),
+          settings.group_policy,
+          group_ref_input_index,
+          group_output_index,
+          exiting_treasury_input_index,
+          reserve_input_index,
+          reserve_output_index,
+          utxo,
+          self,
+        )
+
+      ReserveClose { group_input_index } ->
+        // The reserve dies with its group (deleteGroup shape pinned inside).
+        validate_reserve_close(
+          policy_id_from_utxo(inputs, utxo),
+          settings.group_policy,
+          group_input_index,
           utxo,
           self,
         )
