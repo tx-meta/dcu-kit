@@ -48,6 +48,10 @@ import {
 } from "./terminateDefault.js";
 import { unsignedContributeTxProgram, ContributeConfig } from "./contribute.js";
 import {
+  unsignedTopUpReserveTxProgram,
+  TopUpReserveConfig,
+} from "./topUpReserve.js";
+import {
   unsignedUpdatePayoutCredentialTxProgram,
   UpdatePayoutCredentialConfig,
 } from "./updatePayoutCredential.js";
@@ -155,6 +159,9 @@ export const createDcuSdk = (settingsPolicy: string) => {
     contribute: (lucid: LucidEvolution, config: ContributeConfig) =>
       makeReturn(unsignedContributeTxProgram(protocol, lucid, config)),
 
+    topUpReserve: (lucid: LucidEvolution, config: TopUpReserveConfig) =>
+      makeReturn(unsignedTopUpReserveTxProgram(protocol, lucid, config)),
+
     updatePayoutCredential: (
       lucid: LucidEvolution,
       config: UpdatePayoutCredentialConfig,
@@ -247,6 +254,8 @@ export const createDcuSession = (
     terminateDefault: (config: TerminateDefaultConfig) =>
       sdk.terminateDefault(lucid, config),
     contribute: (config: ContributeConfig) => sdk.contribute(lucid, config),
+    topUpReserve: (config: TopUpReserveConfig) =>
+      sdk.topUpReserve(lucid, config),
     updatePayoutCredential: (config: UpdatePayoutCredentialConfig) =>
       sdk.updatePayoutCredential(lucid, config),
     extendGraceWindow: (config: ExtendGraceWindowConfig) =>

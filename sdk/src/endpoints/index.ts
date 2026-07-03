@@ -12,6 +12,7 @@ export * from "./exitGroup.js";
 export * from "./terminateGroup.js";
 export * from "./terminateDefault.js";
 export * from "./contribute.js";
+export * from "./topUpReserve.js";
 export * from "./updatePayoutCredential.js";
 export * from "./extendGraceWindow.js";
 export * from "./claimPayout.js";

@@ -388,6 +388,8 @@ export type JoinGroupTestParams = {
   groupUtxo: UTxO;
   accountUtxo: UTxO;
   userSeed: string;
+  // Optional deposit override (ADA groups) — prefund more rounds than the floor.
+  overrideDepositLovelace?: bigint;
   // Defaults to context.scriptRefs (deployed once per emulator context — see
   // test/context.ts) so join txs stay well under the inline size limit. Pass
   // `null` to force the inline-attach path for a specific test.
@@ -423,6 +425,9 @@ export const joinGroupTestCase = (
       groupTokenSuffix,
       accountTokenSuffix,
       currentTime,
+      ...(params.overrideDepositLovelace !== undefined
+        ? { overrideDepositLovelace: params.overrideDepositLovelace }
+        : {}),
       scriptRefs:
         scriptRefs === null ? undefined : scriptRefs ?? context.scriptRefs,
     };
