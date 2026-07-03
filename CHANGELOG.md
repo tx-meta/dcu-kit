@@ -6,6 +6,48 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+### Coop-SDK Phase 6 — Mutual reserve (Cluster C)
+
+**Immutable-contract change → new hashes** (group `32da6e88…`, treasury `d829dda8…`; account and
+settings unchanged). Not deployed — supersedes the Phase-5 bundle in the open hash window.
+
+#### Added
+- **Mutual reserve** — one `ReserveState` UTxO per group under the treasury validator, created
+  one-shot in the `createGroup` tx and identified by a permanent reserve token
+  (`"RSVE" + group suffix`, treasury policy). The on-chain welfare fund: configurable
+  `reserve_join_levy` (once per join) and `reserve_round_levy` (per member per round) accrue
+  into it; both default 0 (off) and freeze once a member joins.
+- **Objective default cover (the stand-in).** `terminateDefault` now routes the defaulter's
+  forfeited balance INTO the reserve and adds their remaining rounds this lap to
+  `standin_rounds`; while positive, each distribute round draws `min(fee, pot)` into the
+  payout so later borrowers still receive full pots. The counter decrements even on a dry
+  draw, and `beginRecommit`'s clean gate additionally requires `standin_rounds == 0`.
+- **Wind-down refunds.** Once deactivated, each `exitGroup` may take
+  `floor(balance / pre-exit member_count)` from the reserve (`claimReserveShare`, default on);
+  `deleteGroup` closes the reserve (token burn, residue to change).
+- New endpoint `topUpReserve` (permissionless, increase-only donations) and query
+  `getReserveState` (`balance`, `standinRounds`, `joinLevy`, `roundLevy`);
+  `reserveTokenName` helper. New `dcu/reserve.ak` on-chain module.
+- `scriptRefs` support added to `createGroup`, `deleteGroup`, `terminateGroup`,
+  `updatePayoutCredential`, and `extendGraceWindow` — create/delete now run both minting
+  policies and no longer fit inline together.
+
+#### Changed
+- **`TerminateDefault` forfeit destination**: reserve, not admin (the admin keeps only the
+  defaulter's min-ADA lovelace). `GroupDatum` gains `reserve_join_levy`/`reserve_round_levy`
+  (appended); `TreasuryDatum` gains the `ReserveState` variant (appended);
+  `TreasuryRedeemer` gains `CreateReserve`/`ReserveTopUp`/`ReserveCover`/`ReserveRefund`/
+  `ReserveClose` (appended); `BeginRecommit` gains `reserve_ref_input_index` (appended).
+  Indexer notes in [`MIGRATION.md`](./MIGRATION.md).
+- Scale probe re-measured with the reserve leg: N=20 worst case 10.54M mem (75% of budget) —
+  `max_group_members = 20` stands.
+
+#### Security
+- Review gate (MLabs checklist, full pass): one CONFIRMED major fixed — the reserve is
+  restricted to an enterprise address at creation, closing a creator staking-reward skim on
+  the communal pot. Cover/refund legs are pinned to shapes only a genuine
+  terminate/wind-down-exit can produce.
+
 ### Coop-SDK Phase 5 — Recommit / cycle reset (Cluster B)
 
 **Immutable-contract change → new hashes** (group `0fb5601d…`, treasury `1a132ad6…`; account and

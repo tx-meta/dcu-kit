@@ -82,16 +82,18 @@ per-transaction execution budget caps group size. Measured with real UPLC execut
 
 | Members | Memory (of 14M limit) | CPU (of 10B limit) |
 | --- | --- | --- |
-| 5 | 2.49M — 18% | 0.77B — 8% |
-| 10 | 4.50M — 32% | 1.39B — 14% |
-| 15 | 6.66M — 48% | 2.05B — 20% |
-| 20 | 8.97M — 64% | 2.76B — 28% |
-| 30 | 14.05M — over the limit | 4.31B — 43% |
+| 5 | 2.81M — 20% | 0.88B — 9% |
+| 10 | 5.01M — 36% | 1.55B — 16% |
+| 15 | 7.37M — 53% | 2.28B — 23% |
+| 20 | 9.88M — 71% | 3.05B — 31% |
+| 20 + reserve leg active | 10.54M — 75% | 3.25B — 33% |
+| 30 | 15.36M — over the limit | 4.73B — 47% |
 
-The protocol cap (`max_group_members = 20`) keeps the heaviest transaction at ~64% of
-the memory budget, leaving headroom for the per-input spend checks and network variance.
-Groups larger than ~20 need the batching/linked-list design tracked for a future major
-version.
+The protocol cap (`max_group_members = 20`) keeps the heaviest transaction — a round
+with the [mutual reserve](/docs/reserve) levy on and a stand-in draw active — at ~75%
+of the memory budget, leaving headroom for the per-input spend checks and network
+variance. Groups larger than ~20 need the batching/linked-list design tracked for a
+future major version.
 
 ## Operator guidance
 
@@ -101,4 +103,8 @@ version.
   the current lap (or at the halt itself — the gate opens either way).
 - A defaulting borrower is not an emergency: the grace ladder exists for exactly that,
   and rounds resume as soon as the member tops back up. Termination, by contrast,
-  vacates the slot — plan a recommit after it.
+  vacates the slot — plan a recommit after it. The terminated member's forfeited
+  balance funds the [mutual reserve](/docs/reserve), which then stands in for their
+  remaining contributions this lap — later borrowers still receive full pots up to
+  what the reserve holds. The recommit gate additionally waits for that cover to
+  finish paying out (`standin_rounds == 0`).

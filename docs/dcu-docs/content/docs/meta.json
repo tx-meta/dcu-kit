@@ -8,6 +8,7 @@
         "lifecycle",
         "rotation-lifecycle",
         "crank-runbook",
+        "reserve",
         "escrow",
         "error-reference",
         "api-reference"

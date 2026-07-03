@@ -8,6 +8,62 @@ cryptic script errors. Validator hashes for each release are tabled at the botto
 
 ---
 
+## Unreleased (Coop-SDK Phase 6 — Mutual reserve, Cluster C)
+
+New validator hashes (group `32da6e88…`, treasury `d829dda8…`) superseding the Phase-5
+bundle — re-run `deploy-scripts` when this releases. Indexer-impacting changes:
+
+### `GroupDatum` gains two fields (appended — existing field order unchanged)
+
+```ts
+groupDatum: {
+  ...params,
+  reserve_join_levy: 0n,   // one-time reserve levy per join, contribution asset
+  reserve_round_levy: 0n,  // per-member per-round reserve levy, contribution asset
+}
+```
+
+### `TreasuryDatum` gains a fifth variant: `ReserveState` (Constr index 4)
+
+```ts
+ReserveState: {
+  group_reference_tokenname: string; // the bound group's (100) ref token name
+  standin_rounds: bigint;            // fee-units owed to future rounds' pots
+}
+```
+
+Exactly one exists per group, created in the `createGroup` tx and identified by a
+reserve token under the **treasury** policy: `"52535645" ("RSVE") + group suffix`
+(`reserveTokenName(groupRefName)` in the SDK). Indexers watching the treasury address
+must expect this non-member UTxO.
+
+### `TerminateDefault` forfeit destination changed
+
+The defaulter's forfeited contributable balance now flows INTO the reserve (with a
+`standin_rounds` increment), not to the admin. The admin keeps only the defaulter's
+min-ADA lovelace as change. Anything reconciling terminate transactions must follow
+the new value flow.
+
+### `TreasuryRedeemer` gains five variants (appended)
+
+`CreateReserve`, `ReserveTopUp`, `ReserveCover`, `ReserveRefund`, `ReserveClose` —
+existing constructor indices unchanged.
+
+### `BeginRecommit` redeemer gains a field (appended)
+
+`reserve_ref_input_index` — the reserve rides recommit txs as a reference input; the
+clean gate additionally requires `standin_rounds == 0`.
+
+### `createGroup` / `deleteGroup` now run BOTH minting policies
+
+Creating a group also mints the reserve token (treasury `CreateReserve`); deletion
+burns it (`ReserveClose`). The two validators no longer fit inline together — these
+endpoints (plus `terminateGroup`, `updatePayoutCredential`, `extendGraceWindow`,
+`claimPayout` in size-tight paths) now accept `scriptRefs` and should be given the
+deployed reference scripts. `createGroup` also requires the settings UTxO on-chain.
+
+---
+
 ## Unreleased (Coop-SDK Phase 5 — Recommit)
 
 New validator hashes (group `0fb5601d…`, treasury `1a132ad6…`) superseding the Phase-2
