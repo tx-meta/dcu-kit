@@ -861,6 +861,12 @@ pub fn validate_start_group(
 
   // [spec StartGroup 5]: group output fields
   let current_time = get_lower_bound(tx)
+
+  // [spec Recommit re-seal]: when sealing a recommit window (rounds have run before),
+  // the opt-out window must have fully elapsed — start_time carries the window-open
+  // time while !is_started. A fresh group (last_distributed_round == -1) has no window.
+  let window_elapsed =
+    current.last_distributed_round < 0 || current_time >= current.start_time + current.recommit_window
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(output_datum_data) = group_output.datum
   expect updated_cip68: GroupCip68Datum = output_datum_data
@@ -875,6 +881,13 @@ pub fn validate_start_group(
       start_time: current_time,
       // [spec StartGroup 5b]: seal the active set = full membership at start.
       active_member_count: current.member_count,
+      // [spec Recommit re-seal]: fresh FCFS slots by registry order. The registry is
+      // newest-first, so slots count DOWN: the earliest joiner (list tail) gets slot 0
+      // and borrows first. A fresh group gets the same map — one code path seals both.
+      member_slots: list.reverse(list.range(0, current.member_count - 1)),
+      // The new era's rotation is re-based at the next monotonic round: 0 on a fresh
+      // group (last_distributed_round == -1), continuation otherwise.
+      era_start_round: current.last_distributed_round + 1,
     },
   }
 
@@ -889,6 +902,7 @@ pub fn validate_start_group(
     admin_authorized?,
     not_already_started?,
     enough_members?,
+    window_elapsed?,
     (group_output.address == group_input.output.address)?,
     (dict.to_pairs(assets.tokens(group_output.value, policy_id)) == [
       Pair(group_ref_token_name, 1),

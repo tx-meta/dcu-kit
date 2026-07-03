@@ -199,3 +199,150 @@ test begin_recommit__rejects_slots_kept() {
     True,
   )
 }
+
+// ─── StartGroup as the (re-)sealer ───────────────────────────────────────────
+
+fn run_start(
+  current: GroupDatum,
+  updated: GroupDatum,
+  lower_bound: Int,
+) -> Bool {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let group_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(policy_id, group_value, cip68(policy_id, current)),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68(policy_id, current),
+    ),
+  )
+  let group_output = common.test_script_utxo(
+    policy_id,
+    group_value,
+    cip68(policy_id, updated),
+  )
+  let tx = Transaction {
+    ..placeholder,
+    inputs: [group_input, admin_input],
+    outputs: [group_output],
+    validity_range: interval.after(lower_bound),
+  }
+  group.validate_start_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+    tx,
+  )
+}
+
+fn sealed(current: GroupDatum, at: Int, era: Int, n: Int) -> GroupDatum {
+  GroupDatum {
+    ..current,
+    is_started: True,
+    num_rounds: n,
+    start_time: at,
+    active_member_count: n,
+    member_slots: countdown(n),
+    era_start_round: era,
+  }
+}
+
+// Registry is newest-first, so slots count down: [n-1, .., 0].
+fn countdown(n: Int) -> List<Int> {
+  when n is {
+    2 -> [1, 0]
+    3 -> [2, 1, 0]
+    _ -> fail @"unsupported fixture size"
+  }
+}
+
+test start_group__fresh_seal_assigns_slots_and_era_zero() {
+  let policy_id = common.test_policy_id()
+  let current =
+    GroupDatum {
+      ..common.test_group_datum(policy_id),
+      member_count: 2,
+      member_token_names: [#"bbbb", #"aaaa"],
+    }
+  run_start(current, sealed(current, 9_000, 0, 2), 9_000)
+}
+
+// The spec §1 collision scenario: A and B join, A exits pre-start, C joins.
+// Registry (newest-first): [c, b]. Seal assigns [1, 0] — b (earliest remaining)
+// borrows first, no collision, no vacant slot. The bug is structurally gone.
+test start_group__pre_start_exit_rejoin_starts_cleanly() {
+  let policy_id = common.test_policy_id()
+  let current =
+    GroupDatum {
+      ..common.test_group_datum(policy_id),
+      member_count: 2,
+      member_token_names: [#"cccc", #"bbbb"],
+    }
+  run_start(current, sealed(current, 9_000, 0, 2), 9_000)
+}
+
+// Recommit-window state: rounds have run (last_distributed_round = 2), one member
+// exited during the window, start_time carries the window-open time.
+fn window_group(policy_id) -> GroupDatum {
+  GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 2,
+    active_member_count: 3,
+    is_started: False,
+    num_rounds: 3,
+    start_time: window_open_time,
+    last_distributed_round: 2,
+    era_start_round: 0,
+    member_token_names: [#"cccc", #"aaaa"],
+    member_slots: [],
+  }
+}
+
+test start_group__reseal_after_window_starts_new_era() {
+  let policy_id = common.test_policy_id()
+  let current = window_group(policy_id)
+  let seal_time = window_open_time + current.recommit_window + 1
+  run_start(current, sealed(current, seal_time, 3, 2), seal_time)
+}
+
+test start_group__reseal_before_window_rejected() {
+  let policy_id = common.test_policy_id()
+  let current = window_group(policy_id)
+  let too_early = window_open_time + current.recommit_window - 1
+  !run_start(current, sealed(current, too_early, 3, 2), too_early)
+}
+
+test start_group__reseal_era_tamper_rejected() {
+  let policy_id = common.test_policy_id()
+  let current = window_group(policy_id)
+  let seal_time = window_open_time + current.recommit_window + 1
+  let tampered = GroupDatum { ..sealed(current, seal_time, 3, 2), era_start_round: 0 }
+  !run_start(current, tampered, seal_time)
+}
+
+test start_group__reseal_slot_order_tamper_rejected() {
+  let policy_id = common.test_policy_id()
+  let current = window_group(policy_id)
+  let seal_time = window_open_time + current.recommit_window + 1
+  let tampered = GroupDatum { ..sealed(current, seal_time, 3, 2), member_slots: [0, 1] }
+  !run_start(current, tampered, seal_time)
+}
+
+test start_group__reseal_num_rounds_tamper_rejected() {
+  let policy_id = common.test_policy_id()
+  let current = window_group(policy_id)
+  let seal_time = window_open_time + current.recommit_window + 1
+  let tampered = GroupDatum { ..sealed(current, seal_time, 3, 2), num_rounds: 3 }
+  !run_start(current, tampered, seal_time)
+}
