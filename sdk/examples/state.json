@@ -16,5 +16,7 @@
   "groupPolicyId": "baf4af179a495f9fd4f1ec40cfd9a9969d61a777e1f15f9b8e9f9627",
   "groupIntervalLength": 300000,
   "groupStartTime": 1780667299000,
-  "groupNumRounds": 2
+  "groupNumRounds": 2,
+  "accountTokenSuffix": "257041c0dd95f9aef7e940d20d4a583f6d2b5263b4e8a5c824aa588a",
+  "groupTokenSuffix": "ded07295eff5ed61dfac32612d1510df27788566b9e8287115df9593"
 }

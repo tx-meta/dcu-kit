@@ -25,34 +25,34 @@ import {
 } from "../core/errors.js";
 
 /**
- * Creates an unsigned transaction for starting a DCU Group.
+ * Creates an unsigned transaction opening a group's recommit window.
  *
  * **Functionality:**
- * - Seals membership: no new members can join after startGroup.
- * - Sets num_rounds = member_count (fixing the rotation schedule).
- * - Sets start_time = tx validity lower bound (anchoring the schedule).
- * - Requires at least 2 members (enforced by the on-chain validator).
+ * - Admin-only, and only when every remaining member is clean AND the rotation is at
+ *   a completed lap OR provably halted at a vacant slot (a member exited mid-cycle).
+ * - During the window: distribution is blocked, joining re-opens, and every member's
+ *   exit is FREE — leaving is simply not staying. Staying costs nothing (opt-out).
+ * - After `recommit_window` elapses, `startGroup` re-seals: fresh first-come
+ *   first-served slots by registry order and a new rotation era. Rounds resume on the
+ *   same monotonic counter.
  *
- * @param lucid - Lucid instance with wallet selected.
- * @param config - StartGroup Configuration.
+ * @param lucid - Lucid instance with the admin wallet selected.
+ * @param config - BeginRecommit Configuration.
  * @returns Effect yielding a TxSignBuilder ready for signing.
  */
-export type StartGroupConfig = {
+export type BeginRecommitConfig = {
   groupTokenSuffix: string;
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, omit for live
-  // Reference script UTxOs (from deploy-scripts). When provided, the validator
-  // script bytes are resolved from the on-chain UTxO rather than included inline,
-  // keeping the transaction well under the 16KB Cardano size limit.
   scriptRefs?: {
-    treasury?: UTxO; // UTxO with scriptRef for treasury validator
-    group?: UTxO; // UTxO with scriptRef for group validator
+    treasury?: UTxO;
+    group?: UTxO;
   };
 } & AdminAuthConfig;
 
-export const unsignedStartGroupTxProgram = (
+export const unsignedBeginRecommitTxProgram = (
   protocol: Protocol,
   lucid: LucidEvolution,
-  config: StartGroupConfig,
+  config: BeginRecommitConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     const { groupValidator, groupPolicyId } = protocol;
@@ -83,7 +83,7 @@ export const unsignedStartGroupTxProgram = (
       );
     const groupRefName = groupRefAsset.slice(groupPolicyId.length);
 
-    // validFrom = start_time; Aiken reads it via get_lower_bound(tx)
+    // validFrom = window-open time; the validator records it in start_time
     const rawNow =
       config.currentTime !== undefined
         ? config.currentTime
@@ -91,34 +91,25 @@ export const unsignedStartGroupTxProgram = (
     const now =
       config.currentTime !== undefined ? rawNow : rawNow - (rawNow % 1000n);
 
-    const memberCount = Number(groupDatum.member_count);
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
-      is_started: true,
-      num_rounds: groupDatum.member_count,
-      // Seal the active set = full membership at start.
-      active_member_count: groupDatum.member_count,
+      is_started: false,
+      // While !is_started, start_time carries the window-open time — the re-sealing
+      // startGroup enforces now >= start_time + recommit_window against it.
       start_time: now,
-      // Fresh FCFS slots by registry order. The registry is newest-first, so slots
-      // count DOWN: the earliest joiner (list tail) gets slot 0 and borrows first.
-      member_slots: Array.from({ length: memberCount }, (_, i) =>
-        BigInt(memberCount - 1 - i),
-      ),
-      // New era re-based at the next monotonic round (0 on a fresh group).
-      era_start_round: groupDatum.last_distributed_round + 1n,
+      member_slots: [],
     };
     const adminAddress = yield* getWalletAddress(lucid);
 
-    // RedeemerBuilder resolves admin_input_index and group_input_index from sorted tx.inputs
     const redeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (indices: bigint[]) =>
         Data.to(
           {
-            StartGroup: {
+            BeginRecommit: {
               group_ref_token_name: groupRefName,
-              admin_input_index: indices[0], // admin (222) token UTxO
-              group_input_index: indices[1], // group ref UTxO (self-reference at entry point)
+              admin_input_index: indices[0],
+              group_input_index: indices[1],
               group_output_index: 0n,
             },
           },
@@ -154,8 +145,6 @@ export const unsignedStartGroupTxProgram = (
       .addSigner(adminAddress)
       .validFrom(Number(now));
 
-    // Use reference scripts when provided — avoids including ~12KB of script bytes
-    // inline, keeping the tx under Cardano's 16,384-byte size limit.
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
     const withValidators =
       scriptRefs.treasury || scriptRefs.group
@@ -172,7 +161,7 @@ export const unsignedStartGroupTxProgram = (
         Effect.mapError(
           (e) =>
             new TransactionBuildError({
-              operation: "startGroup",
+              operation: "beginRecommit",
               error: String(e),
             }),
         ),

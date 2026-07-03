@@ -1368,7 +1368,6 @@ describe("Treasury Endpoints", () => {
         )) as unknown as TreasuryDatum;
         expect("TreasuryState" in recoveredDatum).toBe(true);
         if ("TreasuryState" in recoveredDatum) {
-          expect(recoveredDatum.TreasuryState.assigned_slot).toBe(0n);
           expect(recoveredDatum.TreasuryState.rounds_paid).toBe(1n);
         }
       }),

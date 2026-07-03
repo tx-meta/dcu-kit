@@ -33,6 +33,7 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
   MIN_ADA_RESERVE,
+  removeRegistryEntry,
 } from "../core/utils/index.js";
 
 /**
@@ -232,14 +233,20 @@ export const unsignedExitGroupTxProgram = (
       groupDatum.is_active && groupDatum.is_started && !completedFullCycle;
 
     // Updated Group datum: decrement member count and remove member from registry.
+    // The paired slot entry leaves with the name (no re-pack — the vacancy stays
+    // visible on the group datum; Recommit's halt gate reads it).
+    const remainingRegistry = removeRegistryEntry(
+      groupDatum.member_token_names,
+      groupDatum.member_slots,
+      memberRefName,
+    );
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       member_count: groupDatum.member_count - 1n,
       // ExitGroup is TreasuryState-only → the leaver was active, so the active set shrinks by 1.
       active_member_count: groupDatum.active_member_count - 1n,
-      member_token_names: groupDatum.member_token_names.filter(
-        (n) => n !== memberRefName,
-      ),
+      member_token_names: remainingRegistry.names,
+      member_slots: remainingRegistry.slots,
     };
 
     // Group validator redeemer: MemberExit (no admin required)

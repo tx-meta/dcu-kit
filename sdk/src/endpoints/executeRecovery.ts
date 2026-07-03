@@ -160,13 +160,13 @@ export const unsignedExecuteRecoveryTxProgram = (
             },
           };
 
-    // Registry swap: remove N, append N'.
+    // Registry swap IN PLACE: N' takes N's registry position, so the paired
+    // member_slots entry (the member's rotation turn) is preserved.
     const updatedGroupDatum = {
       ...groupDatum,
-      member_token_names: [
-        ...groupDatum.member_token_names.filter((n) => n !== target_token),
-        new_member_tokenname,
-      ],
+      member_token_names: groupDatum.member_token_names.map((n) =>
+        n === target_token ? new_member_tokenname : n,
+      ),
     };
 
     const oldMemberToken = toUnit(treasuryPolicyId, target_token);

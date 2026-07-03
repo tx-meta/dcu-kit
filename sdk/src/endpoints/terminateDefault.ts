@@ -37,6 +37,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  removeRegistryEntry,
 } from "../core/utils/index.js";
 
 // --- Configuration ---
@@ -159,12 +160,16 @@ export const unsignedTerminateDefaultTxProgram = (
     const burnAssets: Assets = { [memberToken]: -1n };
 
     // Updated Group datum: decrement member_count and drop the member from the registry.
+    const remainingRegistry = removeRegistryEntry(
+      groupDatum.member_token_names,
+      groupDatum.member_slots,
+      memberRefName,
+    );
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       member_count: groupDatum.member_count - 1n,
-      member_token_names: groupDatum.member_token_names.filter(
-        (n) => n !== memberRefName,
-      ),
+      member_token_names: remainingRegistry.names,
+      member_slots: remainingRegistry.slots,
     };
 
     // Group validator redeemer: Exit (permissionless at the group level — authorised by the

@@ -158,7 +158,6 @@ export const unsignedContributeTxProgram = (
         TreasuryState: {
           group_reference_tokenname: ds.group_reference_tokenname,
           member_reference_tokenname: ds.member_reference_tokenname,
-          assigned_slot: ds.assigned_slot,
           rounds_paid: ds.rounds_paid,
           member_payment_credential: ds.member_payment_credential,
           claimable_balance: ds.claimable_balance,

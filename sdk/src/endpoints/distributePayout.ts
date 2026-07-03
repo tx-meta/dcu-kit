@@ -116,7 +116,19 @@ export const unsignedDistributePayoutTxProgram = (
     // distribute simply keeps running, so the "next cycle" needs no separate trigger.
     const roundNumber = groupDatum.last_distributed_round + 1n;
 
-    const currentSlot = Number(roundNumber % groupDatum.num_rounds);
+    // Era-relative: round_number stays monotonic across recommit re-seals; the slot
+    // mapping and schedule re-base at era_start_round.
+    const eraRound = roundNumber - groupDatum.era_start_round;
+    const currentSlot = Number(eraRound % groupDatum.num_rounds);
+    // The borrower is resolved from the group's authoritative registry: the token name
+    // paired with this round's slot (parallel lists; vacancy = rotation halt).
+    const borrowerSlotIndex = groupDatum.member_slots.findIndex(
+      (slot) => Number(slot) === currentSlot,
+    );
+    const borrowerTokenName =
+      borrowerSlotIndex >= 0
+        ? groupDatum.member_token_names[borrowerSlotIndex]
+        : undefined;
 
     const treasuryAddress = yield* getScriptAddress(
       lucid,
@@ -158,7 +170,7 @@ export const unsignedDistributePayoutTxProgram = (
       if (ts.group_reference_tokenname !== groupRefName) continue;
       if (ts.rounds_paid !== roundNumber) continue;
       memberStates.push(state);
-      if (Number(ts.assigned_slot) === currentSlot) {
+      if (ts.member_reference_tokenname === borrowerTokenName) {
         borrowerPaymentCred = ts.member_payment_credential;
       }
     }
@@ -184,8 +196,6 @@ export const unsignedDistributePayoutTxProgram = (
       );
     }
 
-    const effectiveSlot = currentSlot;
-
     // Sort inputs lexicographically (same order Cardano uses for tx.inputs)
     memberStates.sort((a, b) => {
       const cmp = a.utxo.txHash.localeCompare(b.utxo.txHash);
@@ -205,7 +215,7 @@ export const unsignedDistributePayoutTxProgram = (
 
     // The validator requires the tx lower-bound >= start_time + round * interval.
     const minValidFrom =
-      groupDatum.start_time + roundNumber * groupDatum.interval_length;
+      groupDatum.start_time + eraRound * groupDatum.interval_length;
 
     // Pre-check on live networks only: if the raw wall-clock time is before the gate,
     // give a clear message rather than letting the validator fail cryptically.
@@ -254,7 +264,7 @@ export const unsignedDistributePayoutTxProgram = (
         );
     // ICS suppression at every cycle boundary (last round of any cycle) — generalises the old
     // single-cycle last round so a member drained at a boundary stays TreasuryState and can exit.
-    const isCycleBoundary = (roundNumber + 1n) % groupDatum.num_rounds === 0n;
+    const isCycleBoundary = (eraRound + 1n) % groupDatum.num_rounds === 0n;
 
     // Count members transitioning to DefaultState this round so the group output can decrement
     // active_member_count (mirrors the validator's count_default_outputs). Uses the same
@@ -264,7 +274,7 @@ export const unsignedDistributePayoutTxProgram = (
       if (!("TreasuryState" in state.datum)) continue;
       const ts = state.datum.TreasuryState;
       const isBorrowerTreasury =
-        isPull && Number(ts.assigned_slot) === effectiveSlot;
+        isPull && ts.member_reference_tokenname === borrowerTokenName;
       const inBal = state.utxo.assets[contributionUnit] ?? 0n;
       const outBal = isBorrowerTreasury
         ? inBal - groupDatum.contribution_fee + payoutAmount
@@ -387,9 +397,9 @@ export const unsignedDistributePayoutTxProgram = (
         treasuryPolicyId,
         ts.member_reference_tokenname,
       );
-      // Under Pull, the borrower's own treasury (slot == effectiveSlot) is credited the pot.
+      // Under Pull, the borrower's own treasury (registry-resolved) is credited the pot.
       const isBorrowerTreasury =
-        isPull && Number(ts.assigned_slot) === effectiveSlot;
+        isPull && ts.member_reference_tokenname === borrowerTokenName;
       // Balance is measured in the contribution asset (lovelace for ADA groups). Every
       // member is debited the fee; the Pull borrower is also credited the pot, so its
       // balance rises and it never transitions to ICS.
@@ -418,7 +428,6 @@ export const unsignedDistributePayoutTxProgram = (
               grace_expires_at: validFrom + groupDatum.grace_period_length,
               grace_extensions_used: 0n,
               rounds_paid: roundNumber + 1n,
-              assigned_slot: ts.assigned_slot,
               member_payment_credential: ts.member_payment_credential,
               // A defaulting member is always a non-borrower, so the earmark carries
               // through unchanged (the funds stay in the UTxO value either way).

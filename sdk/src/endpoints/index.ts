@@ -7,6 +7,7 @@ export * from "./deleteGroup.js";
 export * from "./joinGroup.js";
 export * from "./distributePayout.js";
 export * from "./startGroup.js";
+export * from "./beginRecommit.js";
 export * from "./exitGroup.js";
 export * from "./terminateGroup.js";
 export * from "./terminateDefault.js";

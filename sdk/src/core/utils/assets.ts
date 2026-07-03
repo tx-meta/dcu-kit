@@ -167,3 +167,21 @@ export const findCip68TokenPair = (
 
     return { userUtxo, userTokenName, refUtxo, refTokenName };
   });
+
+/**
+ * Removes a member's registry entry AND its same-index slot entry (parallel lists,
+ * mirroring the on-chain `remove_paired`). The slot map may be empty (pre-start or
+ * recommit window) — then only the name is removed and the map stays empty.
+ */
+export const removeRegistryEntry = (
+  names: string[],
+  slots: bigint[],
+  target: string,
+): { names: string[]; slots: bigint[] } => {
+  const ix = names.indexOf(target);
+  if (ix === -1) return { names, slots };
+  return {
+    names: names.filter((_, i) => i !== ix),
+    slots: slots.length > 0 ? slots.filter((_, i) => i !== ix) : slots,
+  };
+};

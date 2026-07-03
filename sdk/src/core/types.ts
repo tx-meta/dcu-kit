@@ -167,6 +167,12 @@ export const GroupDatumSchema = Data.Object({
   recovery_threshold: Data.Integer(),
   /** Recovery veto window in **POSIX milliseconds** (propose→execute delay). e.g. 259_200_000n = 3 days. */
   recovery_timelock: Data.Integer(),
+  /** Authoritative slot map, parallel to member_token_names ([] whenever !is_started). */
+  member_slots: Data.Array(Data.Integer()),
+  /** round_number at which the current era's rotation began (re-based at each re-seal). */
+  era_start_round: Data.Integer(),
+  /** Min POSIX-ms between BeginRecommit and the re-sealing startGroup (opt-out window). */
+  recommit_window: Data.Integer(),
 });
 
 /**
@@ -280,6 +286,16 @@ export const GroupSpendRedeemerSchema = Data.Enum([
       treasury_output_index: Data.Integer(),
     }),
   }),
+  Data.Object({
+    // Opens the opt-out reset window (Recommit): blocks distribute, re-opens joining,
+    // makes every exit free; startGroup re-seals after recommit_window elapses.
+    BeginRecommit: Data.Object({
+      group_ref_token_name: Data.Bytes(),
+      admin_input_index: Data.Integer(),
+      group_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+    }),
+  }),
 ]);
 
 export type GroupSpendRedeemer = Data.Static<typeof GroupSpendRedeemerSchema>;
@@ -293,7 +309,6 @@ export const TreasuryDatumSchema = Data.Enum([
     TreasuryState: Data.Object({
       group_reference_tokenname: Data.Bytes(),
       member_reference_tokenname: Data.Bytes(),
-      assigned_slot: Data.Integer(),
       rounds_paid: Data.Integer(),
       member_payment_credential: Data.Bytes(),
       /**
@@ -316,7 +331,6 @@ export const TreasuryDatumSchema = Data.Enum([
       grace_expires_at: Data.Integer(),
       grace_extensions_used: Data.Integer(),
       rounds_paid: Data.Integer(),
-      assigned_slot: Data.Integer(),
       member_payment_credential: Data.Bytes(),
       /**
        * Pull mode: unclaimed earmark carried in from TreasuryState when the member

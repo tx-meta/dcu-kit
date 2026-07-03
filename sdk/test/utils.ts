@@ -97,5 +97,8 @@ export const createDefaultGroupDatum = (
   recovery_threshold: 1n,
   // 259_200_000 ms = 3 days veto window before a recovery can execute.
   recovery_timelock: 259_200_000n,
+  member_slots: [],
+  era_start_round: 0n,
+  recommit_window: 259_200_000n,
   ...overrides,
 });

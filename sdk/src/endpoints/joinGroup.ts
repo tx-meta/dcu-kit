@@ -111,8 +111,6 @@ export const unsignedJoinGroupTxProgram = (
     const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
     const groupDatum = groupCip68.groupDatum;
 
-    const assignedSlot = groupDatum.member_count;
-
     const groupRefAssetEntry = Object.keys(groupUtxo.assets).find((k) =>
       k.startsWith(groupPolicyId),
     );
@@ -192,8 +190,9 @@ export const unsignedJoinGroupTxProgram = (
       TreasuryState: {
         group_reference_tokenname: groupRefName,
         member_reference_tokenname: accountAssetName,
-        assigned_slot: assignedSlot,
-        rounds_paid: 0n,
+        // Lockstep entry: 0 on a fresh group; the next round number when joining
+        // during a recommit window. Slots are assigned by startGroup, not here.
+        rounds_paid: groupDatum.last_distributed_round + 1n,
         member_payment_credential: memberPaymentCredential,
         // Fresh member — nothing earmarked yet (0 under both Push and Pull).
         claimable_balance: 0n,

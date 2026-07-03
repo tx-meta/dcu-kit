@@ -33,6 +33,10 @@ import {
   DistributePayoutConfig,
 } from "./distributePayout.js";
 import { unsignedStartGroupTxProgram, StartGroupConfig } from "./startGroup.js";
+import {
+  unsignedBeginRecommitTxProgram,
+  BeginRecommitConfig,
+} from "./beginRecommit.js";
 import { unsignedExitGroupTxProgram, ExitGroupConfig } from "./exitGroup.js";
 import {
   unsignedTerminateGroupTxProgram,
@@ -132,6 +136,9 @@ export const createDcuSdk = (settingsPolicy: string) => {
 
     startGroup: (lucid: LucidEvolution, config: StartGroupConfig) =>
       makeReturn(unsignedStartGroupTxProgram(protocol, lucid, config)),
+
+    beginRecommit: (lucid: LucidEvolution, config: BeginRecommitConfig) =>
+      makeReturn(unsignedBeginRecommitTxProgram(protocol, lucid, config)),
 
     distributePayout: (lucid: LucidEvolution, config: DistributePayoutConfig) =>
       makeReturn(unsignedDistributePayoutTxProgram(protocol, lucid, config)),
