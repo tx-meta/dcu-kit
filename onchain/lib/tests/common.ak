@@ -120,6 +120,11 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     payout_mode: Push,
     recovery_threshold: 1,
     recovery_timelock: 259_200_000,
+    // [] before startGroup; tests simulating a started rotation set this parallel to
+    // member_token_names (registry is newest-first, so slots count DOWN: [N-1 .. 0])
+    member_slots: [],
+    era_start_round: 0,
+    recommit_window: 259_200_000,
   }
 }
 

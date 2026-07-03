@@ -2279,7 +2279,7 @@ test recover_member__swaps_registry_N_to_Nprime() {
       ref_tn,
       2,
       [#"aabb", #"ccdd"],
-      [#"ccdd", #"eeff"],
+      [#"eeff", #"ccdd"],
       #"aabb",
       #"eeff",
       True,
@@ -2304,7 +2304,8 @@ test recover_member__rejects_when_N_absent() {
   let policy_id = common.test_policy_id()
   let tp = treasury_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
-  // N (#"9999") is not in the input registry at all.
+  // N (#"9999") is not in the input registry at all — the in-place swap is a no-op,
+  // so the output registry is unchanged and the rejection isolates old_present.
   let (inputs, outputs) =
     recover_member_setup(
       policy_id,
@@ -2312,7 +2313,7 @@ test recover_member__rejects_when_N_absent() {
       ref_tn,
       2,
       [#"aabb", #"ccdd"],
-      [#"ccdd", #"eeff"],
+      [#"aabb", #"ccdd"],
       #"9999",
       #"eeff",
       True,
@@ -2384,7 +2385,7 @@ test recover_member__rejects_member_count_change() {
       ..base,
       member_count: 3,
       active_member_count: 2,
-      member_token_names: [#"ccdd", #"eeff"],
+      member_token_names: [#"eeff", #"ccdd"],
     }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
@@ -2438,7 +2439,7 @@ test recover_member__rejects_active_count_change() {
       ..base,
       member_count: 2,
       active_member_count: 1,
-      member_token_names: [#"ccdd", #"eeff"],
+      member_token_names: [#"eeff", #"ccdd"],
     }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
@@ -2492,7 +2493,7 @@ test recover_member__rejects_other_field_mutation() {
       ..base,
       member_count: 2,
       active_member_count: 2,
-      member_token_names: [#"ccdd", #"eeff"],
+      member_token_names: [#"eeff", #"ccdd"],
       penalty_fee: base.penalty_fee + 1,
     }
   let value = assets.from_lovelace(2_000_000)
@@ -2541,7 +2542,7 @@ test recover_member__rejects_missing_treasury_rotation() {
       ref_tn,
       2,
       [#"aabb", #"ccdd"],
-      [#"ccdd", #"eeff"],
+      [#"eeff", #"ccdd"],
       #"aabb",
       #"eeff",
       False,
@@ -2582,7 +2583,7 @@ test recover_member__rejects_treasury_output_not_at_script() {
       ..base,
       member_count: 2,
       active_member_count: 2,
-      member_token_names: [#"ccdd", #"eeff"],
+      member_token_names: [#"eeff", #"ccdd"],
     }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
@@ -2915,4 +2916,211 @@ test create_group__rejects_wrong_version() {
   )
 
   !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// ─── Recommit fields (Task 1): create/update/exit rules ──────────────────────
+
+fn recommit_create_rejects(datum: GroupDatum) {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+test create_group__rejects_nonempty_member_slots() {
+  let policy_id = common.test_policy_id()
+  recommit_create_rejects(
+    GroupDatum { ..common.test_group_datum(policy_id), member_slots: [0] },
+  )
+}
+
+test create_group__rejects_nonzero_era_start_round() {
+  let policy_id = common.test_policy_id()
+  recommit_create_rejects(
+    GroupDatum { ..common.test_group_datum(policy_id), era_start_round: 1 },
+  )
+}
+
+test create_group__rejects_negative_recommit_window() {
+  let policy_id = common.test_policy_id()
+  recommit_create_rejects(
+    GroupDatum { ..common.test_group_datum(policy_id), recommit_window: -1 },
+  )
+}
+
+fn recommit_update_rejects(base_datum: GroupDatum, updated_datum: GroupDatum) {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated_datum),
+  )
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// member_slots is validator-managed (StartGroup/MemberExit) — frozen in UpdateGroup
+// even before any member joins.
+test update_group__rejects_member_slots_change() {
+  let policy_id = common.test_policy_id()
+  let base = common.test_group_datum(policy_id)
+  recommit_update_rejects(base, GroupDatum { ..base, member_slots: [0] })
+}
+
+// era_start_round is validator-managed (StartGroup) — frozen in UpdateGroup.
+test update_group__rejects_era_start_round_change() {
+  let policy_id = common.test_policy_id()
+  let base = common.test_group_datum(policy_id)
+  recommit_update_rejects(base, GroupDatum { ..base, era_start_round: 5 })
+}
+
+// recommit_window is an economic term — frozen once any member has joined
+// (the whole-record allowlist covers it).
+test update_group__rejects_recommit_window_change_with_members() {
+  let policy_id = common.test_policy_id()
+  let base = GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
+  recommit_update_rejects(
+    base,
+    GroupDatum { ..base, recommit_window: base.recommit_window + 1 },
+  )
+}
+
+// Started exit: the paired slot entry leaves with the registry name — no re-pack,
+// the vacancy stays visible. Registry is newest-first: [#"ccdd", #"aabb"] with
+// slots [1, 0] means #"aabb" (first joiner) holds slot 0.
+test member_exit__removes_paired_slot_entry() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (output_ref, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 2,
+    active_member_count: 2,
+    is_started: True,
+    num_rounds: 2,
+    member_token_names: [#"ccdd", #"aabb"],
+    member_slots: [1, 0],
+  }
+  let group_in = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base),
+    ),
+  )
+  let treasury_in = treasury_input_with_token(tp, #"aabb")
+  let updated = GroupDatum {
+    ..base,
+    member_count: 1,
+    active_member_count: 1,
+    member_token_names: [#"ccdd"],
+    member_slots: [1],
+  }
+  let group_out = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated),
+  )
+  validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in, treasury_in],
+    [group_out],
+  )
+}
+
+// Same exit but the output re-packs the remaining slot to 0 — rejected: vacancies
+// must stay visible.
+test member_exit__rejects_slot_repack() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (output_ref, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 2,
+    active_member_count: 2,
+    is_started: True,
+    num_rounds: 2,
+    member_token_names: [#"ccdd", #"aabb"],
+    member_slots: [1, 0],
+  }
+  let group_in = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base),
+    ),
+  )
+  let treasury_in = treasury_input_with_token(tp, #"aabb")
+  let updated = GroupDatum {
+    ..base,
+    member_count: 1,
+    active_member_count: 1,
+    member_token_names: [#"ccdd"],
+    member_slots: [0],
+  }
+  let group_out = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated),
+  )
+  !validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in, treasury_in],
+    [group_out],
+  )
 }

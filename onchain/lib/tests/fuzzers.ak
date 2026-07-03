@@ -72,6 +72,9 @@ pub fn gen_group_datum() {
       payout_mode: Push,
       recovery_threshold: 1,
       recovery_timelock: 259_200_000,
+      member_slots: [],
+      era_start_round: 0,
+      recommit_window: 259_200_000,
     },
   )
 }
@@ -130,6 +133,9 @@ pub fn gen_valid_group_datum() {
       payout_mode: Push,
       recovery_threshold: 1,
       recovery_timelock: 259_200_000,
+      member_slots: [],
+      era_start_round: 0,
+      recommit_window: 259_200_000,
     },
   )
 }

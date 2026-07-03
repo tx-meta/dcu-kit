@@ -116,6 +116,19 @@ pub type GroupDatum {
   // Mandatory delay (POSIX ms) between proposing a recovery and being allowed to execute it —
   // the veto window in which the real holder can CancelRecovery. Default: 259_200_000 (3 days).
   recovery_timelock: Int,
+  // Authoritative rotation slot map, parallel to member_token_names (entry i is member i's
+  // frozen slot). [] whenever !is_started; rebuilt to [0..member_count-1] in registry order
+  // at every StartGroup; a started exit removes the paired entry (never re-packs), so a
+  // vacancy stays visible on the group datum alone.
+  member_slots: List<Int>,
+  // round_number at which the current era's rotation began. effective_slot and the round
+  // time gate are era-relative: (round - era_start_round). 0 at first start; set to
+  // last_distributed_round + 1 by each re-sealing StartGroup. round_number itself stays
+  // monotonic across eras.
+  era_start_round: Int,
+  // Minimum POSIX-ms between BeginRecommit and the re-sealing StartGroup — the free-exit
+  // (opt-out) window. Default: 259_200_000 (3 days). Frozen once any member has joined.
+  recommit_window: Int,
 }
 
 /// Group Validator Mint Redeemer
@@ -368,6 +381,11 @@ pub fn validate_create_group(
     (datum.recovery_threshold >= 1)?,
     (datum.recovery_threshold <= datum.max_members)?,
     (datum.recovery_timelock >= 0)?,
+    // [spec Recommit]: slots are assigned at StartGroup — the map is empty until sealed,
+    // the era counter starts at 0, and the opt-out window length is non-negative
+    (datum.member_slots == [])?,
+    (datum.era_start_round == 0)?,
+    (datum.recommit_window >= 0)?,
   }
 }
 
@@ -479,6 +497,9 @@ pub fn validate_update_group(
     (updated_datum.last_distributed_round == current_datum.last_distributed_round)?,
     // [security]: member registry managed exclusively by MemberJoin/MemberExit
     (updated_datum.member_token_names == current_datum.member_token_names)?,
+    // [spec Recommit]: slot map managed by StartGroup/MemberExit; era counter by StartGroup
+    (updated_datum.member_slots == current_datum.member_slots)?,
+    (updated_datum.era_start_round == current_datum.era_start_round)?,
     // [spec UpdateGroup 6]: is_active is a one-way latch — only True → False allowed
     (current_datum.is_active || !updated_datum.is_active)?,
     (out_ada >= in_ada)?,
@@ -649,6 +670,31 @@ pub fn validate_join_group(
 // [spec Exit 4]: group output at same script address with ref token
 // [spec Exit 5]: only member_count may change; all other fields frozen
 // [security MemberExit 6]: treasury validator must participate (burn or spend)
+// Removes `target` from the registry and its same-index slot entry in one pass.
+// Slots may be [] (pre-start or recommit window) — then only the name is removed and the
+// map stays []. Names are unique (double-join is prevented), so first-match removal is
+// equivalent to a filter but keeps the two lists positionally paired.
+fn remove_paired(
+  names: List<AssetName>,
+  slots: List<Int>,
+  target: AssetName,
+) -> (List<AssetName>, List<Int>) {
+  when names is {
+    [] -> ([], slots)
+    [n, ..ns] ->
+      when slots is {
+        [] -> (list.filter(names, fn(x) { x != target }), [])
+        [s, ..ss] ->
+          if n == target {
+            (ns, ss)
+          } else {
+            let (rest_names, rest_slots) = remove_paired(ns, ss, target)
+            ([n, ..rest_names], [s, ..rest_slots])
+          }
+      }
+  }
+}
+
 pub fn validate_exit_group(
   policy_id: PolicyId,
   treasury_policy_id: PolicyId,
@@ -703,6 +749,13 @@ pub fn validate_exit_group(
 
   // [spec Exit 2 & 5]: member_count decrements by 1; member removed from registry;
   // all other fields frozen; metadata and version preserved
+  // [spec Recommit]: the paired slot entry leaves with the name (no re-pack — a started
+  // group's vacancy stays visible in member_slots).
+  let (remaining_names, remaining_slots) = remove_paired(
+    current.member_token_names,
+    current.member_slots,
+    member_token_name,
+  )
   let expected = GroupCip68Datum {
     metadata,
     version,
@@ -717,10 +770,8 @@ pub fn validate_exit_group(
       } else {
         current.active_member_count
       },
-      member_token_names: list.filter(
-        current.member_token_names,
-        fn(n) { n != member_token_name },
-      ),
+      member_token_names: remaining_names,
+      member_slots: remaining_slots,
     },
   }
 
@@ -1077,10 +1128,17 @@ pub fn validate_recover_member(
     fn(n) { n == new_member_token_name },
   )
 
-  // [spec RecoverMember 4]: registry swap — remove N, append N'; every other field frozen.
-  let swapped_names = list.concat(
-    list.filter(current.member_token_names, fn(n) { n != old_member_token_name }),
-    [new_member_token_name],
+  // [spec RecoverMember 4]: registry swap IN PLACE — N' takes N's registry position, so
+  // the paired member_slots entry (and with it the member's rotation turn) is preserved.
+  let swapped_names = list.map(
+    current.member_token_names,
+    fn(n) {
+      if n == old_member_token_name {
+        new_member_token_name
+      } else {
+        n
+      }
+    },
   )
 
   expect Some(group_output) = list.at(outputs, group_output_index)
