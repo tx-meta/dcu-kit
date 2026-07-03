@@ -63,6 +63,19 @@ pub type TreasuryDatum {
     earliest_execution_slot: Int,
     approvals: List<AssetName>,
   }
+  // Mutual reserve pot — exactly one per group, created in the createGroup tx.
+  // Identity: holds the reserve token (prefix_rsv + the group ref token's unique
+  // part) under this policy. Accrues join/round levies and forfeited defaulter
+  // collateral; stands in for terminated defaulters at DistributeRound; refunds
+  // pro-rata at wind-down. Appended LAST to keep existing Constr indices stable.
+  ReserveState {
+    group_reference_tokenname: AssetName,
+    // Remaining fee-units the reserve stands in for terminated defaulters (one
+    // unit drawn per DistributeRound while > 0 — decrements even when the pot is
+    // dry so owed cover always drains). Flat pool: overlapping defaults extend
+    // duration, not per-round depth.
+    standin_rounds: Int,
+  }
 }
 
 /// Treasury Validator Redeemer
@@ -159,6 +172,14 @@ pub type TreasuryRedeemer {
     request_input_index: Int,
     member_treasury_input_index: Int,
     member_treasury_output_index: Int,
+  }
+  // Mints the group's reserve token and creates the ReserveState UTxO. Valid ONLY
+  // in the same tx as the group-creation mint (one-shot coupling — the group ref
+  // token must itself be minted). Mint-only redeemer. Appended LAST to keep the
+  // Constr indices of all existing variants stable.
+  CreateReserve {
+    group_output_index: Int,
+    reserve_output_index: Int,
   }
 }
 

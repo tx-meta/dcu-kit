@@ -14,8 +14,8 @@ use dcu/quorum.{
   signed_account_token_name,
 }
 use dcu/treasury.{
-  DefaultState, PenaltyState, RecoveryRequest, TreasuryDatum, TreasuryState,
-  max_grace_extensions,
+  DefaultState, PenaltyState, RecoveryRequest, ReserveState, TreasuryDatum,
+  TreasuryState, max_grace_extensions,
 }
 use dcu/treasury_utils.{
   ada_reserve_conserved, contributable_in, count_default_outputs,
@@ -1708,6 +1708,7 @@ pub fn validate_contribute(
       (member_reference_tokenname, group_reference_tokenname)
     PenaltyState { .. } -> fail @"PenaltyState cannot receive contributions"
     RecoveryRequest { .. } -> fail @"RecoveryRequest cannot receive contributions"
+    ReserveState { .. } -> fail @"ReserveState cannot receive contributions"
   }
 
   // [spec Contribute 2]: member auth
@@ -1799,6 +1800,7 @@ pub fn validate_contribute(
     PenaltyState { .. } -> False
 
     RecoveryRequest { .. } -> fail @"RecoveryRequest cannot receive contributions"
+    ReserveState { .. } -> fail @"ReserveState cannot receive contributions"
   }
 
   // [AIK-4 fix]: full-address equality — stake credential preserved from the input.

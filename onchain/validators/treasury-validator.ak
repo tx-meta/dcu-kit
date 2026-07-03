@@ -5,11 +5,12 @@ use cardano/assets.{PolicyId}
 use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/settings.{read_settings}
+use dcu/reserve.{validate_create_reserve}
 use dcu/treasury.{
   ApproveRecovery, CancelRecovery, ClaimPayout, ClaimPenalty, Contribute,
-  DistributeRound, DistributeWithdraw, ExecuteRecovery, ExitGroup, ExtendGrace,
-  JoinGroup, ProposeRecovery, TerminateDefault, TreasuryDatum, TreasuryRedeemer,
-  TreasuryWithdrawRedeemer, UpdatePayout,
+  CreateReserve, DistributeRound, DistributeWithdraw, ExecuteRecovery, ExitGroup,
+  ExtendGrace, JoinGroup, ProposeRecovery, TerminateDefault, TreasuryDatum,
+  TreasuryRedeemer, TreasuryWithdrawRedeemer, UpdatePayout,
 } as treasury_types
 use dcu/treasury_validation.{
   validate_approve_recovery, validate_cancel_recovery, validate_cancel_recovery_mint,
@@ -100,6 +101,19 @@ validator treasury(settings_policy: PolicyId) {
       // The spend handler confirms the burned name matches the request's target_token
       // (exact_burn check in validate_execute_recovery — bidirectional pin).
       ExecuteRecovery { .. } -> validate_claim_penalty_mint(policy_id, mint)
+
+      // CreateReserve mints the group's reserve token — valid only in the same tx
+      // as the group-creation mint (one-shot coupling checked inside).
+      CreateReserve { group_output_index, reserve_output_index } -> {
+        let settings = read_settings(reference_inputs, settings_policy)
+        validate_create_reserve(
+          policy_id,
+          settings.group_policy,
+          group_output_index,
+          reserve_output_index,
+          tx,
+        )
+      }
 
       // All other redeemers are spend-only — reject at mint
       _ -> fail

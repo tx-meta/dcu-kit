@@ -11,21 +11,31 @@ use dcu/group.{
   validate_exit_group, validate_join_group, validate_recover_group,
   validate_recover_member, validate_start_group, validate_update_group,
 }
+use dcu/reserve.{group_reserve_minted}
 
 validator group_validator(treasury_policy_id: PolicyId) {
   mint(redeemer: GroupMintRedeemer, policy_id: PolicyId, tx: Transaction) {
     let Transaction { inputs, outputs, mint, .. } = tx
 
     when redeemer is {
-      CreateGroup { input_index, output_index } ->
-        validate_create_group(
-          policy_id,
-          input_index,
-          output_index,
-          inputs,
-          outputs,
-          mint,
-        )
+      CreateGroup { input_index, output_index } -> {
+        // [spec Reserve C4]: every group is created together with its mutual
+        // reserve — the reserve token (under the treasury policy, name derived
+        // from the same seed input) must be minted in this tx. The treasury's
+        // CreateReserve mint path validates the reserve output itself.
+        expect Some(seed_input) = list.at(inputs, input_index)
+        and {
+          group_reserve_minted(treasury_policy_id, seed_input, mint),
+          validate_create_group(
+            policy_id,
+            input_index,
+            output_index,
+            inputs,
+            outputs,
+            mint,
+          ),
+        }
+      }
       // [security]: BurnGroup — spend handler (RemoveGroup) validates admin auth and
       // member_count == 0. Here we verify: (a) all quantities are negative (no new mint),
       // and (b) exactly 2 tokens are burned (ref + user). Without (b), an admin could
