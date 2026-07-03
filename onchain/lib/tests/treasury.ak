@@ -1753,6 +1753,101 @@ test distribute_round__accepts_transition_to_default() {
   )
 }
 
+// Era-shifted regression: after a re-seal (era_start_round = 5), round 5 is the NEW
+// era's FIRST round — (5+1) % 3 == 0 must NOT read as a lap boundary, so the
+// under-fee member still transitions to DefaultState. Guards the era-relative
+// is_cycle_boundary formula.
+test distribute_round__accepts_transition_to_default_in_new_era() {
+  let tp = treasury_policy()
+  let gp = group_policy()
+
+  let group_datum = GroupDatum {
+    ..test_group_datum(),
+    num_rounds: 3,
+    is_started: True,
+    last_distributed_round: 4,
+    era_start_round: 5,
+    active_member_count: 1,
+    member_token_names: [member_tn()],
+    member_slots: [0],
+  }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
+      value: group_in_value,
+      datum: InlineDatum(cip68_with_group(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: group_in_value,
+    datum: InlineDatum(
+      cip68_with_group(
+        GroupDatum {
+          ..group_datum,
+          last_distributed_round: 5,
+          active_member_count: 0,
+        },
+      ),
+    ),
+    reference_script: None,
+  }
+
+  let treasury_datum = build_treasury_state(group_ref_tn(), 5)
+  let utxo_ref = treasury_utxo_ref()
+  let treasury_in = test_treasury_input(
+    utxo_ref,
+    test_treasury_output(
+      treasury_datum,
+      assets.from_lovelace(min_ada_reserve + 2_000_000)
+        |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+    ),
+  )
+  let default_out_datum = DefaultState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: member_tn(),
+    grace_expires_at: 0,
+    grace_extensions_used: 0,
+    rounds_paid: 6,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
+  }
+  let treasury_out = test_treasury_output(
+    default_out_datum,
+    assets.from_lovelace(min_ada_reserve)
+      |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+  )
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, treasury_in],
+    outputs: [treasury_out, group_output, test_borrower_output()],
+    validity_range: interval.after(0),
+  }
+
+  validate_distribute_withdraw(
+    tp,
+    group_policy(),
+    5,
+    0,
+    1,
+    [1],
+    [0],
+    2,
+    tx,
+  )
+}
+
 // fail: a SPENT member treasury that is not TreasuryState must crash the round
 // (count_active_members rejects a non-TreasuryState contributing input). The fault now
 // lives on the on-chain INPUT datum (the validator reads it there, not from an argument).

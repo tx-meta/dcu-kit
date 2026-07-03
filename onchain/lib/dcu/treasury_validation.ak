@@ -614,7 +614,10 @@ pub fn validate_distribute_withdraw(
   // reserve at a cycle boundary stays TreasuryState and can mature/free-exit (D4) — preserving
   // the ROSCA "complete your cycle, then leave clean" path across unlimited cycles. Mid-cycle
   // drains still transition to DefaultState (grace → recover or TerminateDefault).
-  let is_cycle_boundary = ( round_number + 1 ) % group.num_rounds == 0
+  // Era-relative like every other rotation formula: a lap boundary is measured from
+  // era_start_round, not the monotonic counter.
+  let is_cycle_boundary =
+    ( round_number + 1 - group.era_start_round ) % group.num_rounds == 0
   let current_time = get_lower_bound(tx)
 
   // [spec DistributeRound 6c]: PUSH only — borrower output at scheduled member's wallet,
