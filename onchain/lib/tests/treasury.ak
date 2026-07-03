@@ -4206,8 +4206,10 @@ fn terminate_group_output(
   }
 }
 
-// Composes a terminate-default tx. inputs = [group(0), admin(1), treasury(2)];
-// outputs = [group(0)]. validity lower bound = `lower`.
+// Composes a terminate-default tx. inputs = [group(0), admin(1), treasury(2),
+// reserve(3)]; outputs = [group(0), reserve(1)]. validity lower bound = `lower`.
+// The reserve leg receives the full forfeited contributable balance (5M on top
+// of its 2M min-ADA); the fixture group is not started, so standin stays 0.
 fn terminate_default_tx(
   datum: TreasuryDatum,
   group_input: Input,
@@ -4222,8 +4224,8 @@ fn terminate_default_tx(
   )
   Transaction {
     ..transaction.placeholder,
-    inputs: [group_input, admin_input, treasury_in],
-    outputs: [group_output],
+    inputs: [group_input, admin_input, treasury_in, join_reserve_input(2_000_000)],
+    outputs: [group_output, join_reserve_utxo(7_000_000)],
     mint,
     validity_range: interval.after(lower),
   }
@@ -4250,6 +4252,7 @@ test terminate_default__accepts_after_grace_expired() {
     0,
     0,
     1,
+    2,
     datum,
     tx,
   )
@@ -4272,6 +4275,7 @@ test terminate_default__rejects_before_grace_expiry() {
     0,
     0,
     1,
+    2,
     datum,
     tx,
   )
@@ -4294,6 +4298,7 @@ test terminate_default__rejects_at_grace_boundary() {
     0,
     0,
     1,
+    2,
     datum,
     tx,
   )
@@ -4304,7 +4309,10 @@ test terminate_default__rejects_at_grace_boundary() {
 // from admin auth. The datum's link still derives the correct admin token (held by the
 // admin input), so ONLY group_link_valid is violated — proving an admin of one group cannot
 // drive a terminate against a treasury bound to a different group.
-test terminate_default__rejects_group_link_mismatch() {
+// Since the reserve leg, the forged group name crashes the reserve lookup (the
+// reserve token is derived from the group input's token, and no input holds the
+// forged derivation) — rejection by crash rather than by group_link_valid.
+test terminate_default__rejects_group_link_mismatch() fail {
   let gp = group_policy()
   let datum = test_insufficient_collateral_state()
   // Group input carries member_b_tn() under the group policy instead of group_ref_tn().
@@ -4346,6 +4354,7 @@ test terminate_default__rejects_group_link_mismatch() {
     0,
     0,
     1,
+    2,
     datum,
     tx,
   )
@@ -4368,6 +4377,7 @@ test terminate_default__rejects_non_admin() {
     0,
     0,
     1,
+    2,
     datum,
     tx,
   )
@@ -4390,6 +4400,7 @@ test terminate_default__rejects_no_burn() {
     0,
     0,
     1,
+    2,
     datum,
     tx,
   )
@@ -4412,6 +4423,7 @@ test terminate_default__rejects_no_count_decrement() {
     0,
     0,
     1,
+    2,
     datum,
     tx,
   )
@@ -4434,6 +4446,7 @@ test terminate_default__rejects_member_left_in_registry() {
     0,
     0,
     1,
+    2,
     datum,
     tx,
   )
@@ -4456,6 +4469,7 @@ test terminate_default__rejects_non_default_state() fail {
     0,
     0,
     1,
+    2,
     datum,
     tx,
   )
@@ -4504,6 +4518,7 @@ test terminate_default__rejects_fake_group_script() fail {
     0,
     0,
     1,
+    2,
     datum,
     tx,
   )
@@ -5152,4 +5167,36 @@ test distribute_reserve__rejects_standin_tamper() fail {
 test distribute_reserve__rejects_over_draw() fail {
   let tx = distribute_reserve_tx(250_000, 0, 5_000_000, 2_000_000, 0)
   run_distribute_reserve(tx)
+}
+
+// [spec Reserve C5]: the reserve output must grow by at least the forfeited
+// contributable balance (5M here) — short-changing the pot fails.
+test terminate_default__rejects_unrouted_forfeit() {
+  let datum = test_insufficient_collateral_state()
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, treasury_value()),
+  )
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      terminate_group_input(),
+      test_admin_input(),
+      treasury_in,
+      join_reserve_input(2_000_000),
+    ],
+    outputs: [terminate_group_output(0, []), join_reserve_utxo(6_999_999)],
+    mint: terminate_burn(),
+    validity_range: interval.after(6000),
+  }
+  !validate_terminate_default(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    1,
+    2,
+    datum,
+    tx,
+  )
 }

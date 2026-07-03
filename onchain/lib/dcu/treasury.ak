@@ -188,6 +188,17 @@ pub type TreasuryRedeemer {
     reserve_input_index: Int,
     reserve_output_index: Int,
   }
+  // Reserve leg of a TerminateDefault: the defaulter's forfeited balance flows
+  // INTO the reserve and the stand-in counter grows by their remaining rounds
+  // this lap. Pinned to a genuine termination (DefaultState input + token burn +
+  // registry removal). Spend-only redeemer.
+  ReserveCover {
+    group_ref_input_index: Int,
+    group_output_index: Int,
+    defaulter_input_index: Int,
+    reserve_input_index: Int,
+    reserve_output_index: Int,
+  }
 }
 
 /// Treasury Withdraw-Validator Redeemer (the "withdraw-zero" coupling).

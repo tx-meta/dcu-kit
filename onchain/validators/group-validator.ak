@@ -228,6 +228,7 @@ validator group_validator(treasury_policy_id: PolicyId) {
         admin_input_index,
         group_input_index,
         group_output_index,
+        reserve_ref_input_index,
       } -> {
         // [security]: self-reference — group_input_index must resolve to this UTxO
         expect Some(group_input) = list.at(inputs, group_input_index)
@@ -235,10 +236,12 @@ validator group_validator(treasury_policy_id: PolicyId) {
 
         validate_begin_recommit(
           policy_id,
+          treasury_policy_id,
           group_ref_token_name,
           admin_input_index,
           group_input_index,
           group_output_index,
+          reserve_ref_input_index,
           inputs,
           outputs,
           self,

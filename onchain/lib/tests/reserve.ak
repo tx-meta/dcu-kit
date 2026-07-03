@@ -4,10 +4,12 @@
 use cardano/assets
 use cardano/transaction.{Transaction}
 use dcu/cip68
+use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/reserve.{
+  validate_reserve_cover,
   group_reserve_minted, validate_create_reserve, validate_reserve_topup,
 }
-use dcu/treasury.{ReserveState, TreasuryDatum}
+use dcu/treasury.{DefaultState, ReserveState, TreasuryDatum}
 use tests/common
 
 // ─── Shared test helpers ──────────────────────────────────────────────────────
@@ -522,4 +524,166 @@ test group_reserve_minted__rejects_wrong_name() {
       )
     |> assets.merge(assets.from_asset(treasury_policy(), wrong_name, 1))
   !group_reserve_minted(treasury_policy(), seed, mint)
+}
+
+// ─── ReserveCover (terminate leg) ─────────────────────────────────────────────
+
+fn cover_member_tn() -> assets.AssetName {
+  #"eeffeeffeeffeeffeeffeeffeeffeeffeeffeeffeeffeeffeeffeeff"
+}
+
+fn wrap_group(datum: GroupDatum) -> Data {
+  let wrapped =
+    GroupCip68Datum {
+      metadata: [Pair(#"6e616d65", "Test Group")],
+      version: 1,
+      extra: datum,
+    }
+  let as_data: Data = wrapped
+  as_data
+}
+
+// A started group mid-lap: era 0, num_rounds 3, round 0 distributed →
+// standin increment = 0 + 3 − (0 + 1) = 2.
+fn cover_group_datum() -> GroupDatum {
+  GroupDatum {
+    ..common.test_group_datum(group_policy()),
+    member_count: 1,
+    active_member_count: 1,
+    is_started: True,
+    num_rounds: 3,
+    last_distributed_round: 0,
+    member_token_names: [cover_member_tn()],
+    member_slots: [0],
+  }
+}
+
+fn cover_group_input() {
+  common.test_input(
+    transaction.OutputReference {
+      transaction_id: #"4444444444444444444444444444444444444444444444444444444444444444",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      group_policy(),
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
+      wrap_group(cover_group_datum()),
+    ),
+  )
+}
+
+fn cover_group_output(member_count: Int) {
+  common.test_script_utxo(
+    group_policy(),
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
+    wrap_group(
+      GroupDatum {
+        ..cover_group_datum(),
+        member_count,
+        active_member_count: member_count,
+        member_token_names: [],
+        member_slots: [],
+      },
+    ),
+  )
+}
+
+// Defaulter treasury: DefaultState holding 400 contributable units + its token.
+fn cover_defaulter_input() {
+  common.test_input(
+    transaction.OutputReference {
+      transaction_id: #"5555555555555555555555555555555555555555555555555555555555555555",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      treasury_policy(),
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(
+            assets.from_asset(treasury_policy(), cover_member_tn(), 1),
+          )
+        |> assets.merge(contribution(400)),
+      DefaultState {
+        group_reference_tokenname: group_ref_tn(),
+        member_reference_tokenname: cover_member_tn(),
+        grace_expires_at: 5000,
+        grace_extensions_used: 0,
+        rounds_paid: 1,
+        member_payment_credential: common.test_pkh(),
+        claimable_balance: 0,
+      },
+    ),
+  )
+}
+
+fn cover_burn() -> assets.Value {
+  assets.from_asset(treasury_policy(), cover_member_tn(), -1)
+}
+
+// inputs: group(0), defaulter(1), reserve(2); outputs: group(0), reserve(1).
+fn cover_tx(
+  reserve_out_extra: Int,
+  standin_out: Int,
+  burn: assets.Value,
+  group_out_count: Int,
+) -> Transaction {
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      cover_group_input(),
+      cover_defaulter_input(),
+      reserve_input(0, reserve_create_value() |> assets.merge(contribution(100))),
+    ],
+    outputs: [
+      cover_group_output(group_out_count),
+      reserve_output(
+        group_ref_tn(),
+        standin_out,
+        reserve_create_value()
+          |> assets.merge(contribution(100 + reserve_out_extra)),
+      ),
+    ],
+    mint: burn,
+  }
+}
+
+fn run_cover(tx: Transaction) -> Bool {
+  validate_reserve_cover(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    1,
+    2,
+    1,
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// Genuine termination: forfeit 400 lands in the pot, counter 0 → 2 (two
+// remaining rounds this lap), member removed, token burned.
+test reserve_cover__accepts_genuine_termination() {
+  run_cover(cover_tx(400, 2, cover_burn(), 0))
+}
+
+// Forfeit not routed (pot grows by less than the defaulter's balance).
+test reserve_cover__rejects_unrouted_forfeit() {
+  !run_cover(cover_tx(399, 2, cover_burn(), 0))
+}
+
+// Stand-in counter must grow by exactly the remaining rounds.
+test reserve_cover__rejects_wrong_standin_increment() {
+  !run_cover(cover_tx(400, 1, cover_burn(), 0))
+}
+
+// No membership-token burn (a Contribute recovery shape) — cover cannot ride it.
+test reserve_cover__rejects_without_token_burn() {
+  !run_cover(cover_tx(400, 2, assets.zero, 0))
+}
+
+// member_count kept (an ExecuteRecovery rotation shape) — cover cannot ride it.
+test reserve_cover__rejects_without_member_removal() {
+  !run_cover(cover_tx(400, 2, cover_burn(), 1))
 }

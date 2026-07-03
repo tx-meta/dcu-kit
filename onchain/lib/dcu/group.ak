@@ -5,7 +5,7 @@ use cardano/address.{Credential, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use dcu/cip68
-use dcu/treasury.{DefaultState, TreasuryDatum, TreasuryState}
+use dcu/treasury.{DefaultState, ReserveState, TreasuryDatum, TreasuryState}
 use dcu/utils.{get_lower_bound, output_holds_only_own}
 
 /// Protocol-wide ceiling on members per group, enforced at create-group (a group cannot
@@ -229,6 +229,10 @@ pub type GroupSpendRedeemer {
     admin_input_index: Int,
     group_input_index: Int,
     group_output_index: Int,
+    // The group's reserve UTxO as a REFERENCE input — the clean gate additionally
+    // requires standin_rounds == 0 (owed default cover must finish paying out
+    // before a lap resets the rotation math). Appended field.
+    reserve_ref_input_index: Int,
   }
 }
 
@@ -947,10 +951,12 @@ pub fn validate_start_group(
 //   Everything else — counters, registry, funds — unchanged.
 pub fn validate_begin_recommit(
   policy_id: PolicyId,
+  treasury_policy_id: PolicyId,
   group_ref_token_name: AssetName,
   admin_input_index: Int,
   group_input_index: Int,
   group_output_index: Int,
+  reserve_ref_input_index: Int,
   inputs: List<Input>,
   outputs: List<Output>,
   tx: Transaction,
@@ -969,6 +975,23 @@ pub fn validate_begin_recommit(
     policy_id,
     group_ref_token_name,
   )
+
+  // [spec Reserve §5]: owed default cover must finish paying out before a reset —
+  // the group's reserve (located by its deterministic token under the treasury
+  // policy, read-only) must show standin_rounds == 0.
+  expect Some(reserve_ref) = list.at(tx.reference_inputs, reserve_ref_input_index)
+  let reserve_token_name = cip68.convert_ref_to_reserve_token(
+    group_ref_token_name,
+  )
+  expect
+    assets.quantity_of(
+      reserve_ref.output.value,
+      treasury_policy_id,
+      reserve_token_name,
+    ) == 1
+  expect InlineDatum(reserve_datum_data) = reserve_ref.output.datum
+  expect ReserveState { standin_rounds, .. }: TreasuryDatum = reserve_datum_data
+  let no_pending_cover = standin_rounds == 0
 
   let next_era_round = current.last_distributed_round + 1 - current.era_start_round
   let at_boundary = next_era_round % current.num_rounds == 0
@@ -1000,6 +1023,7 @@ pub fn validate_begin_recommit(
 
   and {
     admin_authorized?,
+    no_pending_cover?,
     current.is_started?,
     current.is_active?,
     (current.active_member_count == current.member_count)?,

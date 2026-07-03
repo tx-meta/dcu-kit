@@ -13,6 +13,7 @@ use dcu/quorum.{
   collect_signed_approvals, recoveree_signed_for_token,
   signed_account_token_name,
 }
+use dcu/reserve.{reserve_cover_transition}
 use dcu/treasury.{
   DefaultState, PenaltyState, RecoveryRequest, ReserveState, TreasuryDatum,
   TreasuryState, max_grace_extensions,
@@ -1788,6 +1789,7 @@ pub fn validate_terminate_default(
   group_ref_input_index: Int,
   group_output_index: Int,
   admin_input_index: Int,
+  treasury_input_index: Int,
   datum: TreasuryDatum,
   tx: Transaction,
 ) -> Bool {
@@ -1849,12 +1851,50 @@ pub fn validate_terminate_default(
     member_reference_tokenname,
   ) == -1
 
+  // [spec Reserve C5]: the forfeited contributable balance funds the RESERVE, not
+  // the admin (defaulter's own assets first — the waterfall ordering), and the
+  // stand-in counter grows by the defaulter's remaining rounds this lap. The
+  // reserve input is located by its deterministic token name; the exact transition
+  // is shared with validate_reserve_cover (the reserve input's own redeemer), so a
+  // termination can neither skip the pot nor ride a datum-frozen ReserveTopUp.
+  // The admin keeps only the defaulter's min-ADA lovelace as change.
+  expect Some(defaulter_input) = list.at(inputs, treasury_input_index)
+  let forfeit = contributable_in(
+    defaulter_input.output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
+  let reserve_token_name = cip68.convert_ref_to_reserve_token(
+    expected_group_token_name,
+  )
+  expect Some(reserve_in) = list.find(
+    inputs,
+    fn(i) {
+      assets.quantity_of(i.output.value, own_policy_id, reserve_token_name) == 1
+    },
+  )
+  expect Some(reserve_out) = list.find(
+    outputs,
+    fn(o) {
+      assets.quantity_of(o.value, own_policy_id, reserve_token_name) == 1
+    },
+  )
+  let forfeit_routed = reserve_cover_transition(
+    own_policy_id,
+    group,
+    expected_group_token_name,
+    forfeit,
+    reserve_in,
+    reserve_out,
+  )
+
   and {
     group_link_valid?,
     member_removed?,
     admin_authorized?,
     grace_expired?,
     token_burned?,
+    forfeit_routed?,
   }
 }
 

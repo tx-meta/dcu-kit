@@ -9,11 +9,19 @@ use aiken/primitive/bytearray
 use aiken/primitive/int
 use cardano/assets
 use cardano/transaction.{Transaction, placeholder}
+use dcu/cip68
 use dcu/group.{GroupDatum, validate_begin_recommit}
+use dcu/treasury.{ReserveState}
 use dcu/treasury_validation
 use tests/common
 
 const window_open_time = 5_000_000
+
+// The treasury policy that minted the group's reserve token (BeginRecommit's
+// stand-in gate reads the reserve as a reference input).
+fn recommit_treasury_policy() -> assets.PolicyId {
+  common.test_hash_01()
+}
 
 fn started_group(policy_id) -> GroupDatum {
   GroupDatum {
@@ -56,6 +64,15 @@ fn run_begin(
   updated: GroupDatum,
   with_admin: Bool,
 ) -> Bool {
+  run_begin_standin(current, updated, with_admin, 0)
+}
+
+fn run_begin_standin(
+  current: GroupDatum,
+  updated: GroupDatum,
+  with_admin: Bool,
+  standin_rounds: Int,
+) -> Bool {
   let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let group_value = assets.from_lovelace(2_000_000)
@@ -78,16 +95,39 @@ fn run_begin(
     group_value,
     cip68(policy_id, updated),
   )
+  // The group's reserve as a REFERENCE input (the stand-in gate).
+  let tp = recommit_treasury_policy()
+  let reserve_ref = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      tp,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(
+            assets.from_asset(
+              tp,
+              cip68.convert_ref_to_reserve_token(ref_tn),
+              1,
+            ),
+          ),
+      ReserveState {
+        group_reference_tokenname: ref_tn,
+        standin_rounds,
+      },
+    ),
+  )
   let tx = Transaction {
     ..placeholder,
     inputs: [group_input, admin_input],
+    reference_inputs: [reserve_ref],
     outputs: [group_output],
     validity_range: interval.after(window_open_time),
   }
   validate_begin_recommit(
     policy_id,
+    tp,
     ref_tn,
     1,
+    0,
     0,
     0,
     [group_input, admin_input],
@@ -434,4 +474,18 @@ test prop_begin__vacancy_or_boundary_when_halted(k via gen_rounds_case()) {
     GroupDatum { ..halted_group(policy_id), last_distributed_round: k }
   let next = ( k + 1 ) % 3
   run_begin(current, expected_window(current), True) == ( next == 0 || next == 1 )
+}
+
+// [spec Reserve §5]: pending stand-in cover blocks the reset — owed cover must
+// finish paying out before a lap resets the rotation math.
+test begin_recommit__rejects_pending_standin_cover() {
+  let policy_id = common.test_policy_id()
+  let current = started_group(policy_id)
+  !run_begin_standin(current, expected_window(current), True, 2)
+}
+
+test begin_recommit__accepts_after_cover_drained() {
+  let policy_id = common.test_policy_id()
+  let current = started_group(policy_id)
+  run_begin_standin(current, expected_window(current), True, 0)
 }
