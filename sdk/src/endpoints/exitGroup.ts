@@ -33,6 +33,7 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
   MIN_ADA_RESERVE,
+  reserveTokenName,
   removeRegistryEntry,
 } from "../core/utils/index.js";
 
@@ -64,6 +65,11 @@ export type ExitGroupConfig = {
   // multiple account tokens from different sessions.
   accountTokenSuffix?: string;
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, omit for live network
+  // Wind-down exits only (group deactivated): also claim this member's equal share
+  // of the mutual reserve — floor(balance / pre-exit member_count) — on the way out.
+  // Defaults to true; set false to leave the share for later exiters. No effect
+  // while the group is active (active exits never touch the reserve).
+  claimReserveShare?: boolean;
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO, keeping the tx under 16KB.
   scriptRefs?: {
@@ -345,13 +351,70 @@ export const unsignedExitGroupTxProgram = (
         )
       : baseTx.mintAssets(burnAssets, mintBurnRedeemer);
 
+    // ─── Wind-down reserve share (ReserveRefund leg) ──────────────────────────
+    // Deactivated group only: take floor(balance / pre-exit member_count) of the
+    // mutual reserve on the way out (self-adjusting equal split; remainders roll
+    // forward to later exiters). Active exits never touch the reserve.
+    const isAdaFee = groupDatum.contribution_fee_policyid === "";
+    const feeUnit = isAdaFee
+      ? "lovelace"
+      : toUnit(
+          groupDatum.contribution_fee_policyid,
+          groupDatum.contribution_fee_assetname,
+        );
+    let withReserveShare = withPenaltyOrBurn;
+    if (!groupDatum.is_active && config.claimReserveShare !== false) {
+      const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
+      const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
+      const reserveUtxo = patchInlineDatum(reserveUtxoRaw);
+      const reserveRaw = reserveUtxo.assets[feeUnit] ?? 0n;
+      const reserveContributable = isAdaFee
+        ? reserveRaw - MIN_ADA_RESERVE
+        : reserveRaw;
+      const share =
+        reserveContributable > 0n
+          ? reserveContributable / groupDatum.member_count
+          : 0n;
+      if (share > 0n) {
+        // Outputs on this (burn) path: 0 = group, 1 = reserve, account return follows.
+        const reserveRedeemer: RedeemerBuilder = {
+          kind: "selected",
+          makeRedeemer: (indices: bigint[]) =>
+            Data.to(
+              {
+                ReserveRefund: {
+                  group_ref_input_index: indices[0],
+                  group_output_index: 0n,
+                  exiting_treasury_input_index: indices[1],
+                  reserve_input_index: indices[2],
+                  reserve_output_index: 1n,
+                },
+              },
+              TreasuryRedeemer,
+            ),
+          inputs: [groupUtxo, treasuryUtxo, reserveUtxo],
+        };
+        const reserveOutAssets: Assets = {
+          ...reserveUtxo.assets,
+          [feeUnit]: reserveRaw - share,
+        };
+        withReserveShare = withPenaltyOrBurn
+          .collectFrom([reserveUtxo], reserveRedeemer)
+          .pay.ToContract(
+            reserveUtxo.address,
+            { kind: "inline", value: reserveUtxo.datum! },
+            reserveOutAssets,
+          );
+      }
+    }
+
     // Explicitly return the member's account (222) token to their wallet. Without this the
     // token dangles into the change output, and when the spent treasury already covers the
     // penalty/burn outputs (e.g. under the larger min-ADA-reserve deposits) coin selection
     // won't pull an extra wallet UTxO — leaving too little ADA to satisfy the token's
     // min-UTxO ("not enough ADA leftover for non-ADA change"). The explicit output forces
     // selection to fund it. Mirrors the value-neutral endpoints' pattern.
-    const afterPath = withPenaltyOrBurn.pay
+    const afterPath = withReserveShare.pay
       .ToAddress(address, { [accountUserUnit]: 1n })
       .validFrom(Number(now));
 

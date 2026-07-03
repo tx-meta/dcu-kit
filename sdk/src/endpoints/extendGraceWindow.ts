@@ -158,7 +158,7 @@ export const unsignedExtendGraceWindowTxProgram = (
       : baseTx0.attach.SpendingValidator(treasuryValidator.spendTreasury);
 
     const withSigners = applyAdminWitness(
-      payAdminReturn(baseTx0, config, adminUtxo),
+      payAdminReturn(withValidator, config, adminUtxo),
       config,
     );
 

@@ -29,6 +29,7 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
   contributableBalance,
+  reserveTokenName,
 } from "../core/utils/index.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
 
@@ -202,8 +203,7 @@ export const unsignedDistributePayoutTxProgram = (
       return cmp !== 0 ? cmp : a.utxo.outputIndex - b.utxo.outputIndex;
     });
 
-    const payoutAmount =
-      BigInt(memberStates.length) * groupDatum.contribution_fee;
+    const grossPot = BigInt(memberStates.length) * groupDatum.contribution_fee;
 
     // 120 s buffer covers Blockfrost slot lag (observed up to ~30 s on Preprod).
     const VALIDITY_BUFFER_MS =
@@ -262,6 +262,65 @@ export const unsignedDistributePayoutTxProgram = (
           groupDatum.contribution_fee_policyid,
           groupDatum.contribution_fee_assetname,
         );
+
+    // ─── Reserve leg (round levy + stand-in draw) ─────────────────────────────
+    // The reserve MUST be spent when the group configures a round levy; with levy
+    // 0 it is spent only while a stand-in is active (the borrower gains the draw).
+    // Levy-0/standin-0 rounds skip the leg entirely — the tx is unchanged.
+    const roundLevy = groupDatum.reserve_round_levy;
+    const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
+    const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
+    const reserveUtxo = patchInlineDatum(reserveUtxoRaw);
+    const reserveDatumParsed = (yield* parseSafeDatum(
+      reserveUtxo.datum,
+      TreasuryDatumSchema,
+    )) as unknown as TreasuryDatum;
+    if (!("ReserveState" in reserveDatumParsed)) {
+      return yield* Effect.fail(
+        new TransactionBuildError({
+          operation: "distributeRound",
+          error: "Expected ReserveState on the reserve UTxO",
+        }),
+      );
+    }
+    const standinIn = reserveDatumParsed.ReserveState.standin_rounds;
+    const reserveNeeded = roundLevy > 0n || standinIn > 0n;
+    const levyTotal = reserveNeeded
+      ? roundLevy * BigInt(memberStates.length)
+      : 0n;
+    const reserveRawIn = reserveUtxo.assets[contributionUnit] ?? 0n;
+    const reserveContributableIn = contributableBalance(
+      reserveRawIn,
+      isAdaContribution,
+    );
+    // One fee-unit per round while the counter is positive, capped by what the
+    // pot (plus this round's levy) holds — a dry draw is 0 but still decrements.
+    const drawCap = reserveContributableIn + levyTotal;
+    const draw =
+      reserveNeeded && standinIn > 0n
+        ? groupDatum.contribution_fee < drawCap
+          ? groupDatum.contribution_fee
+          : drawCap < 0n
+            ? 0n
+            : drawCap
+        : 0n;
+    const standinOut = standinIn > 0n ? standinIn - 1n : 0n;
+    // What the borrower actually receives this round.
+    const payoutAmount = grossPot - levyTotal + draw;
+
+    // The indexer legs: member treasuries plus (when needed) the reserve, sorted
+    // lexicographically so input and output indices are both ascending on-chain.
+    type ReserveLeg = { utxo: UTxO; datum: TreasuryDatum; isReserve: true };
+    type Leg = { utxo: UTxO; datum: TreasuryDatum; isReserve?: boolean };
+    const legs: Leg[] = [
+      ...memberStates,
+      ...(reserveNeeded
+        ? [{ utxo: reserveUtxo, datum: reserveDatumParsed, isReserve: true } as ReserveLeg]
+        : []),
+    ].sort((a, b) => {
+      const cmp = a.utxo.txHash.localeCompare(b.utxo.txHash);
+      return cmp !== 0 ? cmp : a.utxo.outputIndex - b.utxo.outputIndex;
+    });
     // ICS suppression at every cycle boundary (last round of any cycle) — generalises the old
     // single-cycle last round so a member drained at a boundary stays TreasuryState and can exit.
     const isCycleBoundary = (eraRound + 1n) % groupDatum.num_rounds === 0n;
@@ -296,10 +355,11 @@ export const unsignedDistributePayoutTxProgram = (
       active_member_count: groupDatum.active_member_count - icsCount,
     };
 
-    // Output layout: [0] group, [1..n] treasury outputs, [n+1] borrower
-    const borrowerOutputIndex = BigInt(1 + memberStates.length);
+    // Output layout: [0] group, [1..n] indexer legs (treasuries + reserve, sorted
+    // order), [n+1] borrower (Push only).
+    const borrowerOutputIndex = BigInt(1 + legs.length);
 
-    const allInputs = [groupUtxo, ...memberStates.map((s) => s.utxo)];
+    const allInputs = [groupUtxo, ...legs.map((s) => s.utxo)];
 
     const groupRedeemer: RedeemerBuilder = {
       kind: "selected",
@@ -354,12 +414,12 @@ export const unsignedDistributePayoutTxProgram = (
       treasuryValidator.spendTreasury,
     );
 
-    // Build the transaction: group output first, then treasury outputs, then borrower
+    // Build the transaction: group output first, then the indexer legs, then borrower
     const baseTxNoValidators = lucid
       .newTx()
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom(
-        memberStates.map((s) => s.utxo),
+        legs.map((s) => s.utxo),
         treasurySpendRedeemer,
       )
       .withdraw(treasuryRewardAddress, 0n, distributeWithdrawRedeemer);
@@ -390,7 +450,39 @@ export const unsignedDistributePayoutTxProgram = (
     );
 
     // isPull / isAdaContribution / contributionUnit / isCycleBoundary computed above.
-    const withTreasuryOutputs = memberStates.reduce((tx, state) => {
+    // Outputs are built in LEG order (sorted), so the on-chain indexer sees
+    // ascending input AND output indices — the reserve leg lands wherever its
+    // outRef sorts among the member treasuries.
+    const withTreasuryOutputs = legs.reduce((tx, state) => {
+      if (state.isReserve) {
+        const updatedReserve: TreasuryDatum = {
+          ReserveState: {
+            ...(state.datum as { ReserveState: { group_reference_tokenname: string; standin_rounds: bigint } })
+              .ReserveState,
+            standin_rounds: standinOut,
+          },
+        };
+        const reserveOutBalance = reserveRawIn + levyTotal - draw;
+        // ADA groups adjust lovelace; token groups adjust the token (omitting a
+        // zero entry) and keep lovelace unchanged.
+        const reserveOutAssets: Assets = isAdaContribution
+          ? { ...state.utxo.assets, lovelace: reserveOutBalance }
+          : {
+              ...Object.fromEntries(
+                Object.entries(state.utxo.assets).filter(
+                  ([k]) => k !== contributionUnit,
+                ),
+              ),
+              ...(reserveOutBalance > 0n
+                ? { [contributionUnit]: reserveOutBalance }
+                : {}),
+            };
+        return tx.pay.ToContract(
+          state.utxo.address,
+          { kind: "inline", value: Data.to(updatedReserve, TreasuryDatum) },
+          reserveOutAssets,
+        );
+      }
       if (!("TreasuryState" in state.datum)) return tx;
       const ts = state.datum.TreasuryState;
       const memberToken = toUnit(

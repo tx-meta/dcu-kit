@@ -26,6 +26,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  reserveTokenName,
   MIN_ADA_RESERVE,
 } from "../core/utils/index.js";
 import {
@@ -263,7 +264,52 @@ export const unsignedJoinGroupTxProgram = (
             }
         : null;
 
-    const baseTx = lucid
+    // ─── Reserve join levy (ReserveTopUp leg) ─────────────────────────────────
+    // When the group configures a join levy, this tx must also spend the group's
+    // reserve UTxO and grow it by the levy in the contribution asset. Levy-0
+    // groups skip the leg entirely (the join tx is unchanged).
+    const joinLevy = groupDatum.reserve_join_levy;
+    const feeIsAda = groupDatum.contribution_fee_policyid === "";
+    const contributionUnit = feeIsAda
+      ? "lovelace"
+      : toUnit(
+          groupDatum.contribution_fee_policyid,
+          groupDatum.contribution_fee_assetname,
+        );
+    let reserveLeg: { utxo: UTxO; redeemer: RedeemerBuilder; assets: Assets } | null =
+      null;
+    if (joinLevy > 0n) {
+      const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
+      const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
+      const reserveUtxo = patchInlineDatum(reserveUtxoRaw);
+      const reserveOutAssets: Assets = {
+        ...reserveUtxo.assets,
+        [contributionUnit]:
+          (reserveUtxo.assets[contributionUnit] ?? 0n) + joinLevy,
+      };
+      // Outputs: 0 = group, 1 = treasury, 2 = reserve (member return follows).
+      const reserveRedeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (indices: bigint[]) =>
+          Data.to(
+            {
+              ReserveTopUp: {
+                reserve_input_index: indices[0],
+                reserve_output_index: 2n,
+              },
+            },
+            TreasuryRedeemer,
+          ),
+        inputs: [reserveUtxo],
+      };
+      reserveLeg = {
+        utxo: reserveUtxo,
+        redeemer: reserveRedeemer,
+        assets: reserveOutAssets,
+      };
+    }
+
+    const baseTx0 = lucid
       .newTx()
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom([accountUtxo])
@@ -284,7 +330,19 @@ export const unsignedJoinGroupTxProgram = (
         treasuryAddress,
         { kind: "inline", value: Data.to(treasuryDatum, TreasuryDatum) },
         treasuryAssets,
-      )
+      );
+
+    const baseTx = reserveLeg
+      ? baseTx0
+          .collectFrom([reserveLeg.utxo], reserveLeg.redeemer)
+          .pay.ToContract(
+            reserveLeg.utxo.address,
+            { kind: "inline", value: reserveLeg.utxo.datum! },
+            reserveLeg.assets,
+          )
+      : baseTx0;
+
+    const withMemberReturn = baseTx
       // Return only the account token + minimum lovelace.
       // accountUtxo may hold hundreds of ADA (e.g. if the wallet's change from
       // create-account landed in the same UTxO). Returning accountUtxo.assets
@@ -300,8 +358,8 @@ export const unsignedJoinGroupTxProgram = (
     // collectFrom([]) throws EMPTY_UTXO in Lucid Evolution — only add when non-empty
     const withFunding =
       fundingUtxos && fundingUtxos.length > 0
-        ? baseTx.collectFrom(fundingUtxos)
-        : baseTx;
+        ? withMemberReturn.collectFrom(fundingUtxos)
+        : withMemberReturn;
 
     const withFee =
       adminFeeAddress && adminFeeAssets
