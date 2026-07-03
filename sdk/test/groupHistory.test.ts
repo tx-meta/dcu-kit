@@ -14,11 +14,12 @@ const REF_UNIT = `${GROUP_POLICY}${assetNameLabels.prefix100}${SUFFIX}`;
 // Synthetic fixture derived from the real Group A Preprod datum (name "Kiambu Land Chama",
 // contribution_fee 5_000_000). Re-encoded with Data.to(GroupCip68DatumSchema) to include
 // the two Phase 0 fields (recovery_threshold=1, recovery_timelock=259_200_000) appended at
-// the end of GroupDatum, and the Phase 2 Credential-typed creator_payment_credential
-// (VerificationKey Constr-0 wrapper around the same 28-byte hash). Verified round-trips
+// the end of GroupDatum, the Phase 2 Credential-typed creator_payment_credential
+// (VerificationKey Constr-0 wrapper around the same 28-byte hash), and the Phase 6
+// reserve levies (reserve_join_levy=0, reserve_round_levy=0). Verified round-trips
 // correctly with the current schema.
 const REAL_DATUM_CBOR =
-  "d8799fbf4b6465736372697074696f6e5836536176696e6720746f20627579206120706c6f7420696e204b69616d627520c3a2c280c294206d6f6e74686c7920726f746174696f6e446e616d65514b69616d6275204c616e64204368616d61ff01d8799f40401a004c4b4040401a001e848040401a001e8480001a004c4b401a000493e000050000d87a80d879800020d8799f581c4f98ff0132eb48622cef2482f1ecd5cfbdcc54373290ce3f0992f7f1ff8001d87980011a0f73140080001a0f731400ffff";
+  "d8799fbf4b6465736372697074696f6e5836536176696e6720746f20627579206120706c6f7420696e204b69616d627520c3a2c280c294206d6f6e74686c7920726f746174696f6e446e616d65514b69616d6275204c616e64204368616d61ff01d8799f40401a004c4b4040401a001e848040401a001e8480001a004c4b401a000493e000050000d87a80d879800020d8799f581c4f98ff0132eb48622cef2482f1ecd5cfbdcc54373290ce3f0992f7f1ff8001d87980011a0f73140080001a0f7314000000ffff";
 
 const TX_CREATE = "aa".repeat(32);
 const TX_UPDATE = "bb".repeat(32);

@@ -5,8 +5,10 @@ import {
   RedeemerBuilder,
   Assets,
   toUnit,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import {
   AdminAuthConfig,
   applyAdminWitness,
@@ -39,6 +41,8 @@ import {
 export type TerminateGroupConfig = {
   groupTokenSuffix: string;
   memberAccountTokenSuffix: string;
+  /** Deployed treasury reference script — the treasury no longer fits inline. */
+  scriptRefs?: { treasury?: UTxO };
 } & AdminAuthConfig;
 
 // --- Endpoint ---
@@ -170,12 +174,17 @@ export const unsignedTerminateGroupTxProgram = (
       .readFrom([groupUtxo])
       .mintAssets(burnAssets, mintBurnRedeemer)
       .addSigner(address)
-      .attach.MintingPolicy(treasuryValidator.mintTreasury)
-      .attach.SpendingValidator(treasuryValidator.spendTreasury)
       .readFrom([settingsUtxo]);
 
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const withValidator = scriptRefs.treasury
+      ? baseTx0.readFrom([scriptRefs.treasury])
+      : baseTx0.attach
+          .MintingPolicy(treasuryValidator.mintTreasury)
+          .attach.SpendingValidator(treasuryValidator.spendTreasury);
+
     const withSigners = applyAdminWitness(
-      payAdminReturn(baseTx0, config, adminUtxo),
+      payAdminReturn(withValidator, config, adminUtxo),
       config,
     );
 

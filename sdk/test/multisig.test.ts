@@ -658,6 +658,7 @@ describe("script-held admin ops", () => {
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
         const deleteTx = yield* unsignedDeleteGroupTxProgram(context.protocol!, lucid, {
           groupTokenSuffix,
+          scriptRefs: context.scriptRefs,
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
         });
@@ -696,6 +697,7 @@ describe("script-held admin ops", () => {
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
         const deleteTx = yield* unsignedDeleteGroupTxProgram(context.protocol!, lucid, {
           groupTokenSuffix,
+          scriptRefs: context.scriptRefs,
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
         });
@@ -753,6 +755,7 @@ describe("script-held admin ops", () => {
         const tx = yield* unsignedExtendGraceWindowTxProgram(context.protocol!, lucid, {
           groupTokenSuffix,
           memberAccountTokenSuffix,
+          scriptRefs: context.scriptRefs,
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
         });
@@ -813,6 +816,7 @@ describe("script-held admin ops", () => {
         const tx = yield* unsignedExtendGraceWindowTxProgram(context.protocol!, lucid, {
           groupTokenSuffix,
           memberAccountTokenSuffix,
+          scriptRefs: context.scriptRefs,
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
         });
@@ -1012,6 +1016,7 @@ describe("script-held admin ops", () => {
         const terminateTx = yield* unsignedTerminateGroupTxProgram(context.protocol!, lucid, {
           groupTokenSuffix,
           memberAccountTokenSuffix,
+          scriptRefs: context.scriptRefs,
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
         });
@@ -1084,6 +1089,7 @@ describe("script-held admin ops", () => {
         const terminateTx = yield* unsignedTerminateGroupTxProgram(context.protocol!, lucid, {
           groupTokenSuffix,
           memberAccountTokenSuffix,
+          scriptRefs: context.scriptRefs,
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
         });

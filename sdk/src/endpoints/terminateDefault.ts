@@ -38,6 +38,7 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
   removeRegistryEntry,
+  reserveTokenName,
 } from "../core/utils/index.js";
 
 // --- Configuration ---
@@ -63,8 +64,10 @@ export type TerminateDefaultConfig = {
  *
  * **Functionality:**
  * - Spends the defaulter's DefaultState treasury UTxO (TerminateDefault redeemer).
- * - Burns the membership token and forfeits the locked collateral to the admin (it flows
- *   to the admin's wallet as change — the admin builds and signs this tx).
+ * - Burns the membership token; the forfeited contributable balance flows INTO the
+ *   group's mutual reserve (ReserveCover leg — defaulter's own assets first), and the
+ *   reserve's stand-in counter grows by the defaulter's remaining rounds this lap.
+ *   The admin keeps only the defaulter's min-ADA lovelace as change.
  * - Spends the Group UTxO with the Exit redeemer to decrement member_count and remove the
  *   member from the registry (keeping the `length(member_token_names) == member_count`
  *   invariant intact).
@@ -159,6 +162,77 @@ export const unsignedTerminateDefaultTxProgram = (
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
     const burnAssets: Assets = { [memberToken]: -1n };
 
+    // ─── Reserve leg (ReserveCover) ───────────────────────────────────────────
+    // The group's reserve UTxO receives the defaulter's forfeited contributable
+    // balance, and standin_rounds grows by their remaining rounds this lap.
+    const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
+    const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
+    const reserveUtxo = patchInlineDatum(reserveUtxoRaw);
+    const reserveDatum = (yield* parseSafeDatum(
+      reserveUtxo.datum,
+      TreasuryDatumSchema,
+    )) as unknown as TreasuryDatum;
+    if (!("ReserveState" in reserveDatum)) {
+      return yield* Effect.fail(
+        new InvalidDatumError({
+          field: "reserveDatum",
+          reason: "Expected ReserveState on the reserve UTxO",
+        }),
+      );
+    }
+
+    // Forfeit = the defaulter's contributable balance in the contribution asset
+    // (min-ADA excluded for ADA-denominated groups — it returns to the admin).
+    const feeIsAda = groupDatum.contribution_fee_policyid === "";
+    const contributionUnit = feeIsAda
+      ? "lovelace"
+      : toUnit(
+          groupDatum.contribution_fee_policyid,
+          groupDatum.contribution_fee_assetname,
+        );
+    const defaulterRaw = treasuryUtxo.assets[contributionUnit] ?? 0n;
+    const forfeit = feeIsAda ? defaulterRaw - 2_000_000n : defaulterRaw;
+
+    // standin increment: the defaulter's remaining contribution rounds this lap.
+    const remaining = groupDatum.is_started
+      ? groupDatum.era_start_round +
+        groupDatum.num_rounds -
+        (groupDatum.last_distributed_round + 1n)
+      : 0n;
+    const standinIncrement = remaining > 0n ? remaining : 0n;
+
+    const updatedReserveDatum: TreasuryDatum = {
+      ReserveState: {
+        ...reserveDatum.ReserveState,
+        standin_rounds:
+          reserveDatum.ReserveState.standin_rounds + standinIncrement,
+      },
+    };
+    const reserveOutAssets: Assets = {
+      ...reserveUtxo.assets,
+      [contributionUnit]: (reserveUtxo.assets[contributionUnit] ?? 0n) + forfeit,
+    };
+
+    // Reserve spend redeemer — pinned to this genuine termination.
+    // Outputs: 0 = group, 1 = reserve (admin return follows).
+    const reserveSpendRedeemer: RedeemerBuilder = {
+      kind: "selected",
+      makeRedeemer: (inputIndices: bigint[]) =>
+        Data.to(
+          {
+            ReserveCover: {
+              group_ref_input_index: inputIndices[0],
+              group_output_index: 0n,
+              defaulter_input_index: inputIndices[1],
+              reserve_input_index: inputIndices[2],
+              reserve_output_index: 1n,
+            },
+          },
+          TreasuryRedeemer,
+        ),
+      inputs: [groupUtxo, treasuryUtxo, reserveUtxo],
+    };
+
     // Updated Group datum: decrement member_count and drop the member from the registry.
     const remainingRegistry = removeRegistryEntry(
       groupDatum.member_token_names,
@@ -237,6 +311,7 @@ export const unsignedTerminateDefaultTxProgram = (
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom([adminUtxo])
       .collectFrom([treasuryUtxo], treasurySpendRedeemer)
+      .collectFrom([reserveUtxo], reserveSpendRedeemer)
       .addSigner(address)
       .pay.ToContract(
         groupUtxo.address,
@@ -249,6 +324,11 @@ export const unsignedTerminateDefaultTxProgram = (
           ),
         },
         groupUtxo.assets,
+      )
+      .pay.ToContract(
+        reserveUtxo.address,
+        { kind: "inline", value: Data.to(updatedReserveDatum, TreasuryDatum) },
+        reserveOutAssets,
       )
       .mintAssets(burnAssets, mintBurnRedeemer)
       .validFrom(Number(now));
@@ -269,15 +349,13 @@ export const unsignedTerminateDefaultTxProgram = (
 
     const withSigners = applyAdminWitness(withValidators, config);
 
-    // Returning the script-held admin token to its script address adds an output that
-    // forces coin selection to pull a fee input AFTER the RedeemerBuilder indices were
-    // computed, which Lucid rejects ("Coin selection had to be updated after building
-    // redeemers"). Pre-setting a minimum fee makes the first selection pass reserve that
-    // input up front, keeping the selected-input indices stable. Only on the script path
-    // so the VK-wallet path is unchanged. Excess over the real fee returns as change.
-    const withMinFee = config.adminScript
-      ? withSigners.setMinFee(2_000_000n)
-      : withSigners;
+    // The reserve continuation output (and, on the script path, the admin-token
+    // return) forces coin selection to pull a fee input AFTER the RedeemerBuilder
+    // indices were computed, which Lucid rejects ("Coin selection had to be updated
+    // after building redeemers"). Pre-setting a minimum fee makes the first selection
+    // pass reserve that input up front, keeping the selected-input indices stable.
+    // Excess over the real fee returns as change.
+    const withMinFee = withSigners.setMinFee(2_200_000n);
 
     const tx = yield* withMinFee
       .readFrom([settingsUtxo])

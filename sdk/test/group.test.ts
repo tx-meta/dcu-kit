@@ -274,6 +274,7 @@ describe("Group Endpoints", () => {
       const err = yield* Effect.flip(
         unsignedDeleteGroupTxProgram(context.protocol!, lucid, {
           groupTokenSuffix,
+          scriptRefs: context.scriptRefs,
         }),
       );
 
@@ -385,7 +386,7 @@ describe("VK-default admin (regression)", () => {
       const deleteTx = yield* unsignedDeleteGroupTxProgram(
         context.protocol!,
         lucid,
-        { groupTokenSuffix },
+        { groupTokenSuffix, scriptRefs: context.scriptRefs },
       );
       const txHash = yield* signAndSubmit(deleteTx);
       yield* advanceBlock(context.emulator);

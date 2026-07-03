@@ -366,7 +366,10 @@ export const deleteGroupTestCase = (
       context.protocol!.groupPolicyId,
       assetNameLabels.prefix100,
     );
-    const deleteConfig: DeleteGroupConfig = { groupTokenSuffix };
+    const deleteConfig: DeleteGroupConfig = {
+      groupTokenSuffix,
+      scriptRefs: context.scriptRefs,
+    };
 
     const deleteGroupTx = yield* unsignedDeleteGroupTxProgram(
       context.protocol!,
