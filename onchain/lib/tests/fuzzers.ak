@@ -75,6 +75,8 @@ pub fn gen_group_datum() {
       member_slots: [],
       era_start_round: 0,
       recommit_window: 259_200_000,
+      reserve_join_levy: 0,
+      reserve_round_levy: 0,
     },
   )
 }
@@ -102,6 +104,8 @@ pub fn gen_valid_group_datum() {
   let max_members <- fuzz.and_then(fuzz.int_between(1, 20))
   let collateral_rounds <- fuzz.and_then(fuzz.int_between(1, max_members))
   let creator_payment_credential <- fuzz.and_then(gen_credential())
+  let reserve_join_levy <- fuzz.and_then(fuzz.int_at_least(0))
+  let reserve_round_levy <- fuzz.and_then(fuzz.int_at_least(0))
 
   fuzz.constant(
     GroupDatum {
@@ -136,6 +140,8 @@ pub fn gen_valid_group_datum() {
       member_slots: [],
       era_start_round: 0,
       recommit_window: 259_200_000,
+      reserve_join_levy,
+      reserve_round_levy,
     },
   )
 }

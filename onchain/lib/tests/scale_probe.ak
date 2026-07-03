@@ -89,6 +89,8 @@ fn probe_group_datum(n: Int) -> GroupDatum {
     member_slots: list.range(0, n - 1),
     era_start_round: 0,
     recommit_window: 259_200_000,
+    reserve_join_levy: 0,
+    reserve_round_levy: 0,
   }
 }
 

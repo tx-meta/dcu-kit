@@ -3018,6 +3018,41 @@ test update_group__rejects_recommit_window_change_with_members() {
   )
 }
 
+// [spec Reserve C2]: levies are non-negative at creation.
+test create_group__rejects_negative_reserve_join_levy() {
+  let policy_id = common.test_policy_id()
+  recommit_create_rejects(
+    GroupDatum { ..common.test_group_datum(policy_id), reserve_join_levy: -1 },
+  )
+}
+
+test create_group__rejects_negative_reserve_round_levy() {
+  let policy_id = common.test_policy_id()
+  recommit_create_rejects(
+    GroupDatum { ..common.test_group_datum(policy_id), reserve_round_levy: -1 },
+  )
+}
+
+// Reserve levies are economic terms — frozen once any member has joined
+// (the whole-record allowlist covers them).
+test update_group__rejects_reserve_join_levy_change_with_members() {
+  let policy_id = common.test_policy_id()
+  let base = GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
+  recommit_update_rejects(
+    base,
+    GroupDatum { ..base, reserve_join_levy: base.reserve_join_levy + 1 },
+  )
+}
+
+test update_group__rejects_reserve_round_levy_change_with_members() {
+  let policy_id = common.test_policy_id()
+  let base = GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
+  recommit_update_rejects(
+    base,
+    GroupDatum { ..base, reserve_round_levy: base.reserve_round_levy + 1 },
+  )
+}
+
 // Started exit: the paired slot entry leaves with the registry name — no re-pack,
 // the vacancy stays visible. Registry is newest-first: [#"ccdd", #"aabb"] with
 // slots [1, 0] means #"aabb" (first joiner) holds slot 0.

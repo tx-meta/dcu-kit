@@ -37,3 +37,17 @@ pub fn convert_ref_to_user_token(ref_token_name: AssetName) -> AssetName {
   let unique_part = bytearray.drop(ref_token_name, prefix_length)
   bytearray.concat(prefix_222, unique_part)
 }
+
+/// Reserve identity token prefix — ASCII "RSVE". Minted under the TREASURY policy
+/// (unlike the CIP-68 pairs above, which live under the group policy per group and
+/// the treasury policy per member). First byte != 0x00, so it can never collide
+/// with a CIP-67 label prefix (100/222).
+pub const prefix_rsv: ByteArray = #"52535645"
+
+/// Reserve token name for a group: prefix_rsv + the group ref token's unique part.
+/// Deterministic — derivable from the group ref token name alone, by validators
+/// and indexers alike.
+pub fn convert_ref_to_reserve_token(ref_token_name: AssetName) -> AssetName {
+  let unique_part = bytearray.drop(ref_token_name, prefix_length)
+  bytearray.concat(prefix_rsv, unique_part)
+}

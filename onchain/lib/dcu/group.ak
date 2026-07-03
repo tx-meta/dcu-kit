@@ -129,6 +129,14 @@ pub type GroupDatum {
   // Minimum POSIX-ms between BeginRecommit and the re-sealing StartGroup — the free-exit
   // (opt-out) window. Default: 259_200_000 (3 days). Frozen once any member has joined.
   recommit_window: Int,
+  // One-time amount (in the CONTRIBUTION asset) each joiner pays into the group's
+  // mutual reserve at JoinGroup. 0 = off. Immutable after creation. Distinct from
+  // joining_fee, which routes to creator_payment_credential.
+  reserve_join_levy: Int,
+  // Per contributing member per round (in the CONTRIBUTION asset) routed to the
+  // mutual reserve at DistributeRound; the round's pot shrinks by the same total.
+  // 0 = off. Immutable after creation.
+  reserve_round_levy: Int,
 }
 
 /// Group Validator Mint Redeemer
@@ -397,6 +405,10 @@ pub fn validate_create_group(
     (datum.member_slots == [])?,
     (datum.era_start_round == 0)?,
     (datum.recommit_window >= 0)?,
+    // [spec Reserve C2]: levies are non-negative; 0 = off. Frozen once any member has
+    // joined by the record-freeze below, like every other economic field.
+    (datum.reserve_join_levy >= 0)?,
+    (datum.reserve_round_levy >= 0)?,
   }
 }
 

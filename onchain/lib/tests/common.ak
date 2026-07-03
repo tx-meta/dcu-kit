@@ -125,6 +125,8 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     member_slots: [],
     era_start_round: 0,
     recommit_window: 259_200_000,
+    reserve_join_levy: 0,
+    reserve_round_levy: 0,
   }
 }
 
