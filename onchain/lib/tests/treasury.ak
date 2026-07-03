@@ -1,4 +1,5 @@
 use aiken/collection/list
+use aiken/fuzz
 use aiken/interval
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets
@@ -5199,4 +5200,44 @@ test terminate_default__rejects_unrouted_forfeit() {
     datum,
     tx,
   )
+}
+
+// Property: the exact reserve leg accepts across the whole (levy, stand-in,
+// pot) space — fixtures computed from the same formulas the spec defines.
+fn reserve_leg_fuzzer() -> Fuzzer<(Int, Int, Int)> {
+  let levy <- fuzz.and_then(fuzz.int_between(0, 500_000))
+  let standin <- fuzz.and_then(fuzz.int_between(0, 5))
+  let pot <- fuzz.and_then(fuzz.int_between(0, 10_000_000))
+  fuzz.constant((levy, standin, pot))
+}
+
+test prop_distribute_reserve__leg_math(params via reserve_leg_fuzzer()) {
+  let (levy, standin_in, pot) = params
+  // one contributing member in the fixture
+  let levy_total = levy
+  let draw = if standin_in > 0 {
+    let cap = pot + levy_total
+    if 2_000_000 < cap {
+      2_000_000
+    } else if cap < 0 {
+      0
+    } else {
+      cap
+    }
+  } else {
+    0
+  }
+  let standin_out = if standin_in > 0 {
+    standin_in - 1
+  } else {
+    0
+  }
+  let tx = distribute_reserve_tx(
+    levy,
+    standin_in,
+    2_000_000 + pot,
+    2_000_000 + pot + levy_total - draw,
+    standin_out,
+  )
+  run_distribute_reserve(tx)
 }

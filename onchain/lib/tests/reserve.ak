@@ -1,6 +1,7 @@
 //// Mutual reserve (Cluster C) — creation one-shot, top-ups, levies, stand-in
 //// cover, wind-down refunds. Spec: 2026-07-03-cluster-c-reserve-design.md
 
+use aiken/fuzz
 use cardano/assets
 use cardano/transaction.{Transaction}
 use dcu/cip68
@@ -917,4 +918,76 @@ test group_reserve_burned__accepts_burn() {
 test group_reserve_burned__rejects_missing_burn() {
   let mint = assets.from_asset(group_policy(), group_ref_tn(), -1)
   !reserve.group_reserve_burned(treasury_policy(), group_ref_tn(), mint)
+}
+
+// ─── Refund equal-split property ──────────────────────────────────────────────
+
+fn refund_group_input_m(member_count: Int) {
+  common.test_input(
+    transaction.OutputReference {
+      transaction_id: #"6666666666666666666666666666666666666666666666666666666666666666",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      group_policy(),
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
+      wrap_group(
+        GroupDatum { ..refund_group_datum(2), member_count },
+      ),
+    ),
+  )
+}
+
+fn refund_group_output_m(member_count: Int) {
+  common.test_script_utxo(
+    group_policy(),
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
+    wrap_group(
+      GroupDatum { ..refund_group_datum(2), member_count },
+    ),
+  )
+}
+
+fn refund_tx_m(member_count: Int, balance: Int, taken: Int) -> Transaction {
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      refund_group_input_m(member_count),
+      refund_exiting_input(),
+      reserve_input(
+        0,
+        reserve_create_value() |> assets.merge(contribution(balance)),
+      ),
+    ],
+    outputs: [
+      refund_group_output_m(member_count - 1),
+      reserve_output(
+        group_ref_tn(),
+        0,
+        reserve_create_value()
+          |> assets.merge(contribution(balance - taken)),
+      ),
+    ],
+  }
+}
+
+fn refund_bound_fuzzer() -> Fuzzer<(Int, Int)> {
+  let member_count <- fuzz.and_then(fuzz.int_between(1, 20))
+  let balance <- fuzz.and_then(fuzz.int_between(0, 100_000))
+  fuzz.constant((member_count, balance))
+}
+
+// Taking exactly floor(balance / member_count) is always accepted.
+test prop_reserve_refund__share_always_claimable(
+  params via refund_bound_fuzzer(),
+) {
+  let (member_count, balance) = params
+  run_refund(refund_tx_m(member_count, balance, balance / member_count))
+}
+
+// The last exiter (pre-exit member_count == 1) may drain the pot fully.
+test reserve_refund__last_exiter_takes_all() {
+  run_refund(refund_tx_m(1, 1000, 1000))
 }

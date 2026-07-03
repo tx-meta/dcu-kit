@@ -234,3 +234,136 @@ test scale_probe__distribute_n20() {
 test scale_probe__distribute_n30() {
   run_probe(30)
 }
+
+// ─── Reserve-leg probe: levy ON + stand-in draw active (worst case) ───────────
+
+const probe_levy: Int = 100_000
+
+fn probe_reserve_tn() -> assets.AssetName {
+  // prefix_rsv + the group ref's 28-byte unique part
+  bytearray.concat(#"52535645", bytearray.drop(probe_group_ref(), 4))
+}
+
+// Runs the same full round-0 distribute with the reserve leg included: round
+// levy accruing AND a stand-in fee-unit drawn (counter 2 → 1) — the heaviest
+// shape the reserve adds to the hot path.
+fn run_probe_reserve(n: Int) -> Bool {
+  let group_datum = GroupDatum {
+    ..probe_group_datum(n),
+    reserve_round_levy: probe_levy,
+  }
+  let group_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp(), probe_group_ref(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"8888888888888888888888888888888888888888888888888888888888888888",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address {
+        payment_credential: Script(gp()),
+        stake_credential: None,
+      },
+      value: group_value,
+      datum: InlineDatum(probe_cip68(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address {
+      payment_credential: Script(gp()),
+      stake_credential: None,
+    },
+    value: group_value,
+    datum: InlineDatum(
+      probe_cip68(GroupDatum { ..group_datum, last_distributed_round: 0 }),
+    ),
+    reference_script: None,
+  }
+  // Reserve: 5M contributable, stand-in counter 2 → draws one full fee (2M).
+  let levy_total = n * probe_levy
+  let draw = probe_fee
+  let reserve_in = Input {
+    output_reference: OutputReference {
+      transaction_id: #"9999999999999999999999999999999999999999999999999999999999999999",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address {
+        payment_credential: Script(tp()),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(min_ada_reserve + 5_000_000)
+        |> assets.merge(assets.from_asset(tp(), probe_reserve_tn(), 1)),
+      datum: InlineDatum(
+        treasury.ReserveState {
+          group_reference_tokenname: probe_group_ref(),
+          standin_rounds: 2,
+        },
+      ),
+      reference_script: None,
+    },
+  }
+  let reserve_out = Output {
+    address: Address {
+      payment_credential: Script(tp()),
+      stake_credential: None,
+    },
+    value: assets.from_lovelace(min_ada_reserve + 5_000_000 + levy_total - draw)
+      |> assets.merge(assets.from_asset(tp(), probe_reserve_tn(), 1)),
+    datum: InlineDatum(
+      treasury.ReserveState {
+        group_reference_tokenname: probe_group_ref(),
+        standin_rounds: 1,
+      },
+    ),
+    reference_script: None,
+  }
+  let borrower_output = Output {
+    address: Address {
+      payment_credential: VerificationKey(borrower_pkh()),
+      stake_credential: None,
+    },
+    value: assets.from_lovelace(n * probe_fee - levy_total + draw),
+    datum: transaction.NoDatum,
+    reference_script: None,
+  }
+
+  let member_indices = list.range(0, n - 1)
+  let treasury_inputs = list.map(member_indices, probe_treasury_input)
+  let treasury_outputs = list.map(member_indices, probe_treasury_output)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: list.concat([group_input, ..treasury_inputs], [reserve_in]),
+    outputs: list.concat(
+      treasury_outputs,
+      [group_output, borrower_output, reserve_out],
+    ),
+    validity_range: interval.after(0),
+  }
+
+  validate_distribute_withdraw(
+    tp(),
+    gp(),
+    0,
+    0,
+    // group_output_index — after the n treasury outputs
+    n,
+    // treasury inputs 1..n plus the reserve at n+1
+    list.concat(list.map(member_indices, fn(i) { i + 1 }), [n + 1]),
+    // treasury outputs 0..n-1 plus the reserve at n+2 (after group, borrower)
+    list.concat(member_indices, [n + 2]),
+    // borrower_output_index
+    n + 1,
+    tx,
+  )
+}
+
+test scale_probe__distribute_reserve_n20() {
+  run_probe_reserve(20)
+}
+
+test scale_probe__distribute_reserve_n30() {
+  run_probe_reserve(30)
+}
