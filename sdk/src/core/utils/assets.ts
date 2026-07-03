@@ -15,6 +15,7 @@ export const assetNameLabels = {
   prefix222: "000de140", // User/Auth NFT (held by user)
   prefix333: "0014df10", // Royalty NFT
   prefix444: "001bc280", // Other NFT
+  prefixRsv: "52535645", // ASCII "RSVE" — mutual reserve identity (treasury policy)
 };
 
 /**
@@ -75,6 +76,20 @@ export const createCip68TokenNames = (
     );
     return { refTokenName, userTokenName };
   });
+
+/**
+ * Derives the group's mutual-reserve token name from its (100) ref token name.
+ *
+ * Matches the Aiken helper (`dcu/cip68.convert_ref_to_reserve_token`):
+ * `"RSVE" (52535645) + the ref token's 28-byte unique part`. The reserve token
+ * lives under the TREASURY policy (unlike the 100/222 pair) and is the permanent
+ * identity of the group's ReserveState UTxO.
+ *
+ * @param groupRefTokenName - The group's (100) ref token name (64 hex chars).
+ * @returns The 32-byte reserve token name (hex).
+ */
+export const reserveTokenName = (groupRefTokenName: string): string =>
+  assetNameLabels.prefixRsv + groupRefTokenName.slice(8);
 
 /**
  * Finds a UTxO containing at least one of the specified token.

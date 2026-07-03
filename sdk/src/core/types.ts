@@ -173,6 +173,16 @@ export const GroupDatumSchema = Data.Object({
   era_start_round: Data.Integer(),
   /** Min POSIX-ms between BeginRecommit and the re-sealing startGroup (opt-out window). */
   recommit_window: Data.Integer(),
+  /**
+   * One-time amount (in the CONTRIBUTION asset) each joiner pays into the group's
+   * mutual reserve at join. 0n = off. Distinct from joining_fee (creator-routed).
+   */
+  reserve_join_levy: Data.Integer(),
+  /**
+   * Per contributing member per round (in the CONTRIBUTION asset) routed to the
+   * mutual reserve at distribute; the round's pot shrinks by the same total. 0n = off.
+   */
+  reserve_round_levy: Data.Integer(),
 });
 
 /**
@@ -294,6 +304,11 @@ export const GroupSpendRedeemerSchema = Data.Enum([
       admin_input_index: Data.Integer(),
       group_input_index: Data.Integer(),
       group_output_index: Data.Integer(),
+      /**
+       * The group's reserve UTxO as a REFERENCE input — the clean gate requires
+       * standin_rounds == 0n (owed default cover must finish before a reset).
+       */
+      reserve_ref_input_index: Data.Integer(),
     }),
   }),
 ]);
@@ -352,6 +367,20 @@ export const TreasuryDatumSchema = Data.Enum([
       new_payment_credential: Data.Bytes(),
       earliest_execution_slot: Data.Integer(),
       approvals: Data.Array(Data.Bytes()),
+    }),
+  }),
+  Data.Object({
+    // Mutual reserve pot — exactly one per group, created in the createGroup tx.
+    // Identity: holds the reserve token (prefix "RSVE" + the group ref token's
+    // unique part) under the treasury policy. Appended LAST (Constr index 4).
+    ReserveState: Data.Object({
+      group_reference_tokenname: Data.Bytes(),
+      /**
+       * Remaining fee-units the reserve stands in for terminated defaulters —
+       * one unit drawn per distribute round while > 0n (decrements even when the
+       * pot is dry). Flat pool: overlapping defaults extend duration, not depth.
+       */
+      standin_rounds: Data.Integer(),
     }),
   }),
 ]);
@@ -460,6 +489,49 @@ export const TreasuryRedeemerSchema = Data.Enum([
       request_input_index: Data.Integer(),
       member_treasury_input_index: Data.Integer(),
       member_treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    // Mints the group's reserve token + creates the ReserveState UTxO. Valid only
+    // in the same tx as the group-creation mint (one-shot coupling). Mint-only.
+    CreateReserve: Data.Object({
+      group_output_index: Data.Integer(),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    // Increase-only reserve spend: the join levy leg and voluntary top-ups.
+    ReserveTopUp: Data.Object({
+      reserve_input_index: Data.Integer(),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    // Reserve leg of a terminateDefault: forfeit flows in, standin_rounds grows
+    // by the defaulter's remaining rounds this lap.
+    ReserveCover: Data.Object({
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      defaulter_input_index: Data.Integer(),
+      reserve_input_index: Data.Integer(),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    // Wind-down refund riding a member exit: at most floor(balance / pre-exit
+    // member_count) leaves the pot.
+    ReserveRefund: Data.Object({
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      exiting_treasury_input_index: Data.Integer(),
+      reserve_input_index: Data.Integer(),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    // Closes the reserve in the deleteGroup tx (group ref + reserve tokens burn together).
+    ReserveClose: Data.Object({
+      group_input_index: Data.Integer(),
     }),
   }),
 ]);

@@ -4,8 +4,10 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   toUnit,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import {
   AdminAuthConfig,
   applyAdminWitness,
@@ -49,6 +51,8 @@ import {
 export type ExtendGraceWindowConfig = {
   groupTokenSuffix: string;
   memberAccountTokenSuffix: string;
+  /** Deployed treasury reference script — the treasury no longer fits inline. */
+  scriptRefs?: { treasury?: UTxO };
 } & AdminAuthConfig;
 
 export const unsignedExtendGraceWindowTxProgram = (
@@ -146,8 +150,12 @@ export const unsignedExtendGraceWindowTxProgram = (
         { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
         { lovelace: treasuryUtxo.assets.lovelace, [memberToken]: 1n },
       )
-      .attach.SpendingValidator(treasuryValidator.spendTreasury)
       .readFrom([settingsUtxo]);
+
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const withValidator = scriptRefs.treasury
+      ? baseTx0.readFrom([scriptRefs.treasury])
+      : baseTx0.attach.SpendingValidator(treasuryValidator.spendTreasury);
 
     const withSigners = applyAdminWitness(
       payAdminReturn(baseTx0, config, adminUtxo),

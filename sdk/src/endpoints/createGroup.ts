@@ -7,19 +7,23 @@ import {
   Constr,
   Assets,
   Script,
+  UTxO,
   toUnit,
   fromText,
   validatorToScriptHash,
 } from "@lucid-evolution/lucid";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import { Effect } from "effect";
-import { GroupDatum } from "../core/types.js";
+import { GroupDatum, TreasuryDatum, TreasuryRedeemer } from "../core/types.js";
 import {
   buildGroupCip68Datum,
   getScriptAddress,
   getWalletAddress,
   createCip68TokenNames,
   resolveUtxoByOutRef,
+  resolveUtxoByUnit,
   assetNameLabels,
+  reserveTokenName,
 } from "../core/utils/index.js";
 import {
   ConfigurationError,
@@ -59,6 +63,15 @@ export type CreateGroupConfig = {
   creatorScript?: Script;
   /** Skips creator-credential verification (not recommended). */
   force?: boolean;
+  /**
+   * Deployed reference scripts. Creating a group now invokes BOTH minting policies
+   * (group + treasury CreateReserve), and the two attached inline exceed the tx size
+   * limit — pass refs (or register a session) for real deployments.
+   */
+  scriptRefs?: {
+    treasury?: UTxO;
+    group?: UTxO;
+  };
 };
 
 export const unsignedCreateGroupTxProgram = (
@@ -71,8 +84,14 @@ export const unsignedCreateGroupTxProgram = (
   never
 > =>
   Effect.gen(function* () {
-    const { groupValidator, groupPolicyId, treasuryPolicyId, accountPolicyId } =
-      protocol;
+    const {
+      groupValidator,
+      groupPolicyId,
+      treasuryPolicyId,
+      accountPolicyId,
+      treasuryValidator,
+      settingsUnit,
+    } = protocol;
     const { groupName, groupDescription, groupDatum, utxoToSpend } = config;
 
     if (!groupPolicyId)
@@ -156,6 +175,38 @@ export const unsignedCreateGroupTxProgram = (
     const userToken = toUnit(groupPolicyId, userTokenName);
 
     const mintingAssets: Assets = { [refToken]: 1n, [userToken]: 1n };
+
+    // [spec Reserve]: every group is created together with its mutual reserve —
+    // one ReserveState UTxO at the treasury script, identified by the reserve
+    // token ("RSVE" + the group suffix) minted under the TREASURY policy in the
+    // same tx (CreateReserve, one-shot). The treasury mint reads the trusted
+    // group policy from the settings UTxO (reference input).
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
+    const reserveToken = toUnit(treasuryPolicyId, reserveTokenName(refTokenName));
+    const reserveDatum: TreasuryDatum = {
+      ReserveState: {
+        group_reference_tokenname: refTokenName,
+        standin_rounds: 0n,
+      },
+    };
+    const treasuryAddress = yield* getScriptAddress(
+      lucid,
+      treasuryValidator.spendTreasury,
+    );
+    // On-chain requires an ENTERPRISE reserve address (stake credential = None):
+    // the pot is communal, so a creator-supplied stake credential would skim its
+    // staking rewards. getScriptAddress builds enterprise addresses already.
+    const reserveAssets: Assets = { [reserveToken]: 1n, lovelace: 2_000_000n };
+    // Outputs: 0 = group UTxO, 1 = admin (222) to wallet, 2 = reserve.
+    const createReserveRedeemer = Data.to(
+      {
+        CreateReserve: {
+          group_output_index: 0n,
+          reserve_output_index: 2n,
+        },
+      },
+      TreasuryRedeemer,
+    );
     // Lock creator_bond lovelace alongside the ref token so it is held for
     // the group's lifetime and returned to the admin on deleteGroup.
     const scriptAssets: Assets =
@@ -173,17 +224,35 @@ export const unsignedCreateGroupTxProgram = (
       inputs: [utxo],
     };
 
-    const tx = yield* lucid
+    const baseTx = lucid
       .newTx()
       .collectFrom([utxo])
       .mintAssets(mintingAssets, redeemer)
+      .mintAssets({ [reserveToken]: 1n }, createReserveRedeemer)
       .pay.ToContract(
         groupAddress,
         { kind: "inline", value: datum },
         scriptAssets,
       )
       .pay.ToAddress(address, walletAssets)
-      .attach.MintingPolicy(groupValidator.mintGroup)
+      .pay.ToContract(
+        treasuryAddress,
+        { kind: "inline", value: Data.to(reserveDatum, TreasuryDatum) },
+        reserveAssets,
+      )
+      .readFrom([settingsUtxo]);
+
+    // Two minting policies run in this tx; attached inline together they exceed
+    // the tx size limit — prefer reference scripts when available.
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const withGroupValidator = scriptRefs.group
+      ? baseTx.readFrom([scriptRefs.group])
+      : baseTx.attach.MintingPolicy(groupValidator.mintGroup);
+    const withTreasuryValidator = scriptRefs.treasury
+      ? withGroupValidator.readFrom([scriptRefs.treasury])
+      : withGroupValidator.attach.MintingPolicy(treasuryValidator.mintTreasury);
+
+    const tx = yield* withTreasuryValidator
       .completeProgram()
       .pipe(
         Effect.mapError(

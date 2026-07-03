@@ -17,6 +17,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  reserveTokenName,
+  referenceInputIndex,
 } from "../core/utils/index.js";
 import {
   DcuError,
@@ -55,7 +57,7 @@ export const unsignedBeginRecommitTxProgram = (
   config: BeginRecommitConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupValidator, groupPolicyId } = protocol;
+    const { groupValidator, groupPolicyId, treasuryPolicyId } = protocol;
     const { groupTokenSuffix } = config;
 
     const groupRefUnit =
@@ -101,6 +103,22 @@ export const unsignedBeginRecommitTxProgram = (
     };
     const adminAddress = yield* getWalletAddress(lucid);
 
+    // The group's reserve as a REFERENCE input — the on-chain clean gate reads
+    // standin_rounds == 0 from it (owed default cover must finish before a reset).
+    const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
+    const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
+    const reserveUtxo = patchInlineDatum(reserveUtxoRaw);
+
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const allReferenceInputs = [
+      reserveUtxo,
+      ...([scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[]),
+    ];
+    const reserveRefInputIndex = referenceInputIndex(
+      allReferenceInputs,
+      reserveUtxo,
+    );
+
     const redeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (indices: bigint[]) =>
@@ -111,6 +129,7 @@ export const unsignedBeginRecommitTxProgram = (
               admin_input_index: indices[0],
               group_input_index: indices[1],
               group_output_index: 0n,
+              reserve_ref_input_index: reserveRefInputIndex,
             },
           },
           GroupSpendRedeemer,
@@ -143,9 +162,9 @@ export const unsignedBeginRecommitTxProgram = (
       )
       .pay.ToAddress(adminTokenReturnAddress, adminTokenReturnAssets)
       .addSigner(adminAddress)
-      .validFrom(Number(now));
+      .validFrom(Number(now))
+      .readFrom([reserveUtxo]);
 
-    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
     const withValidators =
       scriptRefs.treasury || scriptRefs.group
         ? baseTx.readFrom(

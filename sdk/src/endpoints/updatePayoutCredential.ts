@@ -5,8 +5,10 @@ import {
   RedeemerBuilder,
   paymentCredentialOf,
   toUnit,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import {
   TreasuryDatum,
   TreasuryDatumSchema,
@@ -42,6 +44,8 @@ import {
  */
 export type UpdatePayoutCredentialConfig = {
   accountTokenSuffix: string;
+  /** Deployed treasury reference script — the treasury no longer fits inline. */
+  scriptRefs?: { treasury?: UTxO };
 };
 
 export const unsignedUpdatePayoutCredentialTxProgram = (
@@ -110,7 +114,7 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
       inputs: [accountUtxo, treasuryUtxo],
     };
 
-    const tx = yield* lucid
+    const baseTx = lucid
       .newTx()
       .collectFrom([accountUtxo])
       .collectFrom([treasuryUtxo], redeemer)
@@ -125,8 +129,14 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
       // change leaves too little to satisfy the token output's min-ADA once fees are
       // paid; an explicit output forces coin selection to fund it from the wallet.
       .pay.ToAddress(address, { [accountUnit]: 1n })
-      .attach.SpendingValidator(treasuryValidator.spendTreasury)
-      .readFrom([settingsUtxo])
+      .readFrom([settingsUtxo]);
+
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const withValidator = scriptRefs.treasury
+      ? baseTx.readFrom([scriptRefs.treasury])
+      : baseTx.attach.SpendingValidator(treasuryValidator.spendTreasury);
+
+    const tx = yield* withValidator
       .completeProgram()
       .pipe(
         Effect.mapError(

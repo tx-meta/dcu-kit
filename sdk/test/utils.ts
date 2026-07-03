@@ -100,5 +100,7 @@ export const createDefaultGroupDatum = (
   member_slots: [],
   era_start_round: 0n,
   recommit_window: 259_200_000n,
+  reserve_join_levy: 0n,
+  reserve_round_levy: 0n,
   ...overrides,
 });

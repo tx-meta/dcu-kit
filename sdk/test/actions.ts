@@ -303,6 +303,9 @@ export const createGroupTestCase = (
       ...(creatorScript !== undefined ? { creatorScript } : {}),
       groupDatum,
       utxoToSpend: selectedUTxO,
+      // Creating a group invokes both minting policies (group + treasury
+      // CreateReserve); inline together they exceed the tx size limit.
+      scriptRefs: context.scriptRefs,
     };
 
     const { tx: createGroupTx, groupTokenSuffix } =

@@ -405,6 +405,7 @@ describe("Treasury Endpoints", () => {
           lucid,
           {
             accountTokenSuffix: suffix1,
+            scriptRefs: context.scriptRefs,
           },
         );
         const claimHash = yield* signAndSubmit(claimTx);
@@ -446,6 +447,7 @@ describe("Treasury Endpoints", () => {
           lucid,
           {
             accountTokenSuffix: suffix1,
+            scriptRefs: context.scriptRefs,
             destinationAddress: fresh.address,
           },
         );
@@ -929,6 +931,7 @@ describe("Treasury Endpoints", () => {
           {
             groupTokenSuffix,
             accountTokenSuffix,
+            scriptRefs: context.scriptRefs,
             topUpAmount: 2_000_000n,
           },
         );
@@ -981,6 +984,7 @@ describe("Treasury Endpoints", () => {
           {
             groupTokenSuffix,
             accountTokenSuffix,
+            scriptRefs: context.scriptRefs,
             topUpAmount: 5n,
           },
         );
@@ -1069,7 +1073,7 @@ describe("Treasury Endpoints", () => {
         const txBuilder = yield* unsignedUpdatePayoutCredentialTxProgram(
           context.protocol!,
           lucid,
-          { accountTokenSuffix },
+          { accountTokenSuffix, scriptRefs: context.scriptRefs },
         );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
@@ -1158,6 +1162,7 @@ describe("Treasury Endpoints", () => {
           {
             groupTokenSuffix,
             memberAccountTokenSuffix,
+            scriptRefs: context.scriptRefs,
           },
         );
         const txHash = yield* signAndSubmit(txBuilder);
