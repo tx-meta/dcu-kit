@@ -1,3 +1,6 @@
+use aiken/interval.{
+  Finite, Interval, IntervalBound, NegativeInfinity, PositiveInfinity,
+}
 use cardano/address.{Address, VerificationKey}
 use cardano/address as addr
 use cardano/assets.{PolicyId, Value}
@@ -101,6 +104,28 @@ pub fn escrow_utxo_value(policy_id: PolicyId, lovelace: Int) -> Value {
 
 pub fn user_output(address: Address, value: Value) -> Output {
   Output { address, value, datum: NoDatum, reference_script: None }
+}
+
+// Validity range with a Finite upper bound at t (lower unbounded).
+pub fn range_before(t: Int) -> Interval {
+  Interval {
+    lower_bound: IntervalBound {
+      bound_type: NegativeInfinity,
+      is_inclusive: True,
+    },
+    upper_bound: IntervalBound { bound_type: Finite(t), is_inclusive: True },
+  }
+}
+
+// Validity range with a Finite lower bound at t (upper unbounded).
+pub fn range_after(t: Int) -> Interval {
+  Interval {
+    lower_bound: IntervalBound { bound_type: Finite(t), is_inclusive: True },
+    upper_bound: IntervalBound {
+      bound_type: PositiveInfinity,
+      is_inclusive: True,
+    },
+  }
 }
 
 pub fn escrow_input(ix: Int, output: Output) -> Input {
