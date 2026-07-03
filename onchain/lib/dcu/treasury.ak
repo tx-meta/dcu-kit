@@ -5,10 +5,12 @@ pub const max_grace_extensions: Int = 2
 
 /// Treasury Validator Datum (Sum Type)
 pub type TreasuryDatum {
+  // NOTE (Recommit): the rotation slot no longer lives here — the group datum's
+  // member_slots map (parallel to member_token_names) is the single authority. The
+  // borrower for a round is resolved from the group registry by token name.
   TreasuryState {
     group_reference_tokenname: AssetName,
     member_reference_tokenname: AssetName,
-    assigned_slot: Int,
     // Number of distribution rounds this member has contributed to.
     // Starts at 0; incremented by DistributeRound. Used to enforce sequential
     // round processing: each treasury instance must be at rounds_paid == round_number.
@@ -41,8 +43,6 @@ pub type TreasuryDatum {
     // rounds_paid at the time of transition — carried for record keeping and
     // restored when the member recovers back to TreasuryState.
     rounds_paid: Int,
-    // Rotation slot — preserved so TreasuryState can be fully reconstructed on recovery.
-    assigned_slot: Int,
     // Payment key hash — preserved for payout routing on recovery.
     member_payment_credential: ByteArray,
     // Pull mode only: any unclaimed earmark carried in from TreasuryState when the

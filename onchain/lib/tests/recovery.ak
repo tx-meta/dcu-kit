@@ -1425,7 +1425,6 @@ fn member_treasury_datum() -> TreasuryDatum {
   TreasuryState {
     group_reference_tokenname: group_ref_tn(),
     member_reference_tokenname: target_tn(),
-    assigned_slot: 1,
     rounds_paid: 2,
     member_payment_credential: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     claimable_balance: 500_000,
@@ -1519,7 +1518,6 @@ fn rotated_treasury_output() -> Output {
     TreasuryState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: new_member_tn(),
-      assigned_slot: 1,
       rounds_paid: 2,
       member_payment_credential: recoveree_pkh(),
       claimable_balance: 500_000,
@@ -1588,7 +1586,6 @@ test execute_recovery__rotates_from_default_state() {
       grace_expires_at: 999_999_999,
       grace_extensions_used: 1,
       rounds_paid: 2,
-      assigned_slot: 1,
       member_payment_credential: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       claimable_balance: 500_000,
     }
@@ -1615,7 +1612,6 @@ test execute_recovery__rotates_from_default_state() {
       grace_expires_at: 999_999_999,
       grace_extensions_used: 1,
       rounds_paid: 2,
-      assigned_slot: 1,
       member_payment_credential: recoveree_pkh(),
       claimable_balance: 500_000,
     }
@@ -1858,7 +1854,6 @@ test execute_recovery__rejects_economic_field_mutation() {
     TreasuryState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: new_member_tn(),
-      assigned_slot: 1,
       // rounds_paid incremented — NOT allowed; rotation freezes all economic fields
       rounds_paid: 99,
       member_payment_credential: recoveree_pkh(),
@@ -1890,7 +1885,6 @@ test execute_recovery__rejects_wrong_payment_credential() {
     TreasuryState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: new_member_tn(),
-      assigned_slot: 1,
       rounds_paid: 2,
       member_payment_credential: attacker_pkh,
       claimable_balance: 500_000,
@@ -1938,7 +1932,6 @@ test execute_recovery__rejects_output_wrong_identity() {
     TreasuryState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: new_member_tn(),
-      assigned_slot: 1,
       rounds_paid: 2,
       member_payment_credential: recoveree_pkh(),
       claimable_balance: 500_000,
@@ -1968,7 +1961,6 @@ test execute_recovery__rejects_balance_skim() {
     TreasuryState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: new_member_tn(),
-      assigned_slot: 1,
       rounds_paid: 2,
       member_payment_credential: recoveree_pkh(),
       claimable_balance: 500_000,
@@ -2002,7 +1994,6 @@ test execute_recovery__rejects_foreign_group_member_treasury() {
     TreasuryState {
       group_reference_tokenname: foreign_group_tn,
       member_reference_tokenname: target_tn(),
-      assigned_slot: 1,
       rounds_paid: 2,
       member_payment_credential: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       claimable_balance: 500_000,
@@ -2149,7 +2140,6 @@ fn native_rotated_datum() -> TreasuryDatum {
   TreasuryState {
     group_reference_tokenname: group_ref_tn(),
     member_reference_tokenname: new_member_tn(),
-    assigned_slot: 1,
     rounds_paid: 2,
     member_payment_credential: recoveree_pkh(),
     claimable_balance: 500_000,
@@ -2256,7 +2246,6 @@ test execute_recovery__rejects_claimable_balance_zeroed() {
     TreasuryState {
       group_reference_tokenname: group_ref_tn(),
       member_reference_tokenname: new_member_tn(),
-      assigned_slot: 1,
       rounds_paid: 2,
       member_payment_credential: recoveree_pkh(),
       // claimable_balance zeroed — NOT allowed; the earmark must carry through
@@ -2339,7 +2328,6 @@ test execute_recovery__rejects_rotated_output_stake_credential_change() {
       TreasuryState {
         group_reference_tokenname: group_ref_tn(),
         member_reference_tokenname: new_member_tn(),
-        assigned_slot: 1,
         rounds_paid: 2,
         member_payment_credential: recoveree_pkh(),
         claimable_balance: 500_000,

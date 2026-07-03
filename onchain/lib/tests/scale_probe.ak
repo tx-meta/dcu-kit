@@ -85,7 +85,8 @@ fn probe_group_datum(n: Int) -> GroupDatum {
     payout_mode: Push,
     recovery_threshold: 1,
     recovery_timelock: 259_200_000,
-    member_slots: [],
+    // Paired with member_token_names: probe_tn(i) holds slot i.
+    member_slots: list.range(0, n - 1),
     era_start_round: 0,
     recommit_window: 259_200_000,
   }
@@ -103,7 +104,6 @@ fn probe_state(i: Int, rounds_paid: Int) -> TreasuryDatum {
   TreasuryState {
     group_reference_tokenname: probe_group_ref(),
     member_reference_tokenname: probe_tn(i),
-    assigned_slot: i,
     rounds_paid,
     member_payment_credential: borrower_pkh(),
     claimable_balance: 0,

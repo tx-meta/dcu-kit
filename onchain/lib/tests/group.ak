@@ -1783,7 +1783,6 @@ fn treasury_input_with_token(tp: assets.PolicyId, member_tn: ByteArray) -> Input
       TreasuryState {
         group_reference_tokenname: member_tn,
         member_reference_tokenname: member_tn,
-        assigned_slot: 0,
         rounds_paid: 0,
         member_payment_credential: common.test_pkh(),
         claimable_balance: 0,
@@ -1813,7 +1812,6 @@ fn defaulted_treasury_input_with_token(
         grace_expires_at: 0,
         grace_extensions_used: 0,
         rounds_paid: 0,
-        assigned_slot: 0,
         member_payment_credential: common.test_pkh(),
         claimable_balance: 0,
       },
@@ -2120,7 +2118,6 @@ fn recover_setup(
     TreasuryState {
       group_reference_tokenname: #"aabb",
       member_reference_tokenname: #"aabb",
-      assigned_slot: 0,
       rounds_paid: 0,
       member_payment_credential: common.test_pkh(),
       claimable_balance: 0,
@@ -2133,7 +2130,6 @@ fn recover_setup(
       grace_expires_at: 0,
       grace_extensions_used: 0,
       rounds_paid: 0,
-      assigned_slot: 0,
       member_payment_credential: common.test_pkh(),
       claimable_balance: 0,
     }
@@ -2191,7 +2187,6 @@ fn treasury_utxo_holding(tp: assets.PolicyId, member_tn: ByteArray) -> Output {
       grace_expires_at: 0,
       grace_extensions_used: 0,
       rounds_paid: 0,
-      assigned_slot: 0,
       member_payment_credential: common.test_pkh(),
       claimable_balance: 0,
     },
@@ -2614,7 +2609,6 @@ test recover_member__rejects_treasury_output_not_at_script() {
       grace_expires_at: 0,
       grace_extensions_used: 0,
       rounds_paid: 0,
-      assigned_slot: 0,
       member_payment_credential: common.test_pkh(),
       claimable_balance: 0,
     },

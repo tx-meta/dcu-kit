@@ -2,7 +2,7 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken_design_patterns/multi_utxo_indexer
 use cardano/address.{Address, Script, VerificationKey}
-use cardano/assets.{PolicyId, Value, ada_policy_id}
+use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
@@ -39,8 +39,7 @@ use dcu/utils.{find_own_input, get_lower_bound, only_allowed_policies}
 //                     own policy
 // [spec JoinGroup 6]: treasury output datum is TreasuryState with:
 //                     - group_reference_tokenname links to the group
-//                     - assigned_slot == group.member_count (sequential)
-//                     - rounds_paid == 0 (fresh member, no rounds yet)
+//                     - rounds_paid == last_distributed_round + 1 (lockstep entry)
 //                     - is_deferred == False
 //                     - member_payment_credential records the member's wallet pkh
 // [spec JoinGroup 7]: treasury output holds at least contribution_fee in the
@@ -87,7 +86,6 @@ pub fn validate_join_treasury(
         member_reference_tokenname,
         group_reference_tokenname,
         rounds_paid,
-        assigned_slot,
         member_payment_credential,
         claimable_balance,
       }: TreasuryDatum
@@ -103,11 +101,10 @@ pub fn validate_join_treasury(
   let expected_group_token_name = find_group_token_name(group_input)
   let group_link_valid = group_reference_tokenname == expected_group_token_name
 
-  // [spec JoinGroup 6b]: assigned_slot == group.member_count (sequential slot assignment)
-  let slot_valid = assigned_slot == group.member_count
-
-  // [spec JoinGroup 6c]: rounds_paid == 0 (fresh member, no rounds completed yet)
-  let rounds_paid_valid = rounds_paid == 0
+  // [spec JoinGroup 6c / Recommit]: the member enters in lockstep with the round
+  // counter — 0 on a fresh group (last_distributed_round == -1) and the next round
+  // number when joining during a recommit window. Slots are assigned at StartGroup.
+  let rounds_paid_valid = rounds_paid == group.last_distributed_round + 1
 
   // [spec JoinGroup 6d]: claimable_balance == 0 (fresh member, nothing earmarked yet)
   let no_claimable = claimable_balance == 0
@@ -219,7 +216,6 @@ pub fn validate_join_treasury(
       [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
     )?,
     group_link_valid?,
-    slot_valid?,
     rounds_paid_valid?,
     no_claimable?,
     member_count_incremented?,
@@ -472,7 +468,7 @@ pub fn validate_claim_penalty_mint(own_policy_id: PolicyId, mint: Value) -> Bool
 // [spec DistributeRound 3]: group spending input at group_ref_input_index
 // [spec DistributeRound 4]: group output shows last_distributed_round = round_number
 // [spec DistributeRound 5]: group output at correct address with ref token
-// [spec DistributeRound 6]: borrower output at member with assigned_slot == current_slot
+// [spec DistributeRound 6]: borrower resolved from the group's member_slots registry map
 //                           and receives total payout in contribution asset
 // [spec DistributeRound 7]: own output: rounds_paid + 1, is_deferred = False, balance
 //                           reduced by contribution_fee in the contribution asset
@@ -489,6 +485,24 @@ pub fn validate_claim_penalty_mint(own_policy_id: PolicyId, mint: Value) -> Bool
 // transition, clean output, ADA reserve) run for EVERY treasury input via
 // `multi_utxo_indexer.one_to_one_no_redeemer`, which also enforces ascending
 // one-to-one indices and that every spent treasury UTxO is covered.
+// Walks the group's parallel registry (names <-> slots) and returns the token name
+// paired with `target` slot, or None when the slot is vacant (its holder exited).
+fn find_name_for_slot(
+  names: List<AssetName>,
+  slots: List<Int>,
+  target: Int,
+) -> Option<AssetName> {
+  when (names, slots) is {
+    ([n, ..ns], [s, ..ss]) ->
+      if s == target {
+        Some(n)
+      } else {
+        find_name_for_slot(ns, ss, target)
+      }
+    _ -> None
+  }
+}
+
 pub fn validate_distribute_withdraw(
   own_policy_id: PolicyId,
   trusted_group_policy: PolicyId,
@@ -527,52 +541,61 @@ pub fn validate_distribute_withdraw(
     expected_group_token_name,
   ) == 1
 
-  // [spec DistributeRound 6a]: borrower = the contributing member at this round's slot.
+  // [spec DistributeRound 6a / Recommit]: borrower = the member whose registry entry is
+  // paired with this round's slot in the group's authoritative member_slots map. The slot
+  // is ERA-RELATIVE: round_number stays monotonic across recommit re-seals, and each seal
+  // re-bases the rotation at era_start_round with fresh FCFS slots.
   // Deferral was retired: the rotation is fixed and a member's turn is never reordered.
   // "Collect later" is handled by Pull mode (the pot earmarks into the borrower's own
   // treasury via claimable_balance), not by skipping turns — so there is no deferred path.
-  let effective_slot = round_number % group.num_rounds
+  let effective_slot = ( round_number - group.era_start_round ) % group.num_rounds
+  let borrower_token_opt = find_name_for_slot(
+    group.member_token_names,
+    group.member_slots,
+    effective_slot,
+  )
 
   // The borrower must be present as a contributing spending input in good standing — a
   // defaulted/absent borrower blocks the round in BOTH payout modes (the pot has no
   // legitimate recipient). Computed as an Option and guarded by borrower_present? below.
-  let borrower_cred_opt = list.find_map(
-    treasury_input_indices,
-    fn(idx) {
-      when list.at(inputs, idx) is {
-        Some(ti) -> {
-          expect InlineDatum(d) = ti.output.datum
-          expect td: TreasuryDatum = d
-          when td is {
-            TreasuryState {
-              assigned_slot: slot,
-              member_payment_credential: c,
-              ..
-            } ->
-              if slot == effective_slot {
-                Some(c)
-              } else {
-                None
+  let borrower_cred_opt = when borrower_token_opt is {
+    None -> None
+    Some(borrower_token) ->
+      list.find_map(
+        treasury_input_indices,
+        fn(idx) {
+          when list.at(inputs, idx) is {
+            Some(ti) -> {
+              expect InlineDatum(d) = ti.output.datum
+              expect td: TreasuryDatum = d
+              when td is {
+                TreasuryState {
+                  member_reference_tokenname: name,
+                  member_payment_credential: c,
+                  ..
+                } ->
+                  if name == borrower_token {
+                    Some(c)
+                  } else {
+                    None
+                  }
+                _ -> None
               }
-            _ -> None
+            }
+            None -> None
           }
-        }
-        None -> None
-      }
-    },
-  )
+        },
+      )
+  }
   let borrower_present = borrower_cred_opt != None
 
-  // [VACANT-SLOT SEMANTICS — documented 2026-07-02, structural fix = Cluster B Recommit]:
-  // borrower_present requires a TreasuryState member at this round's slot. Slots are fixed
-  // at startGroup and never re-packed, so any mid-lifetime exit (penalty exit,
-  // TerminateDefault, or a mature exit followed by continued cycling) leaves a permanently
-  // vacant slot. When the rotation reaches it, distribution HALTS at that round: a
-  // defaulting borrower blocks only for their grace window (Contribute-recovery /
-  // ExtendGrace / TerminateDefault release it), but an EXITED member's slot blocks
-  // forever. The escape hatch is admin wind-down: UpdateGroup is_active=False → members
-  // free-exit → CloseGroup. Cluster B's Recommit (fresh FCFS slots at a reset) is the
-  // structural fix; see docs/dcu-docs/rotation-lifecycle.md.
+  // [VACANT-SLOT SEMANTICS]: borrower_present requires a TreasuryState member at this
+  // round's slot. A mid-lifetime exit removes its member_slots entry (never re-packed),
+  // so when the rotation reaches the vacancy, distribution halts at that round — and the
+  // vacancy is visible on the group datum alone, which is exactly what opens the
+  // BeginRecommit gate (Cluster B): reset at the halt, fresh FCFS slots, rotation resumes.
+  // Admin wind-down (UpdateGroup is_active=False → free exits → CloseGroup) remains the
+  // fallback; see docs rotation-lifecycle.
 
   // [spec DistributeRound 6c / D3]: PRO-RATA pot = contribution_fee × cached active_member_count
   // (O(1), replaces the O(N²) count_active_members fold). C4 anti-skim is preserved by two pins:
@@ -635,12 +658,11 @@ pub fn validate_distribute_withdraw(
       outputs,
       fn(_in_idx, own_input, _out_idx, own_output) {
         // [spec DistributeRound 1]: input datum must be TreasuryState. Carries
-        // assigned_slot + member_payment_credential into any DefaultState transition.
+        // member_payment_credential into any DefaultState transition.
         expect InlineDatum(in_datum_data) = own_input.output.datum
         expect TreasuryState {
           member_reference_tokenname,
           group_reference_tokenname,
-          assigned_slot,
           member_payment_credential,
           rounds_paid,
           claimable_balance,
@@ -674,9 +696,9 @@ pub fn validate_distribute_withdraw(
             group.contribution_fee_assetname,
           )
 
-        // is_borrower_treasury is decided purely from immutable datum (assigned_slot) vs the
-        // group-derived effective_slot, so it cannot be spoofed.
-        let is_borrower_treasury = assigned_slot == effective_slot
+        // is_borrower_treasury is decided purely from the immutable membership token name
+        // vs the group-registry-resolved borrower, so it cannot be spoofed.
+        let is_borrower_treasury = Some(member_reference_tokenname) == borrower_token_opt
 
         // [spec DistributeRound 7b]: every member debited contribution_fee; under Pull the
         // borrower's OWN treasury is also credited total_payout (conservation pins all other
@@ -702,7 +724,6 @@ pub fn validate_distribute_withdraw(
               grace_expires_at: current_time + group.grace_period_length,
               grace_extensions_used: 0,
               rounds_paid: round_number + 1,
-              assigned_slot,
               member_payment_credential,
               // [carry-forward]: a defaulter is always a non-borrower (borrower balance rises
               // by total_payout, never below fee), so the earmark carries through unchanged.
@@ -841,14 +862,15 @@ pub fn validate_exit_treasury(
     account_policy_id,
   )
 
-  // [spec ExitGroup D4]: exit branch is rounds_paid-anchored (continuous model — no wall-clock
-  // maturity, since a group cycles indefinitely):
-  //   pre-start (!is_started) or inactive                          → free exit, token burned
-  //   completed a whole cycle (rounds_paid > 0 && % num_rounds==0)  → free exit, token burned
-  //   otherwise (mid-cycle, active, started)                       → penalty exit, PenaltyState
+  // [spec ExitGroup D4 / Recommit]: exit branch is rounds_paid-anchored (continuous model —
+  // no wall-clock maturity, since a group cycles indefinitely). ERA-RELATIVE: rounds_paid is
+  // monotonic across recommit re-seals, so a completed lap is measured from era_start_round:
+  //   pre-start (!is_started) or inactive                              → free exit, token burned
+  //   completed a whole lap of the CURRENT era                         → free exit, token burned
+  //   otherwise (mid-cycle, active, started)                           → penalty exit, PenaltyState
   // The is_started guard short-circuits before the modulo so pre-start (num_rounds == 0) never /0.
   let completed_full_cycle =
-    group.is_started && rounds_paid > 0 && rounds_paid % group.num_rounds == 0
+    group.is_started && rounds_paid > group.era_start_round && ( rounds_paid - group.era_start_round ) % group.num_rounds == 0
   let is_early_exit = group.is_active && group.is_started && !completed_full_cycle
 
   // [spec ExitGroup 3]: group output — member_count decrements on BOTH paths
@@ -1327,7 +1349,6 @@ pub fn validate_execute_recovery(
       TreasuryState {
         member_reference_tokenname: mrt,
         group_reference_tokenname: mgrt,
-        assigned_slot,
         rounds_paid,
         member_payment_credential: _old_cred,
         claimable_balance,
@@ -1340,7 +1361,6 @@ pub fn validate_execute_recovery(
           TreasuryState {
             group_reference_tokenname: mgrt,
             member_reference_tokenname: new_member_tokenname,
-            assigned_slot,
             rounds_paid,
             member_payment_credential: new_payment_credential,
             claimable_balance,
@@ -1353,7 +1373,6 @@ pub fn validate_execute_recovery(
         grace_expires_at,
         grace_extensions_used,
         rounds_paid,
-        assigned_slot,
         member_payment_credential: _old_cred,
         claimable_balance,
       } -> {
@@ -1368,7 +1387,6 @@ pub fn validate_execute_recovery(
             grace_expires_at,
             grace_extensions_used,
             rounds_paid,
-            assigned_slot,
             member_payment_credential: new_payment_credential,
             claimable_balance,
           }
@@ -1759,7 +1777,6 @@ pub fn validate_contribute(
 
     DefaultState {
       group_reference_tokenname,
-      assigned_slot,
       rounds_paid,
       member_payment_credential,
       claimable_balance,
@@ -1771,7 +1788,6 @@ pub fn validate_contribute(
       output_datum == TreasuryState {
         group_reference_tokenname,
         member_reference_tokenname,
-        assigned_slot,
         rounds_paid,
         member_payment_credential,
         claimable_balance,
@@ -1834,7 +1850,6 @@ pub fn validate_update_payout(
       TreasuryState {
         group_reference_tokenname: upd_group_tn,
         member_reference_tokenname,
-        assigned_slot: upd_slot,
         rounds_paid: upd_rounds,
         claimable_balance: upd_claimable,
         ..
@@ -1863,7 +1878,6 @@ pub fn validate_update_payout(
   let expected_datum = TreasuryState {
     group_reference_tokenname: upd_group_tn,
     member_reference_tokenname,
-    assigned_slot: upd_slot,
     rounds_paid: upd_rounds,
     member_payment_credential: new_pkh,
     claimable_balance: upd_claimable,
@@ -1921,7 +1935,6 @@ pub fn validate_extend_grace(
         grace_expires_at,
         grace_extensions_used,
         rounds_paid,
-        assigned_slot,
         member_payment_credential,
         claimable_balance,
       }
@@ -1947,15 +1960,14 @@ pub fn validate_extend_grace(
   expect InlineDatum(output_datum_data) = own_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
 
-  // [spec ExtendGrace 4]: output datum with extended grace window; slot and
-  // payment credential preserved for potential recovery via Contribute
+  // [spec ExtendGrace 4]: output datum with extended grace window; the payment
+  // credential is preserved for potential recovery via Contribute
   let expected_datum = DefaultState {
     group_reference_tokenname,
     member_reference_tokenname,
     grace_expires_at: grace_expires_at + grace_period_length,
     grace_extensions_used: grace_extensions_used + 1,
     rounds_paid,
-    assigned_slot,
     member_payment_credential,
     claimable_balance,
   }
@@ -2016,7 +2028,6 @@ pub fn validate_claim_payout(
       TreasuryState {
         group_reference_tokenname,
         member_reference_tokenname,
-        assigned_slot,
         rounds_paid,
         member_payment_credential,
         claimable_balance,
@@ -2055,12 +2066,11 @@ pub fn validate_claim_payout(
   expect output_datum: TreasuryDatum = output_datum_data
 
   // [spec ClaimPayout 4]: output datum identical except claimable_balance reset to 0.
-  // Pins every other field (slot, rounds, credential, group/member refs) and prevents a
+  // Pins every other field (rounds, credential, group/member refs) and prevents a
   // double-claim (the earmark cannot remain set after withdrawal).
   let expected_datum = TreasuryState {
     group_reference_tokenname,
     member_reference_tokenname,
-    assigned_slot,
     rounds_paid,
     member_payment_credential,
     claimable_balance: 0,

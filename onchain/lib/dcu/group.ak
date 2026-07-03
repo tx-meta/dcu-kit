@@ -927,9 +927,12 @@ pub fn validate_distribute_group(
   // [spec DistributeRound 3]: sequential round enforcement
   let sequential = round_number == current.last_distributed_round + 1
 
-  // [spec DistributeRound 4]: time gate — round can't run before its scheduled start
+  // [spec DistributeRound 4 / Recommit]: time gate — round can't run before its scheduled
+  // start. ERA-RELATIVE: start_time is re-set at each re-seal, so the schedule is measured
+  // from the era's first round, not the monotonic global counter.
   let current_time = get_lower_bound(tx)
-  let round_start_time = current.start_time + round_number * current.interval_length
+  let round_start_time =
+    current.start_time + ( round_number - current.era_start_round ) * current.interval_length
   let time_valid = current_time >= round_start_time
 
   // [spec DistributeRound 5 / continuous]: round_number is monotonic and UNBOUNDED above —
