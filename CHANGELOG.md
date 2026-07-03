@@ -6,6 +6,31 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+### Coop-SDK Phase 4 — milestone escrow (`@tx-meta/dcu-kit/escrow`)
+
+A new standalone product in the cooperative-finance family. Own Aiken project and blueprint
+(escrow validator `3f04186f…`) — DCU protocol hashes are untouched.
+
+#### Added
+- **Escrow validator family** (`escrow/`): funder locks ADA or a native token; a configurable
+  verifier releases sequential milestone tranches to the beneficiary's pinned full address; the
+  funder reclaims the remainder strictly after expiry; funder + beneficiary co-sign aborts. One
+  one-shot state token per escrow; one escrow input per tx (double-satisfaction excluded);
+  creation must prove it happened before expiry and covers the milestone total; at most 100
+  milestones (release cost measured linear: 1.04M mem at 50 tranches, 7.4% of budget).
+- **`credential_authorized` primitive** — VK ⇒ signature, script ⇒ spent input at the script's
+  payment credential: funder/verifier/beneficiary can each be a wallet key or any multisig with
+  no adapter code.
+- **SDK module** `@tx-meta/dcu-kit/escrow`: `createEscrow` (returns the escrow's permanent
+  `stateTokenName`), `releaseMilestone`, `reclaimEscrow`, `abortEscrow`, `getEscrowState`;
+  `verifierWitness`/`funderWitness` implement the dust-UTxO pattern for script parties.
+- Docs: “Escrow: Milestone Payments” page — the four target configurations (bank→developer,
+  chama land purchase, supplier prepayment, startup funding round), retention-as-last-milestone,
+  and the dust-UTxO pattern.
+- Tests: 471 Aiken checks (pass/fail suites, fuzzers, boundary properties, ex-units probe) and
+  7 emulator lifecycle round-trips (create → releases → burn, reclaim, co-signed abort, 2-of-3
+  multisig verifier).
+
 ### Coop-SDK Phase 1–2 — modular multisig, credential fee routing, recovery quorum hardening
 
 **Immutable-contract change → new hashes** (group `269dde42…`, treasury `87782df0…`; account and
