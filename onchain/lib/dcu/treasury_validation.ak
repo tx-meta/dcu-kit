@@ -641,7 +641,83 @@ pub fn validate_distribute_withdraw(
   // cannot be excluded, and a foreign-group treasury cannot pad the count.
   let active_members = group.active_member_count
   let total_payout = active_members * group.contribution_fee
-  let spent_set_complete = list.length(treasury_input_indices) == active_members
+
+  // [spec Reserve C2/C3]: the reserve leg. The reserve UTxO (located by its
+  // deterministic token name) rides the same indexer fold as the member
+  // treasuries. It MUST be spent when the group configures a round levy; with
+  // levy 0 it MAY be spent (draw-only) while a stand-in is active — the borrower
+  // gains by including it, and BeginRecommit waits for standin_rounds == 0.
+  let reserve_token_name = cip68.convert_ref_to_reserve_token(
+    expected_group_token_name,
+  )
+  let reserve_input_opt = list.find(
+    inputs,
+    fn(i) {
+      assets.quantity_of(i.output.value, own_policy_id, reserve_token_name) == 1
+    },
+  )
+  let reserve_leg_ok = when reserve_input_opt is {
+    Some(_) -> True
+    None -> group.reserve_round_levy == 0
+  }
+  let (reserve_present, standin_in, reserve_in_contributable) = when
+    reserve_input_opt
+  is {
+    Some(reserve_in) -> {
+      expect InlineDatum(reserve_datum_data) = reserve_in.output.datum
+      expect ReserveState {
+        group_reference_tokenname: reserve_binding,
+        standin_rounds,
+      }: TreasuryDatum = reserve_datum_data
+      expect reserve_binding == expected_group_token_name
+      (
+        True,
+        standin_rounds,
+        contributable_in(
+          reserve_in.output.value,
+          group.contribution_fee_policyid,
+          group.contribution_fee_assetname,
+        ),
+      )
+    }
+    None -> (False, 0, 0)
+  }
+  // Levy accrues per contributing member; the pot shrinks by the same total.
+  let levy_total = if reserve_present {
+    group.reserve_round_levy * active_members
+  } else {
+    0
+  }
+  // Stand-in draw: one fee-unit per round while the counter is positive, capped
+  // by what the pot (plus this round's levy) actually holds — degrades to a dry
+  // draw of 0 rather than blocking, and the counter still decrements so owed
+  // cover always drains (flat-counter semantics, spec §5).
+  let draw = if reserve_present && standin_in > 0 {
+    let cap = reserve_in_contributable + levy_total
+    if group.contribution_fee < cap {
+      group.contribution_fee
+    } else if cap < 0 {
+      0
+    } else {
+      cap
+    }
+  } else {
+    0
+  }
+  let standin_out_expected = if standin_in > 0 {
+    standin_in - 1
+  } else {
+    0
+  }
+  // What the borrower actually receives this round.
+  let adjusted_payout = total_payout - levy_total + draw
+
+  // The spent set = every active member treasury, plus the reserve when present.
+  let spent_set_complete = list.length(treasury_input_indices) == active_members + if reserve_present {
+    1
+  } else {
+    0
+  }
 
   let is_pull = group.payout_mode == Pull
   // [spec DistributeRound 7a / D2]: the last round of EVERY cycle (generalising the old
@@ -671,7 +747,7 @@ pub fn validate_distribute_withdraw(
       borrower_output.value,
       group.contribution_fee_policyid,
       group.contribution_fee_assetname,
-    ) >= total_payout
+    ) >= adjusted_payout
     borrower_at_correct_wallet? && borrower_receives_total?
   }
 
@@ -695,130 +771,72 @@ pub fn validate_distribute_withdraw(
       inputs,
       outputs,
       fn(_in_idx, own_input, _out_idx, own_output) {
-        // [spec DistributeRound 1]: input datum must be TreasuryState. Carries
-        // member_payment_credential into any DefaultState transition.
         expect InlineDatum(in_datum_data) = own_input.output.datum
-        expect TreasuryState {
-          member_reference_tokenname,
-          group_reference_tokenname,
-          member_payment_credential,
-          rounds_paid,
-          claimable_balance,
-        } = in_datum_data
-
-        // [security C4 / D3]: the spent treasury must belong to THIS group. count_active_members
-        // used to provide this implicitly (by iterating this group's registry); with the cached
-        // count we assert it per input so foreign-group treasuries cannot pad the spent set.
-        let group_link_ok = group_reference_tokenname == expected_group_token_name
-
-        // [spec DistributeRound 2]: member hasn't been processed for this round yet
-        let member_at_correct_round = rounds_paid == round_number
-
-        // [spec DistributeRound 7]: own output datum
-        expect InlineDatum(output_datum_data) = own_output.datum
-        expect output_datum: TreasuryDatum = output_datum_data
-
-        // [spec DistributeRound 7b]: contributable balance (excludes ADA reserve), so the
-        // -fee conservation is reserve-invariant and the ICS threshold fires on spendable
-        // shortfall; final round lands contributable at 0 with the reserve carrying the token.
-        let input_bal =
-          contributable_in(
-            own_input.output.value,
-            group.contribution_fee_policyid,
-            group.contribution_fee_assetname,
-          )
-        let output_bal =
-          contributable_in(
-            own_output.value,
-            group.contribution_fee_policyid,
-            group.contribution_fee_assetname,
-          )
-
-        // is_borrower_treasury is decided purely from the immutable membership token name
-        // vs the group-registry-resolved borrower, so it cannot be spoofed.
-        let is_borrower_treasury = Some(member_reference_tokenname) == borrower_token_opt
-
-        // [spec DistributeRound 7b]: every member debited contribution_fee; under Pull the
-        // borrower's OWN treasury is also credited total_payout (conservation pins all other
-        // treasuries to -fee, so released fees can only land here — no skim possible).
-        let balance_deducted =
-          if is_pull && is_borrower_treasury {
-            output_bal == input_bal - group.contribution_fee + total_payout
-          } else {
-            output_bal == input_bal - group.contribution_fee
-          }
-
-        // [spec DistributeRound 7a / D2]: ICS transition when spendable balance drops below
-        // contribution_fee, EXCEPT at a cycle boundary (last round of any cycle) — there the
-        // member stays TreasuryState so they can mature/free-exit (D4). See is_cycle_boundary.
-        let transition_to_ics =
-          output_bal < group.contribution_fee && !is_cycle_boundary
-
-        let output_datum_correct =
-          if transition_to_ics {
-            output_datum == DefaultState {
-              group_reference_tokenname,
-              member_reference_tokenname,
-              grace_expires_at: current_time + group.grace_period_length,
-              grace_extensions_used: 0,
-              rounds_paid: round_number + 1,
-              member_payment_credential,
-              // [carry-forward]: a defaulter is always a non-borrower (borrower balance rises
-              // by total_payout, never below fee), so the earmark carries through unchanged.
-              claimable_balance,
+        expect in_treasury_datum: TreasuryDatum = in_datum_data
+        when in_treasury_datum is {
+          // [spec Reserve C3]: the reserve continuation leg — levy in, stand-in
+          // draw out, counter decrement, everything else pinned.
+          ReserveState { .. } -> {
+            expect InlineDatum(out_datum_data) = own_output.datum
+            expect ReserveState {
+              group_reference_tokenname: out_binding,
+              standin_rounds: out_standin,
+            }: TreasuryDatum = out_datum_data
+            let out_contributable = contributable_in(
+              own_output.value,
+              group.contribution_fee_policyid,
+              group.contribution_fee_assetname,
+            )
+            and {
+              // Only THE reserve (holding the token) may present a ReserveState —
+              // the identity/binding of the real reserve was checked pre-fold, and
+              // the token can exist in exactly one continuation output.
+              (assets.quantity_of(
+                own_input.output.value,
+                own_policy_id,
+                reserve_token_name,
+              ) == 1)?,
+              (out_binding == expected_group_token_name)?,
+              (out_standin == standin_out_expected)?,
+              (own_output.address == own_input.output.address)?,
+              (dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
+                Pair(reserve_token_name, 1),
+              ])?,
+              only_allowed_policies(
+                own_output.value,
+                [
+                  ada_policy_id, own_policy_id, group.contribution_fee_policyid,
+                ],
+              )?,
+              (out_contributable == reserve_in_contributable + levy_total - draw)?,
+              ada_reserve_conserved(
+                own_input.output.value,
+                own_output.value,
+                group.contribution_fee_policyid,
+              )?,
             }
-          } else {
-            expect TreasuryState {
-              rounds_paid: output_rounds_paid,
-              claimable_balance: output_claimable_balance,
-              ..
-            } = output_datum
-            // [security]: claimable_balance is pinned. Under Push (and every non-borrower
-            // under Pull) preserved exactly — else a caller could inflate their own earmark
-            // and later drain it via ClaimPayout. Under Pull the borrower's OWN treasury
-            // accrues exactly total_payout (matching balance_deducted above).
-            let expected_claimable =
-              if is_pull && is_borrower_treasury {
-                claimable_balance + total_payout
-              } else {
-                claimable_balance
-              }
-            output_rounds_paid == round_number + 1 && output_claimable_balance == expected_claimable
           }
-
-        // [AIK-4 fix]: full-address equality on the continuing treasury output — the stake
-        // credential is preserved from the input. A permissionless cranker (DistributeRound)
-        // cannot attach a different stake key to redirect staking rewards.
-        let address_preserved = own_output.address == own_input.output.address
-
-        // [spec DistributeRound 8]: clean output at treasury script with membership token —
-        // exactly the membership token + only ADA + own policy + contribution asset (no skim).
-        // Address check is handled above (address_preserved).
-        let treasury_output_ok =
-          treasury_output_clean(
-            own_output,
-            own_policy_id,
-            member_reference_tokenname,
-            group.contribution_fee_policyid,
-          )
-
-        and {
-          group_link_ok?,
-          member_at_correct_round?,
-          balance_deducted?,
-          output_datum_correct?,
-          address_preserved?,
-          treasury_output_ok?,
-          // [security]: token groups — output keeps ≥ input lovelace; without this a
-          // permissionless cranker could skim the min-ADA reserve. No-op for ADA groups.
-          ada_reserve_conserved(
-            own_input.output.value,
-            own_output.value,
-            group.contribution_fee_policyid,
-          )?,
+          TreasuryState { .. } ->
+            validate_distribute_member_leg(
+              own_input,
+              own_output,
+              in_treasury_datum,
+              own_policy_id,
+              group,
+              expected_group_token_name,
+              round_number,
+              borrower_token_opt,
+              is_pull,
+              adjusted_payout,
+              is_cycle_boundary,
+              current_time,
+            )
+          // [spec DistributeRound 1]: no other datum state may join a round.
+          _ -> fail @"only TreasuryState members and the reserve join a round"
         }
       },
     )
+
 
   // [D3]: group output decrements active_member_count by exactly the number of members that
   // transitioned to DefaultState (ICS) this round. The pot above used the PRE-decrement count
@@ -830,11 +848,157 @@ pub fn validate_distribute_withdraw(
   and {
     borrower_present?,
     spent_set_complete?,
+    reserve_leg_ok?,
     group_round_incremented?,
     group_output_valid?,
     active_count_correct?,
     borrower_payout_valid?,
     per_input_valid?,
+  }
+}
+
+// validate_distribute_member_leg
+// ─────────────────────────────────────────────────────────────────────────────
+// The per-member transition of a distribute round (extracted verbatim from the
+// indexer closure when the reserve leg joined the fold): round gate, -fee
+// balance conservation (borrower credited the adjusted pot under Pull), ICS
+// transition off cycle boundaries, pinned datum/address/value.
+fn validate_distribute_member_leg(
+  own_input: Input,
+  own_output: Output,
+  in_treasury_datum: TreasuryDatum,
+  own_policy_id: PolicyId,
+  group: GroupDatum,
+  expected_group_token_name: AssetName,
+  round_number: Int,
+  borrower_token_opt: Option<AssetName>,
+  is_pull: Bool,
+  adjusted_payout: Int,
+  is_cycle_boundary: Bool,
+  current_time: Int,
+) -> Bool {
+  // [spec DistributeRound 1]: input datum must be TreasuryState. Carries
+  // member_payment_credential into any DefaultState transition.
+  expect TreasuryState {
+    member_reference_tokenname,
+    group_reference_tokenname,
+    member_payment_credential,
+    rounds_paid,
+    claimable_balance,
+  } = in_treasury_datum
+
+  // [security C4 / D3]: the spent treasury must belong to THIS group. count_active_members
+  // used to provide this implicitly (by iterating this group's registry); with the cached
+  // count we assert it per input so foreign-group treasuries cannot pad the spent set.
+  let group_link_ok = group_reference_tokenname == expected_group_token_name
+
+  // [spec DistributeRound 2]: member hasn't been processed for this round yet
+  let member_at_correct_round = rounds_paid == round_number
+
+  // [spec DistributeRound 7]: own output datum
+  expect InlineDatum(output_datum_data) = own_output.datum
+  expect output_datum: TreasuryDatum = output_datum_data
+
+  // [spec DistributeRound 7b]: contributable balance (excludes ADA reserve), so the
+  // -fee conservation is reserve-invariant and the ICS threshold fires on spendable
+  // shortfall; final round lands contributable at 0 with the reserve carrying the token.
+  let input_bal =
+    contributable_in(
+      own_input.output.value,
+      group.contribution_fee_policyid,
+      group.contribution_fee_assetname,
+    )
+  let output_bal =
+    contributable_in(
+      own_output.value,
+      group.contribution_fee_policyid,
+      group.contribution_fee_assetname,
+    )
+
+  // is_borrower_treasury is decided purely from the immutable membership token name
+  // vs the group-registry-resolved borrower, so it cannot be spoofed.
+  let is_borrower_treasury = Some(member_reference_tokenname) == borrower_token_opt
+
+  // [spec DistributeRound 7b]: every member debited contribution_fee; under Pull the
+  // borrower's OWN treasury is also credited the ADJUSTED pot (gross pot minus the
+  // round levy plus any stand-in draw — conservation pins all other treasuries to
+  // -fee and the reserve leg to its exact delta, so released fees can only land
+  // here — no skim possible).
+  let balance_deducted =
+    if is_pull && is_borrower_treasury {
+      output_bal == input_bal - group.contribution_fee + adjusted_payout
+    } else {
+      output_bal == input_bal - group.contribution_fee
+    }
+
+  // [spec DistributeRound 7a / D2]: ICS transition when spendable balance drops below
+  // contribution_fee, EXCEPT at a cycle boundary (last round of any cycle) — there the
+  // member stays TreasuryState so they can mature/free-exit (D4). See is_cycle_boundary.
+  let transition_to_ics =
+    output_bal < group.contribution_fee && !is_cycle_boundary
+
+  let output_datum_correct =
+    if transition_to_ics {
+      output_datum == DefaultState {
+        group_reference_tokenname,
+        member_reference_tokenname,
+        grace_expires_at: current_time + group.grace_period_length,
+        grace_extensions_used: 0,
+        rounds_paid: round_number + 1,
+        member_payment_credential,
+        // [carry-forward]: a defaulter is always a non-borrower (borrower balance rises
+        // by the adjusted pot, never below fee), so the earmark carries through unchanged.
+        claimable_balance,
+      }
+    } else {
+      expect TreasuryState {
+        rounds_paid: output_rounds_paid,
+        claimable_balance: output_claimable_balance,
+        ..
+      } = output_datum
+      // [security]: claimable_balance is pinned. Under Push (and every non-borrower
+      // under Pull) preserved exactly — else a caller could inflate their own earmark
+      // and later drain it via ClaimPayout. Under Pull the borrower's OWN treasury
+      // accrues exactly the adjusted pot (matching balance_deducted above).
+      let expected_claimable =
+        if is_pull && is_borrower_treasury {
+          claimable_balance + adjusted_payout
+        } else {
+          claimable_balance
+        }
+      output_rounds_paid == round_number + 1 && output_claimable_balance == expected_claimable
+    }
+
+  // [AIK-4 fix]: full-address equality on the continuing treasury output — the stake
+  // credential is preserved from the input. A permissionless cranker (DistributeRound)
+  // cannot attach a different stake key to redirect staking rewards.
+  let address_preserved = own_output.address == own_input.output.address
+
+  // [spec DistributeRound 8]: clean output at treasury script with membership token —
+  // exactly the membership token + only ADA + own policy + contribution asset (no skim).
+  // Address check is handled above (address_preserved).
+  let treasury_output_ok =
+    treasury_output_clean(
+      own_output,
+      own_policy_id,
+      member_reference_tokenname,
+      group.contribution_fee_policyid,
+    )
+
+  and {
+    group_link_ok?,
+    member_at_correct_round?,
+    balance_deducted?,
+    output_datum_correct?,
+    address_preserved?,
+    treasury_output_ok?,
+    // [security]: token groups — output keeps ≥ input lovelace; without this a
+    // permissionless cranker could skim the min-ADA reserve. No-op for ADA groups.
+    ada_reserve_conserved(
+      own_input.output.value,
+      own_output.value,
+      group.contribution_fee_policyid,
+    )?,
   }
 }
 

@@ -4920,3 +4920,236 @@ test join_levy__rejects_missing_reserve_leg() fail {
     tx,
   )
 }
+
+// ─── DistributeRound: reserve leg [spec Reserve C3] ───────────────────────────
+
+// Parametric single-member distribute-with-reserve fixture. Fee = 2M ADA (Push).
+// Returns the tx; indices: group=0, member treasury in=1, reserve in=2;
+// outputs: member treasury=0, group=1, borrower=2, reserve=3.
+fn distribute_reserve_tx(
+  round_levy: Int,
+  standin_in: Int,
+  reserve_in_lovelace: Int,
+  reserve_out_lovelace: Int,
+  standin_out: Int,
+) -> Transaction {
+  let tp = treasury_policy()
+  let gp = group_policy()
+  let group_datum = GroupDatum {
+    ..test_group_datum(),
+    num_rounds: 3,
+    is_started: True,
+    last_distributed_round: -1,
+    active_member_count: 1,
+    member_token_names: [member_tn()],
+    member_slots: [0],
+    reserve_round_levy: round_levy,
+  }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
+      value: group_in_value,
+      datum: InlineDatum(cip68_with_group(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: group_in_value,
+    datum: InlineDatum(
+      cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 0 }),
+    ),
+    reference_script: None,
+  }
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(build_treasury_state(group_ref_tn(), 0), treasury_value()),
+  )
+  let treasury_out = test_treasury_output(
+    build_treasury_state(group_ref_tn(), 1),
+    assets.from_lovelace(min_ada_reserve + 3_000_000)
+      |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+  )
+  let reserve_in = Input {
+    output_reference: OutputReference {
+      transaction_id: #"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address {
+        payment_credential: Script(tp),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(reserve_in_lovelace)
+        |> assets.merge(assets.from_asset(tp, join_reserve_tn(), 1)),
+      datum: InlineDatum(
+        ReserveState {
+          group_reference_tokenname: group_ref_tn(),
+          standin_rounds: standin_in,
+        },
+      ),
+      reference_script: None,
+    },
+  }
+  let reserve_out = Output {
+    address: Address {
+      payment_credential: Script(tp),
+      stake_credential: None,
+    },
+    value: assets.from_lovelace(reserve_out_lovelace)
+      |> assets.merge(assets.from_asset(tp, join_reserve_tn(), 1)),
+    datum: InlineDatum(
+      ReserveState {
+        group_reference_tokenname: group_ref_tn(),
+        standin_rounds: standin_out,
+      },
+    ),
+    reference_script: None,
+  }
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, treasury_in, reserve_in],
+    outputs: [treasury_out, group_output, test_borrower_output(), reserve_out],
+    validity_range: interval.after(0),
+  }
+}
+
+fn run_distribute_reserve(tx: Transaction) -> Bool {
+  validate_distribute_withdraw(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    1,
+    [1, 2],
+    [0, 3],
+    2,
+    tx,
+  )
+}
+
+// Levy 250k, one contributing member: reserve grows by exactly the levy total,
+// the borrower's pot shrinks by the same amount.
+test distribute_reserve__accepts_levy_routing() {
+  let tx = distribute_reserve_tx(250_000, 0, 2_000_000, 2_250_000, 0)
+  run_distribute_reserve(tx)
+}
+
+// Active stand-in with a funded pot: one fee-unit (2M) drawn into the pot, the
+// counter decrements. in contributable 3M + levy 250k − draw 2M = 1.25M.
+test distribute_reserve__accepts_standin_draw() {
+  let tx = distribute_reserve_tx(250_000, 2, 5_000_000, 3_250_000, 1)
+  run_distribute_reserve(tx)
+}
+
+// Dry reserve (contributable 0) with levy 0 and an active stand-in: the draw is
+// 0 but the counter STILL decrements — owed cover drains even when the pot is
+// empty, so BeginRecommit cannot be blocked forever.
+test distribute_reserve__accepts_dry_draw_decrement() {
+  let tx = distribute_reserve_tx(0, 1, 2_000_000, 2_000_000, 0)
+  run_distribute_reserve(tx)
+}
+
+// Partially-funded draw: the cap is what the pot plus this round's levy holds
+// (0 + 250k), not the full fee.
+test distribute_reserve__accepts_partial_draw() {
+  let tx = distribute_reserve_tx(250_000, 1, 2_000_000, 2_000_000, 0)
+  run_distribute_reserve(tx)
+}
+
+// A configured round levy makes the reserve leg MANDATORY.
+test distribute_reserve__rejects_missing_reserve_when_levy_set() {
+  let tp = treasury_policy()
+  let gp = group_policy()
+  let group_datum = GroupDatum {
+    ..test_group_datum(),
+    num_rounds: 3,
+    is_started: True,
+    last_distributed_round: -1,
+    active_member_count: 1,
+    member_token_names: [member_tn()],
+    member_slots: [0],
+    reserve_round_levy: 250_000,
+  }
+  let group_in_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
+      value: group_in_value,
+      datum: InlineDatum(cip68_with_group(group_datum)),
+      reference_script: None,
+    },
+  }
+  let group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: group_in_value,
+    datum: InlineDatum(
+      cip68_with_group(GroupDatum { ..group_datum, last_distributed_round: 0 }),
+    ),
+    reference_script: None,
+  }
+  let treasury_in = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(build_treasury_state(group_ref_tn(), 0), treasury_value()),
+  )
+  let treasury_out = test_treasury_output(
+    build_treasury_state(group_ref_tn(), 1),
+    assets.from_lovelace(min_ada_reserve + 3_000_000)
+      |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+  )
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, treasury_in],
+    outputs: [treasury_out, group_output, test_borrower_output()],
+    validity_range: interval.after(0),
+  }
+  !validate_distribute_withdraw(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    1,
+    [1],
+    [0],
+    2,
+    tx,
+  )
+}
+
+// The reserve's delta is exact — skimming the levy (crediting less than
+// levy_total) crashes the indexer closure.
+test distribute_reserve__rejects_levy_skim() fail {
+  let tx = distribute_reserve_tx(250_000, 0, 2_000_000, 2_100_000, 0)
+  run_distribute_reserve(tx)
+}
+
+// The stand-in counter transition is pinned: leaving it unchanged while
+// drawing crashes.
+test distribute_reserve__rejects_standin_tamper() fail {
+  let tx = distribute_reserve_tx(250_000, 2, 5_000_000, 3_250_000, 2)
+  run_distribute_reserve(tx)
+}
+
+// Draining the reserve beyond the stand-in rules crashes (no permissionless
+// skim through the distribute leg).
+test distribute_reserve__rejects_over_draw() fail {
+  let tx = distribute_reserve_tx(250_000, 0, 5_000_000, 2_000_000, 0)
+  run_distribute_reserve(tx)
+}
