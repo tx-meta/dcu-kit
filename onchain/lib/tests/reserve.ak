@@ -2,6 +2,7 @@
 //// cover, wind-down refunds. Spec: 2026-07-03-cluster-c-reserve-design.md
 
 use aiken/fuzz
+use cardano/address
 use cardano/assets
 use cardano/transaction.{Transaction}
 use dcu/cip68
@@ -990,4 +991,109 @@ test prop_reserve_refund__share_always_claimable(
 // The last exiter (pre-exit member_count == 1) may drain the pot fully.
 test reserve_refund__last_exiter_takes_all() {
   run_refund(refund_tx_m(1, 1000, 1000))
+}
+
+// ─── Review-gate additions (2026-07-03) ───────────────────────────────────────
+
+// [AIK-4 / MLabs 11]: a creator-supplied stake credential on the communal pot
+// would skim its staking rewards forever — enterprise address only at creation.
+test create_reserve__rejects_foreign_stake_credential() {
+  let staked = transaction.Output {
+    address: address.Address {
+      payment_credential: address.Script(treasury_policy()),
+      stake_credential: Some(
+        address.Inline(address.VerificationKey(common.test_pkh())),
+      ),
+    },
+    value: reserve_create_value(),
+    datum: transaction.InlineDatum(reserve_state(0)),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    outputs: [group_create_output(), staked],
+    mint: create_mint(),
+  }
+  !validate_create_reserve(treasury_policy(), group_policy(), 0, 1, tx)
+}
+
+// Cover cannot cite a defaulter that belongs to a different group.
+test reserve_cover__rejects_foreign_group_defaulter() {
+  let foreign_defaulter = common.test_input(
+    transaction.OutputReference {
+      transaction_id: #"5555555555555555555555555555555555555555555555555555555555555555",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      treasury_policy(),
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(
+            assets.from_asset(treasury_policy(), cover_member_tn(), 1),
+          )
+        |> assets.merge(contribution(400)),
+      DefaultState {
+        group_reference_tokenname: #"aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd",
+        member_reference_tokenname: cover_member_tn(),
+        grace_expires_at: 5000,
+        grace_extensions_used: 0,
+        rounds_paid: 1,
+        member_payment_credential: common.test_pkh(),
+        claimable_balance: 0,
+      },
+    ),
+  )
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      cover_group_input(),
+      foreign_defaulter,
+      reserve_input(0, reserve_create_value() |> assets.merge(contribution(100))),
+    ],
+    outputs: [
+      cover_group_output(0),
+      reserve_output(
+        group_ref_tn(),
+        2,
+        reserve_create_value() |> assets.merge(contribution(500)),
+      ),
+    ],
+    mint: cover_burn(),
+  }
+  !run_cover(tx)
+}
+
+// The refund's exit citation cannot be the reserve itself (or any non-member
+// datum) — only TreasuryState/DefaultState members of this group count.
+test reserve_refund__rejects_reserve_as_exit_citation() {
+  let balance = 1000
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      refund_group_input_m(2),
+      reserve_input(
+        0,
+        reserve_create_value() |> assets.merge(contribution(balance)),
+      ),
+    ],
+    outputs: [
+      refund_group_output_m(1),
+      reserve_output(
+        group_ref_tn(),
+        0,
+        reserve_create_value() |> assets.merge(contribution(balance - 500)),
+      ),
+    ],
+  }
+  // exiting_treasury_input_index = 1 → the reserve input itself
+  !validate_reserve_refund(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    1,
+    1,
+    1,
+    reserve_utxo_ref(),
+    tx,
+  )
 }

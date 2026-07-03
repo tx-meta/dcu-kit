@@ -71,6 +71,11 @@ pub fn validate_create_reserve(
     (group_reference_tokenname == group_ref_name)?,
     (standin_rounds == 0)?,
     (reserve_output.address.payment_credential == Script(own_policy_id))?,
+    // [AIK-4 / MLabs 11]: the pot is COMMUNAL money and every later path
+    // preserves the address set here — a creator-supplied stake credential
+    // would skim the pot's staking rewards forever. Enterprise address only
+    // (reserve yield is explicitly out of v1 scope).
+    (reserve_output.address.stake_credential == None)?,
     (assets.without_lovelace(reserve_output.value) == assets.from_asset(
       own_policy_id,
       reserve_token_name,
