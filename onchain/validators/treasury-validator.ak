@@ -5,12 +5,12 @@ use cardano/assets.{PolicyId}
 use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/settings.{read_settings}
-use dcu/reserve.{validate_create_reserve}
+use dcu/reserve.{validate_create_reserve, validate_reserve_topup}
 use dcu/treasury.{
   ApproveRecovery, CancelRecovery, ClaimPayout, ClaimPenalty, Contribute,
   CreateReserve, DistributeRound, DistributeWithdraw, ExecuteRecovery, ExitGroup,
-  ExtendGrace, JoinGroup, ProposeRecovery, TerminateDefault, TreasuryDatum,
-  TreasuryRedeemer, TreasuryWithdrawRedeemer, UpdatePayout,
+  ExtendGrace, JoinGroup, ProposeRecovery, ReserveTopUp, TerminateDefault,
+  TreasuryDatum, TreasuryRedeemer, TreasuryWithdrawRedeemer, UpdatePayout,
 } as treasury_types
 use dcu/treasury_validation.{
   validate_approve_recovery, validate_cancel_recovery, validate_cancel_recovery_mint,
@@ -387,7 +387,20 @@ validator treasury(settings_policy: PolicyId) {
         )
       }
 
-      // JoinGroup is a mint redeemer — reject at spend
+      ReserveTopUp { reserve_input_index, reserve_output_index } ->
+        // Self-reference and all continuation pinning happen inside (the reserve
+        // input at reserve_input_index must BE this UTxO).
+        validate_reserve_topup(
+          policy_id_from_utxo(inputs, utxo),
+          settings.group_policy,
+          reserve_input_index,
+          reserve_output_index,
+          treasury_datum,
+          utxo,
+          self,
+        )
+
+      // JoinGroup / CreateReserve are mint redeemers — reject at spend
       _ -> fail
     }
   }

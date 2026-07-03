@@ -8,7 +8,8 @@ use cardano/transaction.{
 use dcu/cip68
 use dcu/group.{GroupCip68Datum, GroupDatum, Pull, Push}
 use dcu/treasury.{
-  DefaultState, PenaltyState, TreasuryDatum, TreasuryState, max_grace_extensions,
+  DefaultState, PenaltyState, ReserveState, TreasuryDatum, TreasuryState,
+  max_grace_extensions,
 }
 use dcu/treasury_utils.{min_ada_reserve}
 use dcu/treasury_validation.{
@@ -4753,3 +4754,169 @@ test exit__rejects_penalty_output_stake_credential_change() {
   )
 }
 
+
+// ─── JoinGroup: reserve join levy [spec Reserve C2] ───────────────────────────
+
+// Group input/output carrying a configured join levy (contribution asset = ADA
+// in these fixtures, so the levy is paid in lovelace on top of min-ADA).
+fn levy_group_input() -> Input {
+  let gp = group_policy()
+  let datum = cip68_with_group(
+    GroupDatum { ..test_group_datum(), reserve_join_levy: 250_000 },
+  )
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  Input {
+    output_reference: OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address { payment_credential: Script(gp), stake_credential: None },
+      value,
+      datum: InlineDatum(datum),
+      reference_script: None,
+    },
+  }
+}
+
+fn levy_group_output(member_count: Int) -> Output {
+  let gp = group_policy()
+  let datum = cip68_with_group(
+    GroupDatum {
+      ..test_group_datum(),
+      reserve_join_levy: 250_000,
+      member_count,
+      active_member_count: member_count,
+    },
+  )
+  Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
+}
+
+fn join_reserve_tn() -> assets.AssetName {
+  cip68.convert_ref_to_reserve_token(group_ref_tn())
+}
+
+fn join_reserve_utxo(lovelace: Int) -> Output {
+  Output {
+    address: Address {
+      payment_credential: Script(treasury_policy()),
+      stake_credential: None,
+    },
+    value: assets.from_lovelace(lovelace)
+      |> assets.merge(assets.from_asset(treasury_policy(), join_reserve_tn(), 1)),
+    datum: InlineDatum(
+      ReserveState {
+        group_reference_tokenname: group_ref_tn(),
+        standin_rounds: 0,
+      },
+    ),
+    reference_script: None,
+  }
+}
+
+fn join_reserve_input(lovelace: Int) -> Input {
+  Input {
+    output_reference: OutputReference {
+      transaction_id: #"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      output_index: 0,
+    },
+    output: join_reserve_utxo(lovelace),
+  }
+}
+
+fn levy_join_tx(reserve_out_lovelace: Int) -> Transaction {
+  let tp = treasury_policy()
+  let datum = test_treasury_state(0)
+  let output_value = assets.from_lovelace(5_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_output = test_treasury_output(datum, output_value)
+  let mint = assets.from_asset(tp, member_tn(), 1)
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [levy_group_input(), test_member_input(), join_reserve_input(2_000_000)],
+    outputs: [
+      treasury_output,
+      levy_group_output(1),
+      join_reserve_utxo(reserve_out_lovelace),
+    ],
+    mint,
+    validity_range: interval.after(0),
+  }
+}
+
+test join_levy__accepts_paid_levy() {
+  let tx = levy_join_tx(2_250_000)
+  validate_join_treasury(
+    treasury_policy(),
+    account_policy(),
+    group_policy(),
+    0,
+    1,
+    1,
+    0,
+    tx,
+  )
+}
+
+test join_levy__accepts_overpaid_levy() {
+  let tx = levy_join_tx(2_600_000)
+  validate_join_treasury(
+    treasury_policy(),
+    account_policy(),
+    group_policy(),
+    0,
+    1,
+    1,
+    0,
+    tx,
+  )
+}
+
+test join_levy__rejects_short_levy() {
+  let tx = levy_join_tx(2_249_999)
+  !validate_join_treasury(
+    treasury_policy(),
+    account_policy(),
+    group_policy(),
+    0,
+    1,
+    1,
+    0,
+    tx,
+  )
+}
+
+// A levy-carrying join with NO reserve leg at all crashes the expect — the
+// reserve UTxO cannot be skipped.
+test join_levy__rejects_missing_reserve_leg() fail {
+  let tp = treasury_policy()
+  let datum = test_treasury_state(0)
+  let output_value = assets.from_lovelace(5_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_output = test_treasury_output(datum, output_value)
+  let mint = assets.from_asset(tp, member_tn(), 1)
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [levy_group_input(), test_member_input()],
+    outputs: [treasury_output, levy_group_output(1)],
+    mint,
+    validity_range: interval.after(0),
+  }
+  validate_join_treasury(
+    tp,
+    account_policy(),
+    group_policy(),
+    0,
+    1,
+    1,
+    0,
+    tx,
+  )
+}

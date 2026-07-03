@@ -198,6 +198,40 @@ pub fn validate_join_treasury(
     },
   )
 
+  // [spec Reserve C2]: join levy — when the group configures one, this tx must
+  // spend the group's reserve UTxO (via ReserveTopUp, which pins address/datum/
+  // token) and grow its contribution-asset balance by at least the levy. The
+  // reserve is located by its deterministic token name; a missing reserve leg
+  // crashes the expect, so a levy-carrying join can never skip the pot.
+  let join_levy_paid = if group.reserve_join_levy == 0 {
+    True
+  } else {
+    let reserve_token_name = cip68.convert_ref_to_reserve_token(
+      expected_group_token_name,
+    )
+    expect Some(reserve_in) = list.find(
+      inputs,
+      fn(i) {
+        assets.quantity_of(i.output.value, own_policy_id, reserve_token_name) == 1
+      },
+    )
+    expect Some(reserve_out) = list.find(
+      outputs,
+      fn(o) {
+        assets.quantity_of(o.value, own_policy_id, reserve_token_name) == 1
+      },
+    )
+    contributable_in(
+      reserve_out.value,
+      group.contribution_fee_policyid,
+      group.contribution_fee_assetname,
+    ) >= contributable_in(
+      reserve_in.output.value,
+      group.contribution_fee_policyid,
+      group.contribution_fee_assetname,
+    ) + group.reserve_join_levy
+  }
+
   and {
     group_active?,
     not_started?,
@@ -224,6 +258,7 @@ pub fn validate_join_treasury(
     group_output_has_ref_token?,
     fees_locked?,
     joining_fee_routed?,
+    join_levy_paid?,
     member_authorized?,
     member_cred_matches?,
     user_token_at_wallet?,

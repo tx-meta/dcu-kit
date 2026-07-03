@@ -4,8 +4,10 @@
 use cardano/assets
 use cardano/transaction.{Transaction}
 use dcu/cip68
-use dcu/reserve.{group_reserve_minted, validate_create_reserve}
-use dcu/treasury.{ReserveState}
+use dcu/reserve.{
+  group_reserve_minted, validate_create_reserve, validate_reserve_topup,
+}
+use dcu/treasury.{ReserveState, TreasuryDatum}
 use tests/common
 
 // ─── Shared test helpers ──────────────────────────────────────────────────────
@@ -81,6 +83,38 @@ fn create_reserve_tx(
     outputs: [group_create_output(), reserve_output(binding, standin, reserve_value)],
     mint: mint,
   }
+}
+
+// The group's contribution asset per common.test_group_datum(group_policy()):
+// policy = group_policy(), assetname = "".
+fn contribution(amount: Int) -> assets.Value {
+  assets.from_asset(group_policy(), "", amount)
+}
+
+// The bound group as a REFERENCE input (standalone reserve operations).
+fn group_ref_input() {
+  common.test_input(
+    transaction.OutputReference {
+      transaction_id: #"3333333333333333333333333333333333333333333333333333333333333333",
+      output_index: 0,
+    },
+    group_create_output(),
+  )
+}
+
+fn reserve_utxo_ref() -> transaction.OutputReference {
+  transaction.OutputReference {
+    transaction_id: #"2222222222222222222222222222222222222222222222222222222222222222",
+    output_index: 0,
+  }
+}
+
+fn reserve_input(standin: Int, value: assets.Value) {
+  common.test_input(reserve_utxo_ref(), reserve_output(group_ref_tn(), standin, value))
+}
+
+fn reserve_state(standin: Int) -> TreasuryDatum {
+  ReserveState { group_reference_tokenname: group_ref_tn(), standin_rounds: standin }
 }
 
 // ─── CreateReserve: PASS ──────────────────────────────────────────────────────
@@ -218,6 +252,235 @@ test create_reserve__rejects_non_ref_group_token() fail {
     mint: create_mint(),
   }
   validate_create_reserve(treasury_policy(), group_policy(), 0, 1, tx)
+}
+
+// ─── ReserveTopUp ─────────────────────────────────────────────────────────────
+
+// Canonical top-up: reserve holds min-ADA + token + 500 contribution units; the
+// output adds 300 more. Group rides as a reference input.
+fn topup_tx(out_binding: assets.AssetName, out_standin: Int, out_value: assets.Value) -> Transaction {
+  let in_value = reserve_create_value() |> assets.merge(contribution(500))
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [reserve_input(0, in_value)],
+    reference_inputs: [group_ref_input()],
+    outputs: [
+      common.test_script_utxo(
+        treasury_policy(),
+        out_value,
+        ReserveState {
+          group_reference_tokenname: out_binding,
+          standin_rounds: out_standin,
+        },
+      ),
+    ],
+  }
+}
+
+fn topup_out_value(extra: Int) -> assets.Value {
+  reserve_create_value() |> assets.merge(contribution(500 + extra))
+}
+
+test reserve_topup__accepts_growth() {
+  let tx = topup_tx(group_ref_tn(), 0, topup_out_value(300))
+  validate_reserve_topup(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    reserve_state(0),
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// The bound group may also be a SPENDING input (the join-tx shape).
+test reserve_topup__accepts_group_as_spending_input() {
+  let in_value = reserve_create_value() |> assets.merge(contribution(500))
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      reserve_input(0, in_value),
+      group_ref_input(),
+    ],
+    outputs: [
+      common.test_script_utxo(
+        treasury_policy(),
+        topup_out_value(300),
+        reserve_state(0),
+      ),
+    ],
+  }
+  validate_reserve_topup(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    reserve_state(0),
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// No growth = not a top-up.
+test reserve_topup__rejects_no_growth() {
+  let tx = topup_tx(group_ref_tn(), 0, topup_out_value(0))
+  !validate_reserve_topup(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    reserve_state(0),
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// Nothing can leave through this redeemer.
+test reserve_topup__rejects_decrease() {
+  let tx = topup_tx(group_ref_tn(), 0, topup_out_value(-200))
+  !validate_reserve_topup(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    reserve_state(0),
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// Datum is frozen — the stand-in counter cannot move here.
+test reserve_topup__rejects_standin_tamper() {
+  let tx = topup_tx(group_ref_tn(), 1, topup_out_value(300))
+  !validate_reserve_topup(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    reserve_state(0),
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// Datum is frozen — the group binding cannot move here.
+test reserve_topup__rejects_binding_tamper() {
+  let tx = topup_tx(
+    #"aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd",
+    0,
+    topup_out_value(300),
+  )
+  !validate_reserve_topup(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    reserve_state(0),
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// The continuation must stay at the reserve's own (full) address.
+test reserve_topup__rejects_address_change() {
+  let in_value = reserve_create_value() |> assets.merge(contribution(500))
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [reserve_input(0, in_value)],
+    reference_inputs: [group_ref_input()],
+    outputs: [
+      common.test_user_utxo(
+        common.test_pkh(),
+        topup_out_value(300),
+        reserve_state(0),
+      ),
+    ],
+  }
+  !validate_reserve_topup(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    reserve_state(0),
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// The reserve token must ride along.
+test reserve_topup__rejects_token_strip() {
+  let stripped = assets.from_lovelace(2_000_000)
+    |> assets.merge(contribution(800))
+  let tx = topup_tx(group_ref_tn(), 0, stripped)
+  !validate_reserve_topup(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    reserve_state(0),
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// Only ADA + the reserve token + the contribution asset may live in the pot.
+test reserve_topup__rejects_foreign_asset() {
+  let dirty = topup_out_value(300)
+    |> assets.merge(assets.from_asset(common.test_hash_03(), #"cafe", 1))
+  let tx = topup_tx(group_ref_tn(), 0, dirty)
+  !validate_reserve_topup(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    reserve_state(0),
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// Lovelace can never decrease (native-asset pots would otherwise leak min-ADA).
+test reserve_topup__rejects_lovelace_skim() {
+  let skimmed = assets.from_lovelace(1_000_000)
+    |> assets.merge(assets.from_asset(treasury_policy(), reserve_tn(), 1))
+    |> assets.merge(contribution(800))
+  let tx = topup_tx(group_ref_tn(), 0, skimmed)
+  !validate_reserve_topup(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    reserve_state(0),
+    reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// Without the bound group present anywhere, the contribution asset cannot be
+// authenticated — crash.
+test reserve_topup__rejects_missing_group() fail {
+  let in_value = reserve_create_value() |> assets.merge(contribution(500))
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [reserve_input(0, in_value)],
+    outputs: [
+      common.test_script_utxo(
+        treasury_policy(),
+        topup_out_value(300),
+        reserve_state(0),
+      ),
+    ],
+  }
+  validate_reserve_topup(
+    treasury_policy(),
+    group_policy(),
+    0,
+    0,
+    reserve_state(0),
+    reserve_utxo_ref(),
+    tx,
+  )
 }
 
 // ─── group_reserve_minted (group-side coupling) ───────────────────────────────

@@ -181,6 +181,13 @@ pub type TreasuryRedeemer {
     group_output_index: Int,
     reserve_output_index: Int,
   }
+  // Increase-only spend of the ReserveState UTxO: the join levy leg of a JoinGroup
+  // tx and voluntary top-ups. Datum frozen, token preserved, contribution-asset
+  // balance strictly grows. Spend-only redeemer.
+  ReserveTopUp {
+    reserve_input_index: Int,
+    reserve_output_index: Int,
+  }
 }
 
 /// Treasury Withdraw-Validator Redeemer (the "withdraw-zero" coupling).

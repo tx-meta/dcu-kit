@@ -7,10 +7,13 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/primitive/bytearray
 use cardano/address.{Script}
-use cardano/assets.{PolicyId, Value}
-use cardano/transaction.{InlineDatum, Input, Transaction}
+use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
+use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 use dcu/cip68
+use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/treasury.{ReserveState, TreasuryDatum}
+use dcu/treasury_utils.{contributable_in}
+use dcu/utils.{only_allowed_policies}
 
 // validate_create_reserve
 // ─────────────────────────────────────────────────────────────────────────────
@@ -74,6 +77,121 @@ pub fn validate_create_reserve(
       1,
     ))?,
   }
+}
+
+// validate_reserve_topup
+// ─────────────────────────────────────────────────────────────────────────────
+// Increase-only spend of the ReserveState UTxO — join levies and voluntary
+// top-ups (harambee) share this path:
+// [spec Reserve topup 1]: self-reference — the indexed input IS the UTxO being
+//   spent, and it holds the reserve token derived from its own datum binding
+// [spec Reserve topup 2]: the bound group is present — as a reference input
+//   (standalone top-up) or a spending input (join) — at the trusted group script;
+//   it supplies the contribution-asset identity
+// [spec Reserve topup 3]: the continuation output is pinned — same full address
+//   (AIK-4), same datum, the reserve token carried, and no foreign assets
+// [spec Reserve topup 4]: the contribution-asset balance STRICTLY grows and
+//   lovelace never decreases — nothing can leave through this redeemer
+pub fn validate_reserve_topup(
+  own_policy_id: PolicyId,
+  trusted_group_policy: PolicyId,
+  reserve_input_index: Int,
+  reserve_output_index: Int,
+  reserve_datum: TreasuryDatum,
+  utxo: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, reference_inputs, outputs, .. } = tx
+
+  // [spec Reserve topup 1]
+  expect Some(reserve_input) = list.at(inputs, reserve_input_index)
+  expect reserve_input.output_reference == utxo
+  expect ReserveState { group_reference_tokenname, standin_rounds } =
+    reserve_datum
+  let reserve_token_name = cip68.convert_ref_to_reserve_token(
+    group_reference_tokenname,
+  )
+  expect
+    assets.quantity_of(
+      reserve_input.output.value,
+      own_policy_id,
+      reserve_token_name,
+    ) == 1
+
+  // [spec Reserve topup 2]
+  let group = resolve_bound_group(
+    inputs,
+    reference_inputs,
+    trusted_group_policy,
+    group_reference_tokenname,
+  )
+
+  expect Some(reserve_output) = list.at(outputs, reserve_output_index)
+  expect InlineDatum(out_datum_data) = reserve_output.datum
+  expect ReserveState {
+    group_reference_tokenname: out_binding,
+    standin_rounds: out_standin,
+  }: TreasuryDatum = out_datum_data
+
+  let in_contributable = contributable_in(
+    reserve_input.output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
+  let out_contributable = contributable_in(
+    reserve_output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
+
+  and {
+    // [spec Reserve topup 3]
+    (out_binding == group_reference_tokenname)?,
+    (out_standin == standin_rounds)?,
+    (reserve_output.address == reserve_input.output.address)?,
+    (dict.to_pairs(assets.tokens(reserve_output.value, own_policy_id)) == [
+      Pair(reserve_token_name, 1),
+    ])?,
+    only_allowed_policies(
+      reserve_output.value,
+      [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
+    )?,
+    // [spec Reserve topup 4]
+    (out_contributable > in_contributable)?,
+    (assets.lovelace_of(reserve_output.value) >= assets.lovelace_of(
+      reserve_input.output.value,
+    ))?,
+  }
+}
+
+// resolve_bound_group
+// ─────────────────────────────────────────────────────────────────────────────
+// Locate the group UTxO bound to a reserve (by its ref token) at the TRUSTED
+// group script — among reference inputs first (standalone reserve operations),
+// then among spending inputs (join / distribute / terminate ride-alongs).
+pub fn resolve_bound_group(
+  inputs: List<Input>,
+  reference_inputs: List<Input>,
+  trusted_group_policy: PolicyId,
+  group_reference_tokenname: AssetName,
+) -> GroupDatum {
+  let holds_group = fn(i: Input) {
+    i.output.address.payment_credential == Script(trusted_group_policy) && assets.quantity_of(
+      i.output.value,
+      trusted_group_policy,
+      group_reference_tokenname,
+    ) == 1
+  }
+  let group_utxo = when list.find(reference_inputs, holds_group) is {
+    Some(i) -> i
+    None -> {
+      expect Some(i) = list.find(inputs, holds_group)
+      i
+    }
+  }
+  expect InlineDatum(group_datum_data) = group_utxo.output.datum
+  expect GroupCip68Datum { extra: group, .. } = group_datum_data
+  group
 }
 
 // group_reserve_minted
