@@ -26,6 +26,7 @@
     "begin-recommit": "pnpm run build && node dist/begin-recommit.js",
     "top-up-reserve": "pnpm run build && node dist/top-up-reserve.js",
     "inspect-reserve": "pnpm run build && node dist/inspect-reserve.js",
+    "inspect-state": "pnpm run build && node dist/inspect-state.js",
     "assign-admin": "pnpm run build && node dist/assign-admin.js",
     "propose-recovery": "pnpm run build && node dist/propose-recovery.js",
     "approve-recovery": "pnpm run build && node dist/approve-recovery.js",
