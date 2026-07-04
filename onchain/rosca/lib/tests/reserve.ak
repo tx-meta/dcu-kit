@@ -8,11 +8,12 @@ use cardano/transaction.{Transaction}
 use dcu/cip68
 use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/reserve.{
-  validate_reserve_close, validate_reserve_refund,
-  validate_reserve_cover,
-  group_reserve_minted, validate_create_reserve, validate_reserve_topup,
+  group_reserve_minted, validate_create_reserve, validate_reserve_close,
+  validate_reserve_cover, validate_reserve_refund, validate_reserve_topup,
 }
+use dcu/settings
 use dcu/treasury.{DefaultState, ReserveState, TreasuryDatum}
+use dcu/treasury_actions.{run_reserve_action}
 use tests/common
 
 // ─── Shared test helpers ──────────────────────────────────────────────────────
@@ -65,11 +66,7 @@ fn group_create_output() {
   )
 }
 
-fn reserve_output(
-  binding: assets.AssetName,
-  standin: Int,
-  value: assets.Value,
-) {
+fn reserve_output(binding: assets.AssetName, standin: Int, value: assets.Value) {
   common.test_script_utxo(
     treasury_policy(),
     value,
@@ -85,8 +82,11 @@ fn create_reserve_tx(
 ) -> Transaction {
   Transaction {
     ..transaction.placeholder,
-    outputs: [group_create_output(), reserve_output(binding, standin, reserve_value)],
-    mint: mint,
+    outputs: [
+      group_create_output(),
+      reserve_output(binding, standin, reserve_value),
+    ],
+    mint,
   }
 }
 
@@ -115,11 +115,17 @@ fn reserve_utxo_ref() -> transaction.OutputReference {
 }
 
 fn reserve_input(standin: Int, value: assets.Value) {
-  common.test_input(reserve_utxo_ref(), reserve_output(group_ref_tn(), standin, value))
+  common.test_input(
+    reserve_utxo_ref(),
+    reserve_output(group_ref_tn(), standin, value),
+  )
 }
 
 fn reserve_state(standin: Int) -> TreasuryDatum {
-  ReserveState { group_reference_tokenname: group_ref_tn(), standin_rounds: standin }
+  ReserveState {
+    group_reference_tokenname: group_ref_tn(),
+    standin_rounds: standin,
+  }
 }
 
 // ─── CreateReserve: PASS ──────────────────────────────────────────────────────
@@ -139,11 +145,7 @@ test create_reserve__success() {
 // One-shot violation: the group ref token exists in the output but is NOT being
 // minted (an already-existing group cannot gain a second reserve).
 test create_reserve__rejects_unminted_group_ref() {
-  let mint_without_group = assets.from_asset(
-    treasury_policy(),
-    reserve_tn(),
-    1,
-  )
+  let mint_without_group = assets.from_asset(treasury_policy(), reserve_tn(), 1)
   let tx = create_reserve_tx(
     group_ref_tn(),
     0,
@@ -234,7 +236,10 @@ test create_reserve__rejects_untrusted_group_address() fail {
   )
   let tx = Transaction {
     ..transaction.placeholder,
-    outputs: [forged_group, reserve_output(group_ref_tn(), 0, reserve_create_value())],
+    outputs: [
+      forged_group,
+      reserve_output(group_ref_tn(), 0, reserve_create_value()),
+    ],
     mint: create_mint(),
   }
   validate_create_reserve(treasury_policy(), group_policy(), 0, 1, tx)
@@ -263,7 +268,11 @@ test create_reserve__rejects_non_ref_group_token() fail {
 
 // Canonical top-up: reserve holds min-ADA + token + 500 contribution units; the
 // output adds 300 more. Group rides as a reference input.
-fn topup_tx(out_binding: assets.AssetName, out_standin: Int, out_value: assets.Value) -> Transaction {
+fn topup_tx(
+  out_binding: assets.AssetName,
+  out_standin: Int,
+  out_value: assets.Value,
+) -> Transaction {
   let in_value = reserve_create_value() |> assets.merge(contribution(500))
   Transaction {
     ..transaction.placeholder,
@@ -304,10 +313,7 @@ test reserve_topup__accepts_group_as_spending_input() {
   let in_value = reserve_create_value() |> assets.merge(contribution(500))
   let tx = Transaction {
     ..transaction.placeholder,
-    inputs: [
-      reserve_input(0, in_value),
-      group_ref_input(),
-    ],
+    inputs: [reserve_input(0, in_value), group_ref_input()],
     outputs: [
       common.test_script_utxo(
         treasury_policy(),
@@ -522,9 +528,7 @@ test group_reserve_minted__rejects_wrong_name() {
     #"000643b0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   )
   let mint = create_mint()
-    |> assets.merge(
-        assets.from_asset(treasury_policy(), reserve_tn(), -1),
-      )
+    |> assets.merge(assets.from_asset(treasury_policy(), reserve_tn(), -1))
     |> assets.merge(assets.from_asset(treasury_policy(), wrong_name, 1))
   !group_reserve_minted(treasury_policy(), seed, mint)
 }
@@ -536,12 +540,11 @@ fn cover_member_tn() -> assets.AssetName {
 }
 
 fn wrap_group(datum: GroupDatum) -> Data {
-  let wrapped =
-    GroupCip68Datum {
-      metadata: [Pair(#"6e616d65", "Test Group")],
-      version: 1,
-      extra: datum,
-    }
+  let wrapped = GroupCip68Datum {
+    metadata: [Pair(#"6e616d65", "Test Group")],
+    version: 1,
+    extra: datum,
+  }
   let as_data: Data = wrapped
   as_data
 }
@@ -636,7 +639,10 @@ fn cover_tx(
     inputs: [
       cover_group_input(),
       cover_defaulter_input(),
-      reserve_input(0, reserve_create_value() |> assets.merge(contribution(100))),
+      reserve_input(
+        0,
+        reserve_create_value() |> assets.merge(contribution(100)),
+      ),
     ],
     outputs: [
       cover_group_output(group_out_count),
@@ -764,9 +770,7 @@ fn refund_tx(taken: Int, active_group: Bool, standin_out: Int) -> Transaction {
         group_policy(),
         assets.from_lovelace(2_000_000)
           |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
-        wrap_group(
-          GroupDatum { ..refund_group_datum(2), is_active: True },
-        ),
+        wrap_group(GroupDatum { ..refund_group_datum(2), is_active: True }),
       ),
     )
   } else {
@@ -777,7 +781,10 @@ fn refund_tx(taken: Int, active_group: Bool, standin_out: Int) -> Transaction {
     inputs: [
       group_in,
       refund_exiting_input(),
-      reserve_input(0, reserve_create_value() |> assets.merge(contribution(1000))),
+      reserve_input(
+        0,
+        reserve_create_value() |> assets.merge(contribution(1000)),
+      ),
     ],
     outputs: [
       refund_group_output(),
@@ -933,9 +940,7 @@ fn refund_group_input_m(member_count: Int) {
       group_policy(),
       assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
-      wrap_group(
-        GroupDatum { ..refund_group_datum(2), member_count },
-      ),
+      wrap_group(GroupDatum { ..refund_group_datum(2), member_count }),
     ),
   )
 }
@@ -945,9 +950,7 @@ fn refund_group_output_m(member_count: Int) {
     group_policy(),
     assets.from_lovelace(2_000_000)
       |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
-    wrap_group(
-      GroupDatum { ..refund_group_datum(2), member_count },
-    ),
+    wrap_group(GroupDatum { ..refund_group_datum(2), member_count }),
   )
 }
 
@@ -1047,7 +1050,10 @@ test reserve_cover__rejects_foreign_group_defaulter() {
     inputs: [
       cover_group_input(),
       foreign_defaulter,
-      reserve_input(0, reserve_create_value() |> assets.merge(contribution(100))),
+      reserve_input(
+        0,
+        reserve_create_value() |> assets.merge(contribution(100)),
+      ),
     ],
     outputs: [
       cover_group_output(0),
@@ -1094,6 +1100,87 @@ test reserve_refund__rejects_reserve_as_exit_citation() {
     1,
     1,
     reserve_utxo_ref(),
+    tx,
+  )
+}
+
+// ─── Reserve runner (treasury split — spec 2026-07-04 section 4/5) ────────────
+
+fn runner_settings() -> settings.ProtocolSettings {
+  settings.ProtocolSettings {
+    account_policy: common.test_hash_03(),
+    group_policy: group_policy(),
+    treasury_policy: treasury_policy(),
+    treasury_rounds_stake: common.test_hash_04(),
+    treasury_lifecycle_stake: common.test_hash_05(),
+    treasury_recovery_stake: common.test_hash_06(),
+    treasury_reserve_stake: common.test_hash_07(),
+  }
+}
+
+// Mirror of reserve_topup__accepts_growth through the runner — the action covers
+// the reserve UTxO (input 0); the runner resolves its datum + outref from there.
+test reserve_runner__accepts_topup_growth() {
+  run_reserve_action(
+    treasury_actions.TopUpAction {
+      covered_inputs: [0],
+      reserve_output_index: 0,
+    },
+    runner_settings(),
+    topup_tx(group_ref_tn(), 0, topup_out_value(300)),
+  )
+}
+
+// [security]: a TopUpAction must cover EXACTLY ONE reserve input.
+test reserve_runner__rejects_topup_empty_coverage() fail {
+  run_reserve_action(
+    treasury_actions.TopUpAction { covered_inputs: [], reserve_output_index: 0 },
+    runner_settings(),
+    topup_tx(group_ref_tn(), 0, topup_out_value(300)),
+  )
+}
+
+// [security]: the covered input must sit at the treasury script — a reserve
+// action cannot validate against a foreign input (here: the group UTxO at the
+// group script) as if it were the reserve.
+test reserve_runner__rejects_topup_covering_foreign_input() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_ref_input()],
+    outputs: [
+      common.test_script_utxo(
+        treasury_policy(),
+        topup_out_value(300),
+        reserve_state(0),
+      ),
+    ],
+  }
+  run_reserve_action(
+    treasury_actions.TopUpAction {
+      covered_inputs: [0],
+      reserve_output_index: 0,
+    },
+    runner_settings(),
+    tx,
+  )
+}
+
+// [security]: a CreateAction covers no treasury input (one-shot with the group
+// mint) — claiming coverage would exempt an unrelated treasury spend.
+test reserve_runner__rejects_create_claiming_coverage() fail {
+  let tx = create_reserve_tx(
+    group_ref_tn(),
+    0,
+    reserve_create_value(),
+    create_mint(),
+  )
+  run_reserve_action(
+    treasury_actions.CreateAction {
+      covered_inputs: [0],
+      group_output_index: 0,
+      reserve_output_index: 1,
+    },
+    runner_settings(),
     tx,
   )
 }

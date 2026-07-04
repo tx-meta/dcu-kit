@@ -1,19 +1,31 @@
 use aiken/collection/dict
 use aiken/collection/list
+use aiken/crypto.{ScriptHash}
 use cardano/assets.{AssetName, PolicyId}
 use cardano/transaction.{InlineDatum, Input, OutputReference, Transaction}
 
-/// Protocol settings — the trusted policy IDs of the three DCU validators.
+/// Protocol settings — the trusted policy IDs of the three DCU validators plus the
+/// treasury family stake-validator hashes.
 ///
 /// Published exactly once in an immutable settings UTxO (locked at the always-fails
 /// address) alongside a singleton settings NFT. Validators parameterized by the
 /// settings-NFT policy read these trusted IDs (via `read_settings`) to authenticate
 /// cross-validator inputs — closing the untrusted group↔treasury binding that is the
 /// root of audit findings C1/C2/C3/m1. See [[p5-settings-nft-plan]].
+///
+/// The four `treasury_*_stake` hashes are the withdraw-zero stake validators that
+/// carry the treasury validation logic, split by redeemer family (the treasury
+/// spend/mint script is a thin dispatcher). Settings is the registry that binds a
+/// redeemer family to its stake validator; future protocol modules register here as
+/// new stake validators instead of growing the treasury script.
 pub type ProtocolSettings {
   account_policy: PolicyId,
   group_policy: PolicyId,
   treasury_policy: PolicyId,
+  treasury_rounds_stake: ScriptHash,
+  treasury_lifecycle_stake: ScriptHash,
+  treasury_recovery_stake: ScriptHash,
+  treasury_reserve_stake: ScriptHash,
 }
 
 /// Fixed asset name of the singleton settings NFT — "settings" in UTF-8.

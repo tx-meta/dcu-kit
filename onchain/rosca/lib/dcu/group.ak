@@ -492,13 +492,13 @@ pub fn validate_update_group(
   // structural fields (member_count, num_rounds, is_started, last_distributed_round,
   // member_token_names) are additionally pinned in the `and { .. }` block below.
   // metadata and version (CIP-68 wrapper) are frozen separately as they live off the datum.
-  let metadata_frozen =
-    output_metadata == input_metadata && output_version == input_version
-  let only_is_active_differs =
-    updated_datum == GroupDatum { ..current_datum, is_active: updated_datum.is_active }
+  let metadata_frozen = output_metadata == input_metadata && output_version == input_version
+  let only_is_active_differs = updated_datum == GroupDatum {
+    ..current_datum,
+    is_active: updated_datum.is_active,
+  }
 
-  let is_safe_update =
-    current_datum.member_count == 0 || metadata_frozen && only_is_active_differs
+  let is_safe_update = current_datum.member_count == 0 || metadata_frozen && only_is_active_differs
 
   // [security 7]: ADA preservation — admin must not drain the group UTxO during update
   let in_ada = assets.lovelace_of(group_input.output.value)
@@ -881,8 +881,7 @@ pub fn validate_start_group(
   // [spec Recommit re-seal]: when sealing a recommit window (rounds have run before),
   // the opt-out window must have fully elapsed — start_time carries the window-open
   // time while !is_started. A fresh group (last_distributed_round == -1) has no window.
-  let window_elapsed =
-    current.last_distributed_round < 0 || current_time >= current.start_time + current.recommit_window
+  let window_elapsed = current.last_distributed_round < 0 || current_time >= current.start_time + current.recommit_window
   expect Some(group_output) = list.at(outputs, group_output_index)
   expect InlineDatum(output_datum_data) = group_output.datum
   expect updated_cip68: GroupCip68Datum = output_datum_data
@@ -979,7 +978,10 @@ pub fn validate_begin_recommit(
   // [spec Reserve §5]: owed default cover must finish paying out before a reset —
   // the group's reserve (located by its deterministic token under the treasury
   // policy, read-only) must show standin_rounds == 0.
-  expect Some(reserve_ref) = list.at(tx.reference_inputs, reserve_ref_input_index)
+  expect Some(reserve_ref) = list.at(
+    tx.reference_inputs,
+    reserve_ref_input_index,
+  )
   let reserve_token_name = cip68.convert_ref_to_reserve_token(
     group_ref_token_name,
   )
@@ -1081,8 +1083,9 @@ pub fn validate_distribute_group(
   // start. ERA-RELATIVE: start_time is re-set at each re-seal, so the schedule is measured
   // from the era's first round, not the monotonic global counter.
   let current_time = get_lower_bound(tx)
-  let round_start_time =
-    current.start_time + ( round_number - current.era_start_round ) * current.interval_length
+  let round_start_time = current.start_time + (
+    round_number - current.era_start_round
+  ) * current.interval_length
   let time_valid = current_time >= round_start_time
 
   // [spec DistributeRound 5 / continuous]: round_number is monotonic and UNBOUNDED above —

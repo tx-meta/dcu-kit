@@ -78,142 +78,66 @@ pub type TreasuryDatum {
   }
 }
 
-/// Treasury Validator Redeemer
+/// Treasury Validator Redeemer.
+///
+/// The treasury script is a thin DISPATCHER: all heavy validation lives in the four
+/// family stake validators (rounds / lifecycle / recovery / reserve — hashes published
+/// in ProtocolSettings) and runs ONCE per tx in their `withdraw` handlers. Spend
+/// variants therefore carry only `withdraw_redeemer_index` — the index into
+/// `tx.redeemers` of the family withdrawal whose action must COVER this UTxO (the pin
+/// rule, see dcu/dispatch). The action indices themselves live on the family withdraw
+/// redeemer (single source of truth). DistributeRound keeps its original shape: the
+/// rounds indexer enforces completeness globally, so a withdrawal-presence check
+/// (`withdrawal_index` into tx.withdrawals) suffices.
+///
+/// Variant ORDER is unchanged from the monolith (constr indices stable where the
+/// variant survives; field shapes are the wire-level break of this cycle).
 pub type TreasuryRedeemer {
-  JoinGroup {
-    group_ref_input_index: Int,
-    group_output_index: Int,
-    member_input_index: Int,
-    treasury_output_index: Int,
-  }
-  ClaimPenalty {
-    // Group UTxO as a reference input — not spent, only read to derive
-    // the group policy_id for admin token verification. Same pattern as ExtendGrace.
-    group_ref_input_index: Int,
-    // Admin input holding the group (222) user token.
-    admin_input_index: Int,
-  }
-  // Withdraw-zero coupling: the heavy round validation runs ONCE in the treasury
-  // `withdraw` handler (DistributeWithdraw). Each treasury spend only asserts that a
-  // withdrawal from the treasury's own stake credential is present (at withdrawal_index
-  // in tx.withdrawals) — a script-credential withdrawal always triggers that handler,
-  // which validates the complete round, so this UTxO cannot be spent without it.
+  // Mint: issue 1 membership token + create the treasury UTxO. Requires the
+  // lifecycle withdrawal to run a JoinAction (constr tag 0).
+  JoinGroup { withdraw_redeemer_index: Int }
+  // Spend: admin withdraws a PenaltyState UTxO. At mint: exact-1-burn check.
+  ClaimPenalty { withdraw_redeemer_index: Int }
+  // Withdraw-zero coupling (unchanged): each treasury spend asserts a withdrawal
+  // from the ROUNDS stake validator is present (at withdrawal_index in
+  // tx.withdrawals); the rounds `withdraw` handler validates the complete round and
+  // its multi-UTxO indexer covers EVERY spent treasury UTxO.
   DistributeRound { withdrawal_index: Int }
-  ExitGroup {
-    group_ref_input_index: Int,
-    group_output_index: Int,
-    member_input_index: Int,
-    treasury_input_index: Int,
-    penalty_output_index: Int,
-  }
-  // Member tops up their treasury balance to remain above contribution_fee.
-  Contribute {
-    // Group UTxO as a reference input — read for the contribution asset + fee.
-    group_ref_input_index: Int,
-    member_input_index: Int,
-    treasury_input_index: Int,
-    treasury_output_index: Int,
-  }
-  // Member updates their payout destination credential.
-  UpdatePayout {
-    member_input_index: Int,
-    treasury_input_index: Int,
-    treasury_output_index: Int,
-  }
-  // Admin grants a grace window extension to a member in DefaultState.
-  // grace_period_length (from the group datum) is passed from the entry point.
-  ExtendGrace {
-    group_ref_input_index: Int,
-    admin_input_index: Int,
-    treasury_input_index: Int,
-    treasury_output_index: Int,
-  }
-  // Pull mode: member withdraws their earmarked payout (claimable_balance) to any
-  // address. Auth is possession of the member (222) token — bearer model, so a member
-  // who lost their original wallet can still claim from a new one holding the token.
-  ClaimPayout {
-    // Group UTxO as a reference input — read only for the contribution asset identity.
-    group_ref_input_index: Int,
-    member_input_index: Int,
-    treasury_output_index: Int,
-  }
-  // Admin terminates a member stuck in DefaultState after their grace window (including
-  // any extensions) has fully expired. The membership token is burned, the group's
-  // member_count decrements (the group is spent with the Exit redeemer in the same tx),
-  // and the forfeited collateral is claimed by the admin who builds the transaction.
-  // Time-gated (now > grace_expires_at) and admin-only, so it is neutral and fair: grace
-  // plus extensions are always offered before a defaulter can be removed. Appended LAST to
-  // keep the Constr indices of all existing variants stable.
-  TerminateDefault {
-    // Group SPENDING input — spent with the group Exit redeemer to decrement member_count.
-    group_ref_input_index: Int,
-    // Group output showing member_count decremented and the member removed from the registry.
-    group_output_index: Int,
-    // Admin input holding the group (222) user token.
-    admin_input_index: Int,
-    // Self-reference — the defaulter's DefaultState treasury UTxO.
-    treasury_input_index: Int,
-  }
-  ProposeRecovery {
-    group_ref_input_index: Int,
-    request_output_index: Int,
-    approver_input_indices: List<Int>,
-  }
-  ApproveRecovery {
-    group_ref_input_index: Int,
-    request_input_index: Int,
-    request_output_index: Int,
-    approver_input_index: Int,
-  }
-  CancelRecovery { request_input_index: Int }
-  ExecuteRecovery {
-    group_ref_input_index: Int,
-    group_output_index: Int,
-    request_input_index: Int,
-    member_treasury_input_index: Int,
-    member_treasury_output_index: Int,
-  }
-  // Mints the group's reserve token and creates the ReserveState UTxO. Valid ONLY
-  // in the same tx as the group-creation mint (one-shot coupling — the group ref
-  // token must itself be minted). Mint-only redeemer. Appended LAST to keep the
-  // Constr indices of all existing variants stable.
-  CreateReserve {
-    group_output_index: Int,
-    reserve_output_index: Int,
-  }
-  // Increase-only spend of the ReserveState UTxO: the join levy leg of a JoinGroup
-  // tx and voluntary top-ups. Datum frozen, token preserved, contribution-asset
-  // balance strictly grows. Spend-only redeemer.
-  ReserveTopUp {
-    reserve_input_index: Int,
-    reserve_output_index: Int,
-  }
-  // Reserve leg of a TerminateDefault: the defaulter's forfeited balance flows
-  // INTO the reserve and the stand-in counter grows by their remaining rounds
-  // this lap. Pinned to a genuine termination (DefaultState input + token burn +
-  // registry removal). Spend-only redeemer.
-  ReserveCover {
-    group_ref_input_index: Int,
-    group_output_index: Int,
-    defaulter_input_index: Int,
-    reserve_input_index: Int,
-    reserve_output_index: Int,
-  }
-  // Wind-down reserve refund: rides a member's ExitGroup while the group is
-  // deactivated. Each exiting member may take at most floor(balance /
-  // pre-exit member_count) — self-adjusting equal split, remainders roll
-  // forward. Datum frozen. Spend-only redeemer.
-  ReserveRefund {
-    group_ref_input_index: Int,
-    group_output_index: Int,
-    exiting_treasury_input_index: Int,
-    reserve_input_index: Int,
-    reserve_output_index: Int,
-  }
-  // Closes the reserve UTxO in the deleteGroup tx: the group ref token and the
-  // reserve token burn together (member_count == 0). Residue leaves with the
-  // builder. Spend redeemer; at mint it validates the single-token burn.
-  ReserveClose { group_input_index: Int }
+  // Spend: member exit (free pre/post-cycle; in-cycle → penalty UTxO). At mint:
+  // exact-1-burn check (mature exit burns the membership token).
+  ExitGroup { withdraw_redeemer_index: Int }
+  // Spend: member tops up their treasury balance.
+  Contribute { withdraw_redeemer_index: Int }
+  // Spend: member updates their payout destination credential.
+  UpdatePayout { withdraw_redeemer_index: Int }
+  // Spend: admin grants a grace window extension to a member in DefaultState.
+  ExtendGrace { withdraw_redeemer_index: Int }
+  // Spend (Pull mode): member withdraws their earmarked claimable_balance.
+  ClaimPayout { withdraw_redeemer_index: Int }
+  // Spend: admin terminates an expired defaulter. At mint: exact-1-burn check.
+  TerminateDefault { withdraw_redeemer_index: Int }
+  // Mint: issue N' for a new RecoveryRequest UTxO. Requires the recovery
+  // withdrawal to run a ProposeAction (constr tag 0).
+  ProposeRecovery { withdraw_redeemer_index: Int }
+  // Spend: add one approval to a RecoveryRequest.
+  ApproveRecovery { withdraw_redeemer_index: Int }
+  // Spend: veto a RecoveryRequest. At mint: exact-N'-burn check.
+  CancelRecovery { withdraw_redeemer_index: Int }
+  // Spend: rotate the lost member's position (carried by BOTH the request and the
+  // member treasury input — the recovery ExecuteAction covers both). At mint:
+  // exact-burn check of N (the old identity token).
+  ExecuteRecovery { withdraw_redeemer_index: Int }
+  // Mint: issue the group's reserve token (one-shot with the group-creation mint).
+  // Requires the reserve withdrawal to run a CreateAction (constr tag 0).
+  CreateReserve { withdraw_redeemer_index: Int }
+  // Spend: increase-only reserve top-up (join levy leg + donations).
+  ReserveTopUp { withdraw_redeemer_index: Int }
+  // Spend: reserve leg of a TerminateDefault (forfeit flows in, stand-in grows).
+  ReserveCover { withdraw_redeemer_index: Int }
+  // Spend: wind-down equal-split refund riding a member exit.
+  ReserveRefund { withdraw_redeemer_index: Int }
+  // Spend: close the reserve in the deleteGroup tx. At mint: exact-1-burn check.
+  ReserveClose { withdraw_redeemer_index: Int }
 }
 
 /// Treasury Withdraw-Validator Redeemer (the "withdraw-zero" coupling).

@@ -59,11 +59,7 @@ fn expected_window(current: GroupDatum) -> GroupDatum {
   }
 }
 
-fn run_begin(
-  current: GroupDatum,
-  updated: GroupDatum,
-  with_admin: Bool,
-) -> Bool {
+fn run_begin(current: GroupDatum, updated: GroupDatum, with_admin: Bool) -> Bool {
   run_begin_standin(current, updated, with_admin, 0)
 }
 
@@ -88,7 +84,11 @@ fn run_begin_standin(
   }
   let admin_input = common.test_input(
     output_ref,
-    common.test_user_utxo(common.test_pkh(), admin_token, cip68(policy_id, current)),
+    common.test_user_utxo(
+      common.test_pkh(),
+      admin_token,
+      cip68(policy_id, current),
+    ),
   )
   let group_output = common.test_script_utxo(
     policy_id,
@@ -103,16 +103,9 @@ fn run_begin_standin(
       tp,
       assets.from_lovelace(2_000_000)
         |> assets.merge(
-            assets.from_asset(
-              tp,
-              cip68.convert_ref_to_reserve_token(ref_tn),
-              1,
-            ),
+            assets.from_asset(tp, cip68.convert_ref_to_reserve_token(ref_tn), 1),
           ),
-      ReserveState {
-        group_reference_tokenname: ref_tn,
-        standin_rounds,
-      },
+      ReserveState { group_reference_tokenname: ref_tn, standin_rounds },
     ),
   )
   let tx = Transaction {
@@ -137,12 +130,11 @@ fn run_begin_standin(
 }
 
 fn cip68(_policy_id, datum: GroupDatum) {
-  let wrapped =
-    group.GroupCip68Datum {
-      metadata: [Pair(#"6e616d65", "Test Group")],
-      version: 1,
-      extra: datum,
-    }
+  let wrapped = group.GroupCip68Datum {
+    metadata: [Pair(#"6e616d65", "Test Group")],
+    version: 1,
+    extra: datum,
+  }
   let as_data: Data = wrapped
   as_data
 }
@@ -165,16 +157,20 @@ test begin_recommit__accepts_at_vacant_slot_halt() {
 // proceed, so there is nothing to reset.
 test begin_recommit__rejects_mid_cycle_without_vacancy() {
   let policy_id = common.test_policy_id()
-  let current =
-    GroupDatum { ..started_group(policy_id), last_distributed_round: 0 }
+  let current = GroupDatum {
+    ..started_group(policy_id),
+    last_distributed_round: 0,
+  }
   !run_begin(current, expected_window(current), True)
 }
 
 // A defaulter exists (active < member): reset would be an escape hatch — rejected.
 test begin_recommit__rejects_with_defaulter() {
   let policy_id = common.test_policy_id()
-  let current =
-    GroupDatum { ..started_group(policy_id), active_member_count: 2 }
+  let current = GroupDatum {
+    ..started_group(policy_id),
+    active_member_count: 2,
+  }
   !run_begin(current, expected_window(current), True)
 }
 
@@ -186,8 +182,11 @@ test begin_recommit__rejects_without_admin_token() {
 
 test begin_recommit__rejects_not_started() {
   let policy_id = common.test_policy_id()
-  let current =
-    GroupDatum { ..started_group(policy_id), is_started: False, member_slots: [] }
+  let current = GroupDatum {
+    ..started_group(policy_id),
+    is_started: False,
+    member_slots: [],
+  }
   !run_begin(
     current,
     GroupDatum { ..current, start_time: window_open_time },
@@ -205,13 +204,12 @@ test begin_recommit__rejects_inactive_group() {
 test begin_recommit__rejects_registry_tamper() {
   let policy_id = common.test_policy_id()
   let current = started_group(policy_id)
-  let tampered =
-    GroupDatum {
-      ..expected_window(current),
-      member_token_names: [#"cccc", #"bbbb"],
-      member_count: 2,
-      active_member_count: 2,
-    }
+  let tampered = GroupDatum {
+    ..expected_window(current),
+    member_token_names: [#"cccc", #"bbbb"],
+    member_count: 2,
+    active_member_count: 2,
+  }
   !run_begin(current, tampered, True)
 }
 
@@ -247,11 +245,7 @@ test begin_recommit__rejects_slots_kept() {
 
 // ─── StartGroup as the (re-)sealer ───────────────────────────────────────────
 
-fn run_start(
-  current: GroupDatum,
-  updated: GroupDatum,
-  lower_bound: Int,
-) -> Bool {
+fn run_start(current: GroupDatum, updated: GroupDatum, lower_bound: Int) -> Bool {
   let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
   let group_value = assets.from_lovelace(2_000_000)
@@ -314,12 +308,11 @@ fn countdown(n: Int) -> List<Int> {
 
 test start_group__fresh_seal_assigns_slots_and_era_zero() {
   let policy_id = common.test_policy_id()
-  let current =
-    GroupDatum {
-      ..common.test_group_datum(policy_id),
-      member_count: 2,
-      member_token_names: [#"bbbb", #"aaaa"],
-    }
+  let current = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 2,
+    member_token_names: [#"bbbb", #"aaaa"],
+  }
   run_start(current, sealed(current, 9_000, 0, 2), 9_000)
 }
 
@@ -328,12 +321,11 @@ test start_group__fresh_seal_assigns_slots_and_era_zero() {
 // borrows first, no collision, no vacant slot. The bug is structurally gone.
 test start_group__pre_start_exit_rejoin_starts_cleanly() {
   let policy_id = common.test_policy_id()
-  let current =
-    GroupDatum {
-      ..common.test_group_datum(policy_id),
-      member_count: 2,
-      member_token_names: [#"cccc", #"bbbb"],
-    }
+  let current = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 2,
+    member_token_names: [#"cccc", #"bbbb"],
+  }
   run_start(current, sealed(current, 9_000, 0, 2), 9_000)
 }
 
@@ -372,7 +364,10 @@ test start_group__reseal_era_tamper_rejected() {
   let policy_id = common.test_policy_id()
   let current = window_group(policy_id)
   let seal_time = window_open_time + current.recommit_window + 1
-  let tampered = GroupDatum { ..sealed(current, seal_time, 3, 2), era_start_round: 0 }
+  let tampered = GroupDatum {
+    ..sealed(current, seal_time, 3, 2),
+    era_start_round: 0,
+  }
   !run_start(current, tampered, seal_time)
 }
 
@@ -380,7 +375,10 @@ test start_group__reseal_slot_order_tamper_rejected() {
   let policy_id = common.test_policy_id()
   let current = window_group(policy_id)
   let seal_time = window_open_time + current.recommit_window + 1
-  let tampered = GroupDatum { ..sealed(current, seal_time, 3, 2), member_slots: [0, 1] }
+  let tampered = GroupDatum {
+    ..sealed(current, seal_time, 3, 2),
+    member_slots: [0, 1],
+  }
   !run_start(current, tampered, seal_time)
 }
 
@@ -388,7 +386,10 @@ test start_group__reseal_num_rounds_tamper_rejected() {
   let policy_id = common.test_policy_id()
   let current = window_group(policy_id)
   let seal_time = window_open_time + current.recommit_window + 1
-  let tampered = GroupDatum { ..sealed(current, seal_time, 3, 2), num_rounds: 3 }
+  let tampered = GroupDatum {
+    ..sealed(current, seal_time, 3, 2),
+    num_rounds: 3,
+  }
   !run_start(current, tampered, seal_time)
 }
 
@@ -435,15 +436,18 @@ test prop_registry__paired_removal_preserves_pairing(
   let (n, target) = case
   let names = list.map(list.range(0, n - 1), as_name)
   let slots = list.reverse(list.range(0, n - 1))
-  let (rest_names, rest_slots) = group.remove_paired(names, slots, as_name(target))
-  let expected_pairs =
-    list.filter(
-      list.zip(names, slots),
-      fn(p) {
-        let (nm, _) = p
-        nm != as_name(target)
-      },
-    )
+  let (rest_names, rest_slots) = group.remove_paired(
+    names,
+    slots,
+    as_name(target),
+  )
+  let expected_pairs = list.filter(
+    list.zip(names, slots),
+    fn(p) {
+      let (nm, _) = p
+      nm != as_name(target)
+    },
+  )
   list.zip(rest_names, rest_slots) == expected_pairs
 }
 
@@ -461,8 +465,10 @@ fn gen_rounds_case() -> Fuzzer<Int> {
 // Full roster (no vacancy): the gate opens exactly at era boundaries.
 test prop_begin__boundary_only_when_full(k via gen_rounds_case()) {
   let policy_id = common.test_policy_id()
-  let current =
-    GroupDatum { ..started_group(policy_id), last_distributed_round: k }
+  let current = GroupDatum {
+    ..started_group(policy_id),
+    last_distributed_round: k,
+  }
   run_begin(current, expected_window(current), True) == ( ( k + 1 ) % 3 == 0 )
 }
 
@@ -470,10 +476,14 @@ test prop_begin__boundary_only_when_full(k via gen_rounds_case()) {
 // vacancy (D10), on top of the boundary case.
 test prop_begin__vacancy_or_boundary_when_halted(k via gen_rounds_case()) {
   let policy_id = common.test_policy_id()
-  let current =
-    GroupDatum { ..halted_group(policy_id), last_distributed_round: k }
+  let current = GroupDatum {
+    ..halted_group(policy_id),
+    last_distributed_round: k,
+  }
   let next = ( k + 1 ) % 3
-  run_begin(current, expected_window(current), True) == ( next == 0 || next == 1 )
+  run_begin(current, expected_window(current), True) == (
+    next == 0 || next == 1
+  )
 }
 
 // [spec Reserve §5]: pending stand-in cover blocks the reset — owed cover must

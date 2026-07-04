@@ -5,7 +5,9 @@ use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
 }
 use dcu/group.{GroupCip68Datum, GroupDatum, Push}
+use dcu/settings
 use dcu/treasury.{DefaultState, RecoveryRequest, TreasuryDatum, TreasuryState}
+use dcu/treasury_actions.{run_recovery_action}
 use dcu/treasury_validation.{
   validate_approve_recovery, validate_cancel_recovery, validate_execute_recovery,
   validate_propose_recovery,
@@ -203,7 +205,9 @@ fn recoveree_input() -> Input {
 
 // The RecoveryRequest datum a valid ProposeRecovery is expected to produce,
 // given the derived approvals list and a recomputed earliest_execution_slot.
-fn test_recovery_request_datum(approvals: List<assets.AssetName>) -> TreasuryDatum {
+fn test_recovery_request_datum(
+  approvals: List<assets.AssetName>,
+) -> TreasuryDatum {
   RecoveryRequest {
     group_reference_tokenname: group_ref_tn(),
     target_token: target_tn(),
@@ -282,16 +286,15 @@ test propose_recovery__accepts_valid_two_approvals() {
     test_recovery_request_datum(approvals),
   )
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, approver_a, approver_b],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      extra_signatories: [recoveree_pkh(), approver_a_pkh(), approver_b_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, approver_a, approver_b],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    extra_signatories: [recoveree_pkh(), approver_a_pkh(), approver_b_pkh()],
+    validity_range: interval.after(0),
+  }
 
   validate_propose_recovery(
     treasury_policy(),
@@ -312,27 +315,25 @@ test propose_recovery__rejects_target_not_in_registry() {
   let approver_a = approver_a_input()
 
   let approvals = [approver_a_tn()]
-  let datum =
-    RecoveryRequest {
-      group_reference_tokenname: group_ref_tn(),
-      target_token: non_member_tn(),
-      new_member_tokenname: new_member_tn(),
-      new_payment_credential: recoveree_pkh(),
-      earliest_execution_slot: 259_200_000,
-      approvals,
-    }
+  let datum = RecoveryRequest {
+    group_reference_tokenname: group_ref_tn(),
+    target_token: non_member_tn(),
+    new_member_tokenname: new_member_tn(),
+    new_payment_credential: recoveree_pkh(),
+    earliest_execution_slot: 259_200_000,
+    approvals,
+  }
   let request_output = test_request_output(datum)
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, approver_a],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      extra_signatories: [recoveree_pkh(), approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, approver_a],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    extra_signatories: [recoveree_pkh(), approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
 
   !validate_propose_recovery(
     treasury_policy(),
@@ -353,38 +354,35 @@ test propose_recovery__rejects_new_token_already_member() {
   let approver_a = approver_a_input()
 
   let approvals = [approver_a_tn()]
-  let datum =
-    RecoveryRequest {
-      group_reference_tokenname: group_ref_tn(),
-      target_token: target_tn(),
-      new_member_tokenname: approver_b_tn(),
-      new_payment_credential: recoveree_pkh(),
-      earliest_execution_slot: 259_200_000,
-      approvals,
-    }
+  let datum = RecoveryRequest {
+    group_reference_tokenname: group_ref_tn(),
+    target_token: target_tn(),
+    new_member_tokenname: approver_b_tn(),
+    new_payment_credential: recoveree_pkh(),
+    earliest_execution_slot: 259_200_000,
+    approvals,
+  }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(treasury_policy(), approver_b_tn(), 1))
-  let request_output =
-    Output {
-      address: Address {
-        payment_credential: Script(treasury_policy()),
-        stake_credential: None,
-      },
-      value,
-      datum: InlineDatum(datum),
-      reference_script: None,
-    }
+  let request_output = Output {
+    address: Address {
+      payment_credential: Script(treasury_policy()),
+      stake_credential: None,
+    },
+    value,
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, approver_a],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), approver_b_tn(), 1),
-      extra_signatories: [recoveree_pkh(), approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, approver_a],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), approver_b_tn(), 1),
+    extra_signatories: [recoveree_pkh(), approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
 
   !validate_propose_recovery(
     treasury_policy(),
@@ -409,17 +407,16 @@ test propose_recovery__rejects_recoveree_not_signed() {
     test_recovery_request_datum(approvals),
   )
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, approver_a],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      // recoveree_pkh() deliberately omitted
-      extra_signatories: [approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, approver_a],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    // recoveree_pkh() deliberately omitted
+    extra_signatories: [approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
 
   !validate_propose_recovery(
     treasury_policy(),
@@ -445,17 +442,16 @@ test propose_recovery__rejects_approver_not_signed() fail {
     test_recovery_request_datum(approvals),
   )
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, approver_a],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      // approver_a_pkh() deliberately omitted — only the recoveree signed
-      extra_signatories: [recoveree_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, approver_a],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    // approver_a_pkh() deliberately omitted — only the recoveree signed
+    extra_signatories: [recoveree_pkh()],
+    validity_range: interval.after(0),
+  }
 
   validate_propose_recovery(
     treasury_policy(),
@@ -481,16 +477,15 @@ test propose_recovery__rejects_approver_not_member() {
     test_recovery_request_datum(approvals),
   )
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, non_member_input],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      extra_signatories: [recoveree_pkh(), non_member_pkh],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, non_member_input],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    extra_signatories: [recoveree_pkh(), non_member_pkh],
+    validity_range: interval.after(0),
+  }
 
   !validate_propose_recovery(
     treasury_policy(),
@@ -515,16 +510,15 @@ test propose_recovery__rejects_duplicate_approval() {
     test_recovery_request_datum(approvals),
   )
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, approver_a],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      extra_signatories: [recoveree_pkh(), approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, approver_a],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    extra_signatories: [recoveree_pkh(), approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
 
   !validate_propose_recovery(
     treasury_policy(),
@@ -549,16 +543,15 @@ test propose_recovery__rejects_target_in_approvals() {
     test_recovery_request_datum(approvals),
   )
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, target_as_approver],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      extra_signatories: [recoveree_pkh(), approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, target_as_approver],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    extra_signatories: [recoveree_pkh(), approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
 
   !validate_propose_recovery(
     treasury_policy(),
@@ -580,28 +573,26 @@ test propose_recovery__rejects_wrong_earliest_execution_slot() {
   let approver_a = approver_a_input()
 
   let approvals = [approver_a_tn()]
-  let datum =
-    RecoveryRequest {
-      group_reference_tokenname: group_ref_tn(),
-      target_token: target_tn(),
-      new_member_tokenname: new_member_tn(),
-      new_payment_credential: recoveree_pkh(),
-      // Should be 259_200_000 (0 + recovery_timelock); shortened here
-      earliest_execution_slot: 1,
-      approvals,
-    }
+  let datum = RecoveryRequest {
+    group_reference_tokenname: group_ref_tn(),
+    target_token: target_tn(),
+    new_member_tokenname: new_member_tn(),
+    new_payment_credential: recoveree_pkh(),
+    // Should be 259_200_000 (0 + recovery_timelock); shortened here
+    earliest_execution_slot: 1,
+    approvals,
+  }
   let request_output = test_request_output(datum)
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, approver_a],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      extra_signatories: [recoveree_pkh(), approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, approver_a],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    extra_signatories: [recoveree_pkh(), approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
 
   !validate_propose_recovery(
     treasury_policy(),
@@ -627,28 +618,26 @@ test propose_recovery__rejects_new_payment_credential_not_recoveree() {
 
   let attacker_pkh = #"abababababababababababababababababababababababababababab00"
   let approvals = [approver_a_tn()]
-  let datum =
-    RecoveryRequest {
-      group_reference_tokenname: group_ref_tn(),
-      target_token: target_tn(),
-      new_member_tokenname: new_member_tn(),
-      // Recoveree controls N' and signs, but the payout address is the attacker's
-      new_payment_credential: attacker_pkh,
-      earliest_execution_slot: 259_200_000,
-      approvals,
-    }
+  let datum = RecoveryRequest {
+    group_reference_tokenname: group_ref_tn(),
+    target_token: target_tn(),
+    new_member_tokenname: new_member_tn(),
+    // Recoveree controls N' and signs, but the payout address is the attacker's
+    new_payment_credential: attacker_pkh,
+    earliest_execution_slot: 259_200_000,
+    approvals,
+  }
   let request_output = test_request_output(datum)
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, approver_a],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      extra_signatories: [recoveree_pkh(), approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, approver_a],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    extra_signatories: [recoveree_pkh(), approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
 
   !validate_propose_recovery(
     treasury_policy(),
@@ -665,9 +654,8 @@ test propose_recovery__rejects_new_payment_credential_not_recoveree() {
 
 test propose_recovery__rejects_extra_mint() {
   let tx = valid_tx()
-  let extra_mint =
-    assets.from_asset(treasury_policy(), new_member_tn(), 1)
-      |> assets.merge(assets.from_asset(treasury_policy(), non_member_tn(), 1))
+  let extra_mint = assets.from_asset(treasury_policy(), new_member_tn(), 1)
+    |> assets.merge(assets.from_asset(treasury_policy(), non_member_tn(), 1))
   let bad_tx = Transaction { ..tx, mint: extra_mint }
 
   !validate_propose_recovery(
@@ -709,27 +697,25 @@ test propose_recovery__rejects_request_not_at_script() {
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(treasury_policy(), new_member_tn(), 1))
   // Output sits at a VK wallet address instead of Script(own_policy_id)
-  let request_output =
-    Output {
-      address: Address {
-        payment_credential: VerificationKey(common.test_pkh()),
-        stake_credential: None,
-      },
-      value,
-      datum: InlineDatum(datum),
-      reference_script: None,
-    }
+  let request_output = Output {
+    address: Address {
+      payment_credential: VerificationKey(common.test_pkh()),
+      stake_credential: None,
+    },
+    value,
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, approver_a],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      extra_signatories: [recoveree_pkh(), approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, approver_a],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    extra_signatories: [recoveree_pkh(), approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
 
   !validate_propose_recovery(
     treasury_policy(),
@@ -757,16 +743,15 @@ test propose_recovery__rejects_request_datum_mismatch() {
     test_recovery_request_datum(inflated_approvals),
   )
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, approver_a],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      extra_signatories: [recoveree_pkh(), approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, approver_a],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    extra_signatories: [recoveree_pkh(), approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
 
   !validate_propose_recovery(
     treasury_policy(),
@@ -792,16 +777,15 @@ test propose_recovery__rejects_fake_group_script() fail {
     test_recovery_request_datum(approvals),
   )
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [recoveree, approver_a],
-      reference_inputs: [group_input],
-      outputs: [request_output],
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-      extra_signatories: [recoveree_pkh(), approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [recoveree, approver_a],
+    reference_inputs: [group_input],
+    outputs: [request_output],
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+    extra_signatories: [recoveree_pkh(), approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
 
   validate_propose_recovery(
     treasury_policy(),
@@ -848,25 +832,22 @@ fn approve_request_datum(approvals: List<assets.AssetName>) -> TreasuryDatum {
 // The spent RecoveryRequest UTxO (at Script(treasury_policy), holding N').
 fn request_input_utxo(datum: TreasuryDatum) -> Input {
   let tp = treasury_policy()
-  let value =
-    assets.from_lovelace(2_000_000)
-      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
-  let output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      value,
-      datum: InlineDatum(datum),
-      reference_script: None,
-    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value,
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
   Input { output_reference: request_ref(), output }
 }
 
 // The continuing RecoveryRequest output.
 fn approve_request_output(datum: TreasuryDatum) -> Output {
   let tp = treasury_policy()
-  let value =
-    assets.from_lovelace(2_000_000)
-      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
   Output {
     address: Address { payment_credential: Script(tp), stake_credential: None },
     value,
@@ -884,8 +865,9 @@ fn valid_approve_tx() -> Transaction {
 
   let request_in = request_input_utxo(approve_request_datum(existing_approvals))
   let approver_b = approver_b_input()
-  let request_out =
-    approve_request_output(approve_request_datum(updated_approvals))
+  let request_out = approve_request_output(
+    approve_request_datum(updated_approvals),
+  )
   let group_ref = test_group_input()
 
   Transaction {
@@ -943,21 +925,20 @@ test approve_recovery__rejects_non_member_approver() {
 
   let existing_approvals = [approver_a_tn()]
   let updated_approvals = [approver_a_tn(), non_member_tn()]
-  let request_in =
-    request_input_utxo(approve_request_datum(existing_approvals))
-  let request_out =
-    approve_request_output(approve_request_datum(updated_approvals))
+  let request_in = request_input_utxo(approve_request_datum(existing_approvals))
+  let request_out = approve_request_output(
+    approve_request_datum(updated_approvals),
+  )
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [request_in, non_member_in],
-      reference_inputs: [test_group_input()],
-      outputs: [request_out],
-      mint: assets.zero,
-      extra_signatories: [non_member_pkh],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [request_in, non_member_in],
+    reference_inputs: [test_group_input()],
+    outputs: [request_out],
+    mint: assets.zero,
+    extra_signatories: [non_member_pkh],
+    validity_range: interval.after(0),
+  }
   !call_approve(tx)
 }
 
@@ -965,21 +946,20 @@ test approve_recovery__rejects_non_member_approver() {
 test approve_recovery__rejects_duplicate_approval() {
   let existing_approvals = [approver_a_tn()]
   let updated_approvals = [approver_a_tn(), approver_a_tn()]
-  let request_in =
-    request_input_utxo(approve_request_datum(existing_approvals))
-  let request_out =
-    approve_request_output(approve_request_datum(updated_approvals))
+  let request_in = request_input_utxo(approve_request_datum(existing_approvals))
+  let request_out = approve_request_output(
+    approve_request_datum(updated_approvals),
+  )
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [request_in, approver_a_input()],
-      reference_inputs: [test_group_input()],
-      outputs: [request_out],
-      mint: assets.zero,
-      extra_signatories: [approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [request_in, approver_a_input()],
+    reference_inputs: [test_group_input()],
+    outputs: [request_out],
+    mint: assets.zero,
+    extra_signatories: [approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
   !call_approve(tx)
 }
 
@@ -987,22 +967,21 @@ test approve_recovery__rejects_duplicate_approval() {
 test approve_recovery__rejects_target_as_approver() {
   let existing_approvals: List<assets.AssetName> = []
   let updated_approvals = [target_tn()]
-  let request_in =
-    request_input_utxo(approve_request_datum(existing_approvals))
-  let request_out =
-    approve_request_output(approve_request_datum(updated_approvals))
+  let request_in = request_input_utxo(approve_request_datum(existing_approvals))
+  let request_out = approve_request_output(
+    approve_request_datum(updated_approvals),
+  )
   let target_as_approver = signed_account_input(approver_a_pkh(), target_tn())
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [request_in, target_as_approver],
-      reference_inputs: [test_group_input()],
-      outputs: [request_out],
-      mint: assets.zero,
-      extra_signatories: [approver_a_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [request_in, target_as_approver],
+    reference_inputs: [test_group_input()],
+    outputs: [request_out],
+    mint: assets.zero,
+    extra_signatories: [approver_a_pkh()],
+    validity_range: interval.after(0),
+  }
   !call_approve(tx)
 }
 
@@ -1013,29 +992,26 @@ test approve_recovery__rejects_target_as_approver() {
 test approve_recovery__rejects_datum_mutation() {
   let existing_approvals = [approver_a_tn()]
   let updated_approvals = [approver_a_tn(), approver_b_tn()]
-  let request_in =
-    request_input_utxo(approve_request_datum(existing_approvals))
-  let mutated_out_datum =
-    RecoveryRequest {
-      group_reference_tokenname: group_ref_tn(),
-      target_token: non_member_tn(),
-      new_member_tokenname: new_member_tn(),
-      new_payment_credential: recoveree_pkh(),
-      earliest_execution_slot: 259_200_000,
-      approvals: updated_approvals,
-    }
+  let request_in = request_input_utxo(approve_request_datum(existing_approvals))
+  let mutated_out_datum = RecoveryRequest {
+    group_reference_tokenname: group_ref_tn(),
+    target_token: non_member_tn(),
+    new_member_tokenname: new_member_tn(),
+    new_payment_credential: recoveree_pkh(),
+    earliest_execution_slot: 259_200_000,
+    approvals: updated_approvals,
+  }
   let request_out = approve_request_output(mutated_out_datum)
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [request_in, approver_b_input()],
-      reference_inputs: [test_group_input()],
-      outputs: [request_out],
-      mint: assets.zero,
-      extra_signatories: [approver_b_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [request_in, approver_b_input()],
+    reference_inputs: [test_group_input()],
+    outputs: [request_out],
+    mint: assets.zero,
+    extra_signatories: [approver_b_pkh()],
+    validity_range: interval.after(0),
+  }
   !call_approve(tx)
 }
 
@@ -1045,30 +1021,27 @@ test approve_recovery__rejects_datum_mutation() {
 test approve_recovery__rejects_value_skim() {
   let existing_approvals = [approver_a_tn()]
   let updated_approvals = [approver_a_tn(), approver_b_tn()]
-  let request_in =
-    request_input_utxo(approve_request_datum(existing_approvals))
+  let request_in = request_input_utxo(approve_request_datum(existing_approvals))
   let skimmed_value = assets.from_lovelace(2_000_000)
-  let skimmed_out =
-    Output {
-      address: Address {
-        payment_credential: Script(treasury_policy()),
-        stake_credential: None,
-      },
-      value: skimmed_value,
-      datum: InlineDatum(approve_request_datum(updated_approvals)),
-      reference_script: None,
-    }
+  let skimmed_out = Output {
+    address: Address {
+      payment_credential: Script(treasury_policy()),
+      stake_credential: None,
+    },
+    value: skimmed_value,
+    datum: InlineDatum(approve_request_datum(updated_approvals)),
+    reference_script: None,
+  }
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [request_in, approver_b_input()],
-      reference_inputs: [test_group_input()],
-      outputs: [skimmed_out],
-      mint: assets.zero,
-      extra_signatories: [approver_b_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [request_in, approver_b_input()],
+    reference_inputs: [test_group_input()],
+    outputs: [skimmed_out],
+    mint: assets.zero,
+    extra_signatories: [approver_b_pkh()],
+    validity_range: interval.after(0),
+  }
   !call_approve(tx)
 }
 
@@ -1078,33 +1051,29 @@ test approve_recovery__rejects_value_skim() {
 test approve_recovery__rejects_request_not_at_script() {
   let existing_approvals = [approver_a_tn()]
   let updated_approvals = [approver_a_tn(), approver_b_tn()]
-  let request_in =
-    request_input_utxo(approve_request_datum(existing_approvals))
+  let request_in = request_input_utxo(approve_request_datum(existing_approvals))
   let tp = treasury_policy()
-  let value =
-    assets.from_lovelace(2_000_000)
-      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
-  let wallet_out =
-    Output {
-      address: Address {
-        payment_credential: VerificationKey(common.test_pkh()),
-        stake_credential: None,
-      },
-      value,
-      datum: InlineDatum(approve_request_datum(updated_approvals)),
-      reference_script: None,
-    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let wallet_out = Output {
+    address: Address {
+      payment_credential: VerificationKey(common.test_pkh()),
+      stake_credential: None,
+    },
+    value,
+    datum: InlineDatum(approve_request_datum(updated_approvals)),
+    reference_script: None,
+  }
 
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [request_in, approver_b_input()],
-      reference_inputs: [test_group_input()],
-      outputs: [wallet_out],
-      mint: assets.zero,
-      extra_signatories: [approver_b_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [request_in, approver_b_input()],
+    reference_inputs: [test_group_input()],
+    outputs: [wallet_out],
+    mint: assets.zero,
+    extra_signatories: [approver_b_pkh()],
+    validity_range: interval.after(0),
+  }
   !call_approve(tx)
 }
 
@@ -1114,11 +1083,10 @@ test approve_recovery__rejects_request_not_at_script() {
 // ApproveRecovery neither mints nor burns.
 test approve_recovery__rejects_mint() {
   let tx = valid_approve_tx()
-  let bad_tx =
-    Transaction {
-      ..tx,
-      mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
-    }
+  let bad_tx = Transaction {
+    ..tx,
+    mint: assets.from_asset(treasury_policy(), new_member_tn(), 1),
+  }
   !call_approve(bad_tx)
 }
 
@@ -1149,16 +1117,14 @@ fn cancel_request_datum() -> TreasuryDatum {
 
 fn cancel_request_input() -> Input {
   let tp = treasury_policy()
-  let value =
-    assets.from_lovelace(2_000_000)
-      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
-  let output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      value,
-      datum: InlineDatum(cancel_request_datum()),
-      reference_script: None,
-    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value,
+    datum: InlineDatum(cancel_request_datum()),
+    reference_script: None,
+  }
   Input { output_reference: request_ref(), output }
 }
 
@@ -1196,16 +1162,15 @@ fn call_cancel(tx: Transaction) -> Bool {
 // The genuine holder of target_tn() presents+signs it → request consumed, N' burned.
 test cancel_recovery__veto_by_signed_target_holder() {
   let target_holder = target_holder_input()
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [cancel_request_input(), target_holder],
-      reference_inputs: [],
-      outputs: [],
-      mint: n_prime_burn(),
-      extra_signatories: [target_holder_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [cancel_request_input(), target_holder],
+    reference_inputs: [],
+    outputs: [],
+    mint: n_prime_burn(),
+    extra_signatories: [target_holder_pkh()],
+    validity_range: interval.after(0),
+  }
   call_cancel(tx)
 }
 
@@ -1214,16 +1179,15 @@ test cancel_recovery__veto_by_signed_target_holder() {
 // approver_b is in the approvals list and signs → cancel accepted.
 test cancel_recovery__withdrawal_by_signed_approver() {
   let approver_b = approver_b_input()
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [cancel_request_input(), approver_b],
-      reference_inputs: [],
-      outputs: [],
-      mint: n_prime_burn(),
-      extra_signatories: [approver_b_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [cancel_request_input(), approver_b],
+    reference_inputs: [],
+    outputs: [],
+    mint: n_prime_burn(),
+    extra_signatories: [approver_b_pkh()],
+    validity_range: interval.after(0),
+  }
   call_cancel(tx)
 }
 
@@ -1236,16 +1200,15 @@ test cancel_recovery__withdrawal_by_signed_approver() {
 test cancel_recovery__veto_works_before_timelock() {
   let target_holder = target_holder_input()
   // validity_range lower bound deliberately set BEFORE the timelock
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [cancel_request_input(), target_holder],
-      reference_inputs: [],
-      outputs: [],
-      mint: n_prime_burn(),
-      extra_signatories: [target_holder_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [cancel_request_input(), target_holder],
+    reference_inputs: [],
+    outputs: [],
+    mint: n_prime_burn(),
+    extra_signatories: [target_holder_pkh()],
+    validity_range: interval.after(0),
+  }
   call_cancel(tx)
 }
 
@@ -1256,16 +1219,15 @@ test cancel_recovery__veto_works_before_timelock() {
 test cancel_recovery__rejects_random_party() {
   let non_member_pkh = #"dddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
   let random_input = signed_account_input(non_member_pkh, non_member_tn())
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [cancel_request_input(), random_input],
-      reference_inputs: [],
-      outputs: [],
-      mint: n_prime_burn(),
-      extra_signatories: [non_member_pkh],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [cancel_request_input(), random_input],
+    reference_inputs: [],
+    outputs: [],
+    mint: n_prime_burn(),
+    extra_signatories: [non_member_pkh],
+    validity_range: interval.after(0),
+  }
   !call_cancel(tx)
 }
 
@@ -1275,17 +1237,16 @@ test cancel_recovery__rejects_random_party() {
 // consent. signed_account_token_name crashes on this path → `fail` annotation.
 test cancel_recovery__rejects_unsigned_target_holder() fail {
   let unsigned_holder = target_holder_input()
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [cancel_request_input(), unsigned_holder],
-      reference_inputs: [],
-      outputs: [],
-      mint: n_prime_burn(),
-      // PKH deliberately absent
-      extra_signatories: [],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [cancel_request_input(), unsigned_holder],
+    reference_inputs: [],
+    outputs: [],
+    mint: n_prime_burn(),
+    // PKH deliberately absent
+    extra_signatories: [],
+    validity_range: interval.after(0),
+  }
   // If the crash is reached first (signed_account_token_name fails), test passes as `fail`.
   // The boolean fallback also covers if we try path (b) and it returns False.
   call_cancel(tx)
@@ -1296,16 +1257,15 @@ test cancel_recovery__rejects_unsigned_target_holder() fail {
 // Target holder signs and is present, but mint has NO burn of N' → reject.
 test cancel_recovery__rejects_n_prime_not_burned() {
   let target_holder = target_holder_input()
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [cancel_request_input(), target_holder],
-      reference_inputs: [],
-      outputs: [],
-      mint: assets.zero,
-      extra_signatories: [target_holder_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [cancel_request_input(), target_holder],
+    reference_inputs: [],
+    outputs: [],
+    mint: assets.zero,
+    extra_signatories: [target_holder_pkh()],
+    validity_range: interval.after(0),
+  }
   !call_cancel(tx)
 }
 
@@ -1316,16 +1276,15 @@ test cancel_recovery__rejects_n_prime_not_burned() {
 test cancel_recovery__rejects_wrong_token_burned() {
   let target_holder = target_holder_input()
   let wrong_burn = assets.from_asset(treasury_policy(), non_member_tn(), -1)
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [cancel_request_input(), target_holder],
-      reference_inputs: [],
-      outputs: [],
-      mint: wrong_burn,
-      extra_signatories: [target_holder_pkh()],
-      validity_range: interval.after(0),
-    }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [cancel_request_input(), target_holder],
+    reference_inputs: [],
+    outputs: [],
+    mint: wrong_burn,
+    extra_signatories: [target_holder_pkh()],
+    validity_range: interval.after(0),
+  }
   !call_cancel(tx)
 }
 
@@ -1335,19 +1294,17 @@ test cancel_recovery__rejects_wrong_token_burned() {
 // The exact-one-burn check must catch this.
 test cancel_recovery__rejects_extra_mint_or_burn() {
   let target_holder = target_holder_input()
-  let extra_mint =
-    n_prime_burn()
-      |> assets.merge(assets.from_asset(treasury_policy(), non_member_tn(), 1))
-  let tx =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: [cancel_request_input(), target_holder],
-      reference_inputs: [],
-      outputs: [],
-      mint: extra_mint,
-      extra_signatories: [target_holder_pkh()],
-      validity_range: interval.after(0),
-    }
+  let extra_mint = n_prime_burn()
+    |> assets.merge(assets.from_asset(treasury_policy(), non_member_tn(), 1))
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [cancel_request_input(), target_holder],
+    reference_inputs: [],
+    outputs: [],
+    mint: extra_mint,
+    extra_signatories: [target_holder_pkh()],
+    validity_range: interval.after(0),
+  }
   !call_cancel(tx)
 }
 
@@ -1409,16 +1366,14 @@ fn exec_member_treasury_ref() -> OutputReference {
 // The RecoveryRequest spending input (holds N').
 fn exec_request_input() -> Input {
   let tp = treasury_policy()
-  let value =
-    assets.from_lovelace(2_000_000)
-      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
-  let output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      value,
-      datum: InlineDatum(execute_request_datum()),
-      reference_script: None,
-    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value,
+    datum: InlineDatum(execute_request_datum()),
+    reference_script: None,
+  }
   Input { output_reference: exec_request_ref(), output }
 }
 
@@ -1435,16 +1390,14 @@ fn member_treasury_datum() -> TreasuryDatum {
 
 fn exec_member_treasury_input() -> Input {
   let tp = treasury_policy()
-  let value =
-    assets.from_lovelace(4_000_000)
-      |> assets.merge(assets.from_asset(tp, target_tn(), 1))
-  let output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      value,
-      datum: InlineDatum(member_treasury_datum()),
-      reference_script: None,
-    }
+  let value = assets.from_lovelace(4_000_000)
+    |> assets.merge(assets.from_asset(tp, target_tn(), 1))
+  let output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value,
+    datum: InlineDatum(member_treasury_datum()),
+    reference_script: None,
+  }
   Input { output_reference: exec_member_treasury_ref(), output }
 }
 
@@ -1472,33 +1425,29 @@ fn exec_group_ref() -> OutputReference {
 // Group spending input (RecoverMember redeemer — so it is in tx.inputs, not reference_inputs).
 fn exec_group_input() -> Input {
   let gp = group_policy()
-  let value =
-    assets.from_lovelace(2_000_000)
-      |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
-  let output =
-    Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
-      value,
-      datum: InlineDatum(exec_group_cip68_datum()),
-      reference_script: None,
-    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value,
+    datum: InlineDatum(exec_group_cip68_datum()),
+    reference_script: None,
+  }
   Input { output_reference: exec_group_ref(), output }
 }
 
 // Group output with the registry swapped N→N'.
 fn exec_group_output() -> Output {
   let gp = group_policy()
-  let value =
-    assets.from_lovelace(2_000_000)
-      |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
-  let swapped_datum =
-    GroupCip68Datum {
-      ..exec_group_cip68_datum(),
-      extra: GroupDatum {
-        ..exec_group_datum(),
-        member_token_names: [approver_a_tn(), approver_b_tn(), new_member_tn()],
-      },
-    }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
+  let swapped_datum = GroupCip68Datum {
+    ..exec_group_cip68_datum(),
+    extra: GroupDatum {
+      ..exec_group_datum(),
+      member_token_names: [approver_a_tn(), approver_b_tn(), new_member_tn()],
+    },
+  }
   Output {
     address: Address { payment_credential: Script(gp), stake_credential: None },
     value,
@@ -1513,17 +1462,15 @@ fn rotated_treasury_output() -> Output {
   let tp = treasury_policy()
   // Same lovelace and value as the member treasury input (4_000_000 lovelace + N').
   // N' comes from the request UTxO and moves into this output; N is burned.
-  let value =
-    assets.from_lovelace(4_000_000)
-      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
-  let rotated_datum =
-    TreasuryState {
-      group_reference_tokenname: group_ref_tn(),
-      member_reference_tokenname: new_member_tn(),
-      rounds_paid: 2,
-      member_payment_credential: recoveree_pkh(),
-      claimable_balance: 500_000,
-    }
+  let value = assets.from_lovelace(4_000_000)
+    |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let rotated_datum = TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: new_member_tn(),
+    rounds_paid: 2,
+    member_payment_credential: recoveree_pkh(),
+    claimable_balance: 500_000,
+  }
   Output {
     address: Address { payment_credential: Script(tp), stake_credential: None },
     value,
@@ -1541,7 +1488,11 @@ fn execute_mint() -> assets.Value {
 fn valid_execute_tx() -> Transaction {
   Transaction {
     ..transaction.placeholder,
-    inputs: [exec_group_input(), exec_request_input(), exec_member_treasury_input()],
+    inputs: [
+      exec_group_input(),
+      exec_request_input(),
+      exec_member_treasury_input(),
+    ],
     reference_inputs: [],
     outputs: [exec_group_output(), rotated_treasury_output()],
     mint: execute_mint(),
@@ -1581,55 +1532,51 @@ test execute_recovery__rotates_after_timelock_at_threshold() {
 // completes: all DefaultState fields preserved, member_payment_credential updated.
 test execute_recovery__rotates_from_default_state() {
   let tp = treasury_policy()
-  let default_datum =
-    DefaultState {
-      group_reference_tokenname: group_ref_tn(),
-      member_reference_tokenname: target_tn(),
-      grace_expires_at: 999_999_999,
-      grace_extensions_used: 1,
-      rounds_paid: 2,
-      member_payment_credential: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      claimable_balance: 500_000,
-    }
-  let default_input_value =
-    assets.from_lovelace(4_000_000)
-      |> assets.merge(assets.from_asset(tp, target_tn(), 1))
-  let default_input =
-    Input {
-      output_reference: exec_member_treasury_ref(),
-      output: Output {
-        address: Address { payment_credential: Script(tp), stake_credential: None },
-        value: default_input_value,
-        datum: InlineDatum(default_datum),
-        reference_script: None,
+  let default_datum = DefaultState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: target_tn(),
+    grace_expires_at: 999_999_999,
+    grace_extensions_used: 1,
+    rounds_paid: 2,
+    member_payment_credential: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    claimable_balance: 500_000,
+  }
+  let default_input_value = assets.from_lovelace(4_000_000)
+    |> assets.merge(assets.from_asset(tp, target_tn(), 1))
+  let default_input = Input {
+    output_reference: exec_member_treasury_ref(),
+    output: Output {
+      address: Address {
+        payment_credential: Script(tp),
+        stake_credential: None,
       },
-    }
-  let rotated_default_output_value =
-    assets.from_lovelace(4_000_000)
-      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
-  let rotated_default_datum =
-    DefaultState {
-      group_reference_tokenname: group_ref_tn(),
-      member_reference_tokenname: new_member_tn(),
-      grace_expires_at: 999_999_999,
-      grace_extensions_used: 1,
-      rounds_paid: 2,
-      member_payment_credential: recoveree_pkh(),
-      claimable_balance: 500_000,
-    }
-  let rotated_default_output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      value: rotated_default_output_value,
-      datum: InlineDatum(rotated_default_datum),
+      value: default_input_value,
+      datum: InlineDatum(default_datum),
       reference_script: None,
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      inputs: [exec_group_input(), exec_request_input(), default_input],
-      outputs: [exec_group_output(), rotated_default_output],
-    }
+    },
+  }
+  let rotated_default_output_value = assets.from_lovelace(4_000_000)
+    |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let rotated_default_datum = DefaultState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: new_member_tn(),
+    grace_expires_at: 999_999_999,
+    grace_extensions_used: 1,
+    rounds_paid: 2,
+    member_payment_credential: recoveree_pkh(),
+    claimable_balance: 500_000,
+  }
+  let rotated_default_output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value: rotated_default_output_value,
+    datum: InlineDatum(rotated_default_datum),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    inputs: [exec_group_input(), exec_request_input(), default_input],
+    outputs: [exec_group_output(), rotated_default_output],
+  }
   call_execute(tx)
 }
 
@@ -1637,11 +1584,10 @@ test execute_recovery__rotates_from_default_state() {
 
 // Lower bound is 1 ms before the earliest_execution_slot — must reject.
 test execute_recovery__rejects_before_timelock() {
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      validity_range: interval.after(earliest_slot() - 1),
-    }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    validity_range: interval.after(earliest_slot() - 1),
+  }
   !call_execute(tx)
 }
 
@@ -1650,33 +1596,36 @@ test execute_recovery__rejects_before_timelock() {
 // Only 0 approvals in the request (threshold=1) — must reject.
 test execute_recovery__rejects_below_threshold() {
   let tp = treasury_policy()
-  let no_approval_request_datum =
-    RecoveryRequest {
-      group_reference_tokenname: group_ref_tn(),
-      target_token: target_tn(),
-      new_member_tokenname: new_member_tn(),
-      new_payment_credential: recoveree_pkh(),
-      earliest_execution_slot: earliest_slot(),
-      approvals: [],
-    }
-  let request_value =
-    assets.from_lovelace(2_000_000)
-      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
-  let bad_request_input =
-    Input {
-      output_reference: exec_request_ref(),
-      output: Output {
-        address: Address { payment_credential: Script(tp), stake_credential: None },
-        value: request_value,
-        datum: InlineDatum(no_approval_request_datum),
-        reference_script: None,
+  let no_approval_request_datum = RecoveryRequest {
+    group_reference_tokenname: group_ref_tn(),
+    target_token: target_tn(),
+    new_member_tokenname: new_member_tn(),
+    new_payment_credential: recoveree_pkh(),
+    earliest_execution_slot: earliest_slot(),
+    approvals: [],
+  }
+  let request_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+  let bad_request_input = Input {
+    output_reference: exec_request_ref(),
+    output: Output {
+      address: Address {
+        payment_credential: Script(tp),
+        stake_credential: None,
       },
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      inputs: [exec_group_input(), bad_request_input, exec_member_treasury_input()],
-    }
+      value: request_value,
+      datum: InlineDatum(no_approval_request_datum),
+      reference_script: None,
+    },
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    inputs: [
+      exec_group_input(),
+      bad_request_input,
+      exec_member_treasury_input(),
+    ],
+  }
   !call_execute(tx)
 }
 
@@ -1685,26 +1634,35 @@ test execute_recovery__rejects_below_threshold() {
 // Group has member_count=3 but recovery_threshold=4 — sanity check must reject.
 test execute_recovery__rejects_threshold_above_member_count() {
   let gp = group_policy()
-  let bad_group_datum =
-    GroupDatum { ..exec_group_datum(), recovery_threshold: 4 }
-  let bad_group_cip68 =
-    GroupCip68Datum { ..exec_group_cip68_datum(), extra: bad_group_datum }
-  let bad_group_input =
-    Input {
-      output_reference: exec_group_ref(),
-      output: Output {
-        address: Address { payment_credential: Script(gp), stake_credential: None },
-        value: assets.from_lovelace(2_000_000)
-          |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(bad_group_cip68),
-        reference_script: None,
+  let bad_group_datum = GroupDatum {
+    ..exec_group_datum(),
+    recovery_threshold: 4,
+  }
+  let bad_group_cip68 = GroupCip68Datum {
+    ..exec_group_cip68_datum(),
+    extra: bad_group_datum,
+  }
+  let bad_group_input = Input {
+    output_reference: exec_group_ref(),
+    output: Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
       },
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      inputs: [bad_group_input, exec_request_input(), exec_member_treasury_input()],
-    }
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(bad_group_cip68),
+      reference_script: None,
+    },
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    inputs: [
+      bad_group_input,
+      exec_request_input(),
+      exec_member_treasury_input(),
+    ],
+  }
   !call_execute(tx)
 }
 
@@ -1717,46 +1675,53 @@ test execute_recovery__rejects_threshold_above_member_count() {
 test execute_recovery__accepts_shrunken_group_all_remaining_vouch() {
   let tp = treasury_policy()
   let gp = group_policy()
-  let full_quorum_request_datum =
-    RecoveryRequest {
-      group_reference_tokenname: group_ref_tn(),
-      target_token: target_tn(),
-      new_member_tokenname: new_member_tn(),
-      new_payment_credential: recoveree_pkh(),
-      earliest_execution_slot: earliest_slot(),
-      approvals: [approver_a_tn(), approver_b_tn()],
-    }
-  let request_input =
-    Input {
-      output_reference: exec_request_ref(),
-      output: Output {
-        address: Address { payment_credential: Script(tp), stake_credential: None },
-        value: assets.from_lovelace(2_000_000)
-          |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
-        datum: InlineDatum(full_quorum_request_datum),
-        reference_script: None,
+  let full_quorum_request_datum = RecoveryRequest {
+    group_reference_tokenname: group_ref_tn(),
+    target_token: target_tn(),
+    new_member_tokenname: new_member_tn(),
+    new_payment_credential: recoveree_pkh(),
+    earliest_execution_slot: earliest_slot(),
+    approvals: [approver_a_tn(), approver_b_tn()],
+  }
+  let request_input = Input {
+    output_reference: exec_request_ref(),
+    output: Output {
+      address: Address {
+        payment_credential: Script(tp),
+        stake_credential: None,
       },
-    }
-  let strict_group_datum =
-    GroupDatum { ..exec_group_datum(), recovery_threshold: 3 }
-  let strict_group_input =
-    Input {
-      output_reference: exec_group_ref(),
-      output: Output {
-        address: Address { payment_credential: Script(gp), stake_credential: None },
-        value: assets.from_lovelace(2_000_000)
-          |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(
-          GroupCip68Datum { ..exec_group_cip68_datum(), extra: strict_group_datum },
-        ),
-        reference_script: None,
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+      datum: InlineDatum(full_quorum_request_datum),
+      reference_script: None,
+    },
+  }
+  let strict_group_datum = GroupDatum {
+    ..exec_group_datum(),
+    recovery_threshold: 3,
+  }
+  let strict_group_input = Input {
+    output_reference: exec_group_ref(),
+    output: Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
       },
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      inputs: [strict_group_input, request_input, exec_member_treasury_input()],
-    }
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(
+        GroupCip68Datum {
+          ..exec_group_cip68_datum(),
+          extra: strict_group_datum,
+        },
+      ),
+      reference_script: None,
+    },
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    inputs: [strict_group_input, request_input, exec_member_treasury_input()],
+  }
   call_execute(tx)
 }
 
@@ -1766,31 +1731,38 @@ test execute_recovery__accepts_shrunken_group_all_remaining_vouch() {
 // (they exited after vouching). Discounted, valid approvals drop to 0 — reject.
 test execute_recovery__rejects_exited_approver_below_threshold() {
   let gp = group_policy()
-  let shrunk_group_datum =
-    GroupDatum {
-      ..exec_group_datum(),
-      member_count: 2,
-      member_token_names: [target_tn(), approver_b_tn()],
-    }
-  let shrunk_group_input =
-    Input {
-      output_reference: exec_group_ref(),
-      output: Output {
-        address: Address { payment_credential: Script(gp), stake_credential: None },
-        value: assets.from_lovelace(2_000_000)
-          |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(
-          GroupCip68Datum { ..exec_group_cip68_datum(), extra: shrunk_group_datum },
-        ),
-        reference_script: None,
+  let shrunk_group_datum = GroupDatum {
+    ..exec_group_datum(),
+    member_count: 2,
+    member_token_names: [target_tn(), approver_b_tn()],
+  }
+  let shrunk_group_input = Input {
+    output_reference: exec_group_ref(),
+    output: Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
       },
-    }
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(
+        GroupCip68Datum {
+          ..exec_group_cip68_datum(),
+          extra: shrunk_group_datum,
+        },
+      ),
+      reference_script: None,
+    },
+  }
   // Request approvals = [approver_a] — who exited (absent from the registry above).
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      inputs: [shrunk_group_input, exec_request_input(), exec_member_treasury_input()],
-    }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    inputs: [
+      shrunk_group_input,
+      exec_request_input(),
+      exec_member_treasury_input(),
+    ],
+  }
   !call_execute(tx)
 }
 
@@ -1799,51 +1771,55 @@ test execute_recovery__rejects_exited_approver_below_threshold() {
 test execute_recovery__accepts_with_exited_approver_discounted() {
   let tp = treasury_policy()
   let gp = group_policy()
-  let two_approval_request_datum =
-    RecoveryRequest {
-      group_reference_tokenname: group_ref_tn(),
-      target_token: target_tn(),
-      new_member_tokenname: new_member_tn(),
-      new_payment_credential: recoveree_pkh(),
-      earliest_execution_slot: earliest_slot(),
-      approvals: [approver_a_tn(), approver_b_tn()],
-    }
-  let request_input =
-    Input {
-      output_reference: exec_request_ref(),
-      output: Output {
-        address: Address { payment_credential: Script(tp), stake_credential: None },
-        value: assets.from_lovelace(2_000_000)
-          |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
-        datum: InlineDatum(two_approval_request_datum),
-        reference_script: None,
+  let two_approval_request_datum = RecoveryRequest {
+    group_reference_tokenname: group_ref_tn(),
+    target_token: target_tn(),
+    new_member_tokenname: new_member_tn(),
+    new_payment_credential: recoveree_pkh(),
+    earliest_execution_slot: earliest_slot(),
+    approvals: [approver_a_tn(), approver_b_tn()],
+  }
+  let request_input = Input {
+    output_reference: exec_request_ref(),
+    output: Output {
+      address: Address {
+        payment_credential: Script(tp),
+        stake_credential: None,
       },
-    }
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+      datum: InlineDatum(two_approval_request_datum),
+      reference_script: None,
+    },
+  }
   // approver_a exited; approver_b is still a member. threshold=1 → [b] suffices.
-  let shrunk_group_datum =
-    GroupDatum {
-      ..exec_group_datum(),
-      member_count: 2,
-      member_token_names: [target_tn(), approver_b_tn()],
-    }
-  let shrunk_group_input =
-    Input {
-      output_reference: exec_group_ref(),
-      output: Output {
-        address: Address { payment_credential: Script(gp), stake_credential: None },
-        value: assets.from_lovelace(2_000_000)
-          |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-        datum: InlineDatum(
-          GroupCip68Datum { ..exec_group_cip68_datum(), extra: shrunk_group_datum },
-        ),
-        reference_script: None,
+  let shrunk_group_datum = GroupDatum {
+    ..exec_group_datum(),
+    member_count: 2,
+    member_token_names: [target_tn(), approver_b_tn()],
+  }
+  let shrunk_group_input = Input {
+    output_reference: exec_group_ref(),
+    output: Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
       },
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      inputs: [shrunk_group_input, request_input, exec_member_treasury_input()],
-    }
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(
+        GroupCip68Datum {
+          ..exec_group_cip68_datum(),
+          extra: shrunk_group_datum,
+        },
+      ),
+      reference_script: None,
+    },
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    inputs: [shrunk_group_input, request_input, exec_member_treasury_input()],
+  }
   call_execute(tx)
 }
 
@@ -1852,28 +1828,25 @@ test execute_recovery__accepts_with_exited_approver_discounted() {
 // The output changes rounds_paid — the rotation must preserve all economic fields exactly.
 test execute_recovery__rejects_economic_field_mutation() {
   let tp = treasury_policy()
-  let mutated_datum =
-    TreasuryState {
-      group_reference_tokenname: group_ref_tn(),
-      member_reference_tokenname: new_member_tn(),
-      // rounds_paid incremented — NOT allowed; rotation freezes all economic fields
-      rounds_paid: 99,
-      member_payment_credential: recoveree_pkh(),
-      claimable_balance: 500_000,
-    }
-  let mutated_output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      value: assets.from_lovelace(4_000_000)
-        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
-      datum: InlineDatum(mutated_datum),
-      reference_script: None,
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      outputs: [exec_group_output(), mutated_output],
-    }
+  let mutated_datum = TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: new_member_tn(),
+    // rounds_paid incremented — NOT allowed; rotation freezes all economic fields
+    rounds_paid: 99,
+    member_payment_credential: recoveree_pkh(),
+    claimable_balance: 500_000,
+  }
+  let mutated_output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value: assets.from_lovelace(4_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+    datum: InlineDatum(mutated_datum),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    outputs: [exec_group_output(), mutated_output],
+  }
   !call_execute(tx)
 }
 
@@ -1883,27 +1856,24 @@ test execute_recovery__rejects_economic_field_mutation() {
 test execute_recovery__rejects_wrong_payment_credential() {
   let tp = treasury_policy()
   let attacker_pkh = #"abababababababababababababababababababababababababababab00"
-  let wrong_cred_datum =
-    TreasuryState {
-      group_reference_tokenname: group_ref_tn(),
-      member_reference_tokenname: new_member_tn(),
-      rounds_paid: 2,
-      member_payment_credential: attacker_pkh,
-      claimable_balance: 500_000,
-    }
-  let wrong_output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      value: assets.from_lovelace(4_000_000)
-        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
-      datum: InlineDatum(wrong_cred_datum),
-      reference_script: None,
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      outputs: [exec_group_output(), wrong_output],
-    }
+  let wrong_cred_datum = TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: new_member_tn(),
+    rounds_paid: 2,
+    member_payment_credential: attacker_pkh,
+    claimable_balance: 500_000,
+  }
+  let wrong_output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value: assets.from_lovelace(4_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+    datum: InlineDatum(wrong_cred_datum),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    outputs: [exec_group_output(), wrong_output],
+  }
   !call_execute(tx)
 }
 
@@ -1930,27 +1900,24 @@ test execute_recovery__rejects_wrong_token_burned() {
 test execute_recovery__rejects_output_wrong_identity() {
   let tp = treasury_policy()
   // Correct datum but wrong VALUE token (N instead of N').
-  let rotated_datum =
-    TreasuryState {
-      group_reference_tokenname: group_ref_tn(),
-      member_reference_tokenname: new_member_tn(),
-      rounds_paid: 2,
-      member_payment_credential: recoveree_pkh(),
-      claimable_balance: 500_000,
-    }
-  let wrong_output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      value: assets.from_lovelace(4_000_000)
-        |> assets.merge(assets.from_asset(tp, target_tn(), 1)),
-      datum: InlineDatum(rotated_datum),
-      reference_script: None,
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      outputs: [exec_group_output(), wrong_output],
-    }
+  let rotated_datum = TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: new_member_tn(),
+    rounds_paid: 2,
+    member_payment_credential: recoveree_pkh(),
+    claimable_balance: 500_000,
+  }
+  let wrong_output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value: assets.from_lovelace(4_000_000)
+      |> assets.merge(assets.from_asset(tp, target_tn(), 1)),
+    datum: InlineDatum(rotated_datum),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    outputs: [exec_group_output(), wrong_output],
+  }
   !call_execute(tx)
 }
 
@@ -1959,28 +1926,25 @@ test execute_recovery__rejects_output_wrong_identity() {
 // Output ADA is 1 lovelace less than input ADA — economic value must be conserved.
 test execute_recovery__rejects_balance_skim() {
   let tp = treasury_policy()
-  let rotated_datum =
-    TreasuryState {
-      group_reference_tokenname: group_ref_tn(),
-      member_reference_tokenname: new_member_tn(),
-      rounds_paid: 2,
-      member_payment_credential: recoveree_pkh(),
-      claimable_balance: 500_000,
-    }
-  let skimmed_output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      // 1 lovelace less than the 4_000_000 in exec_member_treasury_input
-      value: assets.from_lovelace(3_999_999)
-        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
-      datum: InlineDatum(rotated_datum),
-      reference_script: None,
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      outputs: [exec_group_output(), skimmed_output],
-    }
+  let rotated_datum = TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: new_member_tn(),
+    rounds_paid: 2,
+    member_payment_credential: recoveree_pkh(),
+    claimable_balance: 500_000,
+  }
+  let skimmed_output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    // 1 lovelace less than the 4_000_000 in exec_member_treasury_input
+    value: assets.from_lovelace(3_999_999)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+    datum: InlineDatum(rotated_datum),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    outputs: [exec_group_output(), skimmed_output],
+  }
   !call_execute(tx)
 }
 
@@ -1990,32 +1954,31 @@ test execute_recovery__rejects_balance_skim() {
 // does not match the group being spent) — must reject.
 test execute_recovery__rejects_foreign_group_member_treasury() {
   let tp = treasury_policy()
-  let foreign_group_tn =
-    #"ffffffffffffffffffffffffffffffffffffffffffffffffffffaaaa"
-  let foreign_member_datum =
-    TreasuryState {
-      group_reference_tokenname: foreign_group_tn,
-      member_reference_tokenname: target_tn(),
-      rounds_paid: 2,
-      member_payment_credential: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      claimable_balance: 500_000,
-    }
-  let foreign_treasury_input =
-    Input {
-      output_reference: exec_member_treasury_ref(),
-      output: Output {
-        address: Address { payment_credential: Script(tp), stake_credential: None },
-        value: assets.from_lovelace(4_000_000)
-          |> assets.merge(assets.from_asset(tp, target_tn(), 1)),
-        datum: InlineDatum(foreign_member_datum),
-        reference_script: None,
+  let foreign_group_tn = #"ffffffffffffffffffffffffffffffffffffffffffffffffffffaaaa"
+  let foreign_member_datum = TreasuryState {
+    group_reference_tokenname: foreign_group_tn,
+    member_reference_tokenname: target_tn(),
+    rounds_paid: 2,
+    member_payment_credential: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    claimable_balance: 500_000,
+  }
+  let foreign_treasury_input = Input {
+    output_reference: exec_member_treasury_ref(),
+    output: Output {
+      address: Address {
+        payment_credential: Script(tp),
+        stake_credential: None,
       },
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      inputs: [exec_group_input(), exec_request_input(), foreign_treasury_input],
-    }
+      value: assets.from_lovelace(4_000_000)
+        |> assets.merge(assets.from_asset(tp, target_tn(), 1)),
+      datum: InlineDatum(foreign_member_datum),
+      reference_script: None,
+    },
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    inputs: [exec_group_input(), exec_request_input(), foreign_treasury_input],
+  }
   !call_execute(tx)
 }
 
@@ -2025,28 +1988,25 @@ test execute_recovery__rejects_foreign_group_member_treasury() {
 test execute_recovery__rejects_missing_registry_swap() {
   let gp = group_policy()
   // Group output datum with the OLD registry (N still present, N' absent).
-  let unswapped_group_datum =
-    GroupCip68Datum {
-      ..exec_group_cip68_datum(),
-      extra: GroupDatum {
-        ..exec_group_datum(),
-        // N (target_tn) still in registry — not swapped
-        member_token_names: [target_tn(), approver_a_tn(), approver_b_tn()],
-      },
-    }
-  let unswapped_group_output =
-    Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
-      value: assets.from_lovelace(2_000_000)
-        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
-      datum: InlineDatum(unswapped_group_datum),
-      reference_script: None,
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      outputs: [unswapped_group_output, rotated_treasury_output()],
-    }
+  let unswapped_group_datum = GroupCip68Datum {
+    ..exec_group_cip68_datum(),
+    extra: GroupDatum {
+      ..exec_group_datum(),
+      // N (target_tn) still in registry — not swapped
+      member_token_names: [target_tn(), approver_a_tn(), approver_b_tn()],
+    },
+  }
+  let unswapped_group_output = Output {
+    address: Address { payment_credential: Script(gp), stake_credential: None },
+    value: assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+    datum: InlineDatum(unswapped_group_datum),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    outputs: [unswapped_group_output, rotated_treasury_output()],
+  }
   !call_execute(tx)
 }
 
@@ -2088,7 +2048,10 @@ fn native_group_input() -> Input {
   Input {
     output_reference: exec_group_ref(),
     output: Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value: assets.from_lovelace(2_000_000)
         |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
       datum: InlineDatum(native_group_cip68_datum()),
@@ -2099,14 +2062,13 @@ fn native_group_input() -> Input {
 
 fn native_group_output() -> Output {
   let gp = group_policy()
-  let swapped_datum =
-    GroupCip68Datum {
-      ..native_group_cip68_datum(),
-      extra: GroupDatum {
-        ..native_group_datum(),
-        member_token_names: [approver_a_tn(), approver_b_tn(), new_member_tn()],
-      },
-    }
+  let swapped_datum = GroupCip68Datum {
+    ..native_group_cip68_datum(),
+    extra: GroupDatum {
+      ..native_group_datum(),
+      member_token_names: [approver_a_tn(), approver_b_tn(), new_member_tn()],
+    },
+  }
   Output {
     address: Address { payment_credential: Script(gp), stake_credential: None },
     value: assets.from_lovelace(2_000_000)
@@ -2122,7 +2084,10 @@ fn native_member_treasury_input() -> Input {
   Input {
     output_reference: exec_member_treasury_ref(),
     output: Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(tp),
+        stake_credential: None,
+      },
       value: assets.from_lovelace(4_000_000)
         |> assets.merge(assets.from_asset(tp, target_tn(), 1))
         |> assets.merge(
@@ -2151,56 +2116,52 @@ fn native_rotated_datum() -> TreasuryDatum {
 // Rotated output that DROPS the 100 contribution tokens — the drain.
 test execute_recovery__rejects_native_token_drain() {
   let tp = treasury_policy()
-  let drained_output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      // ADA + N' preserved, contribution tokens GONE (routed out)
-      value: assets.from_lovelace(4_000_000)
-        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
-      datum: InlineDatum(native_rotated_datum()),
-      reference_script: None,
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      inputs: [
-        native_group_input(),
-        exec_request_input(),
-        native_member_treasury_input(),
-      ],
-      outputs: [native_group_output(), drained_output],
-    }
+  let drained_output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    // ADA + N' preserved, contribution tokens GONE (routed out)
+    value: assets.from_lovelace(4_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+    datum: InlineDatum(native_rotated_datum()),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    inputs: [
+      native_group_input(),
+      exec_request_input(),
+      native_member_treasury_input(),
+    ],
+    outputs: [native_group_output(), drained_output],
+  }
   !call_execute(tx)
 }
 
 // Control: a native-token rotation that PRESERVES the contribution tokens passes.
 test execute_recovery__accepts_native_token_preserved() {
   let tp = treasury_policy()
-  let conserved_output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      value: assets.from_lovelace(4_000_000)
-        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
-        |> assets.merge(
-            assets.from_asset(
-              contribution_policy(),
-              contribution_assetname(),
-              100,
-            ),
+  let conserved_output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value: assets.from_lovelace(4_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1))
+      |> assets.merge(
+          assets.from_asset(
+            contribution_policy(),
+            contribution_assetname(),
+            100,
           ),
-      datum: InlineDatum(native_rotated_datum()),
-      reference_script: None,
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      inputs: [
-        native_group_input(),
-        exec_request_input(),
-        native_member_treasury_input(),
-      ],
-      outputs: [native_group_output(), conserved_output],
-    }
+        ),
+    datum: InlineDatum(native_rotated_datum()),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    inputs: [
+      native_group_input(),
+      exec_request_input(),
+      native_member_treasury_input(),
+    ],
+    outputs: [native_group_output(), conserved_output],
+  }
   call_execute(tx)
 }
 
@@ -2210,31 +2171,28 @@ test execute_recovery__accepts_native_token_preserved() {
 // address instead of the group script — the treasury side must reject this without
 // relying on RecoverMember. Enforced via `expect` (hard crash), so `fail`-style.
 test execute_recovery__rejects_group_output_at_wrong_address() fail {
-  let swapped_datum =
-    GroupCip68Datum {
-      ..exec_group_cip68_datum(),
-      extra: GroupDatum {
-        ..exec_group_datum(),
-        member_token_names: [approver_a_tn(), approver_b_tn(), new_member_tn()],
-      },
-    }
-  let wrong_addr_group_output =
-    Output {
-      // VK wallet address, not the group script
-      address: Address {
-        payment_credential: VerificationKey(common.test_pkh()),
-        stake_credential: None,
-      },
-      value: assets.from_lovelace(2_000_000)
-        |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
-      datum: InlineDatum(swapped_datum),
-      reference_script: None,
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      outputs: [wrong_addr_group_output, rotated_treasury_output()],
-    }
+  let swapped_datum = GroupCip68Datum {
+    ..exec_group_cip68_datum(),
+    extra: GroupDatum {
+      ..exec_group_datum(),
+      member_token_names: [approver_a_tn(), approver_b_tn(), new_member_tn()],
+    },
+  }
+  let wrong_addr_group_output = Output {
+    // VK wallet address, not the group script
+    address: Address {
+      payment_credential: VerificationKey(common.test_pkh()),
+      stake_credential: None,
+    },
+    value: assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(group_policy(), group_ref_tn(), 1)),
+    datum: InlineDatum(swapped_datum),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    outputs: [wrong_addr_group_output, rotated_treasury_output()],
+  }
   call_execute(tx)
 }
 
@@ -2244,28 +2202,25 @@ test execute_recovery__rejects_group_output_at_wrong_address() fail {
 // zeroed in the rotated output — the recovered member loses their earmarked payout.
 test execute_recovery__rejects_claimable_balance_zeroed() {
   let tp = treasury_policy()
-  let zeroed_datum =
-    TreasuryState {
-      group_reference_tokenname: group_ref_tn(),
-      member_reference_tokenname: new_member_tn(),
-      rounds_paid: 2,
-      member_payment_credential: recoveree_pkh(),
-      // claimable_balance zeroed — NOT allowed; the earmark must carry through
-      claimable_balance: 0,
-    }
-  let zeroed_output =
-    Output {
-      address: Address { payment_credential: Script(tp), stake_credential: None },
-      value: assets.from_lovelace(4_000_000)
-        |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
-      datum: InlineDatum(zeroed_datum),
-      reference_script: None,
-    }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      outputs: [exec_group_output(), zeroed_output],
-    }
+  let zeroed_datum = TreasuryState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: new_member_tn(),
+    rounds_paid: 2,
+    member_payment_credential: recoveree_pkh(),
+    // claimable_balance zeroed — NOT allowed; the earmark must carry through
+    claimable_balance: 0,
+  }
+  let zeroed_output = Output {
+    address: Address { payment_credential: Script(tp), stake_credential: None },
+    value: assets.from_lovelace(4_000_000)
+      |> assets.merge(assets.from_asset(tp, new_member_tn(), 1)),
+    datum: InlineDatum(zeroed_datum),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    outputs: [exec_group_output(), zeroed_output],
+  }
   !call_execute(tx)
 }
 
@@ -2337,10 +2292,68 @@ test execute_recovery__rejects_rotated_output_stake_credential_change() {
     ),
     reference_script: None,
   }
-  let tx =
-    Transaction {
-      ..valid_execute_tx(),
-      outputs: [exec_group_output(), attacker_output],
-    }
+  let tx = Transaction {
+    ..valid_execute_tx(),
+    outputs: [exec_group_output(), attacker_output],
+  }
   !call_execute(tx)
+}
+
+// ─── Recovery runner (treasury split — spec 2026-07-04 section 4/5) ───────────
+
+fn runner_settings() -> settings.ProtocolSettings {
+  settings.ProtocolSettings {
+    account_policy: account_policy(),
+    group_policy: group_policy(),
+    treasury_policy: treasury_policy(),
+    treasury_rounds_stake: common.test_hash_04(),
+    treasury_lifecycle_stake: common.test_hash_05(),
+    treasury_recovery_stake: common.test_hash_06(),
+    treasury_reserve_stake: common.test_hash_07(),
+  }
+}
+
+// Mirror of propose_recovery__accepts_valid through the runner — a ProposeAction
+// covers no treasury input (it CREATES the request UTxO).
+test recovery_runner__accepts_valid_propose() {
+  run_recovery_action(
+    treasury_actions.ProposeAction {
+      covered_inputs: [],
+      group_ref_input_index: 0,
+      request_output_index: 0,
+      approver_input_indices: [1],
+    },
+    runner_settings(),
+    valid_tx(),
+  )
+}
+
+// [security]: a ProposeAction claiming coverage would exempt an unrelated
+// treasury spend from validation.
+test recovery_runner__rejects_propose_claiming_coverage() fail {
+  run_recovery_action(
+    treasury_actions.ProposeAction {
+      covered_inputs: [0],
+      group_ref_input_index: 0,
+      request_output_index: 0,
+      approver_input_indices: [1],
+    },
+    runner_settings(),
+    valid_tx(),
+  )
+}
+
+// [security]: an ExecuteAction must cover BOTH spent treasury UTxOs (request +
+// lost member) — single coverage would leave one unvalidated.
+test recovery_runner__rejects_execute_single_coverage() fail {
+  run_recovery_action(
+    treasury_actions.ExecuteAction {
+      covered_inputs: [0],
+      group_ref_input_index: 0,
+      group_output_index: 0,
+      member_treasury_output_index: 0,
+    },
+    runner_settings(),
+    valid_tx(),
+  )
 }

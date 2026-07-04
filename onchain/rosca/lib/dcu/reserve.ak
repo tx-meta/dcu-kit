@@ -8,7 +8,9 @@ use aiken/collection/list
 use aiken/primitive/bytearray
 use cardano/address.{Script}
 use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
-use cardano/transaction.{InlineDatum, Input, Output, OutputReference, Transaction}
+use cardano/transaction.{
+  InlineDatum, Input, Output, OutputReference, Transaction,
+}
 use dcu/cip68
 use dcu/group.{GroupCip68Datum, GroupDatum}
 use dcu/treasury.{DefaultState, ReserveState, TreasuryDatum, TreasuryState}
@@ -39,8 +41,7 @@ pub fn validate_create_reserve(
 
   // [spec Reserve create 1]
   expect Some(group_output) = list.at(outputs, group_output_index)
-  expect
-    group_output.address.payment_credential == Script(trusted_group_policy)
+  expect group_output.address.payment_credential == Script(trusted_group_policy)
   expect [Pair(group_ref_name, 1)] = dict.to_pairs(
     assets.tokens(group_output.value, trusted_group_policy),
   )
@@ -62,7 +63,8 @@ pub fn validate_create_reserve(
   // [spec Reserve create 4]
   expect Some(reserve_output) = list.at(outputs, reserve_output_index)
   expect InlineDatum(reserve_datum_data) = reserve_output.datum
-  expect ReserveState { group_reference_tokenname, standin_rounds }: TreasuryDatum
+  expect  
+      ReserveState { group_reference_tokenname, standin_rounds }: TreasuryDatum
     = reserve_datum_data
 
   and {
@@ -111,8 +113,7 @@ pub fn validate_reserve_topup(
   // [spec Reserve topup 1]
   expect Some(reserve_input) = list.at(inputs, reserve_input_index)
   expect reserve_input.output_reference == utxo
-  expect ReserveState { group_reference_tokenname, standin_rounds } =
-    reserve_datum
+  expect ReserveState { group_reference_tokenname, standin_rounds } = reserve_datum
   let reserve_token_name = cip68.convert_ref_to_reserve_token(
     group_reference_tokenname,
   )
@@ -133,10 +134,12 @@ pub fn validate_reserve_topup(
 
   expect Some(reserve_output) = list.at(outputs, reserve_output_index)
   expect InlineDatum(out_datum_data) = reserve_output.datum
-  expect ReserveState {
-    group_reference_tokenname: out_binding,
-    standin_rounds: out_standin,
-  }: TreasuryDatum = out_datum_data
+  expect  
+      ReserveState {
+        group_reference_tokenname: out_binding,
+        standin_rounds: out_standin,
+      }: TreasuryDatum
+    = out_datum_data
 
   let in_contributable = contributable_in(
     reserve_input.output.value,
@@ -206,10 +209,9 @@ pub fn resolve_bound_group(
 // group that is not started (no rotation to stand in for).
 pub fn standin_increment(group: GroupDatum) -> Int {
   if group.is_started {
-    let remaining =
-      group.era_start_round + group.num_rounds - (
-        group.last_distributed_round + 1
-      )
+    let remaining = group.era_start_round + group.num_rounds - (
+      group.last_distributed_round + 1
+    )
     if remaining > 0 {
       remaining
     } else {
@@ -238,16 +240,20 @@ pub fn reserve_cover_transition(
     expected_group_token_name,
   )
   expect InlineDatum(in_datum_data) = reserve_in.output.datum
-  expect ReserveState {
-    group_reference_tokenname: in_binding,
-    standin_rounds: standin_in,
-  }: TreasuryDatum = in_datum_data
+  expect  
+      ReserveState {
+        group_reference_tokenname: in_binding,
+        standin_rounds: standin_in,
+      }: TreasuryDatum
+    = in_datum_data
 
   expect InlineDatum(out_datum_data) = reserve_out.datum
-  expect ReserveState {
-    group_reference_tokenname: out_binding,
-    standin_rounds: standin_out,
-  }: TreasuryDatum = out_datum_data
+  expect  
+      ReserveState {
+        group_reference_tokenname: out_binding,
+        standin_rounds: standin_out,
+      }: TreasuryDatum
+    = out_datum_data
 
   let in_contributable = contributable_in(
     reserve_in.output.value,
@@ -336,11 +342,13 @@ pub fn validate_reserve_cover(
   // [spec Reserve cover 1]
   expect Some(defaulter_input) = list.at(inputs, defaulter_input_index)
   expect InlineDatum(defaulter_datum_data) = defaulter_input.output.datum
-  expect DefaultState {
-    member_reference_tokenname: defaulter_token,
-    group_reference_tokenname: defaulter_binding,
-    ..
-  }: TreasuryDatum = defaulter_datum_data
+  expect  
+      DefaultState {
+        member_reference_tokenname: defaulter_token,
+        group_reference_tokenname: defaulter_binding,
+        ..
+      }: TreasuryDatum
+    = defaulter_datum_data
   let defaulter_of_this_group = defaulter_binding == expected_group_token_name
 
   // [spec Reserve cover 2]
@@ -399,10 +407,9 @@ pub fn validate_reserve_refund(
   expect Some(reserve_in) = list.at(inputs, reserve_input_index)
   expect reserve_in.output_reference == utxo
   expect InlineDatum(in_datum_data) = reserve_in.output.datum
-  expect ReserveState {
-    group_reference_tokenname,
-    standin_rounds: standin_in,
-  }: TreasuryDatum = in_datum_data
+  expect  
+      ReserveState { group_reference_tokenname, standin_rounds: standin_in }: TreasuryDatum
+    = in_datum_data
   let reserve_token_name = cip68.convert_ref_to_reserve_token(
     group_reference_tokenname,
   )
@@ -453,10 +460,12 @@ pub fn validate_reserve_refund(
   )
   expect Some(reserve_out) = list.at(outputs, reserve_output_index)
   expect InlineDatum(out_datum_data) = reserve_out.datum
-  expect ReserveState {
-    group_reference_tokenname: out_binding,
-    standin_rounds: standin_out,
-  }: TreasuryDatum = out_datum_data
+  expect  
+      ReserveState {
+        group_reference_tokenname: out_binding,
+        standin_rounds: standin_out,
+      }: TreasuryDatum
+    = out_datum_data
   let out_contributable = contributable_in(
     reserve_out.value,
     group.contribution_fee_policyid,
@@ -513,8 +522,7 @@ pub fn validate_reserve_close(
     fn(i) { i.output_reference == utxo },
   )
   expect InlineDatum(in_datum_data) = reserve_in.output.datum
-  expect ReserveState { group_reference_tokenname, .. }: TreasuryDatum =
-    in_datum_data
+  expect ReserveState { group_reference_tokenname, .. }: TreasuryDatum = in_datum_data
   let reserve_token_name = cip68.convert_ref_to_reserve_token(
     group_reference_tokenname,
   )
@@ -539,12 +547,11 @@ pub fn validate_reserve_close(
     ) == 1
   expect InlineDatum(group_datum_data) = group_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
-  let group_dissolving =
-    group.member_count == 0 && assets.quantity_of(
-      mint,
-      trusted_group_policy,
-      group_reference_tokenname,
-    ) == -1
+  let group_dissolving = group.member_count == 0 && assets.quantity_of(
+    mint,
+    trusted_group_policy,
+    group_reference_tokenname,
+  ) == -1
 
   // [spec Reserve close 2]
   let reserve_burned = dict.to_pairs(assets.tokens(mint, own_policy_id)) == [

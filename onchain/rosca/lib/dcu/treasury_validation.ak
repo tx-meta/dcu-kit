@@ -320,14 +320,16 @@ pub fn validate_propose_recovery(
   approver_input_indices: List<Int>,
   tx: Transaction,
 ) -> Bool {
-  let Transaction {
-    inputs,
-    reference_inputs,
-    outputs,
-    mint,
-    extra_signatories,
-    ..
-  } = tx
+  let  
+      Transaction {
+        inputs,
+        reference_inputs,
+        outputs,
+        mint,
+        extra_signatories,
+        ..
+      }
+    = tx
 
   // [spec ProposeRecovery 1]: group reference input at the trusted group script.
   // The group is read-only here — ProposeRecovery does not modify the registry (that
@@ -348,14 +350,16 @@ pub fn validate_propose_recovery(
   expect Some(request_output) = list.at(outputs, request_output_index)
   expect InlineDatum(request_datum_data) = request_output.datum
   expect request_datum: TreasuryDatum = request_datum_data
-  expect RecoveryRequest {
-    target_token,
-    new_member_tokenname,
-    new_payment_credential,
-    earliest_execution_slot,
-    approvals: _approvals,
-    ..
-  } = request_datum
+  expect  
+      RecoveryRequest {
+        target_token,
+        new_member_tokenname,
+        new_payment_credential,
+        earliest_execution_slot,
+        approvals: _approvals,
+        ..
+      }
+    = request_datum
 
   // [spec ProposeRecovery 2]: the lost member must be a real registry member
   let target_in_registry = list.any(
@@ -389,7 +393,9 @@ pub fn validate_propose_recovery(
   // payouts to an attacker's address. The recovered member can still re-point it later
   // via UpdatePayout, so this is a binding, not a limitation. None ⇒ no signed N'
   // holder found ⇒ recoveree_controls_new_identity is False below.
-  let recoveree_controls_new_identity = recoveree_pkh == Some(new_payment_credential)
+  let recoveree_controls_new_identity = recoveree_pkh == Some(
+    new_payment_credential,
+  )
 
   // [spec ProposeRecovery 4]: the timelock is FIXED here from the trusted group's
   // recovery_timelock and the tx's own lower bound — never trusted from the datum as
@@ -435,15 +441,14 @@ pub fn validate_propose_recovery(
   // input (not an arbitrary caller-supplied value), and approvals equals EXACTLY
   // the derived signed-approval set (a caller cannot claim approvals beyond what
   // was actually signature-verified above).
-  let datum_correct =
-    request_datum == RecoveryRequest {
-      group_reference_tokenname: find_group_token_name(group_input),
-      target_token,
-      new_member_tokenname,
-      new_payment_credential,
-      earliest_execution_slot,
-      approvals: derived_approvals,
-    }
+  let datum_correct = request_datum == RecoveryRequest {
+    group_reference_tokenname: find_group_token_name(group_input),
+    target_token,
+    new_member_tokenname,
+    new_payment_credential,
+    earliest_execution_slot,
+    approvals: derived_approvals,
+  }
 
   and {
     target_in_registry?,
@@ -462,7 +467,8 @@ pub fn validate_propose_recovery(
       Pair(new_member_tokenname, 1),
     ])?,
     // [security]: output holds only ADA + own policy — prevents unbounded value accumulation
-    only_allowed_policies(request_output.value, [ada_policy_id, own_policy_id])?,
+    only_allowed_policies(request_output.value, [ada_policy_id,
+        own_policy_id])?,
   }
 }
 
@@ -632,7 +638,6 @@ pub fn validate_distribute_withdraw(
   // BeginRecommit gate (Cluster B): reset at the halt, fresh FCFS slots, rotation resumes.
   // Admin wind-down (UpdateGroup is_active=False → free exits → CloseGroup) remains the
   // fallback; see docs rotation-lifecycle.
-
   // [spec DistributeRound 6c / D3]: PRO-RATA pot = contribution_fee × cached active_member_count
   // (O(1), replaces the O(N²) count_active_members fold). C4 anti-skim is preserved by two pins:
   //   (1) spent_set_complete — the spent treasury set size == active_member_count, and
@@ -666,10 +671,12 @@ pub fn validate_distribute_withdraw(
   is {
     Some(reserve_in) -> {
       expect InlineDatum(reserve_datum_data) = reserve_in.output.datum
-      expect ReserveState {
-        group_reference_tokenname: reserve_binding,
-        standin_rounds,
-      }: TreasuryDatum = reserve_datum_data
+      expect  
+          ReserveState {
+            group_reference_tokenname: reserve_binding,
+            standin_rounds,
+          }: TreasuryDatum
+        = reserve_datum_data
       expect reserve_binding == expected_group_token_name
       (
         True,
@@ -728,8 +735,7 @@ pub fn validate_distribute_withdraw(
   // drains still transition to DefaultState (grace → recover or TerminateDefault).
   // Era-relative like every other rotation formula: a lap boundary is measured from
   // era_start_round, not the monotonic counter.
-  let is_cycle_boundary =
-    ( round_number + 1 - group.era_start_round ) % group.num_rounds == 0
+  let is_cycle_boundary = ( round_number + 1 - group.era_start_round ) % group.num_rounds == 0
   let current_time = get_lower_bound(tx)
 
   // [spec DistributeRound 6c]: PUSH only — borrower output at scheduled member's wallet,
@@ -757,94 +763,90 @@ pub fn validate_distribute_withdraw(
   // old indices_in_ascending_order checks) AND that every spent treasury UTxO is covered.
   // The closure returns Bool; a violation makes the indexer fail (crash), so per-input
   // negative tests must use `fail`, not `!`.
-  let io_pairs =
-    list.map(
-      list.zip(treasury_input_indices, treasury_output_indices),
-      fn(p) {
-        let (i, o) = p
-        Pair(i, o)
-      },
-    )
-  let per_input_valid =
-    multi_utxo_indexer.one_to_one_no_redeemer(
-      io_pairs,
-      own_policy_id,
-      inputs,
-      outputs,
-      fn(_in_idx, own_input, _out_idx, own_output) {
-        expect InlineDatum(in_datum_data) = own_input.output.datum
-        expect in_treasury_datum: TreasuryDatum = in_datum_data
-        when in_treasury_datum is {
-          // [spec Reserve C3]: the reserve continuation leg — levy in, stand-in
-          // draw out, counter decrement, everything else pinned.
-          ReserveState { .. } -> {
-            expect InlineDatum(out_datum_data) = own_output.datum
-            expect ReserveState {
-              group_reference_tokenname: out_binding,
-              standin_rounds: out_standin,
-            }: TreasuryDatum = out_datum_data
-            let out_contributable = contributable_in(
+  let io_pairs = list.map(
+    list.zip(treasury_input_indices, treasury_output_indices),
+    fn(p) {
+      let (i, o) = p
+      Pair(i, o)
+    },
+  )
+  let per_input_valid = multi_utxo_indexer.one_to_one_no_redeemer(
+    io_pairs,
+    own_policy_id,
+    inputs,
+    outputs,
+    fn(_in_idx, own_input, _out_idx, own_output) {
+      expect InlineDatum(in_datum_data) = own_input.output.datum
+      expect in_treasury_datum: TreasuryDatum = in_datum_data
+      when in_treasury_datum is {
+        // [spec Reserve C3]: the reserve continuation leg — levy in, stand-in
+        // draw out, counter decrement, everything else pinned.
+        ReserveState { .. } -> {
+          expect InlineDatum(out_datum_data) = own_output.datum
+          expect  
+              ReserveState {
+                group_reference_tokenname: out_binding,
+                standin_rounds: out_standin,
+              }: TreasuryDatum
+            = out_datum_data
+          let out_contributable = contributable_in(
+            own_output.value,
+            group.contribution_fee_policyid,
+            group.contribution_fee_assetname,
+          )
+          and {
+            // Only THE reserve (holding the token) may present a ReserveState —
+            // the identity/binding of the real reserve was checked pre-fold, and
+            // the token can exist in exactly one continuation output.
+            (assets.quantity_of(
+              own_input.output.value,
+              own_policy_id,
+              reserve_token_name,
+            ) == 1)?,
+            (out_binding == expected_group_token_name)?,
+            (out_standin == standin_out_expected)?,
+            (own_output.address == own_input.output.address)?,
+            (dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
+              Pair(reserve_token_name, 1),
+            ])?,
+            only_allowed_policies(
+              own_output.value,
+              [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
+            )?,
+            (out_contributable == reserve_in_contributable + levy_total - draw)?,
+            ada_reserve_conserved(
+              own_input.output.value,
               own_output.value,
               group.contribution_fee_policyid,
-              group.contribution_fee_assetname,
-            )
-            and {
-              // Only THE reserve (holding the token) may present a ReserveState —
-              // the identity/binding of the real reserve was checked pre-fold, and
-              // the token can exist in exactly one continuation output.
-              (assets.quantity_of(
-                own_input.output.value,
-                own_policy_id,
-                reserve_token_name,
-              ) == 1)?,
-              (out_binding == expected_group_token_name)?,
-              (out_standin == standin_out_expected)?,
-              (own_output.address == own_input.output.address)?,
-              (dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
-                Pair(reserve_token_name, 1),
-              ])?,
-              only_allowed_policies(
-                own_output.value,
-                [
-                  ada_policy_id, own_policy_id, group.contribution_fee_policyid,
-                ],
-              )?,
-              (out_contributable == reserve_in_contributable + levy_total - draw)?,
-              ada_reserve_conserved(
-                own_input.output.value,
-                own_output.value,
-                group.contribution_fee_policyid,
-              )?,
-            }
+            )?,
           }
-          TreasuryState { .. } ->
-            validate_distribute_member_leg(
-              own_input,
-              own_output,
-              in_treasury_datum,
-              own_policy_id,
-              group,
-              expected_group_token_name,
-              round_number,
-              borrower_token_opt,
-              is_pull,
-              adjusted_payout,
-              is_cycle_boundary,
-              current_time,
-            )
-          // [spec DistributeRound 1]: no other datum state may join a round.
-          _ -> fail @"only TreasuryState members and the reserve join a round"
         }
-      },
-    )
-
+        TreasuryState { .. } ->
+          validate_distribute_member_leg(
+            own_input,
+            own_output,
+            in_treasury_datum,
+            own_policy_id,
+            group,
+            expected_group_token_name,
+            round_number,
+            borrower_token_opt,
+            is_pull,
+            adjusted_payout,
+            is_cycle_boundary,
+            current_time,
+          )
+        // [spec DistributeRound 1]: no other datum state may join a round.
+        _ -> fail @"only TreasuryState members and the reserve join a round"
+      }
+    },
+  )
 
   // [D3]: group output decrements active_member_count by exactly the number of members that
   // transitioned to DefaultState (ICS) this round. The pot above used the PRE-decrement count
   // (correct — every member who contributed this round is counted, including any going to ICS).
   let ics_count = count_default_outputs(treasury_output_indices, outputs)
-  let active_count_correct =
-    updated_group.active_member_count == group.active_member_count - ics_count
+  let active_count_correct = updated_group.active_member_count == group.active_member_count - ics_count
 
   and {
     borrower_present?,
@@ -880,13 +882,15 @@ fn validate_distribute_member_leg(
 ) -> Bool {
   // [spec DistributeRound 1]: input datum must be TreasuryState. Carries
   // member_payment_credential into any DefaultState transition.
-  expect TreasuryState {
-    member_reference_tokenname,
-    group_reference_tokenname,
-    member_payment_credential,
-    rounds_paid,
-    claimable_balance,
-  } = in_treasury_datum
+  expect  
+      TreasuryState {
+        member_reference_tokenname,
+        group_reference_tokenname,
+        member_payment_credential,
+        rounds_paid,
+        claimable_balance,
+      }
+    = in_treasury_datum
 
   // [security C4 / D3]: the spent treasury must belong to THIS group. count_active_members
   // used to provide this implicitly (by iterating this group's registry); with the cached
@@ -903,18 +907,16 @@ fn validate_distribute_member_leg(
   // [spec DistributeRound 7b]: contributable balance (excludes ADA reserve), so the
   // -fee conservation is reserve-invariant and the ICS threshold fires on spendable
   // shortfall; final round lands contributable at 0 with the reserve carrying the token.
-  let input_bal =
-    contributable_in(
-      own_input.output.value,
-      group.contribution_fee_policyid,
-      group.contribution_fee_assetname,
-    )
-  let output_bal =
-    contributable_in(
-      own_output.value,
-      group.contribution_fee_policyid,
-      group.contribution_fee_assetname,
-    )
+  let input_bal = contributable_in(
+    own_input.output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
+  let output_bal = contributable_in(
+    own_output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
 
   // is_borrower_treasury is decided purely from the immutable membership token name
   // vs the group-registry-resolved borrower, so it cannot be spoofed.
@@ -925,50 +927,48 @@ fn validate_distribute_member_leg(
   // round levy plus any stand-in draw — conservation pins all other treasuries to
   // -fee and the reserve leg to its exact delta, so released fees can only land
   // here — no skim possible).
-  let balance_deducted =
-    if is_pull && is_borrower_treasury {
-      output_bal == input_bal - group.contribution_fee + adjusted_payout
-    } else {
-      output_bal == input_bal - group.contribution_fee
-    }
+  let balance_deducted = if is_pull && is_borrower_treasury {
+    output_bal == input_bal - group.contribution_fee + adjusted_payout
+  } else {
+    output_bal == input_bal - group.contribution_fee
+  }
 
   // [spec DistributeRound 7a / D2]: ICS transition when spendable balance drops below
   // contribution_fee, EXCEPT at a cycle boundary (last round of any cycle) — there the
   // member stays TreasuryState so they can mature/free-exit (D4). See is_cycle_boundary.
-  let transition_to_ics =
-    output_bal < group.contribution_fee && !is_cycle_boundary
+  let transition_to_ics = output_bal < group.contribution_fee && !is_cycle_boundary
 
-  let output_datum_correct =
-    if transition_to_ics {
-      output_datum == DefaultState {
-        group_reference_tokenname,
-        member_reference_tokenname,
-        grace_expires_at: current_time + group.grace_period_length,
-        grace_extensions_used: 0,
-        rounds_paid: round_number + 1,
-        member_payment_credential,
-        // [carry-forward]: a defaulter is always a non-borrower (borrower balance rises
-        // by the adjusted pot, never below fee), so the earmark carries through unchanged.
-        claimable_balance,
-      }
-    } else {
-      expect TreasuryState {
-        rounds_paid: output_rounds_paid,
-        claimable_balance: output_claimable_balance,
-        ..
-      } = output_datum
-      // [security]: claimable_balance is pinned. Under Push (and every non-borrower
-      // under Pull) preserved exactly — else a caller could inflate their own earmark
-      // and later drain it via ClaimPayout. Under Pull the borrower's OWN treasury
-      // accrues exactly the adjusted pot (matching balance_deducted above).
-      let expected_claimable =
-        if is_pull && is_borrower_treasury {
-          claimable_balance + adjusted_payout
-        } else {
-          claimable_balance
-        }
-      output_rounds_paid == round_number + 1 && output_claimable_balance == expected_claimable
+  let output_datum_correct = if transition_to_ics {
+    output_datum == DefaultState {
+      group_reference_tokenname,
+      member_reference_tokenname,
+      grace_expires_at: current_time + group.grace_period_length,
+      grace_extensions_used: 0,
+      rounds_paid: round_number + 1,
+      member_payment_credential,
+      // [carry-forward]: a defaulter is always a non-borrower (borrower balance rises
+      // by the adjusted pot, never below fee), so the earmark carries through unchanged.
+      claimable_balance,
     }
+  } else {
+    expect  
+        TreasuryState {
+          rounds_paid: output_rounds_paid,
+          claimable_balance: output_claimable_balance,
+          ..
+        }
+      = output_datum
+    // [security]: claimable_balance is pinned. Under Push (and every non-borrower
+    // under Pull) preserved exactly — else a caller could inflate their own earmark
+    // and later drain it via ClaimPayout. Under Pull the borrower's OWN treasury
+    // accrues exactly the adjusted pot (matching balance_deducted above).
+    let expected_claimable = if is_pull && is_borrower_treasury {
+      claimable_balance + adjusted_payout
+    } else {
+      claimable_balance
+    }
+    output_rounds_paid == round_number + 1 && output_claimable_balance == expected_claimable
+  }
 
   // [AIK-4 fix]: full-address equality on the continuing treasury output — the stake
   // credential is preserved from the input. A permissionless cranker (DistributeRound)
@@ -978,13 +978,12 @@ fn validate_distribute_member_leg(
   // [spec DistributeRound 8]: clean output at treasury script with membership token —
   // exactly the membership token + only ADA + own policy + contribution asset (no skim).
   // Address check is handled above (address_preserved).
-  let treasury_output_ok =
-    treasury_output_clean(
-      own_output,
-      own_policy_id,
-      member_reference_tokenname,
-      group.contribution_fee_policyid,
-    )
+  let treasury_output_ok = treasury_output_clean(
+    own_output,
+    own_policy_id,
+    member_reference_tokenname,
+    group.contribution_fee_policyid,
+  )
 
   and {
     group_link_ok?,
@@ -1031,7 +1030,7 @@ pub fn validate_exit_treasury(
   let Transaction { inputs, outputs, mint, .. } = tx
 
   // [spec ExitGroup 1]: datum must be TreasuryState
-  expect
+  expect  
       TreasuryState {
         member_reference_tokenname,
         group_reference_tokenname,
@@ -1072,8 +1071,9 @@ pub fn validate_exit_treasury(
   //   completed a whole lap of the CURRENT era                         → free exit, token burned
   //   otherwise (mid-cycle, active, started)                           → penalty exit, PenaltyState
   // The is_started guard short-circuits before the modulo so pre-start (num_rounds == 0) never /0.
-  let completed_full_cycle =
-    group.is_started && rounds_paid > group.era_start_round && ( rounds_paid - group.era_start_round ) % group.num_rounds == 0
+  let completed_full_cycle = group.is_started && rounds_paid > group.era_start_round && (
+    rounds_paid - group.era_start_round
+  ) % group.num_rounds == 0
   let is_early_exit = group.is_active && group.is_started && !completed_full_cycle
 
   // [spec ExitGroup 3]: group output — member_count decrements on BOTH paths
@@ -1188,55 +1188,63 @@ pub fn validate_approve_recovery(
   utxo: OutputReference,
   tx: Transaction,
 ) -> Bool {
-  let Transaction {
-    inputs,
-    reference_inputs,
-    outputs,
-    mint,
-    extra_signatories,
-    ..
-  } = tx
+  let  
+      Transaction {
+        inputs,
+        reference_inputs,
+        outputs,
+        mint,
+        extra_signatories,
+        ..
+      }
+    = tx
 
   // [spec ApproveRecovery 1]: self-reference — request_input_index must resolve to own UTxO
   expect Some(request_input) = list.at(inputs, request_input_index)
   expect request_input.output_reference == utxo
   expect InlineDatum(request_datum_data) = request_input.output.datum
   expect request_datum: TreasuryDatum = request_datum_data
-  expect RecoveryRequest {
-    group_reference_tokenname,
-    target_token,
-    new_member_tokenname,
-    new_payment_credential,
-    earliest_execution_slot,
-    approvals: existing_approvals,
-  } = request_datum
+  expect  
+      RecoveryRequest {
+        group_reference_tokenname,
+        target_token,
+        new_member_tokenname,
+        new_payment_credential,
+        earliest_execution_slot,
+        approvals: existing_approvals,
+      }
+    = request_datum
 
   // [spec ApproveRecovery 2]: group at Script(trusted_group_policy) as a REFERENCE input
   // (ApproveRecovery does not modify the group — it only reads the registry)
   expect Some(group_input) = list.at(reference_inputs, group_ref_input_index)
   expect
-    group_input.output.address.payment_credential == Script(trusted_group_policy)
+    group_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
   expect InlineDatum(group_datum_data) = group_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
 
   // [spec ApproveRecovery 2b]: request's group_reference_tokenname links to this group
-  let group_link_valid =
-    group_reference_tokenname == find_group_token_name(group_input)
+  let group_link_valid = group_reference_tokenname == find_group_token_name(
+    group_input,
+  )
 
   // [spec ApproveRecovery 3]: new approver via signed_account_token_name — must be at
   // a VK address whose PKH signed, and hold exactly 1 account token. Crashes on
   // unsigned/script-address/multi-token inputs (fail-fast, mirrors ProposeRecovery).
-  let new_approval =
-    signed_account_token_name(
-      inputs,
-      approver_input_index,
-      account_policy_id,
-      extra_signatories,
-    )
+  let new_approval = signed_account_token_name(
+    inputs,
+    approver_input_index,
+    account_policy_id,
+    extra_signatories,
+  )
 
   // [spec ApproveRecovery 3a]: approver must be a real registry member
-  let approver_is_member =
-    approvals_are_registry_members([new_approval], group.member_token_names)
+  let approver_is_member = approvals_are_registry_members(
+    [new_approval],
+    group.member_token_names,
+  )
 
   // [spec ApproveRecovery 3b]: approver must NOT already appear in existing_approvals
   let approver_not_duplicate = !list.has(existing_approvals, new_approval)
@@ -1251,15 +1259,14 @@ pub fn validate_approve_recovery(
   expect Some(request_output) = list.at(outputs, request_output_index)
   expect InlineDatum(output_datum_data) = request_output.datum
   expect output_datum: TreasuryDatum = output_datum_data
-  let datum_correct =
-    output_datum == RecoveryRequest {
-      group_reference_tokenname,
-      target_token,
-      new_member_tokenname,
-      new_payment_credential,
-      earliest_execution_slot,
-      approvals: updated_approvals,
-    }
+  let datum_correct = output_datum == RecoveryRequest {
+    group_reference_tokenname,
+    target_token,
+    new_member_tokenname,
+    new_payment_credential,
+    earliest_execution_slot,
+    approvals: updated_approvals,
+  }
 
   // [AIK-4 fix]: full-address equality — the request output's address must exactly
   // match the input's address; stake credential is preserved from the input.
@@ -1267,14 +1274,15 @@ pub fn validate_approve_recovery(
 
   // [spec ApproveRecovery 5b]: output holds EXACTLY {N': 1} under own policy — no skim,
   // no merge of a second token under this policy (exact token check).
-  let token_preserved =
-    dict.to_pairs(assets.tokens(request_output.value, own_policy_id)) == [
-      Pair(new_member_tokenname, 1),
-    ]
+  let token_preserved = dict.to_pairs(
+    assets.tokens(request_output.value, own_policy_id),
+  ) == [Pair(new_member_tokenname, 1)]
 
   // [spec ApproveRecovery 5c]: output holds only ADA + own policy — prevents accumulation
-  let clean_output_value =
-    only_allowed_policies(request_output.value, [ada_policy_id, own_policy_id])
+  let clean_output_value = only_allowed_policies(
+    request_output.value,
+    [ada_policy_id, own_policy_id],
+  )
 
   // [spec ApproveRecovery 5d]: no mint under own policy — ApproveRecovery neither mints
   // nor burns; the N' token that authenticates the request persists untouched
@@ -1348,22 +1356,16 @@ pub fn validate_cancel_recovery(
   expect request_input.output_reference == utxo
   expect InlineDatum(request_datum_data) = request_input.output.datum
   expect request_datum: TreasuryDatum = request_datum_data
-  expect RecoveryRequest {
-    target_token,
-    new_member_tokenname,
-    approvals,
-    ..
-  } = request_datum
+  expect RecoveryRequest { target_token, new_member_tokenname, approvals, .. } = request_datum
 
   // [spec CancelRecovery 4]: spend↔mint cross-check — the burn must be EXACTLY
   // {N': -1} under own policy, nothing else minted/burned. This is the bidirectional
   // pin: the spend handler confirms the name matches the request's datum N' AND that
   // no extra tokens are minted/burned under own policy. The mint handler independently
   // enforces the same exact-one-burn shape, so both must agree.
-  let n_prime_burned =
-    dict.to_pairs(assets.tokens(mint, own_policy_id)) == [
-      Pair(new_member_tokenname, -1),
-    ]
+  let n_prime_burned = dict.to_pairs(assets.tokens(mint, own_policy_id)) == [
+    Pair(new_member_tokenname, -1),
+  ]
 
   // [spec CancelRecovery 2a/2b]: EITHER the real holder of target_token signs, OR a
   // member from the approvals set signs. We scan tx.inputs for ANY input that satisfies
@@ -1375,34 +1377,31 @@ pub fn validate_cancel_recovery(
   //
   // Path (b): input holds exactly 1 of any account token whose name is in approvals,
   //           at a VK address whose PKH is in extra_signatories.
-  let authorized =
-    list.any(
-      inputs,
-      fn(inp) {
-        when inp.output.address.payment_credential is {
-          VerificationKey(pkh) ->
-            if list.has(extra_signatories, pkh) {
-              // Check path (a): does this input hold exactly target_token?
-              let holds_target =
-                dict.to_pairs(
-                  assets.tokens(inp.output.value, account_policy_id),
-                ) == [Pair(target_token, 1)]
-              // Check path (b): does this input hold an account token in approvals?
-              let holds_approver_token =
-                when dict.to_pairs(
-                  assets.tokens(inp.output.value, account_policy_id),
-                ) is {
-                  [Pair(tn, 1)] -> list.has(approvals, tn)
-                  _ -> False
-                }
-              holds_target || holds_approver_token
-            } else {
-              False
+  let authorized = list.any(
+    inputs,
+    fn(inp) {
+      when inp.output.address.payment_credential is {
+        VerificationKey(pkh) ->
+          if list.has(extra_signatories, pkh) {
+            // Check path (a): does this input hold exactly target_token?
+            let holds_target = dict.to_pairs(
+              assets.tokens(inp.output.value, account_policy_id),
+            ) == [Pair(target_token, 1)]
+            // Check path (b): does this input hold an account token in approvals?
+            let holds_approver_token = when
+              dict.to_pairs(assets.tokens(inp.output.value, account_policy_id))
+            is {
+              [Pair(tn, 1)] -> list.has(approvals, tn)
+              _ -> False
             }
-          _ -> False
-        }
-      },
-    )
+            holds_target || holds_approver_token
+          } else {
+            False
+          }
+        _ -> False
+      }
+    },
+  )
 
   // [spec CancelRecovery 3]: NO timelock gate — authorization is sufficient at any time.
   // [spec CancelRecovery 4]: N' burned under own policy, cross-checked against datum.
@@ -1471,26 +1470,29 @@ pub fn validate_execute_recovery(
   expect Some(request_input) = list.at(inputs, request_input_index)
   expect InlineDatum(request_datum_data) = request_input.output.datum
   expect request_datum: TreasuryDatum = request_datum_data
-  expect RecoveryRequest {
-    group_reference_tokenname,
-    target_token,
-    new_member_tokenname,
-    new_payment_credential,
-    earliest_execution_slot,
-    approvals,
-  } = request_datum
+  expect  
+      RecoveryRequest {
+        group_reference_tokenname,
+        target_token,
+        new_member_tokenname,
+        new_payment_credential,
+        earliest_execution_slot,
+        approvals,
+      }
+    = request_datum
 
   // [spec ExecuteRecovery 1]: request holds exactly {N': 1} under own policy
-  let request_holds_n_prime =
-    dict.to_pairs(assets.tokens(request_input.output.value, own_policy_id)) == [
-      Pair(new_member_tokenname, 1),
-    ]
+  let request_holds_n_prime = dict.to_pairs(
+    assets.tokens(request_input.output.value, own_policy_id),
+  ) == [Pair(new_member_tokenname, 1)]
 
   // [spec ExecuteRecovery 3]: group is a SPENDING input (RecoverMember redeemer modifies it)
   expect Some(group_input) = list.at(inputs, group_ref_input_index)
   // [security C1/C2]: the group input MUST sit at the trusted group script.
   expect
-    group_input.output.address.payment_credential == Script(trusted_group_policy)
+    group_input.output.address.payment_credential == Script(
+      trusted_group_policy,
+    )
   expect InlineDatum(group_datum_data) = group_input.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
 
@@ -1508,21 +1510,21 @@ pub fn validate_execute_recovery(
   // except the lost one, who can never self-vouch), so a group that shrank below its
   // configured threshold keeps a reachable quorum instead of permanently losing
   // recovery. Floored at 1 — at least one signed current member is always required.
-  let valid_approvals =
-    list.filter(approvals, fn(a) { list.has(group.member_token_names, a) })
+  let valid_approvals = list.filter(
+    approvals,
+    fn(a) { list.has(group.member_token_names, a) },
+  )
   let max_achievable = group.member_count - 1
-  let clamped =
-    if group.recovery_threshold > max_achievable {
-      max_achievable
-    } else {
-      group.recovery_threshold
-    }
-  let effective_threshold =
-    if clamped < 1 {
-      1
-    } else {
-      clamped
-    }
+  let clamped = if group.recovery_threshold > max_achievable {
+    max_achievable
+  } else {
+    group.recovery_threshold
+  }
+  let effective_threshold = if clamped < 1 {
+    1
+  } else {
+    clamped
+  }
   let meets_threshold = list.length(valid_approvals) >= effective_threshold
 
   // [spec ExecuteRecovery 4]: member treasury input holds {N: 1} under own policy.
@@ -1530,10 +1532,9 @@ pub fn validate_execute_recovery(
     inputs,
     member_treasury_input_index,
   )
-  let member_holds_n =
-    dict.to_pairs(
-      assets.tokens(member_treasury_input.output.value, own_policy_id),
-    ) == [Pair(target_token, 1)]
+  let member_holds_n = dict.to_pairs(
+    assets.tokens(member_treasury_input.output.value, own_policy_id),
+  ) == [Pair(target_token, 1)]
 
   // [spec ExecuteRecovery 4]: datum is TreasuryState or DefaultState with
   // member_reference_tokenname == target_token (N). Destructure both paths and verify
@@ -1543,61 +1544,56 @@ pub fn validate_execute_recovery(
 
   // Extract member_reference_tokenname and group link for the member treasury,
   // plus carry all economic fields for the rotated output construction.
-  let (
-    member_ref_tn_ok,
-    member_group_link_ok,
-    expected_rotated_datum,
-  ) =
-    when member_datum is {
-      TreasuryState {
-        member_reference_tokenname: mrt,
+  let (member_ref_tn_ok, member_group_link_ok, expected_rotated_datum) = when
+    member_datum
+  is {
+    TreasuryState {
+      member_reference_tokenname: mrt,
+      group_reference_tokenname: mgrt,
+      rounds_paid,
+      member_payment_credential: _old_cred,
+      claimable_balance,
+    } -> {
+      let tn_ok = mrt == target_token
+      let gl_ok = mgrt == expected_group_token_name
+      // [spec ExecuteRecovery 5]: rotated datum: ONLY member_reference_tokenname→N'
+      // and member_payment_credential→new_payment_credential changed; all else preserved.
+      let rotated = TreasuryState {
         group_reference_tokenname: mgrt,
+        member_reference_tokenname: new_member_tokenname,
         rounds_paid,
-        member_payment_credential: _old_cred,
+        member_payment_credential: new_payment_credential,
         claimable_balance,
-      } -> {
-        let tn_ok = mrt == target_token
-        let gl_ok = mgrt == expected_group_token_name
-        // [spec ExecuteRecovery 5]: rotated datum: ONLY member_reference_tokenname→N'
-        // and member_payment_credential→new_payment_credential changed; all else preserved.
-        let rotated =
-          TreasuryState {
-            group_reference_tokenname: mgrt,
-            member_reference_tokenname: new_member_tokenname,
-            rounds_paid,
-            member_payment_credential: new_payment_credential,
-            claimable_balance,
-          }
-        (tn_ok, gl_ok, rotated)
       }
-      DefaultState {
-        member_reference_tokenname: mrt,
+      (tn_ok, gl_ok, rotated)
+    }
+    DefaultState {
+      member_reference_tokenname: mrt,
+      group_reference_tokenname: mgrt,
+      grace_expires_at,
+      grace_extensions_used,
+      rounds_paid,
+      member_payment_credential: _old_cred,
+      claimable_balance,
+    } -> {
+      let tn_ok = mrt == target_token
+      let gl_ok = mgrt == expected_group_token_name
+      // DefaultState: same rotation — member_reference_tokenname→N' and
+      // member_payment_credential→new_payment_credential; grace fields preserved.
+      let rotated = DefaultState {
         group_reference_tokenname: mgrt,
+        member_reference_tokenname: new_member_tokenname,
         grace_expires_at,
         grace_extensions_used,
         rounds_paid,
-        member_payment_credential: _old_cred,
+        member_payment_credential: new_payment_credential,
         claimable_balance,
-      } -> {
-        let tn_ok = mrt == target_token
-        let gl_ok = mgrt == expected_group_token_name
-        // DefaultState: same rotation — member_reference_tokenname→N' and
-        // member_payment_credential→new_payment_credential; grace fields preserved.
-        let rotated =
-          DefaultState {
-            group_reference_tokenname: mgrt,
-            member_reference_tokenname: new_member_tokenname,
-            grace_expires_at,
-            grace_extensions_used,
-            rounds_paid,
-            member_payment_credential: new_payment_credential,
-            claimable_balance,
-          }
-        (tn_ok, gl_ok, rotated)
       }
-      // PenaltyState and RecoveryRequest are not valid lost-member positions.
-      _ -> fail @"member treasury must be TreasuryState or DefaultState"
+      (tn_ok, gl_ok, rotated)
     }
+    // PenaltyState and RecoveryRequest are not valid lost-member positions.
+    _ -> fail @"member treasury must be TreasuryState or DefaultState"
+  }
 
   // [spec ExecuteRecovery 5]: rotated output at member_treasury_output_index.
   expect Some(rotated_output) = list.at(outputs, member_treasury_output_index)
@@ -1610,43 +1606,39 @@ pub fn validate_execute_recovery(
 
   // [spec ExecuteRecovery 5]: output holds exactly {N': 1} under own policy — N' is
   // relocated from the request UTxO (not freshly minted); net mint is only {N: -1}.
-  let output_holds_n_prime =
-    dict.to_pairs(assets.tokens(rotated_output.value, own_policy_id)) == [
-      Pair(new_member_tokenname, 1),
-    ]
+  let output_holds_n_prime = dict.to_pairs(
+    assets.tokens(rotated_output.value, own_policy_id),
+  ) == [Pair(new_member_tokenname, 1)]
 
   // [spec ExecuteRecovery 5]: the rotated output's total lovelace >= input lovelace
   // (ADA must not decrease — for an ADA-denominated group this also pins the
   // contribution balance, since the contribution asset IS the lovelace).
-  let value_conserved =
-    assets.lovelace_of(rotated_output.value) >= assets.lovelace_of(
-      member_treasury_input.output.value,
-    )
+  let value_conserved = assets.lovelace_of(rotated_output.value) >= assets.lovelace_of(
+    member_treasury_input.output.value,
+  )
 
   // [security]: the rotated output may hold ONLY ADA + own policy + the group's
   // contribution asset — no foreign tokens can be smuggled in, and (paired with the
   // contribution-conservation check below) no contribution tokens can be routed out.
-  let clean_output_value =
-    only_allowed_policies(
-      rotated_output.value,
-      [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
-    )
+  let clean_output_value = only_allowed_policies(
+    rotated_output.value,
+    [ada_policy_id, own_policy_id, group.contribution_fee_policyid],
+  )
 
   // [security]: for a NATIVE-TOKEN group the contribution balance is independent of
   // lovelace, so value_conserved alone does NOT stop a drain of the member's
   // contribution tokens. Pin the contributable balance exactly — rotation must not
   // change the recovered member's economic position. For an ADA group this is a no-op
   // beyond value_conserved (the lovelace floor already covers it).
-  let contribution_conserved =
-    contributable_in(
-      rotated_output.value,
-      group.contribution_fee_policyid,
-      group.contribution_fee_assetname,
-    ) == contributable_in(
-      member_treasury_input.output.value,
-      group.contribution_fee_policyid,
-      group.contribution_fee_assetname,
-    )
+  let contribution_conserved = contributable_in(
+    rotated_output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  ) == contributable_in(
+    member_treasury_input.output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
 
   // [spec ExecuteRecovery 5]: datum exactly matches the constructed rotated datum
   // (two-field record update: member_reference_tokenname, member_payment_credential).
@@ -1656,8 +1648,7 @@ pub fn validate_execute_recovery(
   // N' is RELOCATED (already minted by ProposeRecovery; goes from request to rotated output),
   // so the only net own-policy mint event here is the burn of the old identity N.
   let minted_tokens = assets.tokens(mint, own_policy_id)
-  let exact_burn =
-    dict.to_pairs(minted_tokens) == [Pair(target_token, -1)]
+  let exact_burn = dict.to_pairs(minted_tokens) == [Pair(target_token, -1)]
 
   // [spec ExecuteRecovery 7]: group output shows N→N' swap — lightweight coupling.
   // RecoverMember enforces the full registry edit; we independently verify N is gone
@@ -1711,7 +1702,10 @@ pub fn validate_execute_recovery(
 //
 // [spec CancelRecovery mint 1]: exactly one token under own policy burned (qty = -1),
 //                               no other mints/burns under own policy.
-pub fn validate_cancel_recovery_mint(own_policy_id: PolicyId, mint: Value) -> Bool {
+pub fn validate_cancel_recovery_mint(
+  own_policy_id: PolicyId,
+  mint: Value,
+) -> Bool {
   let minted_tokens = assets.tokens(mint, own_policy_id)
   // Exactly one entry, with quantity -1 (mirrors validate_claim_penalty_mint shape).
   expect [Pair(_, qty)] = dict.to_pairs(minted_tokens)
@@ -1946,7 +1940,8 @@ pub fn validate_contribute(
     DefaultState { member_reference_tokenname, group_reference_tokenname, .. } ->
       (member_reference_tokenname, group_reference_tokenname)
     PenaltyState { .. } -> fail @"PenaltyState cannot receive contributions"
-    RecoveryRequest { .. } -> fail @"RecoveryRequest cannot receive contributions"
+    RecoveryRequest { .. } ->
+      fail @"RecoveryRequest cannot receive contributions"
     ReserveState { .. } -> fail @"ReserveState cannot receive contributions"
   }
 
@@ -1968,20 +1963,21 @@ pub fn validate_contribute(
     DefaultState { .. } -> True
     _ -> False
   }
-  let group_utxo =
-    if is_recovery {
-      expect Some(gi) = list.at(inputs, group_ref_input_index)
-      gi
-    } else {
-      expect Some(gi) = list.at(reference_inputs, group_ref_input_index)
-      gi
-    }
+  let group_utxo = if is_recovery {
+    expect Some(gi) = list.at(inputs, group_ref_input_index)
+    gi
+  } else {
+    expect Some(gi) = list.at(reference_inputs, group_ref_input_index)
+    gi
+  }
   // [security C1]: the group must sit at the trusted group script.
   expect
     group_utxo.output.address.payment_credential == Script(trusted_group_policy)
   expect InlineDatum(group_datum_data) = group_utxo.output.datum
   expect GroupCip68Datum { extra: group, .. } = group_datum_data
-  let group_link_valid = datum_group_tokenname == find_group_token_name(group_utxo)
+  let group_link_valid = datum_group_tokenname == find_group_token_name(
+    group_utxo,
+  )
 
   expect Some(own_input) = find_own_input(inputs, utxo)
 
@@ -2038,7 +2034,8 @@ pub fn validate_contribute(
 
     PenaltyState { .. } -> False
 
-    RecoveryRequest { .. } -> fail @"RecoveryRequest cannot receive contributions"
+    RecoveryRequest { .. } ->
+      fail @"RecoveryRequest cannot receive contributions"
     ReserveState { .. } -> fail @"ReserveState cannot receive contributions"
   }
 

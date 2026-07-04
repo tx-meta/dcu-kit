@@ -13,12 +13,17 @@ fn settings_policy() -> assets.PolicyId {
   common.test_hash_01()
 }
 
-// The published trusted policy IDs (account / group / treasury).
+// The published trusted policy IDs (account / group / treasury) and the four
+// treasury family stake-validator hashes.
 fn sample_settings() -> ProtocolSettings {
   ProtocolSettings {
     account_policy: common.test_hash_01(),
     group_policy: common.test_hash_02(),
     treasury_policy: common.test_hash_03(),
+    treasury_rounds_stake: common.test_hash_04(),
+    treasury_lifecycle_stake: common.test_hash_05(),
+    treasury_recovery_stake: common.test_hash_06(),
+    treasury_reserve_stake: common.test_hash_07(),
   }
 }
 

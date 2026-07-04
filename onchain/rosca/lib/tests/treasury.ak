@@ -8,10 +8,12 @@ use cardano/transaction.{
 }
 use dcu/cip68
 use dcu/group.{GroupCip68Datum, GroupDatum, Pull, Push}
+use dcu/settings.{ProtocolSettings}
 use dcu/treasury.{
   DefaultState, PenaltyState, ReserveState, TreasuryDatum, TreasuryState,
   max_grace_extensions,
 }
+use dcu/treasury_actions.{ExitAction, JoinAction, run_lifecycle_action}
 use dcu/treasury_utils.{min_ada_reserve}
 use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
@@ -253,7 +255,10 @@ fn test_treasury_output(datum: TreasuryDatum, value: assets.Value) -> Output {
 // Standard enterprise treasury address used in ExitGroup tests —
 // the address the spent treasury input has (stake credential = None).
 fn treasury_script_address() -> Address {
-  Address { payment_credential: Script(treasury_policy()), stake_credential: None }
+  Address {
+    payment_credential: Script(treasury_policy()),
+    stake_credential: None,
+  }
 }
 
 // Treasury input wrapping an output
@@ -401,7 +406,10 @@ fn test_started_group_input(member_count: Int) -> Input {
       output_index: 0,
     },
     output: Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value,
       datum: InlineDatum(datum),
       reference_script: None,
@@ -1480,17 +1488,7 @@ test distribute_round__rejects_fake_group_script() fail {
     validity_range: interval.after(0),
   }
 
-  validate_distribute_withdraw(
-    tp,
-    group_policy(),
-    0,
-    0,
-    1,
-    [1],
-    [0],
-    2,
-    tx,
-  )
+  validate_distribute_withdraw(tp, group_policy(), 0, 0, 1, [1], [0], 2, tx)
 }
 
 test distribute_round__accepts_valid_round() {
@@ -1521,16 +1519,15 @@ test distribute_round__accepts_second_cycle_round() {
   let gp = group_policy()
 
   // num_rounds = 1; last_distributed_round = 0, so round_number = 1 (== num_rounds).
-  let group_datum =
-    GroupDatum {
-      ..test_group_datum(),
-      num_rounds: 1,
-      is_started: True,
-      last_distributed_round: 0,
-      active_member_count: 1,
-      member_token_names: [member_tn()],
+  let group_datum = GroupDatum {
+    ..test_group_datum(),
+    num_rounds: 1,
+    is_started: True,
+    last_distributed_round: 0,
+    active_member_count: 1,
+    member_token_names: [member_tn()],
     member_slots: [0],
-    }
+  }
   let group_in_value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
   let group_input = Input {
@@ -1539,7 +1536,10 @@ test distribute_round__accepts_second_cycle_round() {
       output_index: 0,
     },
     output: Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value: group_in_value,
       datum: InlineDatum(cip68_with_group(group_datum)),
       reference_script: None,
@@ -1556,7 +1556,10 @@ test distribute_round__accepts_second_cycle_round() {
   // Member ready for round 1 (rounds_paid == 1); after the round, rounds_paid == 2.
   let treasury_in = test_treasury_input(
     treasury_utxo_ref(),
-    test_treasury_output(build_treasury_state(group_ref_tn(), 1), treasury_value()),
+    test_treasury_output(
+      build_treasury_state(group_ref_tn(), 1),
+      treasury_value(),
+    ),
   )
   let treasury_out = test_treasury_output(
     build_treasury_state(group_ref_tn(), 2),
@@ -1643,17 +1646,7 @@ test distribute_round__accepts_final_round_drains_to_reserve() {
     validity_range: interval.after(0),
   }
 
-  validate_distribute_withdraw(
-    tp,
-    group_policy(),
-    0,
-    0,
-    1,
-    [1],
-    [0],
-    2,
-    tx,
-  )
+  validate_distribute_withdraw(tp, group_policy(), 0, 0, 1, [1], [0], 2, tx)
 }
 
 // [B3 + B2] Mid-cycle DefaultState transition: a non-final round (0 of 3) debits the fee,
@@ -1744,17 +1737,7 @@ test distribute_round__accepts_transition_to_default() {
     validity_range: interval.after(0),
   }
 
-  validate_distribute_withdraw(
-    tp,
-    group_policy(),
-    0,
-    0,
-    1,
-    [1],
-    [0],
-    2,
-    tx,
-  )
+  validate_distribute_withdraw(tp, group_policy(), 0, 0, 1, [1], [0], 2, tx)
 }
 
 // Era-shifted regression: after a re-seal (era_start_round = 5), round 5 is the NEW
@@ -1839,17 +1822,7 @@ test distribute_round__accepts_transition_to_default_in_new_era() {
     validity_range: interval.after(0),
   }
 
-  validate_distribute_withdraw(
-    tp,
-    group_policy(),
-    5,
-    0,
-    1,
-    [1],
-    [0],
-    2,
-    tx,
-  )
+  validate_distribute_withdraw(tp, group_policy(), 5, 0, 1, [1], [0], 2, tx)
 }
 
 // fail: a SPENT member treasury that is not TreasuryState must crash the round
@@ -1860,16 +1833,14 @@ test distribute_round__rejects_penalty_state_datum() fail {
   let Transaction { inputs, .. } = tx
   expect Some(group_in) = list.at(inputs, 0)
   expect Some(old_t_in) = list.at(inputs, 1)
-  let penalty_datum =
-    PenaltyState {
-      group_reference_tokenname: group_ref_tn(),
-      member_reference_tokenname: member_tn(),
-    }
-  let bad_t_in =
-    Input {
-      ..old_t_in,
-      output: Output { ..old_t_in.output, datum: InlineDatum(penalty_datum) },
-    }
+  let penalty_datum = PenaltyState {
+    group_reference_tokenname: group_ref_tn(),
+    member_reference_tokenname: member_tn(),
+  }
+  let bad_t_in = Input {
+    ..old_t_in,
+    output: Output { ..old_t_in.output, datum: InlineDatum(penalty_datum) },
+  }
   let bad_tx = Transaction { ..tx, inputs: [group_in, bad_t_in] }
   validate_distribute_withdraw(
     treasury_policy(),
@@ -1908,17 +1879,7 @@ test distribute_round__rejects_no_ada_reduction() fail {
     validity_range,
   }
 
-  validate_distribute_withdraw(
-    tp,
-    group_policy(),
-    0,
-    0,
-    1,
-    [1],
-    [0],
-    2,
-    bad_tx,
-  )
+  validate_distribute_withdraw(tp, group_policy(), 0, 0, 1, [1], [0], 2, bad_tx)
 }
 
 // Treasury output datum has stale rounds_paid (0 instead of 1) — output_datum_correct fails
@@ -1943,17 +1904,7 @@ test distribute_round__rejects_wrong_datum_update() fail {
     validity_range,
   }
 
-  validate_distribute_withdraw(
-    tp,
-    group_policy(),
-    0,
-    0,
-    1,
-    [1],
-    [0],
-    2,
-    bad_tx,
-  )
+  validate_distribute_withdraw(tp, group_policy(), 0, 0, 1, [1], [0], 2, bad_tx)
 }
 
 // Borrower output at a script address instead of a wallet — borrower_at_correct_wallet fails
@@ -1976,17 +1927,7 @@ test distribute_round__rejects_borrower_output_at_script() fail {
     validity_range,
   }
 
-  validate_distribute_withdraw(
-    tp,
-    group_policy(),
-    0,
-    0,
-    1,
-    [1],
-    [0],
-    2,
-    bad_tx,
-  )
+  validate_distribute_withdraw(tp, group_policy(), 0, 0, 1, [1], [0], 2, bad_tx)
 }
 
 // current_slot = 0, but only treasury input has assigned_slot = 1
@@ -2048,17 +1989,7 @@ test distribute_round__rejects_when_borrower_absent() fail {
   }
 
   // list.find_map returns None → expect Some(borrower_cred) crashes
-  validate_distribute_withdraw(
-    tp,
-    group_policy(),
-    0,
-    0,
-    1,
-    [1],
-    [0],
-    2,
-    tx,
-  )
+  validate_distribute_withdraw(tp, group_policy(), 0, 0, 1, [1], [0], 2, tx)
 }
 
 // Duplicate index pair (1,0),(1,0): the multi-UTxO indexer requires strictly ascending,
@@ -2143,17 +2074,7 @@ test distribute_round__rejects_wrong_round_number() fail {
   }
 
   // round_number=1 but rounds_paid=0 → member_at_correct_round = False → returns False
-  validate_distribute_withdraw(
-    tp,
-    group_policy(),
-    1,
-    0,
-    1,
-    [1],
-    [0],
-    2,
-    tx,
-  )
+  validate_distribute_withdraw(tp, group_policy(), 1, 0, 1, [1], [0], 2, tx)
 }
 
 // Group output has stale last_distributed_round (-1 instead of 0) — group_round_incremented fails
@@ -2182,17 +2103,7 @@ test distribute_round__rejects_unchanged_group_round() fail {
     validity_range,
   }
 
-  validate_distribute_withdraw(
-    tp,
-    group_policy(),
-    0,
-    0,
-    1,
-    [1],
-    [0],
-    2,
-    bad_tx,
-  )
+  validate_distribute_withdraw(tp, group_policy(), 0, 0, 1, [1], [0], 2, bad_tx)
 }
 
 // --- Pull payout mode (earmark into borrower's own treasury) ---
@@ -2628,17 +2539,7 @@ test distribute_round__rejects_excluded_member() fail {
     outputs: [a_out, group_output, test_borrower_output()],
     validity_range: interval.after(0),
   }
-  validate_distribute_withdraw(
-    tp,
-    group_policy(),
-    0,
-    0,
-    1,
-    [1],
-    [0],
-    2,
-    tx,
-  )
+  validate_distribute_withdraw(tp, group_policy(), 0, 0, 1, [1], [0], 2, tx)
 }
 
 // Anti-dodge / C4: with 2 active members the round MUST spend both. Here active_member_count
@@ -3230,7 +3131,8 @@ test exit_group__rejects_wrong_group_link() {
   let member_input = test_member_input()
 
   // Datum uses a WRONG group_reference_tokenname — simulates a cross-group attack
-  let wrong_datum = build_treasury_state(#"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  let wrong_datum = build_treasury_state(
+    #"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
     0,
   )
 
@@ -4225,7 +4127,12 @@ fn terminate_default_tx(
   )
   Transaction {
     ..transaction.placeholder,
-    inputs: [group_input, admin_input, treasury_in, join_reserve_input(2_000_000)],
+    inputs: [
+      group_input,
+      admin_input,
+      treasury_in,
+      join_reserve_input(2_000_000),
+    ],
     outputs: [group_output, join_reserve_utxo(7_000_000)],
     mint,
     validity_range: interval.after(lower),
@@ -4555,7 +4462,10 @@ test distribute__rejects_treasury_output_stake_credential_change() fail {
   // output at the attacker's staked address — correct payment cred, wrong stake.
   let Transaction { outputs, .. } = tx
   expect Some(treasury_out) = list.at(outputs, 0)
-  let attacker_out = Output { ..treasury_out, address: attacker_stake_address() }
+  let attacker_out = Output {
+    ..treasury_out,
+    address: attacker_stake_address(),
+  }
   let bad_outputs = [attacker_out, ..list.drop(outputs, 1)]
   let bad_tx = Transaction { ..tx, outputs: bad_outputs }
 
@@ -4706,8 +4616,10 @@ test claim_payout__rejects_output_stake_credential_change() {
     datum: InlineDatum(claim_payout_out_datum(0)),
     reference_script: None,
   }
-  let (base_tx, datum, utxo) =
-    claim_payout_setup(claim_payout_out_datum(0), claim_payout_value(5_000_000))
+  let (base_tx, datum, utxo) = claim_payout_setup(
+    claim_payout_out_datum(0),
+    claim_payout_value(5_000_000),
+  )
   // Replace the output with the attacker version
   let bad_tx = Transaction { ..base_tx, outputs: [attacker_out] }
   !validate_claim_payout(
@@ -4770,7 +4682,6 @@ test exit__rejects_penalty_output_stake_credential_change() {
   )
 }
 
-
 // ─── JoinGroup: reserve join levy [spec Reserve C2] ───────────────────────────
 
 // Group input/output carrying a configured join levy (contribution asset = ADA
@@ -4788,7 +4699,10 @@ fn levy_group_input() -> Input {
       output_index: 0,
     },
     output: Output {
-      address: Address { payment_credential: Script(gp), stake_credential: None },
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
       value,
       datum: InlineDatum(datum),
       reference_script: None,
@@ -4826,7 +4740,9 @@ fn join_reserve_utxo(lovelace: Int) -> Output {
       stake_credential: None,
     },
     value: assets.from_lovelace(lovelace)
-      |> assets.merge(assets.from_asset(treasury_policy(), join_reserve_tn(), 1)),
+      |> assets.merge(
+          assets.from_asset(treasury_policy(), join_reserve_tn(), 1),
+        ),
     datum: InlineDatum(
       ReserveState {
         group_reference_tokenname: group_ref_tn(),
@@ -4856,7 +4772,11 @@ fn levy_join_tx(reserve_out_lovelace: Int) -> Transaction {
   let mint = assets.from_asset(tp, member_tn(), 1)
   Transaction {
     ..transaction.placeholder,
-    inputs: [levy_group_input(), test_member_input(), join_reserve_input(2_000_000)],
+    inputs: [
+      levy_group_input(),
+      test_member_input(),
+      join_reserve_input(2_000_000),
+    ],
     outputs: [
       treasury_output,
       levy_group_output(1),
@@ -4925,16 +4845,7 @@ test join_levy__rejects_missing_reserve_leg() fail {
     mint,
     validity_range: interval.after(0),
   }
-  validate_join_treasury(
-    tp,
-    account_policy(),
-    group_policy(),
-    0,
-    1,
-    1,
-    0,
-    tx,
-  )
+  validate_join_treasury(tp, account_policy(), group_policy(), 0, 1, 1, 0, tx)
 }
 
 // ─── DistributeRound: reserve leg [spec Reserve C3] ───────────────────────────
@@ -4988,7 +4899,10 @@ fn distribute_reserve_tx(
   }
   let treasury_in = test_treasury_input(
     treasury_utxo_ref(),
-    test_treasury_output(build_treasury_state(group_ref_tn(), 0), treasury_value()),
+    test_treasury_output(
+      build_treasury_state(group_ref_tn(), 0),
+      treasury_value(),
+    ),
   )
   let treasury_out = test_treasury_output(
     build_treasury_state(group_ref_tn(), 1),
@@ -5017,10 +4931,7 @@ fn distribute_reserve_tx(
     },
   }
   let reserve_out = Output {
-    address: Address {
-      payment_credential: Script(tp),
-      stake_credential: None,
-    },
+    address: Address { payment_credential: Script(tp), stake_credential: None },
     value: assets.from_lovelace(reserve_out_lovelace)
       |> assets.merge(assets.from_asset(tp, join_reserve_tn(), 1)),
     datum: InlineDatum(
@@ -5123,7 +5034,10 @@ test distribute_reserve__rejects_missing_reserve_when_levy_set() {
   }
   let treasury_in = test_treasury_input(
     treasury_utxo_ref(),
-    test_treasury_output(build_treasury_state(group_ref_tn(), 0), treasury_value()),
+    test_treasury_output(
+      build_treasury_state(group_ref_tn(), 0),
+      treasury_value(),
+    ),
   )
   let treasury_out = test_treasury_output(
     build_treasury_state(group_ref_tn(), 1),
@@ -5240,4 +5154,182 @@ test prop_distribute_reserve__leg_math(params via reserve_leg_fuzzer()) {
     standin_out,
   )
   run_distribute_reserve(tx)
+}
+
+// ─── Lifecycle runner (treasury split — spec 2026-07-04 section 4/5) ──────────
+// The family stake validator resolves the covered treasury input itself and
+// delegates to the same validate_* functions tested above. These tests drive the
+// runner: covered-arity binding, the treasury-address assertion, and argument
+// threading on reused happy fixtures.
+
+fn runner_settings() -> ProtocolSettings {
+  ProtocolSettings {
+    account_policy: account_policy(),
+    group_policy: group_policy(),
+    treasury_policy: treasury_policy(),
+    treasury_rounds_stake: common.test_hash_04(),
+    treasury_lifecycle_stake: common.test_hash_05(),
+    treasury_recovery_stake: common.test_hash_06(),
+    treasury_reserve_stake: common.test_hash_07(),
+  }
+}
+
+// Mirror of join_group__accepts_valid_join through the runner — a JoinAction
+// covers no treasury input (the join CREATES the treasury UTxO).
+test lifecycle_runner__accepts_valid_join() {
+  let tp = treasury_policy()
+
+  let group_input = test_group_input()
+  let member_input = test_member_input()
+
+  let datum = test_treasury_state(0)
+  let output_value = assets.from_lovelace(5_000_000)
+    |> assets.merge(assets.from_asset(tp, member_tn(), 1))
+  let treasury_output = test_treasury_output(datum, output_value)
+  let group_out = test_group_output(1)
+
+  let mint = assets.from_asset(tp, member_tn(), 1)
+
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, member_input],
+    outputs: [treasury_output, group_out],
+    mint,
+    validity_range: interval.after(0),
+  }
+
+  run_lifecycle_action(
+    JoinAction {
+      covered_inputs: [],
+      group_ref_input_index: 0,
+      group_output_index: 1,
+      member_input_index: 1,
+      treasury_output_index: 0,
+    },
+    runner_settings(),
+    tx,
+  )
+}
+
+// [security]: a JoinAction claiming coverage would exempt an unrelated treasury
+// spend from validation — the runner binds covered_inputs to [] for joins.
+test lifecycle_runner__rejects_join_claiming_coverage() fail {
+  let tp = treasury_policy()
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [test_group_input(), test_member_input()],
+    outputs: [
+      test_treasury_output(
+        test_treasury_state(0),
+        assets.from_lovelace(5_000_000)
+          |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
+      ),
+      test_group_output(1),
+    ],
+    mint: assets.from_asset(tp, member_tn(), 1),
+    validity_range: interval.after(0),
+  }
+  run_lifecycle_action(
+    JoinAction {
+      covered_inputs: [0],
+      group_ref_input_index: 0,
+      group_output_index: 1,
+      member_input_index: 1,
+      treasury_output_index: 0,
+    },
+    runner_settings(),
+    tx,
+  )
+}
+
+// Mirror of exit_group__accepts_mature_exit_with_burn through the runner: the
+// spent treasury UTxO now rides in tx.inputs (index 2) and the action covers it —
+// the runner resolves its address + datum from there.
+fn mature_exit_tx_with_treasury_input() -> Transaction {
+  let tp = treasury_policy()
+
+  let inactive_group_datum = GroupDatum {
+    ..test_group_datum(),
+    is_active: False,
+    member_count: 1,
+  }
+  let gp = group_policy()
+  let group_input = Input {
+    output_reference: OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address {
+        payment_credential: Script(gp),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1)),
+      datum: InlineDatum(cip68_with_group(inactive_group_datum)),
+      reference_script: None,
+    },
+  }
+
+  let member_input = test_member_input()
+  let datum = test_treasury_state(0)
+  let treasury_exit_input = test_treasury_input(
+    treasury_utxo_ref(),
+    test_treasury_output(datum, treasury_value()),
+  )
+
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [group_input, member_input, treasury_exit_input],
+    outputs: [test_group_output(0)],
+    mint: assets.from_asset(tp, member_tn(), -1),
+    validity_range: interval.after(500),
+  }
+}
+
+test lifecycle_runner__accepts_mature_exit() {
+  run_lifecycle_action(
+    ExitAction {
+      covered_inputs: [2],
+      group_ref_input_index: 0,
+      group_output_index: 0,
+      member_input_index: 1,
+      penalty_output_index: 0,
+    },
+    runner_settings(),
+    mature_exit_tx_with_treasury_input(),
+  )
+}
+
+// [security]: an ExitAction must cover EXACTLY ONE treasury input — empty
+// coverage would leave the spent UTxO unvalidated.
+test lifecycle_runner__rejects_exit_empty_coverage() fail {
+  run_lifecycle_action(
+    ExitAction {
+      covered_inputs: [],
+      group_ref_input_index: 0,
+      group_output_index: 0,
+      member_input_index: 1,
+      penalty_output_index: 0,
+    },
+    runner_settings(),
+    mature_exit_tx_with_treasury_input(),
+  )
+}
+
+// [security]: the covered input must sit at the treasury script — an action
+// cannot point its coverage at a foreign input (here: the member's wallet input)
+// and validate against foreign state.
+test lifecycle_runner__rejects_exit_covering_foreign_input() fail {
+  run_lifecycle_action(
+    ExitAction {
+      covered_inputs: [1],
+      group_ref_input_index: 0,
+      group_output_index: 0,
+      member_input_index: 1,
+      penalty_output_index: 0,
+    },
+    runner_settings(),
+    mature_exit_tx_with_treasury_input(),
+  )
 }

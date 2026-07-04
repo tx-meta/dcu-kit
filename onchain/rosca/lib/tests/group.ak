@@ -2030,20 +2030,18 @@ test member_exit__terminate_default_keeps_active_count() {
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
 
   let base = common.test_group_datum(policy_id)
-  let in_datum =
-    GroupDatum {
-      ..base,
-      member_count: 2,
-      active_member_count: 1,
-      member_token_names: [#"aabb"],
-    }
-  let out_datum =
-    GroupDatum {
-      ..base,
-      member_count: 1,
-      active_member_count: 1,
-      member_token_names: [],
-    }
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 1,
+    member_token_names: [#"aabb"],
+  }
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 1,
+    active_member_count: 1,
+    member_token_names: [],
+  }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
   let group_in = common.test_input(
@@ -2083,20 +2081,18 @@ fn recover_setup(
 ) -> (List<Input>, List<Output>) {
   let base = common.test_group_datum(policy_id)
   // 1 member who defaulted → member_count 1, active_member_count 0.
-  let in_datum =
-    GroupDatum {
-      ..base,
-      member_count: 1,
-      active_member_count: 0,
-      member_token_names: [#"aabb"],
-    }
-  let out_datum =
-    GroupDatum {
-      ..base,
-      member_count: 1,
-      active_member_count: out_active,
-      member_token_names: [#"aabb"],
-    }
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 1,
+    active_member_count: 0,
+    member_token_names: [#"aabb"],
+  }
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 1,
+    active_member_count: out_active,
+    member_token_names: [#"aabb"],
+  }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
   let group_in = common.test_input(
@@ -2114,25 +2110,23 @@ fn recover_setup(
   let treasury_in = defaulted_treasury_input_with_token(tp, #"aabb")
   let t_value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(tp, #"aabb", 1))
-  let recovered_datum =
-    TreasuryState {
-      group_reference_tokenname: #"aabb",
-      member_reference_tokenname: #"aabb",
-      rounds_paid: 0,
-      member_payment_credential: common.test_pkh(),
-      claimable_balance: 0,
-    }
+  let recovered_datum = TreasuryState {
+    group_reference_tokenname: #"aabb",
+    member_reference_tokenname: #"aabb",
+    rounds_paid: 0,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
+  }
   // When false, leave the treasury output as DefaultState (no real recovery) to exercise rejection.
-  let still_default =
-    DefaultState {
-      group_reference_tokenname: #"aabb",
-      member_reference_tokenname: #"aabb",
-      grace_expires_at: 0,
-      grace_extensions_used: 0,
-      rounds_paid: 0,
-      member_payment_credential: common.test_pkh(),
-      claimable_balance: 0,
-    }
+  let still_default = DefaultState {
+    group_reference_tokenname: #"aabb",
+    member_reference_tokenname: #"aabb",
+    grace_expires_at: 0,
+    grace_extensions_used: 0,
+    rounds_paid: 0,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
+  }
   let treasury_out = common.test_script_utxo(
     tp,
     t_value,
@@ -2210,20 +2204,18 @@ fn recover_member_setup(
   include_new_treasury_output: Bool,
 ) -> (List<Input>, List<Output>) {
   let base = common.test_group_datum(policy_id)
-  let in_datum =
-    GroupDatum {
-      ..base,
-      member_count: count,
-      active_member_count: count,
-      member_token_names: in_names,
-    }
-  let out_datum =
-    GroupDatum {
-      ..base,
-      member_count: count,
-      active_member_count: count,
-      member_token_names: out_names,
-    }
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: count,
+    active_member_count: count,
+    member_token_names: in_names,
+  }
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: count,
+    active_member_count: count,
+    member_token_names: out_names,
+  }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
   let group_in = common.test_input(
@@ -2267,19 +2259,18 @@ test recover_member__swaps_registry_N_to_Nprime() {
   let policy_id = common.test_policy_id()
   let tp = treasury_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
-  let (inputs, outputs) =
-    recover_member_setup(
-      policy_id,
-      tp,
-      ref_tn,
-      2,
-      [#"aabb", #"ccdd"],
-      [#"eeff", #"ccdd"],
-      #"aabb",
-      #"eeff",
-      True,
-      True,
-    )
+  let (inputs, outputs) = recover_member_setup(
+    policy_id,
+    tp,
+    ref_tn,
+    2,
+    [#"aabb", #"ccdd"],
+    [#"eeff", #"ccdd"],
+    #"aabb",
+    #"eeff",
+    True,
+    True,
+  )
   validate_recover_member(
     policy_id,
     tp,
@@ -2301,19 +2292,18 @@ test recover_member__rejects_when_N_absent() {
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
   // N (#"9999") is not in the input registry at all — the in-place swap is a no-op,
   // so the output registry is unchanged and the rejection isolates old_present.
-  let (inputs, outputs) =
-    recover_member_setup(
-      policy_id,
-      tp,
-      ref_tn,
-      2,
-      [#"aabb", #"ccdd"],
-      [#"aabb", #"ccdd"],
-      #"9999",
-      #"eeff",
-      True,
-      True,
-    )
+  let (inputs, outputs) = recover_member_setup(
+    policy_id,
+    tp,
+    ref_tn,
+    2,
+    [#"aabb", #"ccdd"],
+    [#"aabb", #"ccdd"],
+    #"9999",
+    #"eeff",
+    True,
+    True,
+  )
   !validate_recover_member(
     policy_id,
     tp,
@@ -2334,19 +2324,18 @@ test recover_member__rejects_when_Nprime_already_member() {
   let tp = treasury_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
   // N' (#"ccdd") already sits in the input registry — collision.
-  let (inputs, outputs) =
-    recover_member_setup(
-      policy_id,
-      tp,
-      ref_tn,
-      2,
-      [#"aabb", #"ccdd"],
-      [#"ccdd", #"ccdd"],
-      #"aabb",
-      #"ccdd",
-      True,
-      True,
-    )
+  let (inputs, outputs) = recover_member_setup(
+    policy_id,
+    tp,
+    ref_tn,
+    2,
+    [#"aabb", #"ccdd"],
+    [#"ccdd", #"ccdd"],
+    #"aabb",
+    #"ccdd",
+    True,
+    True,
+  )
   !validate_recover_member(
     policy_id,
     tp,
@@ -2367,21 +2356,19 @@ test recover_member__rejects_member_count_change() {
   let tp = treasury_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
   let base = common.test_group_datum(policy_id)
-  let in_datum =
-    GroupDatum {
-      ..base,
-      member_count: 2,
-      active_member_count: 2,
-      member_token_names: [#"aabb", #"ccdd"],
-    }
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"aabb", #"ccdd"],
+  }
   // member_count bumped to 3 alongside the otherwise-correct registry swap.
-  let out_datum =
-    GroupDatum {
-      ..base,
-      member_count: 3,
-      active_member_count: 2,
-      member_token_names: [#"eeff", #"ccdd"],
-    }
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 3,
+    active_member_count: 2,
+    member_token_names: [#"eeff", #"ccdd"],
+  }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
   let group_in = common.test_input(
@@ -2421,21 +2408,19 @@ test recover_member__rejects_active_count_change() {
   let tp = treasury_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
   let base = common.test_group_datum(policy_id)
-  let in_datum =
-    GroupDatum {
-      ..base,
-      member_count: 2,
-      active_member_count: 2,
-      member_token_names: [#"aabb", #"ccdd"],
-    }
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"aabb", #"ccdd"],
+  }
   // active_member_count dropped to 1 alongside the otherwise-correct registry swap.
-  let out_datum =
-    GroupDatum {
-      ..base,
-      member_count: 2,
-      active_member_count: 1,
-      member_token_names: [#"eeff", #"ccdd"],
-    }
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 1,
+    member_token_names: [#"eeff", #"ccdd"],
+  }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
   let group_in = common.test_input(
@@ -2475,22 +2460,20 @@ test recover_member__rejects_other_field_mutation() {
   let tp = treasury_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
   let base = common.test_group_datum(policy_id)
-  let in_datum =
-    GroupDatum {
-      ..base,
-      member_count: 2,
-      active_member_count: 2,
-      member_token_names: [#"aabb", #"ccdd"],
-    }
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"aabb", #"ccdd"],
+  }
   // penalty_fee silently changed alongside the otherwise-correct registry swap.
-  let out_datum =
-    GroupDatum {
-      ..base,
-      member_count: 2,
-      active_member_count: 2,
-      member_token_names: [#"eeff", #"ccdd"],
-      penalty_fee: base.penalty_fee + 1,
-    }
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"eeff", #"ccdd"],
+    penalty_fee: base.penalty_fee + 1,
+  }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
   let group_in = common.test_input(
@@ -2530,19 +2513,18 @@ test recover_member__rejects_missing_treasury_rotation() {
   let tp = treasury_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
   // Neither the treasury input holds N, nor the treasury output holds N' — no rotation.
-  let (inputs, outputs) =
-    recover_member_setup(
-      policy_id,
-      tp,
-      ref_tn,
-      2,
-      [#"aabb", #"ccdd"],
-      [#"eeff", #"ccdd"],
-      #"aabb",
-      #"eeff",
-      False,
-      False,
-    )
+  let (inputs, outputs) = recover_member_setup(
+    policy_id,
+    tp,
+    ref_tn,
+    2,
+    [#"aabb", #"ccdd"],
+    [#"eeff", #"ccdd"],
+    #"aabb",
+    #"eeff",
+    False,
+    False,
+  )
   !validate_recover_member(
     policy_id,
     tp,
@@ -2566,20 +2548,18 @@ test recover_member__rejects_treasury_output_not_at_script() {
   let tp = treasury_policy_id()
   let (_, ref_tn, _) = common.setup_cip68(policy_id)
   let base = common.test_group_datum(policy_id)
-  let in_datum =
-    GroupDatum {
-      ..base,
-      member_count: 2,
-      active_member_count: 2,
-      member_token_names: [#"aabb", #"ccdd"],
-    }
-  let out_datum =
-    GroupDatum {
-      ..base,
-      member_count: 2,
-      active_member_count: 2,
-      member_token_names: [#"eeff", #"ccdd"],
-    }
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"aabb", #"ccdd"],
+  }
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"eeff", #"ccdd"],
+  }
   let value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
   let group_in = common.test_input(
@@ -3011,7 +2991,10 @@ test update_group__rejects_era_start_round_change() {
 // (the whole-record allowlist covers it).
 test update_group__rejects_recommit_window_change_with_members() {
   let policy_id = common.test_policy_id()
-  let base = GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
+  let base = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 1,
+  }
   recommit_update_rejects(
     base,
     GroupDatum { ..base, recommit_window: base.recommit_window + 1 },
@@ -3037,7 +3020,10 @@ test create_group__rejects_negative_reserve_round_levy() {
 // (the whole-record allowlist covers them).
 test update_group__rejects_reserve_join_levy_change_with_members() {
   let policy_id = common.test_policy_id()
-  let base = GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
+  let base = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 1,
+  }
   recommit_update_rejects(
     base,
     GroupDatum { ..base, reserve_join_levy: base.reserve_join_levy + 1 },
@@ -3046,7 +3032,10 @@ test update_group__rejects_reserve_join_levy_change_with_members() {
 
 test update_group__rejects_reserve_round_levy_change_with_members() {
   let policy_id = common.test_policy_id()
-  let base = GroupDatum { ..common.test_group_datum(policy_id), member_count: 1 }
+  let base = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 1,
+  }
   recommit_update_rejects(
     base,
     GroupDatum { ..base, reserve_round_levy: base.reserve_round_levy + 1 },

@@ -44,6 +44,22 @@ pub fn test_hash_03() {
   bytearray.take(blake2b_256(#"03"), 28)
 }
 
+pub fn test_hash_04() {
+  bytearray.take(blake2b_256(#"04"), 28)
+}
+
+pub fn test_hash_05() {
+  bytearray.take(blake2b_256(#"05"), 28)
+}
+
+pub fn test_hash_06() {
+  bytearray.take(blake2b_256(#"06"), 28)
+}
+
+pub fn test_hash_07() {
+  bytearray.take(blake2b_256(#"07"), 28)
+}
+
 pub fn test_policy_id() {
   test_hash_01()
 }
