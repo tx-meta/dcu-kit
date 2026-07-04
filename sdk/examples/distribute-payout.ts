@@ -31,6 +31,7 @@ import {
   cexplorerTxUrl,
   logError,
   logWalletInfo,
+  loadScriptRefs,
 } from "./context.js";
 import {
   loadState,
@@ -121,33 +122,7 @@ async function main() {
 
   // Load reference script UTxOs — reduces tx size from ~19KB to ~4KB.
   // Deploy once with: pnpm run deploy-scripts
-  let scriptRefs: DistributePayoutConfig["scriptRefs"];
-  if (state.scriptRefTreasury && state.scriptRefGroup) {
-    const [tUtxo, gUtxo] = await lucid.utxosByOutRef([
-      {
-        txHash: state.scriptRefTreasury.txHash,
-        outputIndex: state.scriptRefTreasury.outputIndex,
-      },
-      {
-        txHash: state.scriptRefGroup.txHash,
-        outputIndex: state.scriptRefGroup.outputIndex,
-      },
-    ]);
-    if (tUtxo?.scriptRef && gUtxo?.scriptRef) {
-      scriptRefs = { treasury: tUtxo as UTxO, group: gUtxo as UTxO };
-      console.log("Using reference scripts — tx will be under 16KB.");
-    } else {
-      console.warn(
-        "Reference script UTxOs not found on-chain — falling back to inline scripts.",
-      );
-      console.warn("Run 'pnpm run deploy-scripts' to deploy them.");
-    }
-  } else {
-    console.warn(
-      "No script refs in state.json — falling back to inline scripts (may exceed 16KB).",
-    );
-    console.warn("Run 'pnpm run deploy-scripts' first.");
-  }
+  const scriptRefs = await loadScriptRefs(lucid);
 
   const config: DistributePayoutConfig = {
     groupTokenSuffix,

@@ -40,6 +40,7 @@ import {
   cexplorerTxUrl,
   logError,
   logWalletInfo,
+  loadScriptRefs,
 } from "./context.js";
 import {
   loadState,
@@ -116,29 +117,7 @@ async function main() {
 
   // Load the treasury reference script UTxO — keeps the tx under the size limit.
   // Deploy once with: pnpm run deploy-scripts
-  let scriptRefs: ClaimPayoutConfig["scriptRefs"];
-  if (state.scriptRefTreasury) {
-    const [tUtxo] = await lucid.utxosByOutRef([
-      {
-        txHash: state.scriptRefTreasury.txHash,
-        outputIndex: state.scriptRefTreasury.outputIndex,
-      },
-    ]);
-    if (tUtxo?.scriptRef) {
-      scriptRefs = { treasury: tUtxo as UTxO };
-      console.log("Using reference script — tx will be under 16KB.");
-    } else {
-      console.warn(
-        "Treasury reference script UTxO not found on-chain — falling back to inline script.",
-      );
-      console.warn("Run 'pnpm run deploy-scripts' to deploy it.");
-    }
-  } else {
-    console.warn(
-      "No treasury script ref in state.json — falling back to inline script (may exceed 16KB).",
-    );
-    console.warn("Run 'pnpm run deploy-scripts' first.");
-  }
+  const scriptRefs = await loadScriptRefs(lucid);
 
   const config: ClaimPayoutConfig = {
     accountTokenSuffix,
