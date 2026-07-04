@@ -43,17 +43,29 @@ Rule of thumb:
 
 ---
 
-## Current validator hashes (Preprod)
+## Current validator hashes (pending Preprod redeploy)
 
-| Validator   | Policy ID / Hash                                           |
-| ----------- | ---------------------------------------------------------- |
-| Account     | `f0d4bf83e11fced2287b706b1efb32764689a8d7912b81a79a8a16cd` |
-| Treasury    | `19e8d64beb1cc1143e01bf8f1c1b4a5ed0c208f997f60227f2628625` |
-| Group       | `8a29191f7bc9e6a8c244213571bc6d203bf24fd3a24b76effd6af8bc` |
-| AlwaysFails | `22c9a103ed3f2fa97c982d76d6e2af50c5d54ac306983b196c8fcdab` |
+Base (settings-unapplied) hashes. The treasury split (2026-07-04) replaced the
+treasury monolith with a thin dispatcher + four withdraw-zero family stake
+validators; group, account, settings, and escrow are byte-unchanged.
 
-Reference scripts permanently locked at:
-`addr_test1wq3vnggra5ljl2tunqkhd4hz4agvt422cvrfswcedj8um2cwsu3l3`
+| Validator           | Policy ID / Hash                                              |
+| ------------------- | ------------------------------------------------------------- |
+| Account             | `d80e2e5a82cb60b3b2ee2faa1347337a9ff809207f7d8da2ca92bca3`    |
+| Treasury (dispatch) | `9c54823e…` (settings-parameterized; applied hash per deploy) |
+| Treasury rounds     | `f7a2262bcdf6240a0b0e0ea1af88a8eedb8b6ef4bc6d1b65ddc16474`    |
+| Treasury lifecycle  | `b4090fbde4f5c070702ecfe5455cfb5e9ad3b9c8698daef5471eba96`    |
+| Treasury recovery   | `f16fc034e7c2c7304824ccdac2838789e173abf25449cf1839997c26`    |
+| Treasury reserve    | `2dff16b23a98aa2b200e131913d2fffa0376441f092c17fdd4cad49d`    |
+| Group               | `32da6e881778a41582c97b839fe2f9c68933b16e03502c40c5083239`    |
+| Settings            | `07a7cd9d64681a33c37b2acbbc0cef0d01eee9dca6b934ec8590c138`    |
+| Escrow              | `3f04186ff52db2ab1844f9e7eeeab4f793089129b56cd5fae9a41b71`    |
+| AlwaysFails         | `22c9a103ed3f2fa97c982d76d6e2af50c5d54ac306983b196c8fcdab`    |
+
+These hashes are NOT yet deployed to Preprod. Earlier deployments (and their
+reference-script UTxOs) belong to superseded validators — start from
+`pnpm run reset-state`, then `initialize-settings` + `deploy-scripts` on the
+current SDK before anything else.
 
 > **Stale state?** If `state.json` has a different `accountPolicyId` or `groupPolicyId`, the
 > validators changed since your last session. Run `pnpm run reset-state` before starting.
@@ -71,12 +83,15 @@ pnpm run show-wallets
 # Fund ADMIN ~150 ADA, USER1 ~50 ADA, USER2 ~50 ADA at the Preprod faucet.
 # Wait ~1 minute for funding txs to confirm, then continue.
 
-# ── 1. Deploy reference scripts (once per SDK version, ~56 ADA, permanent) ────
+# ── 1. Deploy reference scripts (once per SDK version, permanent) ─────────────
 pnpm run deploy-scripts
-# → tx 1/2: deploys treasury validator (~30 ADA), waits for confirmation (~1 min)
-# → tx 2/2: deploys group validator   (~26 ADA), saves both outRefs to state.json
-# → both sent to alwaysFails address — permanently locked, never spendable
-# → re-running is safe: verifyDeployment detects existing valid UTxOs and exits early
+# → deploys SIX ref scripts one per tx (treasury dispatcher, group, and the four
+#    family stake validators), saving every outRef to state.json
+# → registers the FOUR family stake credentials — the withdraw-zero prerequisite;
+#    no treasury operation can run without them
+# → scripts sent to alwaysFails address — permanently locked, never spendable
+# → re-running is safe: verifyDeployment detects existing valid UTxOs, and the
+#   stake registration treats "already registered" as success
 
 # ── 2. Create an account NFT for each participant ─────────────────────────────
 ACTIVE_WALLET=ADMIN pnpm run create-account
@@ -113,17 +128,32 @@ pnpm run start-group
 # → validator now rejects any further join-group calls
 
 # ── 6. Distribute payouts (permissionless — any wallet can submit) ────────────
+#
+# COLLATERAL NOTE — the default create-group config uses PerRound collateral
+# (collateral_rounds: 1n): each member locks only ONE round's contribution_fee.
+# Paying round 0 zeroes every balance, which correctly moves all members to
+# DefaultState — round 1 will then report "No treasury UTxOs ready" and the
+# only path forward is terminate-default after the grace window. This is the
+# insufficient-collateral system working as designed, not a bug.
+#
+# To run all three rounds through, do ONE of:
+#   a) FullUpfront — set `collateral_rounds: 3n` (= num rounds) in create-group.ts
+#      before step 3, so the whole obligation is locked at join; or
+#   b) PerRound + top-ups — run `contribute` for EVERY member between rounds:
+#      pnpm run contribute && ACTIVE_WALLET=USER1 pnpm run contribute && \
+#      ACTIVE_WALLET=USER2 pnpm run contribute
+#
 # Wait 5 minutes after start-group, then:
 pnpm run distribute-payout
 # → round 0: ADMIN (slot 0) receives 3 × 5 ADA = 15 ADA
 #    all treasury UTxOs: rounds_paid 0 → 1
 
-# Wait another 5 minutes:
+# (PerRound only) top up all three members, then wait another 5 minutes:
 pnpm run distribute-payout
 # → round 1: USER1 (slot 1) receives 15 ADA
 #    all treasury UTxOs: rounds_paid 1 → 2
 
-# Wait another 5 minutes:
+# (PerRound only) top up again, wait another 5 minutes:
 pnpm run distribute-payout
 # → round 2: USER2 (slot 2) receives 15 ADA
 #    all treasury UTxOs: rounds_paid 2 → 3 (group now mature)
@@ -194,7 +224,35 @@ pnpm run delete-group
 | `contribute`               | USER1          | Tops up a treasury UTxO balance. `TOP_UP_AMOUNT=<lovelace>` (default 5 ADA).                                       |
 | `update-payout-credential` | USER1          | Redirects future payouts to the current signing wallet's address.                                                  |
 | `extend-grace-window`      | ADMIN          | Extends grace period for `MEMBER_WALLET` (default USER1) in ICS.                                                   |
-| `next-cycle`               | ADMIN          | Resets a mature group for another rotation cycle. Members re-deposit, then admin calls start-group again.          |
+| `terminate-default`        | ADMIN          | Terminates a member whose grace expired. Forfeited balance funds the mutual reserve (stand-in cover).              |
+
+### Recommit & mutual reserve
+
+| Script            | Default wallet | What it does                                                                                               |
+| ----------------- | -------------- | ---------------------------------------------------------------------------------------------------------- |
+| `begin-recommit`  | ADMIN          | Opens the recommit window: distribution pauses, joins re-open, exits are free. Re-seal with `start-group`. |
+| `top-up-reserve`  | USER1          | Donates to the group's mutual reserve (permissionless). `RESERVE_TOPUP=<amount>` (default 1 ADA).          |
+| `inspect-reserve` | —              | Read-only: reserve balance, pending stand-in cover, configured levies.                                     |
+
+### Admin & recovery
+
+| Script             | Default wallet | What it does                                                                                                                     |
+| ------------------ | -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `assign-admin`     | ADMIN          | Transfers the group admin (222) token to `NEW_ADMIN_ADDRESS`. One-way door.                                                      |
+| `propose-recovery` | USER2          | Opens a lost-member recovery (N → N'). Needs `TARGET_SUFFIX`, `NEW_ACCOUNT_SUFFIX`, `NEW_PAYMENT_KEY_HASH`, `APPROVER_SUFFIXES`. |
+| `approve-recovery` | USER1          | A quorum member vouches for the pending request (one run per approver).                                                          |
+| `execute-recovery` | USER1          | Finalizes after the timelock — run from the recoveree's wallet (holds N').                                                       |
+| `cancel-recovery`  | USER1          | Veto by the original member N — proves the identity was never lost.                                                              |
+
+### Escrow (standalone — `@tx-meta/dcu-kit/escrow`)
+
+| Script           | Default wallet   | What it does                                                                                                         |
+| ---------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `escrow-create`  | USER1 (funder)   | Locks `MILESTONES` (csv lovelace) until `EXPIRY_DAYS`. Requires `BENEFICIARY_ADDRESS`. Saves `escrowStateTokenName`. |
+| `escrow-release` | USER1 (verifier) | Releases the next tranche to the beneficiary. Sequential; stops at expiry.                                           |
+| `escrow-reclaim` | USER1 (funder)   | Strictly after expiry: takes back whatever was never released and closes the escrow.                                 |
+| `escrow-abort`   | USER1 (funder)   | Mutual-consent early end — funder + beneficiary co-sign one tx (`COSIGNER_SEED`, `BENEFICIARY_LOVELACE`).            |
+| `inspect-escrow` | —                | Read-only: milestone progress, locked balance, expiry.                                                               |
 
 ---
 

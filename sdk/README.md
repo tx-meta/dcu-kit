@@ -1,6 +1,6 @@
-# @tx-meta/dcu-sdk
+# @tx-meta/dcu-kit
 
-[![npm](https://img.shields.io/npm/v/@tx-meta/dcu-sdk)](https://www.npmjs.com/package/@tx-meta/dcu-sdk)
+[![npm](https://img.shields.io/npm/v/@tx-meta/dcu-kit)](https://www.npmjs.com/package/@tx-meta/dcu-kit)
 [![CI](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml)
 
 TypeScript offchain SDK for the **DCU Toolkit**, a ROSCA protocol on Cardano. Built on [Lucid Evolution](https://github.com/Anastasia-Labs/lucid-evolution) and [Effect](https://effect.website/).
@@ -8,9 +8,9 @@ TypeScript offchain SDK for the **DCU Toolkit**, a ROSCA protocol on Cardano. Bu
 ## Installation
 
 ```sh
-npm install @tx-meta/dcu-sdk
+npm install @tx-meta/dcu-kit
 # or
-pnpm add @tx-meta/dcu-sdk
+pnpm add @tx-meta/dcu-kit
 ```
 
 ## Usage
@@ -18,7 +18,7 @@ pnpm add @tx-meta/dcu-sdk
 Every endpoint returns a `ProgramRunner` with three execution methods:
 
 ```ts
-import { createAccount, CreateAccountConfig } from "@tx-meta/dcu-sdk";
+import { createAccount, CreateAccountConfig } from "@tx-meta/dcu-kit";
 
 const config: CreateAccountConfig = {
   selected_out_ref: utxos[0],
@@ -91,7 +91,7 @@ pnpm format         # Auto-fix formatting
 pnpm lint           # ESLint
 pnpm tsc --noEmit   # Type check
 pnpm run build      # Compile to dist/
-NETWORK=Custom pnpm test  # Full test suite (Lucid emulator, no live network)
+NETWORK=Emulator pnpm test  # Full test suite (Lucid emulator, no live network)
 ```
 
 ## Testing
@@ -99,14 +99,14 @@ NETWORK=Custom pnpm test  # Full test suite (Lucid emulator, no live network)
 Tests use `vitest` + `@effect/vitest` against the Lucid emulator (real UPLC execution, no mocks):
 
 ```sh
-NETWORK=Custom pnpm test                        # All suites
-NETWORK=Custom pnpm test test/account.test.ts   # Account only
-NETWORK=Custom pnpm test test/group.test.ts     # Group only
-NETWORK=Custom pnpm test test/treasury.test.ts  # Treasury only
-NETWORK=Custom pnpm test -- -t "pattern"        # Filter by name
+NETWORK=Emulator pnpm test                        # All suites
+NETWORK=Emulator pnpm test test/account.test.ts   # Account only
+NETWORK=Emulator pnpm test test/group.test.ts     # Group only
+NETWORK=Emulator pnpm test test/treasury.test.ts  # Treasury only
+NETWORK=Emulator pnpm test -- -t "pattern"        # Filter by name
 ```
 
-`NETWORK=Custom` is required. Without it the SDK attempts to connect to Preprod.
+`NETWORK=Emulator` is required. Without it the SDK attempts to connect to Preprod.
 
 ## License
 

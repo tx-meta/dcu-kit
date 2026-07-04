@@ -1,0 +1,3144 @@
+use aiken/fuzz
+use aiken/primitive/bytearray
+use cardano/address.{Script, VerificationKey}
+use cardano/assets
+use cardano/transaction.{Input, Output, OutputReference}
+use dcu/cip68
+use dcu/group.{
+  GroupCip68Datum, GroupDatum, max_group_members, validate_close_group,
+  validate_create_group, validate_exit_group, validate_join_group,
+  validate_recover_group, validate_recover_member, validate_update_group,
+}
+use dcu/treasury.{DefaultState, TreasuryState}
+use tests/common
+use tests/fuzzers.{gen_group_datum, gen_valid_group_datum}
+
+fn cip68_with(policy_id: assets.PolicyId, extra: GroupDatum) -> GroupCip68Datum {
+  GroupCip68Datum { ..common.test_group_cip68_datum(policy_id), extra }
+}
+
+test create_group_success() {
+  let policy_id = common.test_policy_id()
+  // 1. Setup CIP-68 names & ref
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  // 2. Prepare Mint
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  // 3. Prepare Datum
+  let datum = common.test_group_datum(policy_id)
+
+  // 4. Build Output (must have Ref Token + Correct Addr + ADA for policy guard)
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+
+  // 5. Build Input
+  let input = common.test_input(output_ref, output)
+
+  // 6. Build user token output at wallet address
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  let inputs = [input]
+  let outputs = [output, user_output]
+
+  // Expectation: returns True
+  validate_create_group(policy_id, 0, 0, inputs, outputs, mint)
+}
+
+test create_group_invalid_fee() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  let datum = GroupDatum { ..base_datum, contribution_fee: 0 }
+  let output_value = assets.from_asset(policy_id, ref_tn, 1)
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+test create_group_invalid_member_count() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  let datum = GroupDatum { ..base_datum, member_count: 1 }
+
+  let output_value = assets.from_asset(policy_id, ref_tn, 1)
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+test create_group_rejects_nonzero_active_member_count() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  // active_member_count MUST be 0 at creation (set to member_count by startGroup)
+  let datum = GroupDatum { ..base_datum, active_member_count: 1 }
+
+  let output_value = assets.from_asset(policy_id, ref_tn, 1)
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+test create_group_invalid_intervals() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  let datum = GroupDatum { ..base_datum, interval_length: 0 }
+
+  let output_value = assets.from_asset(policy_id, ref_tn, 1)
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+test create_group_inactive() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  let datum = GroupDatum { ..base_datum, is_active: False }
+
+  let output_value = assets.from_asset(policy_id, ref_tn, 1)
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// expect Some(1) = dict.get(...) crashes when token name not found — use fail without !
+test create_group_wrong_token_names() fail {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, _user_tn) = common.setup_cip68(policy_id)
+  let datum = common.test_group_datum(policy_id)
+  // Use a WRONG suffix to simulate mismatch
+  let wrong_suffix = #"badbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbad"
+  let wrong_ref_tn = cip68.prefix_100 |> bytearray.concat(wrong_suffix)
+  let wrong_user_tn = cip68.prefix_222 |> bytearray.concat(wrong_suffix)
+  let mint = assets.from_asset(policy_id, wrong_ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, wrong_user_tn, 1))
+  // Even if we put the 'correct' ref token in output (unlikely scenario but possible if mismatched),
+  // validation should fail on mint check first.
+  let output_value = assets.from_asset(policy_id, ref_tn, 1)
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+
+  validate_create_group(policy_id, 0, 0, [input], [output], mint)
+}
+
+// expect Some(1) = Some(2) crashes when qty != 1 — use fail without !
+test create_group_wrong_mint_quantity() fail {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let datum = common.test_group_datum(policy_id)
+
+  // Invalid: Minting 2 Reference Tokens instead of 1
+  let invalid_mint = assets.from_asset(policy_id, ref_tn, 2)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+  let output_value = assets.from_asset(policy_id, ref_tn, 1)
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+
+  validate_create_group(policy_id, 0, 0, [input], [output], invalid_mint)
+}
+
+test create_group_wrong_output_address_fails() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let datum = common.test_group_datum(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let output_value = assets.from_asset(policy_id, ref_tn, 1)
+  // FAILURE CASE: Wrong Address (not script address)
+  let output = common.test_user_utxo(
+    common.test_pkh(),
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+test create_group_missing_ref_token_fails() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let datum = common.test_group_datum(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  // FAILURE CASE: Output has NO value (missing ref token)
+  let output_value = assets.zero
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// --- Update Group Tests ---
+
+test update_group_success() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  let base_datum = common.test_group_datum(policy_id)
+  // Initial State: member_count = 0 (from test_group_datum)
+  let group_input_utxo = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, base_datum),
+  )
+  let group_input = common.test_input(output_ref, group_input_utxo)
+
+  let admin_input_utxo = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, base_datum),
+  )
+  let admin_input = common.test_input(output_ref, admin_input_utxo)
+
+  // Update: Change fee
+  let updated_datum = GroupDatum { ..base_datum, contribution_fee: 2000 }
+  let group_output_utxo = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  let inputs = [group_input, admin_input]
+  let outputs = [group_output_utxo]
+
+  validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    // admin_input_index
+    0,
+    // group_input_index
+    0,
+    // group_output_index
+    inputs,
+    outputs,
+  )
+}
+
+test update_group_fail_auth() fail {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, _user_tn) = common.setup_cip68(policy_id)
+  let base_datum = common.test_group_datum(policy_id)
+  let group_input_utxo = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, base_datum),
+  )
+  let group_input = common.test_input(output_ref, group_input_utxo)
+
+  // Admin has WRONG token (or no token)
+  let admin_input_utxo = common.test_user_utxo(
+    common.test_pkh(),
+    assets.zero,
+    cip68_with(policy_id, base_datum),
+  )
+  let admin_input = common.test_input(output_ref, admin_input_utxo)
+
+  let updated_datum = GroupDatum { ..base_datum, contribution_fee: 2000 }
+  let group_output_utxo = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output_utxo],
+  )
+}
+
+test update_group_fail_active() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  // Active Group with Members
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 5,
+  }
+  let group_input_utxo = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, base_datum),
+  )
+  let group_input = common.test_input(output_ref, group_input_utxo)
+
+  let admin_input_utxo = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, base_datum),
+  )
+  let admin_input = common.test_input(output_ref, admin_input_utxo)
+
+  // Critical Update on Active Group -> Should Fail
+  let updated_datum = GroupDatum { ..base_datum, contribution_fee: 2000 }
+  let group_output_utxo = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output_utxo],
+  )
+}
+
+test update_group_fail_change_members() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = common.test_group_datum(policy_id)
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+
+  // Try to manually increment member count via Update (Not Allowed)
+  let updated_datum = GroupDatum { ..base_datum, member_count: 1 }
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+test update_group_wrong_output_address_fails() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = common.test_group_datum(policy_id)
+
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+
+  // Fail: Send to wrong address
+  let group_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, base_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+test update_group_missing_ref_token_fails() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = common.test_group_datum(policy_id)
+
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+
+  // Fail: Missing Ref Token
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.zero,
+    cip68_with(policy_id, base_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// Group output carries no ADA — output_clean_value (policies == [ada, policy_id]) fails
+// because ada_policy_id is absent. Also exercises that deactivation itself is allowed
+// (is_active True→False passes the latch), so the only failure is the missing ADA.
+test update_group__rejects_output_without_ada() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = common.test_group_datum(policy_id)
+
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+
+  // Deactivation (True→False) is allowed by the is_active latch. The output is
+  // rejected solely because it has no ADA — output_clean_value fails.
+  let updated_datum = GroupDatum { ..base_datum, is_active: False }
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// Reactivation (is_active False→True) is permanently blocked by the one-way latch:
+// (current.is_active || !updated.is_active) → (False || !True) → False.
+test update_group__rejects_reactivation() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  // Start from an already-deactivated group
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    is_active: False,
+  }
+
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+
+  // Attempt to flip is_active back to True — latch must reject this
+  let updated_datum = GroupDatum { ..base_datum, is_active: True }
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// --- Remove Group Tests (burn pattern) ---
+// DeleteGroup burns both tokens and returns ADA to admin.
+// Requires: is_active == False (deactivated first) AND member_count == 0.
+
+fn make_burn_mint(
+  policy_id: ByteArray,
+  ref_tn: ByteArray,
+  user_tn: ByteArray,
+) -> assets.Value {
+  assets.from_asset(policy_id, ref_tn, -1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, -1))
+}
+
+test remove_group_success() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  // Group must be deactivated (is_active = False) before deletion
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    is_active: False,
+  }
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(5_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let mint = make_burn_mint(policy_id, ref_tn, user_tn)
+
+  validate_close_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    [group_input, admin_input],
+    mint,
+  )
+}
+
+test remove_group_fail_still_active() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  // Group is still active — must call UpdateGroup to deactivate first
+  let base_datum = common.test_group_datum(policy_id)
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let mint = make_burn_mint(policy_id, ref_tn, user_tn)
+
+  !validate_close_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    [group_input, admin_input],
+    mint,
+  )
+}
+
+test remove_group_fail_members() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  // Deactivated but still has a member — member must exit first
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    is_active: False,
+    member_count: 1,
+  }
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let mint = make_burn_mint(policy_id, ref_tn, user_tn)
+
+  !validate_close_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    [group_input, admin_input],
+    mint,
+  )
+}
+
+test remove_group_fail_no_burn() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    is_active: False,
+  }
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  // No burn in mint — tokens not included
+  let mint = assets.zero
+
+  !validate_close_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    [group_input, admin_input],
+    mint,
+  )
+}
+
+test remove_group_fail_partial_burn() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    is_active: False,
+  }
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  // Only ref token burned — user token ghost remains
+  let mint = assets.from_asset(policy_id, ref_tn, -1)
+
+  !validate_close_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    [group_input, admin_input],
+    mint,
+  )
+}
+
+// --- Deactivation Tests (UpdateGroup with is_active = False) ---
+
+test update_group_deactivate_success() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = common.test_group_datum(policy_id)
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  // Admin sets is_active = False — signals wind-down, all exits become penalty-free
+  let updated_datum = GroupDatum { ..base_datum, is_active: False }
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+test update_group_fail_reactivate() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  // Group is already deactivated
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    is_active: False,
+  }
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  // Attempt to flip is_active back to True — must fail
+  let updated_datum = GroupDatum { ..base_datum, is_active: True }
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// --- creator_bond Tests ---
+
+test create_group_invalid_creator_bond() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  // Negative creator_bond is not allowed
+  let datum = GroupDatum { ..base_datum, creator_bond: -1 }
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// --- collateral_rounds Tests ---
+
+// collateral_rounds must be in [1, max_members]. 0 is rejected.
+test create_group__rejects_collateral_rounds_below_one() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  let datum = GroupDatum { ..base_datum, collateral_rounds: 0 }
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// collateral_rounds greater than max_members is rejected.
+test create_group__rejects_collateral_rounds_above_max_members() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  // max_members is 20 in test_group_datum; 21 exceeds it.
+  let datum = GroupDatum { ..base_datum, collateral_rounds: 21 }
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// [scale] max_members above the protocol ceiling (max_group_members) is rejected, so a
+// group can never be created whose distribute / next-cycle tx would be unsubmittable.
+test create_group__rejects_max_members_above_ceiling() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  // One above the ceiling — every other field is valid, so only the cap check fails.
+  let datum = GroupDatum { ..base_datum, max_members: max_group_members + 1 }
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// --- Property Tests ---
+
+test prop_create_group_integrity(datum via gen_group_datum()) {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  // Construct valid Mint and UTxOs around the random datum
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  // Include ADA so the output policy guard [ada_policy_id, policy_id] passes for valid datums
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  // Define what makes a datum "Invalid" — must mirror EVERY datum-level rule in
+  // validate_create_group, otherwise the "valid" branch below can assert True on a datum
+  // the validator actually rejects. (member_token_names, version and name are pinned valid
+  // by the harness — gen_group_datum sets member_token_names: [], cip68_with sets version/name.)
+  let is_invalid = datum.contribution_fee <= 0 || datum.joining_fee < 0 || datum.penalty_fee < 0 || datum.creator_bond < 0 || datum.grace_period_length < 0 || datum.interval_length <= 0 || datum.num_rounds != 0 || datum.max_members <= 0 || datum.max_members > max_group_members || datum.member_count != 0 || !datum.is_active || datum.is_started || datum.start_time != 0 || datum.last_distributed_round != -1 || datum.collateral_rounds < 1 || datum.collateral_rounds > datum.max_members || when
+    datum.creator_payment_credential
+  is {
+    VerificationKey(h) -> bytearray.length(h) != 28
+    Script(h) -> bytearray.length(h) != 28
+  }
+
+  // The Property:
+  // If the datum is invalid, validation MUST return False.
+  // If the datum happens to be valid (rare but possible), we expect True.
+  if is_invalid {
+    !validate_create_group(
+      policy_id,
+      0,
+      0,
+      [input],
+      [output, user_output],
+      mint,
+    )
+  } else {
+    validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+  }
+}
+
+// Accept-path property: a datum that satisfies every creation rule MUST be accepted.
+// gen_group_datum is random, so the `else` branch above is almost never reached with a
+// genuinely valid datum; this test uses a constrained generator so the accept path is
+// exercised on every run.
+test prop_create_group_accepts_valid(datum via gen_valid_group_datum()) {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// --- Security: num_rounds must be 0 at creation (set by startGroup) ---
+
+test create_group__rejects_nonzero_num_rounds() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  // num_rounds = 1 is non-zero — must be 0 at creation
+  let datum = GroupDatum { ..common.test_group_datum(policy_id), num_rounds: 1 }
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+test create_group__rejects_zero_max_members() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  // max_members = 0 is invalid — a group with zero capacity cannot accept any member
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    max_members: 0,
+  }
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.merge(
+      assets.from_lovelace(2_000_000),
+      assets.from_asset(policy_id, ref_tn, 1),
+    ),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// creator_payment_credential shorter than 28 bytes — bytearray.length check fails
+test create_group__rejects_invalid_creator_payment_credential() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  // 27 bytes — one byte short of the required 28
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    creator_payment_credential: VerificationKey(
+      #"aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbcc",
+    ),
+  }
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.merge(
+      assets.from_lovelace(2_000_000),
+      assets.from_asset(policy_id, ref_tn, 1),
+    ),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// creator_payment_credential as a 28-byte Script hash (multisig creator) — accepted.
+test create_group__accepts_script_creator_credential() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    creator_payment_credential: Script(common.test_pkh()),
+  }
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.merge(
+      assets.from_lovelace(2_000_000),
+      assets.from_asset(policy_id, ref_tn, 1),
+    ),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// creator_payment_credential as a SHORT Script hash (27 bytes) — rejected, same
+// 28-byte rule as the VerificationKey kind.
+test create_group__rejects_short_script_creator_credential() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    creator_payment_credential: Script(
+      #"aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbcc",
+    ),
+  }
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.merge(
+      assets.from_lovelace(2_000_000),
+      assets.from_asset(policy_id, ref_tn, 1),
+    ),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// recovery_threshold == 0 — below the minimum of 1; must be rejected.
+test create_group__rejects_recovery_threshold_zero() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    recovery_threshold: 0,
+  }
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.merge(
+      assets.from_lovelace(2_000_000),
+      assets.from_asset(policy_id, ref_tn, 1),
+    ),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// recovery_threshold above max_members — cannot require more approvals than members; rejected.
+test create_group__rejects_recovery_threshold_above_max() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let base_datum = common.test_group_datum(policy_id)
+  // max_members is 20 in test_group_datum; 21 exceeds it.
+  let datum = GroupDatum {
+    ..base_datum,
+    recovery_threshold: base_datum.max_members + 1,
+  }
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.merge(
+      assets.from_lovelace(2_000_000),
+      assets.from_asset(policy_id, ref_tn, 1),
+    ),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// --- Security: fee currency freeze (is_critical_update with members) ---
+
+test update_group__rejects_fee_currency_change_with_members() {
+  let policy_id = common.test_policy_id()
+  let alt_policy_id = common.test_hash_03()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  // Group has 3 members — critical fields must be frozen
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 3,
+  }
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_asset(policy_id, ref_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+
+  // Attempt to switch contribution_fee currency — economic rug-pull
+  let updated_datum = GroupDatum {
+    ..base_datum,
+    contribution_fee_policyid: alt_policy_id,
+  }
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// --- Security: ADA preservation on update ---
+
+test update_group__rejects_ada_drain() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = common.test_group_datum(policy_id)
+
+  // Input has 5 ADA locked alongside the ref token
+  let group_input_value = assets.from_lovelace(5_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      group_input_value,
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+
+  // Output only returns the ref token — ADA drained
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, base_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// --- Security: admin token required for remove ---
+
+test remove_group__rejects_missing_admin_token() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, _user_tn) = common.setup_cip68(policy_id)
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    is_active: False,
+  }
+
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(5_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  // Admin input holds no user token — authorization missing
+  let fake_admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_lovelace(2_000_000),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let mint = make_burn_mint(policy_id, ref_tn, ref_tn)
+
+  !validate_close_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    [group_input, fake_admin_input],
+    mint,
+  )
+}
+
+// --- Security: extra token burn rejected ---
+
+test remove_group__rejects_extra_token_in_burn() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    is_active: False,
+  }
+  let other_tn = #"deadbeef"
+
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(5_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  // Three tokens burned — ref, user, and an unexpected third token
+  let mint = assets.from_asset(policy_id, ref_tn, -1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, -1))
+    |> assets.merge(assets.from_asset(policy_id, other_tn, -1))
+
+  !validate_close_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    [group_input, admin_input],
+    mint,
+  )
+}
+
+// --- Security: user token must go to a wallet, not a script ---
+
+test create__rejects_user_token_to_script() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let datum = common.test_group_datum(policy_id)
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+  // User token sent to a script address — admin authority permanently lost
+  let user_output = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, group_output)
+
+  !validate_create_group(
+    policy_id,
+    0,
+    0,
+    [input],
+    [group_output, user_output],
+    mint,
+  )
+}
+
+// --- Property: update rejects critical field change when members are active ---
+//
+// NOTE: group input and output include ADA so output_clean_value and out_ada >= in_ada
+// both pass. The property exercises is_safe_update exclusively: any fee change with
+// member_count > 0 must be rejected regardless of the new fee value.
+
+test prop_update_group__rejects_critical_change_with_members(
+  new_fee via fuzz.int_at_least(1),
+) {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 1,
+  }
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+
+  // Any change to contribution_fee is a critical update — blocked with members.
+  // base_datum.contribution_fee + new_fee >= base_fee + 1, so it always differs
+  // from base_datum.contribution_fee regardless of the base value.
+  let updated_datum = GroupDatum {
+    ..base_datum,
+    contribution_fee: base_datum.contribution_fee + new_fee,
+  }
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// start_time is a critical field — changing it while members are active shifts every
+// member's payout window. The is_safe_update guard must block this.
+test update_group__rejects_start_time_change_with_active_members() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  // member_count = 1: group has an active member
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 1,
+  }
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+
+  // Shift start_time by 1 ms — any change triggers is_critical_update
+  let updated_datum = GroupDatum {
+    ..base_datum,
+    start_time: base_datum.start_time + 1,
+  }
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// max_members is a critical field — admin cannot tighten or expand the cap while
+// members are active (could invalidate existing member expectations).
+test update_group__rejects_max_members_change_with_active_members() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 1,
+  }
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+
+  // Increase max_members — still a critical update, blocked when member_count > 0
+  let updated_datum = GroupDatum {
+    ..base_datum,
+    max_members: base_datum.max_members + 10,
+  }
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated_datum),
+  )
+
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// ─── validate_member_join ─────────────────────────────────────────────────────
+
+// Treasury policy — distinct from the group policy
+fn treasury_policy_id() -> assets.PolicyId {
+  common.test_hash_03()
+}
+
+// Group input holding the ref token with the given member_count
+fn group_input_with_count(
+  policy_id: assets.PolicyId,
+  ref_tn: ByteArray,
+  member_count: Int,
+) -> Input {
+  // Pre-start / no-default invariant: every member is active, so active == member_count.
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count,
+    active_member_count: member_count,
+  }
+  // Include 2 ADA so the ADA preservation check (out_ada >= in_ada) is non-trivial
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, datum),
+  )
+  common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output,
+  )
+}
+
+// Group output holding the ref token with the given member_count.
+// Includes 2 ADA so the output policy guard [ada_policy_id, policy_id] passes.
+fn group_output_with_count(
+  policy_id: assets.PolicyId,
+  ref_tn: ByteArray,
+  member_count: Int,
+) -> Output {
+  // Pre-start / no-default invariant: every member is active, so active == member_count.
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count,
+    active_member_count: member_count,
+  }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  common.test_script_utxo(policy_id, value, cip68_with(policy_id, datum))
+}
+
+// Group input with explicit member_token_names (needed for join/exit tests that
+// must satisfy the duplicate-prevention and membership checks).
+fn group_input_with_names(
+  policy_id: assets.PolicyId,
+  ref_tn: ByteArray,
+  member_count: Int,
+  names: List<ByteArray>,
+) -> Input {
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count,
+    active_member_count: member_count,
+    member_token_names: names,
+  }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, datum),
+  )
+  common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    output,
+  )
+}
+
+// Group output with explicit member_token_names.
+fn group_output_with_names(
+  policy_id: assets.PolicyId,
+  ref_tn: ByteArray,
+  member_count: Int,
+  names: List<ByteArray>,
+) -> Output {
+  let datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count,
+    active_member_count: member_count,
+    member_token_names: names,
+  }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  common.test_script_utxo(policy_id, value, cip68_with(policy_id, datum))
+}
+
+// Treasury input holding a specific membership token under tp.
+// Used to satisfy member_token_authenticated in validate_member_exit.
+// Treasury spending input for an ACTIVE (TreasuryState) member — validate_exit_group reads
+// this datum to decide active_member_count decrements (TreasuryState → active - 1).
+fn treasury_input_with_token(tp: assets.PolicyId, member_tn: ByteArray) -> Input {
+  common.test_input(
+    OutputReference {
+      transaction_id: #"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      tp,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(tp, member_tn, 1)),
+      TreasuryState {
+        group_reference_tokenname: member_tn,
+        member_reference_tokenname: member_tn,
+        rounds_paid: 0,
+        member_payment_credential: common.test_pkh(),
+        claimable_balance: 0,
+      },
+    ),
+  )
+}
+
+// Treasury spending input for a DEFAULTED member — used to assert validate_exit_group does
+// NOT decrement active_member_count when a non-active member is removed (TerminateDefault path).
+fn defaulted_treasury_input_with_token(
+  tp: assets.PolicyId,
+  member_tn: ByteArray,
+) -> Input {
+  common.test_input(
+    OutputReference {
+      transaction_id: #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      tp,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(tp, member_tn, 1)),
+      DefaultState {
+        group_reference_tokenname: member_tn,
+        member_reference_tokenname: member_tn,
+        grace_expires_at: 0,
+        grace_extensions_used: 0,
+        rounds_paid: 0,
+        member_payment_credential: common.test_pkh(),
+        claimable_balance: 0,
+      },
+    ),
+  )
+}
+
+// Join: first member joins — member_count 0 → 1
+test member_join__accepts_valid_join() {
+  let policy_id = common.test_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let tp = treasury_policy_id()
+
+  let group_in = group_input_with_count(policy_id, ref_tn, 0)
+  // Output must append member_token_name to the registry
+  let group_out = group_output_with_names(policy_id, ref_tn, 1, [#"aabb"])
+
+  // Treasury minting exactly 1 token proves JoinGroup ran
+  let mint = assets.from_asset(tp, #"aabb", 1)
+
+  validate_join_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
+}
+
+// Join: second member joins — member_count 1 → 2
+// group_in.member_token_names = [] (group_input_with_count uses test_group_datum default);
+// #"aabb" is not in [], so member_not_duplicate passes.
+test member_join__accepts_second_member() {
+  let policy_id = common.test_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let tp = treasury_policy_id()
+
+  let group_in = group_input_with_count(policy_id, ref_tn, 1)
+  // Output: member_count=2, registry prepends #"aabb" to the previous list []
+  let group_out = group_output_with_names(policy_id, ref_tn, 2, [#"aabb"])
+  let mint = assets.from_asset(tp, #"aabb", 1)
+
+  validate_join_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
+}
+
+// [scale] Join is rejected once member_count has reached max_members — the group cannot
+// grow past its cap (and create-group bounds max_members <= max_group_members), keeping the
+// distribute / next-cycle tx within budget. Only under_cap fails; all other checks pass.
+test member_join__rejects_at_max_members() {
+  let policy_id = common.test_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let tp = treasury_policy_id()
+
+  // test_group_datum has max_members = 20; a group already at 20 cannot accept another join.
+  let group_in = group_input_with_count(policy_id, ref_tn, 20)
+  let group_out = group_output_with_names(policy_id, ref_tn, 21, [#"aabb"])
+  let mint = assets.from_asset(tp, #"aabb", 1)
+
+  !validate_join_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
+}
+
+// Join: no treasury mint — proves JoinGroup did NOT run → rejected
+test member_join__rejects_no_treasury_mint() {
+  let policy_id = common.test_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let tp = treasury_policy_id()
+
+  let group_in = group_input_with_count(policy_id, ref_tn, 0)
+  let group_out = group_output_with_count(policy_id, ref_tn, 1)
+  // Mint is empty — treasury_minting fails immediately
+  let mint = assets.zero
+
+  !validate_join_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
+}
+
+// Join: group output has wrong member_count (not incremented) → rejected
+test member_join__rejects_member_count_not_incremented() {
+  let policy_id = common.test_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let tp = treasury_policy_id()
+
+  let group_in = group_input_with_count(policy_id, ref_tn, 0)
+  // Output: member_count still 0 — updated != expected (expects member_count=1)
+  let group_out = group_output_with_count(policy_id, ref_tn, 0)
+  let mint = assets.from_asset(tp, #"aabb", 1)
+
+  !validate_join_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
+}
+
+// Join: group output has over-incremented member_count → rejected
+test member_join__rejects_member_count_over_incremented() {
+  let policy_id = common.test_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let tp = treasury_policy_id()
+
+  let group_in = group_input_with_count(policy_id, ref_tn, 0)
+  // Output: member_count = 2 (skipped 1) — rejected
+  let group_out = group_output_with_count(policy_id, ref_tn, 2)
+  let mint = assets.from_asset(tp, #"aabb", 1)
+
+  !validate_join_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
+}
+
+// ─── validate_member_exit ─────────────────────────────────────────────────────
+
+// Exit: mature exit — member_count 1 → 0 (token burned by treasury)
+test member_exit__accepts_valid_exit() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+
+  // group_in: #"aabb" is in member_token_names; group_out: list after removing #"aabb" = []
+  let group_in = group_input_with_names(policy_id, ref_tn, 1, [#"aabb"])
+  let group_out = group_output_with_count(policy_id, ref_tn, 0)
+  // treasury_in holds the membership token — satisfies member_token_authenticated
+  let treasury_in = treasury_input_with_token(tp, #"aabb")
+
+  validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in, treasury_in],
+    [group_out],
+  )
+}
+
+// Exit: member_count 2 → 1 (partial exit with remaining members)
+// group_in.member_token_names = [#"aabb"] (only registering the exiting member
+// for simplicity — count=2 being inconsistent with 1 name is acceptable in unit tests).
+test member_exit__accepts_partial_exit() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+
+  let group_in = group_input_with_names(policy_id, ref_tn, 2, [#"aabb"])
+  // After removing #"aabb": member_token_names = [] — matches group_output_with_count
+  let group_out = group_output_with_count(policy_id, ref_tn, 1)
+  let treasury_in = treasury_input_with_token(tp, #"aabb")
+
+  validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in, treasury_in],
+    [group_out],
+  )
+}
+
+// Terminate a DEFAULTED member: member_count 2 → 1 but active_member_count stays 1 (the
+// defaulter already left the active set at their ICS transition). This is the regression
+// guard for the exit/terminate double-decrement bug — validate_exit_group must read the
+// spent treasury's datum (DefaultState here) and NOT decrement active.
+test member_exit__terminate_default_keeps_active_count() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+
+  let base = common.test_group_datum(policy_id)
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 1,
+    member_token_names: [#"aabb"],
+  }
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 1,
+    active_member_count: 1,
+    member_token_names: [],
+  }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = defaulted_treasury_input_with_token(tp, #"aabb")
+
+  validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in, treasury_in],
+    [group_out],
+  )
+}
+
+// Recover: a defaulted member rejoins the active set. member_count stays 1, active_member_count
+// 0 → 1, and the named treasury transitions DefaultState → TreasuryState.
+fn recover_setup(
+  policy_id: assets.PolicyId,
+  tp: assets.PolicyId,
+  ref_tn: ByteArray,
+  out_active: Int,
+  treasury_out_is_treasury_state: Bool,
+) -> (List<Input>, List<Output>) {
+  let base = common.test_group_datum(policy_id)
+  // 1 member who defaulted → member_count 1, active_member_count 0.
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 1,
+    active_member_count: 0,
+    member_token_names: [#"aabb"],
+  }
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 1,
+    active_member_count: out_active,
+    member_token_names: [#"aabb"],
+  }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = defaulted_treasury_input_with_token(tp, #"aabb")
+  let t_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(tp, #"aabb", 1))
+  let recovered_datum = TreasuryState {
+    group_reference_tokenname: #"aabb",
+    member_reference_tokenname: #"aabb",
+    rounds_paid: 0,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
+  }
+  // When false, leave the treasury output as DefaultState (no real recovery) to exercise rejection.
+  let still_default = DefaultState {
+    group_reference_tokenname: #"aabb",
+    member_reference_tokenname: #"aabb",
+    grace_expires_at: 0,
+    grace_extensions_used: 0,
+    rounds_paid: 0,
+    member_payment_credential: common.test_pkh(),
+    claimable_balance: 0,
+  }
+  let treasury_out = common.test_script_utxo(
+    tp,
+    t_value,
+    if treasury_out_is_treasury_state {
+      recovered_datum
+    } else {
+      still_default
+    },
+  )
+  ([group_in, treasury_in], [group_out, treasury_out])
+}
+
+test member_recover__accepts_valid_recovery() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let (inputs, outputs) = recover_setup(policy_id, tp, ref_tn, 1, True)
+  validate_recover_group(policy_id, tp, ref_tn, 0, 0, 1, 1, inputs, outputs)
+}
+
+// active_member_count must increment by exactly 1 — output active unchanged (0) is rejected.
+test member_recover__rejects_active_not_incremented() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let (inputs, outputs) = recover_setup(policy_id, tp, ref_tn, 0, True)
+  !validate_recover_group(policy_id, tp, ref_tn, 0, 0, 1, 1, inputs, outputs)
+}
+
+// No real recovery: the treasury output is still DefaultState → expect TreasuryState crashes,
+// so active_member_count cannot be bumped without a genuine DefaultState → TreasuryState move.
+test member_recover__rejects_no_real_recovery() fail {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let (inputs, outputs) = recover_setup(policy_id, tp, ref_tn, 1, False)
+  validate_recover_group(policy_id, tp, ref_tn, 0, 0, 1, 1, inputs, outputs)
+}
+
+// ─── validate_recover_member (RecoverMember registry swap N -> N') ──────────
+
+// Generic treasury UTxO holding `member_tn` (datum content is irrelevant to the
+// group-side coupling check — only token presence under treasury_policy_id matters).
+fn treasury_utxo_holding(tp: assets.PolicyId, member_tn: ByteArray) -> Output {
+  common.test_script_utxo(
+    tp,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(tp, member_tn, 1)),
+    DefaultState {
+      group_reference_tokenname: member_tn,
+      member_reference_tokenname: member_tn,
+      grace_expires_at: 0,
+      grace_extensions_used: 0,
+      rounds_paid: 0,
+      member_payment_credential: common.test_pkh(),
+      claimable_balance: 0,
+    },
+  )
+}
+
+// Builds the full input/output set for a RecoverMember test:
+//   group: member_token_names = in_names -> out_names (member_count/active frozen at `count`)
+//   treasury: input holds old_tn (if include_old_treasury_input), output holds new_tn
+//             (if include_new_treasury_output)
+fn recover_member_setup(
+  policy_id: assets.PolicyId,
+  tp: assets.PolicyId,
+  ref_tn: ByteArray,
+  count: Int,
+  in_names: List<ByteArray>,
+  out_names: List<ByteArray>,
+  old_tn: ByteArray,
+  new_tn: ByteArray,
+  include_old_treasury_input: Bool,
+  include_new_treasury_output: Bool,
+) -> (List<Input>, List<Output>) {
+  let base = common.test_group_datum(policy_id)
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: count,
+    active_member_count: count,
+    member_token_names: in_names,
+  }
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: count,
+    active_member_count: count,
+    member_token_names: out_names,
+  }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = if include_old_treasury_input {
+    treasury_utxo_holding(tp, old_tn)
+  } else {
+    // No token under old_tn — coupling lookup at treasury_input_index fails.
+    treasury_utxo_holding(tp, #"deadbeef")
+  }
+  let treasury_out = if include_new_treasury_output {
+    treasury_utxo_holding(tp, new_tn)
+  } else {
+    // No token under new_tn — coupling lookup at treasury_output_index fails.
+    treasury_utxo_holding(tp, #"deadbeef")
+  }
+  (
+    [group_in, common.test_input(placeholder_treasury_ref(), treasury_in)],
+    [group_out, treasury_out],
+  )
+}
+
+fn placeholder_treasury_ref() -> OutputReference {
+  OutputReference {
+    transaction_id: #"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    output_index: 0,
+  }
+}
+
+test recover_member__swaps_registry_N_to_Nprime() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let (inputs, outputs) = recover_member_setup(
+    policy_id,
+    tp,
+    ref_tn,
+    2,
+    [#"aabb", #"ccdd"],
+    [#"eeff", #"ccdd"],
+    #"aabb",
+    #"eeff",
+    True,
+    True,
+  )
+  validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    inputs,
+    outputs,
+  )
+}
+
+test recover_member__rejects_when_N_absent() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  // N (#"9999") is not in the input registry at all — the in-place swap is a no-op,
+  // so the output registry is unchanged and the rejection isolates old_present.
+  let (inputs, outputs) = recover_member_setup(
+    policy_id,
+    tp,
+    ref_tn,
+    2,
+    [#"aabb", #"ccdd"],
+    [#"aabb", #"ccdd"],
+    #"9999",
+    #"eeff",
+    True,
+    True,
+  )
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"9999",
+    #"eeff",
+    1,
+    1,
+    inputs,
+    outputs,
+  )
+}
+
+test recover_member__rejects_when_Nprime_already_member() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  // N' (#"ccdd") already sits in the input registry — collision.
+  let (inputs, outputs) = recover_member_setup(
+    policy_id,
+    tp,
+    ref_tn,
+    2,
+    [#"aabb", #"ccdd"],
+    [#"ccdd", #"ccdd"],
+    #"aabb",
+    #"ccdd",
+    True,
+    True,
+  )
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"ccdd",
+    1,
+    1,
+    inputs,
+    outputs,
+  )
+}
+
+test recover_member__rejects_member_count_change() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = common.test_group_datum(policy_id)
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"aabb", #"ccdd"],
+  }
+  // member_count bumped to 3 alongside the otherwise-correct registry swap.
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 3,
+    active_member_count: 2,
+    member_token_names: [#"eeff", #"ccdd"],
+  }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = common.test_input(
+    placeholder_treasury_ref(),
+    treasury_utxo_holding(tp, #"aabb"),
+  )
+  let treasury_out = treasury_utxo_holding(tp, #"eeff")
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    [group_in, treasury_in],
+    [group_out, treasury_out],
+  )
+}
+
+test recover_member__rejects_active_count_change() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = common.test_group_datum(policy_id)
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"aabb", #"ccdd"],
+  }
+  // active_member_count dropped to 1 alongside the otherwise-correct registry swap.
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 1,
+    member_token_names: [#"eeff", #"ccdd"],
+  }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = common.test_input(
+    placeholder_treasury_ref(),
+    treasury_utxo_holding(tp, #"aabb"),
+  )
+  let treasury_out = treasury_utxo_holding(tp, #"eeff")
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    [group_in, treasury_in],
+    [group_out, treasury_out],
+  )
+}
+
+test recover_member__rejects_other_field_mutation() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = common.test_group_datum(policy_id)
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"aabb", #"ccdd"],
+  }
+  // penalty_fee silently changed alongside the otherwise-correct registry swap.
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"eeff", #"ccdd"],
+    penalty_fee: base.penalty_fee + 1,
+  }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = common.test_input(
+    placeholder_treasury_ref(),
+    treasury_utxo_holding(tp, #"aabb"),
+  )
+  let treasury_out = treasury_utxo_holding(tp, #"eeff")
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    [group_in, treasury_in],
+    [group_out, treasury_out],
+  )
+}
+
+test recover_member__rejects_missing_treasury_rotation() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  // Neither the treasury input holds N, nor the treasury output holds N' — no rotation.
+  let (inputs, outputs) = recover_member_setup(
+    policy_id,
+    tp,
+    ref_tn,
+    2,
+    [#"aabb", #"ccdd"],
+    [#"eeff", #"ccdd"],
+    #"aabb",
+    #"eeff",
+    False,
+    False,
+  )
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    inputs,
+    outputs,
+  )
+}
+
+// The N'-bearing treasury output carries the right token but sits at a wallet (VK) address,
+// not the treasury script → token presence is satisfied but the rotated position never landed
+// inside the treasury contract → rejected.
+test recover_member__rejects_treasury_output_not_at_script() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = common.test_group_datum(policy_id)
+  let in_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"aabb", #"ccdd"],
+  }
+  let out_datum = GroupDatum {
+    ..base,
+    member_count: 2,
+    active_member_count: 2,
+    member_token_names: [#"eeff", #"ccdd"],
+  }
+  let value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(policy_id, value, cip68_with(policy_id, in_datum)),
+  )
+  let group_out = common.test_script_utxo(
+    policy_id,
+    value,
+    cip68_with(policy_id, out_datum),
+  )
+  let treasury_in = common.test_input(
+    placeholder_treasury_ref(),
+    treasury_utxo_holding(tp, #"aabb"),
+  )
+  // Treasury output holds N' (#"eeff") but at a VerificationKey (wallet) address, not Script(tp).
+  let treasury_out = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(tp, #"eeff", 1)),
+    DefaultState {
+      group_reference_tokenname: #"eeff",
+      member_reference_tokenname: #"eeff",
+      grace_expires_at: 0,
+      grace_extensions_used: 0,
+      rounds_paid: 0,
+      member_payment_credential: common.test_pkh(),
+      claimable_balance: 0,
+    },
+  )
+  !validate_recover_member(
+    policy_id,
+    tp,
+    ref_tn,
+    0,
+    0,
+    #"aabb",
+    #"eeff",
+    1,
+    1,
+    [group_in, treasury_in],
+    [group_out, treasury_out],
+  )
+}
+
+// Exit: group output member_count not decremented → rejected
+test member_exit__rejects_member_count_not_decremented() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+
+  let group_in = group_input_with_names(policy_id, ref_tn, 1, [#"aabb"])
+  // Output: member_count still 1 — not decremented → updated != expected
+  let group_out = group_output_with_count(policy_id, ref_tn, 1)
+  let treasury_in = treasury_input_with_token(tp, #"aabb")
+
+  !validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in, treasury_in],
+    [group_out],
+  )
+}
+
+// Exit: cannot exit when member_count == 0 (expect crashes)
+test member_exit__rejects_exit_when_no_members() fail {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+
+  let group_in = group_input_with_count(policy_id, ref_tn, 0)
+  let group_out = group_output_with_count(policy_id, ref_tn, -1)
+  let treasury_in = treasury_input_with_token(tp, #"aabb")
+
+  // expect current.member_count >= 1 crashes when member_count == 0
+  validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in, treasury_in],
+    [group_out],
+  )
+}
+
+// Exit: no treasury UTxO holding the membership token in inputs → rejected
+// Proves member_token_authenticated must find the treasury UTxO
+test member_exit__rejects_no_treasury_action() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+
+  // group_in has member in registry so member_exists passes; only treasury is missing
+  let group_in = group_input_with_names(policy_id, ref_tn, 1, [#"aabb"])
+  let group_out = group_output_with_count(policy_id, ref_tn, 0)
+
+  // No treasury input — member_token_authenticated fails
+  !validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in],
+    [group_out],
+  )
+}
+
+// Group input holds 5M ADA; member_join output returns 2M ADA — ADA drained
+test member_join__rejects_group_ada_drain() {
+  let policy_id = common.test_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let tp = treasury_policy_id()
+
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 0,
+  }
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(5_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  // Output: correct datum (member_count=1, registry=[#"aa"]) but only 2M ADA returned
+  // — out_ada (2M) < in_ada (5M) → rejected at out_ada >= in_ada
+  let group_out = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(
+      policy_id,
+      GroupDatum { ..base_datum, member_count: 1, member_token_names: [#"aa"] },
+    ),
+  )
+  let mint = assets.from_asset(tp, #"aa", 1)
+
+  !validate_join_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aa",
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
+}
+
+// Group input holds 5M ADA; member_exit output returns 2M ADA — ADA drained
+test member_exit__rejects_group_ada_drain() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+
+  let base_datum = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 1,
+    member_token_names: [#"aabb"],
+  }
+  let group_in = common.test_input(
+    OutputReference {
+      transaction_id: #"1111111111111111111111111111111111111111111111111111111111111111",
+      output_index: 0,
+    },
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(5_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  // Correct datum: member_count=0, registry cleared after removing #"aabb".
+  // Output only has 2M ADA — out_ada (2M) < in_ada (5M) → rejected at out_ada >= in_ada.
+  let group_out = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(
+      policy_id,
+      GroupDatum { ..base_datum, member_count: 0, member_token_names: [] },
+    ),
+  )
+  let treasury_in = treasury_input_with_token(tp, #"aabb")
+
+  !validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in, treasury_in],
+    [group_out],
+  )
+}
+
+// Join: duplicate join — member_token_name already in registry → rejected
+// member_not_duplicate = !list.any([#"aabb"], fn(n) { n == #"aabb" }) = False
+test member_join__rejects_duplicate_join() {
+  let policy_id = common.test_policy_id()
+  let (_, ref_tn, _) = common.setup_cip68(policy_id)
+  let tp = treasury_policy_id()
+
+  // Group already has #"aabb" registered — same account cannot occupy a second slot
+  let group_in = group_input_with_names(policy_id, ref_tn, 1, [#"aabb"])
+  // Provide a valid-looking output to ensure rejection is from the duplicate check
+  let group_out = group_output_with_names(
+    policy_id,
+    ref_tn,
+    2,
+    [#"aabb", #"aabb"],
+  )
+  let mint = assets.from_asset(tp, #"aabb", 1)
+
+  !validate_join_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in],
+    [group_out],
+    mint,
+  )
+}
+
+// ─── CIP-68 wrapper validation tests ─────────────────────────────────────────
+
+// [spec CreateGroup 14]: group name must be non-empty — empty name rejected
+test create_group__rejects_empty_name() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  // Metadata has "name" key but with empty value
+  let empty_name_datum = GroupCip68Datum {
+    metadata: [Pair(#"6e616d65", #"")],
+    version: 1,
+    extra: common.test_group_datum(policy_id),
+  }
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    empty_name_datum,
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    empty_name_datum,
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// [spec CreateGroup 14]: missing "name" key entirely also rejected
+test create_group__rejects_missing_name_key() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  // No metadata entries at all
+  let no_name_datum = GroupCip68Datum {
+    metadata: [],
+    version: 1,
+    extra: common.test_group_datum(policy_id),
+  }
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(policy_id, output_value, no_name_datum)
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    no_name_datum,
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// [spec CreateGroup 15]: version must be 1 — version 2 rejected
+test create_group__rejects_wrong_version() {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+
+  let wrong_version_datum = GroupCip68Datum {
+    metadata: [Pair(#"6e616d65", "Test Group")],
+    version: 2,
+    extra: common.test_group_datum(policy_id),
+  }
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    wrong_version_datum,
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    wrong_version_datum,
+  )
+
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// ─── Recommit fields (Task 1): create/update/exit rules ──────────────────────
+
+fn recommit_create_rejects(datum: GroupDatum) {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+  !validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+test create_group__rejects_nonempty_member_slots() {
+  let policy_id = common.test_policy_id()
+  recommit_create_rejects(
+    GroupDatum { ..common.test_group_datum(policy_id), member_slots: [0] },
+  )
+}
+
+test create_group__rejects_nonzero_era_start_round() {
+  let policy_id = common.test_policy_id()
+  recommit_create_rejects(
+    GroupDatum { ..common.test_group_datum(policy_id), era_start_round: 1 },
+  )
+}
+
+test create_group__rejects_negative_recommit_window() {
+  let policy_id = common.test_policy_id()
+  recommit_create_rejects(
+    GroupDatum { ..common.test_group_datum(policy_id), recommit_window: -1 },
+  )
+}
+
+fn recommit_update_rejects(base_datum: GroupDatum, updated_datum: GroupDatum) {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let group_input = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let admin_input = common.test_input(
+    output_ref,
+    common.test_user_utxo(
+      common.test_pkh(),
+      assets.from_asset(policy_id, user_tn, 1),
+      cip68_with(policy_id, base_datum),
+    ),
+  )
+  let group_output = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated_datum),
+  )
+  !validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output],
+  )
+}
+
+// member_slots is validator-managed (StartGroup/MemberExit) — frozen in UpdateGroup
+// even before any member joins.
+test update_group__rejects_member_slots_change() {
+  let policy_id = common.test_policy_id()
+  let base = common.test_group_datum(policy_id)
+  recommit_update_rejects(base, GroupDatum { ..base, member_slots: [0] })
+}
+
+// era_start_round is validator-managed (StartGroup) — frozen in UpdateGroup.
+test update_group__rejects_era_start_round_change() {
+  let policy_id = common.test_policy_id()
+  let base = common.test_group_datum(policy_id)
+  recommit_update_rejects(base, GroupDatum { ..base, era_start_round: 5 })
+}
+
+// recommit_window is an economic term — frozen once any member has joined
+// (the whole-record allowlist covers it).
+test update_group__rejects_recommit_window_change_with_members() {
+  let policy_id = common.test_policy_id()
+  let base = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 1,
+  }
+  recommit_update_rejects(
+    base,
+    GroupDatum { ..base, recommit_window: base.recommit_window + 1 },
+  )
+}
+
+// [spec Reserve C2]: levies are non-negative at creation.
+test create_group__rejects_negative_reserve_join_levy() {
+  let policy_id = common.test_policy_id()
+  recommit_create_rejects(
+    GroupDatum { ..common.test_group_datum(policy_id), reserve_join_levy: -1 },
+  )
+}
+
+test create_group__rejects_negative_reserve_round_levy() {
+  let policy_id = common.test_policy_id()
+  recommit_create_rejects(
+    GroupDatum { ..common.test_group_datum(policy_id), reserve_round_levy: -1 },
+  )
+}
+
+// Reserve levies are economic terms — frozen once any member has joined
+// (the whole-record allowlist covers them).
+test update_group__rejects_reserve_join_levy_change_with_members() {
+  let policy_id = common.test_policy_id()
+  let base = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 1,
+  }
+  recommit_update_rejects(
+    base,
+    GroupDatum { ..base, reserve_join_levy: base.reserve_join_levy + 1 },
+  )
+}
+
+test update_group__rejects_reserve_round_levy_change_with_members() {
+  let policy_id = common.test_policy_id()
+  let base = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 1,
+  }
+  recommit_update_rejects(
+    base,
+    GroupDatum { ..base, reserve_round_levy: base.reserve_round_levy + 1 },
+  )
+}
+
+// Started exit: the paired slot entry leaves with the registry name — no re-pack,
+// the vacancy stays visible. Registry is newest-first: [#"ccdd", #"aabb"] with
+// slots [1, 0] means #"aabb" (first joiner) holds slot 0.
+test member_exit__removes_paired_slot_entry() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (output_ref, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 2,
+    active_member_count: 2,
+    is_started: True,
+    num_rounds: 2,
+    member_token_names: [#"ccdd", #"aabb"],
+    member_slots: [1, 0],
+  }
+  let group_in = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base),
+    ),
+  )
+  let treasury_in = treasury_input_with_token(tp, #"aabb")
+  let updated = GroupDatum {
+    ..base,
+    member_count: 1,
+    active_member_count: 1,
+    member_token_names: [#"ccdd"],
+    member_slots: [1],
+  }
+  let group_out = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated),
+  )
+  validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in, treasury_in],
+    [group_out],
+  )
+}
+
+// Same exit but the output re-packs the remaining slot to 0 — rejected: vacancies
+// must stay visible.
+test member_exit__rejects_slot_repack() {
+  let policy_id = common.test_policy_id()
+  let tp = treasury_policy_id()
+  let (output_ref, ref_tn, _) = common.setup_cip68(policy_id)
+  let base = GroupDatum {
+    ..common.test_group_datum(policy_id),
+    member_count: 2,
+    active_member_count: 2,
+    is_started: True,
+    num_rounds: 2,
+    member_token_names: [#"ccdd", #"aabb"],
+    member_slots: [1, 0],
+  }
+  let group_in = common.test_input(
+    output_ref,
+    common.test_script_utxo(
+      policy_id,
+      assets.from_lovelace(2_000_000)
+        |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+      cip68_with(policy_id, base),
+    ),
+  )
+  let treasury_in = treasury_input_with_token(tp, #"aabb")
+  let updated = GroupDatum {
+    ..base,
+    member_count: 1,
+    active_member_count: 1,
+    member_token_names: [#"ccdd"],
+    member_slots: [0],
+  }
+  let group_out = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    cip68_with(policy_id, updated),
+  )
+  !validate_exit_group(
+    policy_id,
+    tp,
+    ref_tn,
+    #"aabb",
+    0,
+    0,
+    [group_in, treasury_in],
+    [group_out],
+  )
+}

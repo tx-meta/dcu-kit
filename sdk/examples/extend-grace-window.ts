@@ -20,13 +20,14 @@
  * Reads groupTokenSuffix and the member's accountTokenSuffix from state.json.
  */
 
-import { ExtendGraceWindowConfig, accountPolicyId } from "@tx-meta/dcu-sdk";
+import { ExtendGraceWindowConfig, accountPolicyId } from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
   logError,
   logWalletInfo,
+  loadScriptRefs,
 } from "./context.js";
 import {
   loadState,
@@ -80,6 +81,7 @@ async function main() {
   const config: ExtendGraceWindowConfig = {
     groupTokenSuffix,
     memberAccountTokenSuffix,
+    scriptRefs: await loadScriptRefs(lucid),
   };
 
   console.log("Building extend-grace-window transaction...");

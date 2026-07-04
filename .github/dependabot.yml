@@ -3,6 +3,7 @@ updates:
   # SDK TypeScript dependencies
   - package-ecosystem: "npm"
     directory: "/sdk"
+    target-branch: "staging"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -14,10 +15,21 @@ updates:
         patterns: ["effect", "@effect/*"]
       typescript-tooling:
         patterns: ["typescript", "tsup", "vitest", "@typescript-eslint/*"]
+    ignore:
+      # Pinned via pnpm.overrides in sdk/package.json — bumps have no effect
+      - dependency-name: "libsodium-wrappers-sumo"
+      - dependency-name: "libsodium-wrappers"
+      # v2 changes import paths (.js subpath exports); migrate deliberately, not via bot
+      - dependency-name: "@noble/hashes"
+        update-types: ["version-update:semver-major"]
+      # Pinned at 0.4.31 — 0.5.x breaks RedeemerBuilder index resolution
+      - dependency-name: "@lucid-evolution/*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   # GitHub Actions — minor/patch only to avoid bumping to non-existent major versions
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "staging"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5

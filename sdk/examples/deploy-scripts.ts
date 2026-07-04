@@ -12,21 +12,31 @@
  *   permanently locked. Reference scripts deposited here stay on-chain forever
  *   and cannot be accidentally spent or stolen.
  *
- * Why two transactions?
- *   Each validator is ~8 KB. Combining both in one transaction (~16 KB of scripts
- *   plus the tx envelope) exceeds Cardano's 16,384-byte limit. One per tx is safe.
+ * Why one script per transaction?
+ *   A deploy tx must carry the full script; batching risks the 16,384-byte tx
+ *   limit. The treasury split (2026-07-04) publishes SIX ref scripts — the
+ *   treasury dispatcher, the group validator, and the four withdraw-zero family
+ *   stake validators (rounds/lifecycle/recovery/reserve) — one per tx. A final
+ *   step registers the four family stake credentials — the withdraw-zero
+ *   prerequisite without which no treasury operation can run. Registration is
+ *   idempotent: re-runs treat "already registered" as success.
  *
  * Run this ONCE per validator set. The outRefs are saved to state.json and
- * loaded automatically by join-group.ts and exit-group.ts.
+ * loaded automatically by every treasury endpoint example.
  *
- * Cost: ~56 ADA total (30 ADA treasury + 26 ADA group) — permanently locked.
+ * Cost: ~six ref-script deposits (scale with script size) + 4×2 ADA stake
+ * deposits, all permanently locked / reclaimable respectively.
  *
  * Usage:
  *   pnpm run deploy-scripts
  */
 
 import { Effect } from "effect";
-import { deployScripts, verifyDeployment } from "@tx-meta/dcu-sdk";
+import {
+  deployScripts,
+  registerTreasuryStake,
+  verifyDeployment,
+} from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
@@ -76,6 +86,20 @@ async function main() {
           `#${state.scriptRefGroup.outputIndex}`,
       );
       console.log("  address: ", result.treasuryUtxo?.address);
+
+      // The refs being on-chain does not prove the stake registrations ran — an
+      // interrupted deploy can leave a family credential unregistered, and every
+      // treasury operation would fail. Idempotent, so always safe to ensure here.
+      const stakeReg = await Effect.runPromise(
+        registerTreasuryStake(protocol, lucid),
+      );
+      for (const reg of stakeReg.registrations) {
+        console.log(
+          reg.alreadyRegistered
+            ? `  stake:    ${reg.family} credential already registered.`
+            : `  stake:    ${reg.family} credential registered now (${cexplorerTxUrl(reg.txHash!)})`,
+        );
+      }
       return;
     }
 
@@ -83,34 +107,48 @@ async function main() {
     for (const issue of result.issues) console.warn(" ", issue);
   }
 
-  console.log("Deploying treasury validator (tx 1/2)...");
   console.log(
-    "Deploying group validator (tx 2/2, submitted after tx 1 confirms)...",
+    "Deploying six reference scripts (treasury dispatcher, group, and the four",
   );
+  console.log(
+    "family stake validators), one per tx, then registering the four family",
+  );
+  console.log("stake credentials (withdraw-zero prerequisite).");
   console.log(
     "Destination: alwaysFails address (scripts are permanently locked).",
   );
   console.log(
-    "This will take ~2 minutes (one on-chain confirmation between txs).\n",
+    "This will take a few minutes (one on-chain confirmation between txs).\n",
   );
 
   const deployResult = await Effect.runPromise(deployScripts(protocol, lucid));
 
-  console.log("\nBoth transactions confirmed.");
+  console.log("\nAll reference scripts confirmed.");
   console.log(
     "  treasury tx:",
-    cexplorerTxUrl(deployResult.treasuryRef.txHash),
+    cexplorerTxUrl(deployResult.refs.treasury.txHash),
   );
-  console.log("  group tx:   ", cexplorerTxUrl(deployResult.groupRef.txHash));
+  console.log("  group tx:   ", cexplorerTxUrl(deployResult.refs.group.txHash));
   console.log("  address:    ", deployResult.deployAddress);
+  for (const reg of deployResult.stakeRegistrations.registrations) {
+    console.log(
+      `  stake:       ${reg.family} → ${reg.rewardAddress}${reg.alreadyRegistered ? " (already registered)" : ""}`,
+    );
+  }
 
   saveState({
-    scriptRefTreasury: deployResult.treasuryRef,
-    scriptRefGroup: deployResult.groupRef,
+    scriptRefTreasury: deployResult.refs.treasury,
+    scriptRefGroup: deployResult.refs.group,
+    scriptRefTreasuryRounds: deployResult.refs.treasuryRounds,
+    scriptRefTreasuryLifecycle: deployResult.refs.treasuryLifecycle,
+    scriptRefTreasuryRecovery: deployResult.refs.treasuryRecovery,
+    scriptRefTreasuryReserve: deployResult.refs.treasuryReserve,
   });
 
   console.log("\nReference scripts saved to state.json.");
-  console.log("join-group and exit-group will now use these automatically.");
+  console.log(
+    "Every treasury endpoint example will now use these automatically.",
+  );
 }
 
 main().catch((e) => {

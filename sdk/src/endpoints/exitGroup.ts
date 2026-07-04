@@ -8,12 +8,16 @@ import {
   toUnit,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   GroupDatum,
   GroupSpendRedeemer,
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  LifecycleAction,
+  ReserveAction,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -32,6 +36,8 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
   MIN_ADA_RESERVE,
+  reserveTokenName,
+  removeRegistryEntry,
 } from "../core/utils/index.js";
 
 /**
@@ -62,12 +68,14 @@ export type ExitGroupConfig = {
   // multiple account tokens from different sessions.
   accountTokenSuffix?: string;
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, omit for live network
+  // Wind-down exits only (group deactivated): also claim this member's equal share
+  // of the mutual reserve — floor(balance / pre-exit member_count) — on the way out.
+  // Defaults to true; set false to leave the share for later exiters. No effect
+  // while the group is active (active exits never touch the reserve).
+  claimReserveShare?: boolean;
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO, keeping the tx under 16KB.
-  scriptRefs?: {
-    treasury?: UTxO;
-    group?: UTxO;
-  };
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedExitGroupTxProgram = (
@@ -218,21 +226,33 @@ export const unsignedExitGroupTxProgram = (
     const rawNow =
       currentTime !== undefined ? currentTime : BigInt(Date.now()) - 120_000n;
     const now = currentTime !== undefined ? rawNow : rawNow - (rawNow % 1000n);
-    const maturityTime =
-      groupDatum.start_time +
-      groupDatum.num_rounds * groupDatum.interval_length;
+    // [D4] Continuous model: free vs penalty is rounds_paid-anchored, not wall-clock. Free exit
+    // (burn) when inactive, pre-start, or a whole cycle completed (rounds_paid > 0 &&
+    // rounds_paid % num_rounds == 0); penalty (PenaltyState) when mid-cycle. The is_started
+    // guard short-circuits before the modulo so pre-start (num_rounds == 0) never divides by 0.
+    const roundsPaid = treasuryDatum.TreasuryState.rounds_paid;
+    const completedFullCycle =
+      groupDatum.is_started &&
+      roundsPaid > 0n &&
+      roundsPaid % groupDatum.num_rounds === 0n;
     const isEarlyExit =
-      groupDatum.is_active &&
-      groupDatum.start_time <= now &&
-      now < maturityTime;
+      groupDatum.is_active && groupDatum.is_started && !completedFullCycle;
 
-    // Updated Group datum: decrement member count and remove member from registry
+    // Updated Group datum: decrement member count and remove member from registry.
+    // The paired slot entry leaves with the name (no re-pack — the vacancy stays
+    // visible on the group datum; Recommit's halt gate reads it).
+    const remainingRegistry = removeRegistryEntry(
+      groupDatum.member_token_names,
+      groupDatum.member_slots,
+      memberRefName,
+    );
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       member_count: groupDatum.member_count - 1n,
-      member_token_names: groupDatum.member_token_names.filter(
-        (n) => n !== memberRefName,
-      ),
+      // ExitGroup is TreasuryState-only → the leaver was active, so the active set shrinks by 1.
+      active_member_count: groupDatum.active_member_count - 1n,
+      member_token_names: remainingRegistry.names,
+      member_slots: remainingRegistry.slots,
     };
 
     // Group validator redeemer: MemberExit (no admin required)
@@ -253,48 +273,29 @@ export const unsignedExitGroupTxProgram = (
       inputs: [groupUtxo],
     };
 
-    // Treasury validator spend redeemer: ExitGroup
+    // Treasury split: field-less spend/burn literal; the LIFECYCLE ExitAction runs
+    // the validation once, covering the leaver's treasury UTxO.
     // Output layout: [0] Group UTxO, [1] Penalty (early exit only)
-    const treasurySpendRedeemer: RedeemerBuilder = {
+    const exitSpendRedeemer = Data.to("ExitGroup", TreasuryRedeemer);
+    const exitAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            ExitGroup: {
+            ExitAction: {
+              covered_inputs: [inputIndices[2]], // treasury
               group_ref_input_index: inputIndices[0],
               group_output_index: 0n,
               member_input_index: inputIndices[1],
-              treasury_input_index: inputIndices[2],
               penalty_output_index: isEarlyExit ? 1n : 0n,
             },
           },
-          TreasuryRedeemer,
+          LifecycleAction,
         ),
       inputs: [groupUtxo, accountUtxo, treasuryUtxo],
     };
 
-    // Mint redeemer for mature exit burn — the mint handler (ExitGroup branch) calls
-    // validate_terminate_group which ignores all index fields; any valid ExitGroup
-    // redeemer works here. Using a plain Data value avoids sharing a RedeemerBuilder
-    // between spend and mint contexts, which can cause index resolution issues in Lucid.
-    const mintBurnRedeemer = Data.to(
-      {
-        ExitGroup: {
-          group_ref_input_index: 0n,
-          group_output_index: 0n,
-          member_input_index: 0n,
-          treasury_input_index: 0n,
-          penalty_output_index: 0n,
-        },
-      },
-      TreasuryRedeemer,
-    );
-
     const address = yield* getWalletAddress(lucid);
-    const groupAddress = yield* getScriptAddress(
-      lucid,
-      groupValidator.spendGroup,
-    );
 
     const penaltyDatum: TreasuryDatum = {
       PenaltyState: {
@@ -309,10 +310,10 @@ export const unsignedExitGroupTxProgram = (
       .newTx()
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom([accountUtxo])
-      .collectFrom([treasuryUtxo], treasurySpendRedeemer)
+      .collectFrom([treasuryUtxo], exitSpendRedeemer)
       .addSigner(address)
       .pay.ToContract(
-        groupAddress,
+        groupUtxo.address,
         {
           kind: "inline",
           value: buildGroupCip68Datum(
@@ -329,11 +330,73 @@ export const unsignedExitGroupTxProgram = (
     // appended AFTER the penalty/burn so it never shifts those indices.
     const withPenaltyOrBurn = isEarlyExit
       ? baseTx.pay.ToContract(
-          treasuryAddress,
+          treasuryUtxo.address,
           { kind: "inline", value: Data.to(penaltyDatum, TreasuryDatum) },
           penaltyAssets,
         )
-      : baseTx.mintAssets(burnAssets, mintBurnRedeemer);
+      : baseTx.mintAssets(burnAssets, exitSpendRedeemer);
+
+    // ─── Wind-down reserve share (ReserveRefund leg) ──────────────────────────
+    // Deactivated group only: take floor(balance / pre-exit member_count) of the
+    // mutual reserve on the way out (self-adjusting equal split; remainders roll
+    // forward to later exiters). Active exits never touch the reserve.
+    const isAdaFee = groupDatum.contribution_fee_policyid === "";
+    const feeUnit = isAdaFee
+      ? "lovelace"
+      : toUnit(
+          groupDatum.contribution_fee_policyid,
+          groupDatum.contribution_fee_assetname,
+        );
+    let withReserveShare = withPenaltyOrBurn;
+    let reserveRefundAction: RedeemerBuilder | null = null;
+    if (!groupDatum.is_active && config.claimReserveShare !== false) {
+      const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
+      const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
+      const reserveUtxo = patchInlineDatum(reserveUtxoRaw);
+      const reserveRaw = reserveUtxo.assets[feeUnit] ?? 0n;
+      const reserveContributable = isAdaFee
+        ? reserveRaw - MIN_ADA_RESERVE
+        : reserveRaw;
+      const share =
+        reserveContributable > 0n
+          ? reserveContributable / groupDatum.member_count
+          : 0n;
+      if (share > 0n) {
+        // Outputs on this (burn) path: 0 = group, 1 = reserve, account return follows.
+        // Treasury split: the RESERVE RefundAction covers the reserve UTxO.
+        reserveRefundAction = {
+          kind: "selected",
+          makeRedeemer: (indices: bigint[]) =>
+            Data.to(
+              {
+                RefundAction: {
+                  covered_inputs: [indices[2]], // reserve
+                  group_ref_input_index: indices[0],
+                  group_output_index: 0n,
+                  exiting_treasury_input_index: indices[1],
+                  reserve_output_index: 1n,
+                },
+              },
+              ReserveAction,
+            ),
+          inputs: [groupUtxo, treasuryUtxo, reserveUtxo],
+        };
+        const reserveOutAssets: Assets = {
+          ...reserveUtxo.assets,
+          [feeUnit]: reserveRaw - share,
+        };
+        withReserveShare = withPenaltyOrBurn
+          .collectFrom(
+            [reserveUtxo],
+            Data.to("ReserveRefund", TreasuryRedeemer),
+          )
+          .pay.ToContract(
+            reserveUtxo.address,
+            { kind: "inline", value: reserveUtxo.datum! },
+            reserveOutAssets,
+          );
+      }
+    }
 
     // Explicitly return the member's account (222) token to their wallet. Without this the
     // token dangles into the change output, and when the spent treasury already covers the
@@ -341,22 +404,45 @@ export const unsignedExitGroupTxProgram = (
     // won't pull an extra wallet UTxO — leaving too little ADA to satisfy the token's
     // min-UTxO ("not enough ADA leftover for non-ADA change"). The explicit output forces
     // selection to fund it. Mirrors the value-neutral endpoints' pattern.
-    const afterPath = withPenaltyOrBurn.pay
+    const afterPath = withReserveShare.pay
       .ToAddress(address, { [accountUserUnit]: 1n })
       .validFrom(Number(now));
 
     // Use reference scripts when provided — avoids ~12KB of inline script bytes.
-    const withValidators =
-      config.scriptRefs?.treasury || config.scriptRefs?.group
-        ? afterPath.readFrom(
-            [config.scriptRefs?.treasury, config.scriptRefs?.group].filter(
-              Boolean,
-            ) as UTxO[],
-          )
-        : afterPath.attach
-            .MintingPolicy(treasuryValidator.mintTreasury)
-            .attach.SpendingValidator(treasuryValidator.spendTreasury)
-            .attach.SpendingValidator(groupValidator.spendGroup);
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const network = lucid.config().network!;
+    const refUtxos = [scriptRefs.treasury, scriptRefs.group].filter(
+      Boolean,
+    ) as UTxO[];
+    let withValidators =
+      refUtxos.length > 0 ? afterPath.readFrom(refUtxos) : afterPath;
+    if (!scriptRefs.treasury)
+      withValidators = withValidators.attach.SpendingValidator(
+        treasuryValidator.spendTreasury,
+      );
+    if (!scriptRefs.group)
+      withValidators = withValidators.attach.SpendingValidator(
+        groupValidator.spendGroup,
+      );
+    // Lifecycle family withdrawal (ExitAction) always; reserve (RefundAction)
+    // only on the wind-down share path.
+    withValidators = attachFamilyWithdrawal(
+      withValidators,
+      protocol,
+      network,
+      "lifecycle",
+      exitAction,
+      scriptRefs,
+    );
+    if (reserveRefundAction)
+      withValidators = attachFamilyWithdrawal(
+        withValidators,
+        protocol,
+        network,
+        "reserve",
+        reserveRefundAction,
+        scriptRefs,
+      );
 
     const tx = yield* withValidators
       .readFrom([settingsUtxo])

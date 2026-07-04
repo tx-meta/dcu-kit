@@ -3,12 +3,14 @@ import {
   LucidEvolution,
   TxSignBuilder,
   RedeemerBuilder,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { AdminAuthConfig, applyAdminWitness } from "../multisig/index.js";
+import { effectiveScriptRefs } from "../core/scripts.js";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
-  getScriptAddress,
   parseGroupCip68Datum,
   buildGroupCip68Datum,
   getWalletAddress,
@@ -38,7 +40,14 @@ import {
 export type StartGroupConfig = {
   groupTokenSuffix: string;
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, omit for live
-};
+  // Reference script UTxOs (from deploy-scripts). When provided, the validator
+  // script bytes are resolved from the on-chain UTxO rather than included inline,
+  // keeping the transaction well under the 16KB Cardano size limit.
+  scriptRefs?: {
+    treasury?: UTxO; // UTxO with scriptRef for treasury validator
+    group?: UTxO; // UTxO with scriptRef for group validator
+  };
+} & AdminAuthConfig;
 
 export const unsignedStartGroupTxProgram = (
   protocol: Protocol,
@@ -82,17 +91,22 @@ export const unsignedStartGroupTxProgram = (
     const now =
       config.currentTime !== undefined ? rawNow : rawNow - (rawNow % 1000n);
 
+    const memberCount = Number(groupDatum.member_count);
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       is_started: true,
       num_rounds: groupDatum.member_count,
+      // Seal the active set = full membership at start.
+      active_member_count: groupDatum.member_count,
       start_time: now,
+      // Fresh FCFS slots by registry order. The registry is newest-first, so slots
+      // count DOWN: the earliest joiner (list tail) gets slot 0 and borrows first.
+      member_slots: Array.from({ length: memberCount }, (_, i) =>
+        BigInt(memberCount - 1 - i),
+      ),
+      // New era re-based at the next monotonic round (0 on a fresh group).
+      era_start_round: groupDatum.last_distributed_round + 1n,
     };
-
-    const groupAddress = yield* getScriptAddress(
-      lucid,
-      groupValidator.spendGroup,
-    );
     const adminAddress = yield* getWalletAddress(lucid);
 
     // RedeemerBuilder resolves admin_input_index and group_input_index from sorted tx.inputs
@@ -113,12 +127,19 @@ export const unsignedStartGroupTxProgram = (
       inputs: [adminUtxo, groupUtxo],
     };
 
-    const tx = yield* lucid
+    const adminTokenReturnAddress = config.adminScript
+      ? (config.adminReturnAddress ?? adminUtxo.address)
+      : adminAddress;
+    const adminTokenReturnAssets = config.adminScript
+      ? adminUtxo.assets
+      : { [groupUserUnit]: 1n };
+
+    const baseTx = lucid
       .newTx()
       .collectFrom([adminUtxo])
       .collectFrom([groupUtxo], redeemer)
       .pay.ToContract(
-        groupAddress,
+        groupUtxo.address,
         {
           kind: "inline",
           value: buildGroupCip68Datum(
@@ -129,20 +150,31 @@ export const unsignedStartGroupTxProgram = (
         },
         groupUtxo.assets,
       )
-      .pay.ToAddress(adminAddress, { [groupUserUnit]: 1n })
-      .attach.SpendingValidator(groupValidator.spendGroup)
+      .pay.ToAddress(adminTokenReturnAddress, adminTokenReturnAssets)
       .addSigner(adminAddress)
-      .validFrom(Number(now))
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "startGroup",
-              error: String(e),
-            }),
-        ),
-      );
+      .validFrom(Number(now));
+
+    // Use reference scripts when provided — avoids including ~12KB of script bytes
+    // inline, keeping the tx under Cardano's 16,384-byte size limit.
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const withValidators =
+      scriptRefs.treasury || scriptRefs.group
+        ? baseTx.readFrom(
+            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
+          )
+        : baseTx.attach.SpendingValidator(groupValidator.spendGroup);
+
+    const withSigners = applyAdminWitness(withValidators, config);
+
+    const tx = yield* withSigners.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "startGroup",
+            error: String(e),
+          }),
+      ),
+    );
 
     return tx;
   });

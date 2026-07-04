@@ -1,7 +1,7 @@
 # DCU Toolkit: Decentralized Credit Unions Infrastructure
 
-[![CI](https://github.com/txmeta/dcu-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/txmeta/dcu-toolkit/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@tx-meta/dcu-sdk)](https://www.npmjs.com/package/@tx-meta/dcu-sdk)
+[![CI](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@tx-meta/dcu-kit)](https://www.npmjs.com/package/@tx-meta/dcu-kit)
 
 An open-source **developer toolkit** for building cooperative finance applications on Cardano. The DCU Toolkit provides the foundational infrastructure to digitize and automate community-based savings groups (Chamas, SACCOs, Tontines).
 
@@ -10,7 +10,7 @@ An open-source **developer toolkit** for building cooperative finance applicatio
 The toolkit is organized into three interoperable layers:
 
 ### 1. Smart Contract Infrastructure ([onchain/](onchain/))
-Modular **Aiken** validators for:
+Two sibling Aiken projects — [onchain/rosca/](onchain/rosca/) (group, treasury, account, settings) and [onchain/escrow/](onchain/escrow/) (milestone escrow) — each with its own `aiken.toml` and compiled blueprint. Modular **Aiken** validators for:
 - **Dynamic Group Formation**: Parameterizable group sizes, contribution schedules, and governance rules.
 - **Automated ROSCA Rotation**: Trustless fund distribution and linear vesting logic.
 - **CIP-68 Membership System**: Verifiable on-chain identity and reputation tracking.
@@ -28,7 +28,7 @@ Standalone scripts and demonstration code showing how to bundle the on-chain and
 ## Quick Start
 
 ```sh
-npm install @tx-meta/dcu-sdk
+npm install @tx-meta/dcu-kit
 ```
 
 Refer to the [SDK README](sdk/README.md) for the full integration guide and API overview.
@@ -52,13 +52,23 @@ pnpm format:check   # Prettier
 pnpm lint           # ESLint
 pnpm tsc --noEmit   # Type check
 pnpm run build      # Compile to dist/
-NETWORK=Custom pnpm test  # Run full test suite against Lucid emulator
+NETWORK=Emulator pnpm test  # Run full test suite against Lucid emulator
 ```
 
 Aiken on-chain checks:
 ```sh
-# From onchain/
+# From onchain/rosca/ (repeat in onchain/escrow/)
 aiken fmt --check
 aiken build
 aiken check
 ```
+
+## License
+
+DCU Toolkit is licensed under the [Business Source License 1.1](LICENSE) (BUSL-1.1). The source is
+public and auditable, but production use is restricted until the Change Date, when the license
+automatically converts to the **Apache License, Version 2.0**. The Change Date is four years from the
+date each version is published.
+
+For production use before the Change Date, or for commercial licensing arrangements, please contact
+Tx Meta.

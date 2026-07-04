@@ -13,7 +13,7 @@ import {
   TreasuryDatumSchema,
   getScriptAddress,
   assetNameLabels,
-} from "@tx-meta/dcu-sdk";
+} from "@tx-meta/dcu-kit";
 
 const j = (x: unknown) =>
   JSON.stringify(x, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2);

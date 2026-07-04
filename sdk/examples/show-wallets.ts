@@ -11,7 +11,7 @@
 
 import "dotenv/config";
 import { Lucid, Blockfrost, Maestro } from "@lucid-evolution/lucid";
-import { accountPolicyId, assetNameLabels } from "@tx-meta/dcu-sdk";
+import { accountPolicyId, assetNameLabels } from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import { cexplorerTxUrl, logError } from "./context.js";
 

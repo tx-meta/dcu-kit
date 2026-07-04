@@ -7,14 +7,17 @@ import {
   Assets,
   toUnit,
   credentialToAddress,
+  validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
 import {
   GroupDatum,
   GroupSpendRedeemer,
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  TreasuryWithdrawRedeemer,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -26,6 +29,7 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
   contributableBalance,
+  reserveTokenName,
 } from "../core/utils/index.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
 
@@ -49,10 +53,7 @@ export type DistributePayoutConfig = {
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO rather than included inline,
   // keeping the transaction well under the 16KB Cardano size limit.
-  scriptRefs?: {
-    treasury?: UTxO;
-    group?: UTxO;
-  };
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedDistributePayoutTxProgram = (
@@ -108,25 +109,28 @@ export const unsignedDistributePayoutTxProgram = (
       );
     }
 
+    // round_number is monotonic and unbounded — a cycle is just num_rounds rounds and the
+    // rotation wraps via roundNumber % num_rounds. There is no per-cycle cap (NextCycle is gone):
+    // distribute simply keeps running, so the "next cycle" needs no separate trigger.
     const roundNumber = groupDatum.last_distributed_round + 1n;
-    if (roundNumber >= groupDatum.num_rounds) {
-      return yield* Effect.fail(
-        new TransactionBuildError({
-          operation: "distributeRound",
-          error: `All ${groupDatum.num_rounds} rounds have been distributed (rounds 0–${groupDatum.num_rounds - 1n} complete). Group is mature — members can now call exit-group.`,
-        }),
-      );
-    }
 
-    const currentSlot = Number(roundNumber % groupDatum.num_rounds);
+    // Era-relative: round_number stays monotonic across recommit re-seals; the slot
+    // mapping and schedule re-base at era_start_round.
+    const eraRound = roundNumber - groupDatum.era_start_round;
+    const currentSlot = Number(eraRound % groupDatum.num_rounds);
+    // The borrower is resolved from the group's authoritative registry: the token name
+    // paired with this round's slot (parallel lists; vacancy = rotation halt).
+    const borrowerSlotIndex = groupDatum.member_slots.findIndex(
+      (slot) => Number(slot) === currentSlot,
+    );
+    const borrowerTokenName =
+      borrowerSlotIndex >= 0
+        ? groupDatum.member_token_names[borrowerSlotIndex]
+        : undefined;
 
     const treasuryAddress = yield* getScriptAddress(
       lucid,
       treasuryValidator.spendTreasury,
-    );
-    const groupAddress = yield* getScriptAddress(
-      lucid,
-      groupValidator.spendGroup,
     );
     const rawTreasuryUtxos = yield* Effect.tryPromise({
       try: () => lucid.utxosAt(treasuryAddress),
@@ -164,27 +168,15 @@ export const unsignedDistributePayoutTxProgram = (
       if (ts.group_reference_tokenname !== groupRefName) continue;
       if (ts.rounds_paid !== roundNumber) continue;
       memberStates.push(state);
-      if (Number(ts.assigned_slot) === currentSlot) {
+      if (ts.member_reference_tokenname === borrowerTokenName) {
         borrowerPaymentCred = ts.member_payment_credential;
       }
     }
 
-    // Defaulters (DefaultState / PenaltyState) for this group must be presented as
-    // reference inputs so the validator's complete-member-set check passes. They do not
-    // contribute, so they are excluded from memberStates and the pro-rata payout.
-    const defaulterUtxos: UTxO[] = [];
-    for (const state of parsedStates) {
-      if (!state) continue;
-      const d = state.datum;
-      const grt =
-        "DefaultState" in d
-          ? d.DefaultState.group_reference_tokenname
-          : "PenaltyState" in d
-            ? d.PenaltyState.group_reference_tokenname
-            : undefined;
-      if (grt === groupRefName) defaulterUtxos.push(state.utxo);
-    }
-
+    // Continuous model: defaulters are NOT referenced. The pot uses the cached
+    // active_member_count and C4 is enforced by spent_set_complete (the spent set size must
+    // equal active_member_count) + the per-input group-link check — so a defaulter simply sits
+    // in its DefaultState UTxO, excluded, and the round proceeds around it.
     if (memberStates.length === 0) {
       return yield* Effect.fail(
         new TransactionBuildError({
@@ -202,16 +194,13 @@ export const unsignedDistributePayoutTxProgram = (
       );
     }
 
-    const effectiveSlot = currentSlot;
-
     // Sort inputs lexicographically (same order Cardano uses for tx.inputs)
     memberStates.sort((a, b) => {
       const cmp = a.utxo.txHash.localeCompare(b.utxo.txHash);
       return cmp !== 0 ? cmp : a.utxo.outputIndex - b.utxo.outputIndex;
     });
 
-    const payoutAmount =
-      BigInt(memberStates.length) * groupDatum.contribution_fee;
+    const grossPot = BigInt(memberStates.length) * groupDatum.contribution_fee;
 
     // 120 s buffer covers Blockfrost slot lag (observed up to ~30 s on Preprod).
     const VALIDITY_BUFFER_MS =
@@ -223,7 +212,7 @@ export const unsignedDistributePayoutTxProgram = (
 
     // The validator requires the tx lower-bound >= start_time + round * interval.
     const minValidFrom =
-      groupDatum.start_time + roundNumber * groupDatum.interval_length;
+      groupDatum.start_time + eraRound * groupDatum.interval_length;
 
     // Pre-check on live networks only: if the raw wall-clock time is before the gate,
     // give a clear message rather than letting the validator fail cryptically.
@@ -261,15 +250,119 @@ export const unsignedDistributePayoutTxProgram = (
       hash: borrowerPaymentCred,
     });
 
+    // Mode + contribution-asset locals (also used when building treasury outputs below).
+    const isPull = groupDatum.payout_mode === "Pull";
+    const isAdaContribution = groupDatum.contribution_fee_policyid === "";
+    const contributionUnit = isAdaContribution
+      ? "lovelace"
+      : toUnit(
+          groupDatum.contribution_fee_policyid,
+          groupDatum.contribution_fee_assetname,
+        );
+
+    // ─── Reserve leg (round levy + stand-in draw) ─────────────────────────────
+    // The reserve MUST be spent when the group configures a round levy; with levy
+    // 0 it is spent only while a stand-in is active (the borrower gains the draw).
+    // Levy-0/standin-0 rounds skip the leg entirely — the tx is unchanged.
+    const roundLevy = groupDatum.reserve_round_levy;
+    const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
+    const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
+    const reserveUtxo = patchInlineDatum(reserveUtxoRaw);
+    const reserveDatumParsed = (yield* parseSafeDatum(
+      reserveUtxo.datum,
+      TreasuryDatumSchema,
+    )) as unknown as TreasuryDatum;
+    if (!("ReserveState" in reserveDatumParsed)) {
+      return yield* Effect.fail(
+        new TransactionBuildError({
+          operation: "distributeRound",
+          error: "Expected ReserveState on the reserve UTxO",
+        }),
+      );
+    }
+    const standinIn = reserveDatumParsed.ReserveState.standin_rounds;
+    const reserveNeeded = roundLevy > 0n || standinIn > 0n;
+    const levyTotal = reserveNeeded
+      ? roundLevy * BigInt(memberStates.length)
+      : 0n;
+    const reserveRawIn = reserveUtxo.assets[contributionUnit] ?? 0n;
+    const reserveContributableIn = contributableBalance(
+      reserveRawIn,
+      isAdaContribution,
+    );
+    // One fee-unit per round while the counter is positive, capped by what the
+    // pot (plus this round's levy) holds — a dry draw is 0 but still decrements.
+    const drawCap = reserveContributableIn + levyTotal;
+    const draw =
+      reserveNeeded && standinIn > 0n
+        ? groupDatum.contribution_fee < drawCap
+          ? groupDatum.contribution_fee
+          : drawCap < 0n
+            ? 0n
+            : drawCap
+        : 0n;
+    const standinOut = standinIn > 0n ? standinIn - 1n : 0n;
+    // What the borrower actually receives this round.
+    const payoutAmount = grossPot - levyTotal + draw;
+
+    // The indexer legs: member treasuries plus (when needed) the reserve, sorted
+    // lexicographically so input and output indices are both ascending on-chain.
+    type ReserveLeg = { utxo: UTxO; datum: TreasuryDatum; isReserve: true };
+    type Leg = { utxo: UTxO; datum: TreasuryDatum; isReserve?: boolean };
+    const legs: Leg[] = [
+      ...memberStates,
+      ...(reserveNeeded
+        ? [
+            {
+              utxo: reserveUtxo,
+              datum: reserveDatumParsed,
+              isReserve: true,
+            } as ReserveLeg,
+          ]
+        : []),
+    ].sort((a, b) => {
+      const cmp = a.utxo.txHash.localeCompare(b.utxo.txHash);
+      return cmp !== 0 ? cmp : a.utxo.outputIndex - b.utxo.outputIndex;
+    });
+    // ICS suppression at every cycle boundary (last round of any cycle) — generalises the old
+    // single-cycle last round so a member drained at a boundary stays TreasuryState and can exit.
+    const isCycleBoundary = (eraRound + 1n) % groupDatum.num_rounds === 0n;
+
+    // Count members transitioning to DefaultState this round so the group output can decrement
+    // active_member_count (mirrors the validator's count_default_outputs). Uses the same
+    // per-member ICS test as the treasury output construction below.
+    let icsCount = 0n;
+    for (const state of memberStates) {
+      if (!("TreasuryState" in state.datum)) continue;
+      const ts = state.datum.TreasuryState;
+      const isBorrowerTreasury =
+        isPull && ts.member_reference_tokenname === borrowerTokenName;
+      const inBal = state.utxo.assets[contributionUnit] ?? 0n;
+      const outBal = isBorrowerTreasury
+        ? inBal - groupDatum.contribution_fee + payoutAmount
+        : inBal - groupDatum.contribution_fee;
+      if (
+        !isBorrowerTreasury &&
+        contributableBalance(outBal, isAdaContribution) <
+          groupDatum.contribution_fee &&
+        !isCycleBoundary
+      ) {
+        icsCount += 1n;
+      }
+    }
+
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       last_distributed_round: roundNumber,
+      // Members who transitioned to ICS this round leave the active set.
+      active_member_count: groupDatum.active_member_count - icsCount,
     };
 
-    // Output layout: [0] group, [1..n] treasury outputs, [n+1] borrower
-    const borrowerOutputIndex = BigInt(1 + memberStates.length);
+    // Output layout: [0] group, [1..n] indexer legs (treasuries + reserve, sorted
+    // order), [n+1] borrower (Push only).
+    const borrowerOutputIndex = BigInt(1 + legs.length);
 
-    const allInputs = [groupUtxo, ...memberStates.map((s) => s.utxo)];
+    const allInputs = [groupUtxo, ...legs.map((s) => s.utxo)];
 
     const groupRedeemer: RedeemerBuilder = {
       kind: "selected",
@@ -288,7 +381,15 @@ export const unsignedDistributePayoutTxProgram = (
       inputs: [groupUtxo],
     };
 
-    const treasuryRedeemer: RedeemerBuilder = {
+    // Withdraw-zero: each treasury spend carries only a constant coupling redeemer pointing
+    // at the single withdrawal (index 0 in tx.withdrawals). The heavy round validation runs
+    // once in the treasury `withdraw` handler via the DistributeWithdraw redeemer below.
+    const treasurySpendRedeemer = Data.to(
+      { DistributeRound: { withdrawal_index: 0n } },
+      TreasuryRedeemer,
+    );
+
+    const distributeWithdrawRedeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (indices: bigint[]) => {
         const groupIdx = indices[0];
@@ -296,45 +397,60 @@ export const unsignedDistributePayoutTxProgram = (
         const treasuryOutIndices = treasuryIndices.map((_, i) => BigInt(i + 1));
         return Data.to(
           {
-            DistributeRound: {
-              round_number: roundNumber,
-              group_ref_input_index: groupIdx,
-              group_output_index: 0n,
-              treasury_input_indices: treasuryIndices,
-              treasury_output_indices: treasuryOutIndices,
-              borrower_output_index: borrowerOutputIndex,
-            },
+            round_number: roundNumber,
+            group_ref_input_index: groupIdx,
+            group_output_index: 0n,
+            treasury_input_indices: treasuryIndices,
+            treasury_output_indices: treasuryOutIndices,
+            borrower_output_index: borrowerOutputIndex,
           },
-          TreasuryRedeemer,
+          TreasuryWithdrawRedeemer,
         );
       },
       inputs: allInputs,
     };
 
-    // Build the transaction: group output first, then treasury outputs, then borrower
+    // The ROUNDS family stake credential (treasury split): the heavy round
+    // validation runs once in its `withdraw` handler. Must be registered
+    // on-chain (done at deploy time). A 0-ADA withdrawal here triggers it.
+    const roundsRewardAddress = validatorToRewardAddress(
+      lucid.config().network!,
+      protocol.treasuryStakeValidators.rounds,
+    );
+
+    // Build the transaction: group output first, then the indexer legs, then borrower
     const baseTxNoValidators = lucid
       .newTx()
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom(
-        memberStates.map((s) => s.utxo),
-        treasuryRedeemer,
+        legs.map((s) => s.utxo),
+        treasurySpendRedeemer,
+      )
+      .withdraw(roundsRewardAddress, 0n, distributeWithdrawRedeemer);
+
+    // Use reference scripts when provided — avoids including ~20KB of script bytes
+    // inline, keeping the tx under Cardano's 16,384-byte size limit.
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const refUtxos = [
+      scriptRefs.treasury,
+      scriptRefs.group,
+      scriptRefs.treasuryRounds,
+    ].filter(Boolean) as UTxO[];
+    let baseTx =
+      refUtxos.length > 0
+        ? baseTxNoValidators.readFrom(refUtxos)
+        : baseTxNoValidators;
+    if (!scriptRefs.treasury)
+      baseTx = baseTx.attach.SpendingValidator(treasuryValidator.spendTreasury);
+    if (!scriptRefs.group)
+      baseTx = baseTx.attach.SpendingValidator(groupValidator.spendGroup);
+    if (!scriptRefs.treasuryRounds)
+      baseTx = baseTx.attach.WithdrawalValidator(
+        protocol.treasuryStakeValidators.rounds,
       );
 
-    // Use reference scripts when provided — avoids including ~15KB of script bytes
-    // inline, keeping the tx under Cardano's 16,384-byte size limit.
-    const baseTx =
-      config.scriptRefs?.treasury || config.scriptRefs?.group
-        ? baseTxNoValidators.readFrom(
-            [config.scriptRefs?.treasury, config.scriptRefs?.group].filter(
-              Boolean,
-            ) as UTxO[],
-          )
-        : baseTxNoValidators.attach
-            .SpendingValidator(groupValidator.spendGroup)
-            .attach.SpendingValidator(treasuryValidator.spendTreasury);
-
     const baseTxWithGroup = baseTx.pay.ToContract(
-      groupAddress,
+      groupUtxo.address,
       {
         kind: "inline",
         value: buildGroupCip68Datum(
@@ -346,31 +462,55 @@ export const unsignedDistributePayoutTxProgram = (
       groupUtxo.assets,
     );
 
-    const isLastRound = roundNumber + 1n === groupDatum.num_rounds;
-
-    // Pull mode: the pot is earmarked into the borrower's OWN treasury (claimable_balance)
-    // instead of paid to a wallet. Push mode keeps the direct wallet output.
-    const isPull = groupDatum.payout_mode === "Pull";
-
-    // The contribution asset may be ADA (lovelace) or any native token.
-    const isAdaContribution = groupDatum.contribution_fee_policyid === "";
-    const contributionUnit = isAdaContribution
-      ? "lovelace"
-      : toUnit(
-          groupDatum.contribution_fee_policyid,
-          groupDatum.contribution_fee_assetname,
+    // isPull / isAdaContribution / contributionUnit / isCycleBoundary computed above.
+    // Outputs are built in LEG order (sorted), so the on-chain indexer sees
+    // ascending input AND output indices — the reserve leg lands wherever its
+    // outRef sorts among the member treasuries.
+    const withTreasuryOutputs = legs.reduce((tx, state) => {
+      if (state.isReserve) {
+        const updatedReserve: TreasuryDatum = {
+          ReserveState: {
+            ...(
+              state.datum as {
+                ReserveState: {
+                  group_reference_tokenname: string;
+                  standin_rounds: bigint;
+                };
+              }
+            ).ReserveState,
+            standin_rounds: standinOut,
+          },
+        };
+        const reserveOutBalance = reserveRawIn + levyTotal - draw;
+        // ADA groups adjust lovelace; token groups adjust the token (omitting a
+        // zero entry) and keep lovelace unchanged.
+        const reserveOutAssets: Assets = isAdaContribution
+          ? { ...state.utxo.assets, lovelace: reserveOutBalance }
+          : {
+              ...Object.fromEntries(
+                Object.entries(state.utxo.assets).filter(
+                  ([k]) => k !== contributionUnit,
+                ),
+              ),
+              ...(reserveOutBalance > 0n
+                ? { [contributionUnit]: reserveOutBalance }
+                : {}),
+            };
+        return tx.pay.ToContract(
+          state.utxo.address,
+          { kind: "inline", value: Data.to(updatedReserve, TreasuryDatum) },
+          reserveOutAssets,
         );
-
-    const withTreasuryOutputs = memberStates.reduce((tx, state) => {
+      }
       if (!("TreasuryState" in state.datum)) return tx;
       const ts = state.datum.TreasuryState;
       const memberToken = toUnit(
         treasuryPolicyId,
         ts.member_reference_tokenname,
       );
-      // Under Pull, the borrower's own treasury (slot == effectiveSlot) is credited the pot.
+      // Under Pull, the borrower's own treasury (registry-resolved) is credited the pot.
       const isBorrowerTreasury =
-        isPull && Number(ts.assigned_slot) === effectiveSlot;
+        isPull && ts.member_reference_tokenname === borrowerTokenName;
       // Balance is measured in the contribution asset (lovelace for ADA groups). Every
       // member is debited the fee; the Pull borrower is also credited the pot, so its
       // balance rises and it never transitions to ICS.
@@ -389,7 +529,7 @@ export const unsignedDistributePayoutTxProgram = (
       const transitionToIcs =
         !isBorrowerTreasury &&
         outputContributable < groupDatum.contribution_fee &&
-        !isLastRound;
+        !isCycleBoundary;
 
       const updatedDatum: TreasuryDatum = transitionToIcs
         ? {
@@ -399,7 +539,6 @@ export const unsignedDistributePayoutTxProgram = (
               grace_expires_at: validFrom + groupDatum.grace_period_length,
               grace_extensions_used: 0n,
               rounds_paid: roundNumber + 1n,
-              assigned_slot: ts.assigned_slot,
               member_payment_credential: ts.member_payment_credential,
               // A defaulting member is always a non-borrower, so the earmark carries
               // through unchanged (the funds stay in the UTxO value either way).
@@ -426,7 +565,7 @@ export const unsignedDistributePayoutTxProgram = (
             ...(outputBal > 0n ? { [contributionUnit]: outputBal } : {}),
           };
       return tx.pay.ToContract(
-        treasuryAddress,
+        state.utxo.address,
         { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
         outAssets,
       );
@@ -437,17 +576,11 @@ export const unsignedDistributePayoutTxProgram = (
       ? { lovelace: payoutAmount }
       : { lovelace: 2_000_000n, [contributionUnit]: payoutAmount };
 
-    // Present defaulters as reference inputs so the complete-member-set check is satisfied.
-    const withRefs =
-      defaulterUtxos.length > 0
-        ? withTreasuryOutputs.readFrom(defaulterUtxos)
-        : withTreasuryOutputs;
-
     // Push: pay the pot to the borrower's wallet. Pull: the pot was earmarked into the
     // borrower's own treasury above, so there is no wallet output.
     const withBorrower = isPull
-      ? withRefs
-      : withRefs.pay.ToAddress(borrowerAddress, borrowerAssets);
+      ? withTreasuryOutputs
+      : withTreasuryOutputs.pay.ToAddress(borrowerAddress, borrowerAssets);
 
     const tx = yield* withBorrower
       .validFrom(Number(validFrom))

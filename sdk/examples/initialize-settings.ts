@@ -13,7 +13,7 @@
  * Live network only (requires BLOCKFROST_KEY or MAESTRO_API_KEY + ADMIN_SEED in .env).
  */
 
-import { initializeSettings, deriveSettings } from "@tx-meta/dcu-sdk";
+import { initializeSettings, deriveSettings } from "@tx-meta/dcu-kit";
 import {
   makeLucid,
   cexplorerTxUrl,

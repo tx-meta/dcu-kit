@@ -38,9 +38,9 @@ grace_period_length`, and the tx lower bound is slot-rounded → up to ~1s misma
 
 ### A3. `examples:setup` installs a stale tarball — FIXED ✅ (committed `aae1e34`)
 
-- **Cause:** `pnpm pack` emits `tx-meta-dcu-sdk-<v>.tgz`, but the script referenced
-  `dcu-sdk-<v>.tgz`, so repacks silently kept the previous tarball installed.
-- **Fix:** `repack` renames the pack output to `dcu-sdk-<v>.tgz`.
+- **Cause:** `pnpm pack` emits `tx-meta-dcu-kit-<v>.tgz`, but the script referenced
+  `dcu-kit-<v>.tgz`, so repacks silently kept the previous tarball installed.
+- **Fix:** `repack` renames the pack output to `dcu-kit-<v>.tgz`.
 
 ---
 

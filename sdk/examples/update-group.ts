@@ -14,7 +14,7 @@ import {
   GroupDatum,
   GroupCip68Datum,
   assetNameLabels,
-} from "@tx-meta/dcu-sdk";
+} from "@tx-meta/dcu-kit";
 import { Data } from "@lucid-evolution/lucid";
 import { loadSdk } from "./sdk.js";
 import {

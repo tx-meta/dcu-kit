@@ -51,15 +51,22 @@ export type ExampleState = {
   // Reference script UTxOs — deployed once by deploy-scripts.ts, used by all
   // transactions that would otherwise exceed the 16KB Cardano tx size limit.
   // treasury.mint === treasury.spend CBOR, so one UTxO covers both handlers.
-  // Same for group.mint === group.spend.
+  // Same for group.mint === group.spend. The treasury split (2026-07-04) adds
+  // the four withdraw-zero family stake validators, each deployed as its own ref.
   scriptRefTreasury?: ScriptRefOutRef;
   scriptRefGroup?: ScriptRefOutRef;
+  scriptRefTreasuryRounds?: ScriptRefOutRef;
+  scriptRefTreasuryLifecycle?: ScriptRefOutRef;
+  scriptRefTreasuryRecovery?: ScriptRefOutRef;
+  scriptRefTreasuryReserve?: ScriptRefOutRef;
+
+  // Escrow (standalone family — @tx-meta/dcu-kit/escrow). The permanent
+  // identity of the last escrow created by escrow-create.ts.
+  escrowStateTokenName?: string;
 };
 
 export type AccountSuffixKey =
-  | "accountTokenSuffix"
-  | "adminAccountTokenSuffix"
-  | "user2AccountTokenSuffix";
+  "accountTokenSuffix" | "adminAccountTokenSuffix" | "user2AccountTokenSuffix";
 
 /** Maps ACTIVE_WALLET value to its state.json key for the account token suffix. */
 export function accountSuffixKey(activeWallet: string): AccountSuffixKey {

@@ -11,7 +11,7 @@
  * contribute). Reads groupTokenSuffix + the member's account suffix from state.json.
  */
 
-import { TerminateDefaultConfig, accountPolicyId } from "@tx-meta/dcu-sdk";
+import { TerminateDefaultConfig, accountPolicyId } from "@tx-meta/dcu-kit";
 import { UTxO } from "@lucid-evolution/lucid";
 import { loadSdk } from "./sdk.js";
 import {
@@ -19,6 +19,7 @@ import {
   cexplorerTxUrl,
   logError,
   logWalletInfo,
+  loadScriptRefs,
 } from "./context.js";
 import {
   loadState,
@@ -66,23 +67,7 @@ async function main() {
 
   // Load reference script UTxOs to keep the terminate tx under 16KB (it spends the
   // group + treasury and burns, so it is too large to inline both validators).
-  let scriptRefs: TerminateDefaultConfig["scriptRefs"];
-  if (state.scriptRefTreasury && state.scriptRefGroup) {
-    const [tUtxo, gUtxo] = await lucid.utxosByOutRef([
-      {
-        txHash: state.scriptRefTreasury.txHash,
-        outputIndex: state.scriptRefTreasury.outputIndex,
-      },
-      {
-        txHash: state.scriptRefGroup.txHash,
-        outputIndex: state.scriptRefGroup.outputIndex,
-      },
-    ]);
-    if (tUtxo?.scriptRef && gUtxo?.scriptRef) {
-      scriptRefs = { treasury: tUtxo as UTxO, group: gUtxo as UTxO };
-      console.log("Using reference scripts.");
-    }
-  }
+  const scriptRefs = await loadScriptRefs(lucid);
 
   console.log(
     `Terminating ${memberWallet}'s DefaultState membership (grace expired)...`,

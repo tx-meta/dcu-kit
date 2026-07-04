@@ -1,0 +1,149 @@
+use aiken/collection/dict
+use aiken/collection/list
+use cardano/address.{Script}
+use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
+use cardano/transaction.{InlineDatum, Input, Output}
+use dcu/treasury.{DefaultState, TreasuryDatum}
+use dcu/utils.{only_allowed_policies}
+
+// ─── Min-ADA reserve ──────────────────────────────────────────────────────────
+
+// min_ada_reserve
+// Lovelace permanently retained in any live treasury/penalty UTxO to satisfy the
+// ledger min-ADA requirement of the membership token it carries. 2 ADA sits safely
+// above the real min-ADA (~1.2–1.4 ADA for a single-token UTxO with an inline
+// TreasuryDatum), so a treasury can always cover its own existence.
+pub const min_ada_reserve: Int = 2_000_000
+
+// contributable_in
+// The *spendable* amount of `policy`/`name` held in `value`. For an ADA-denominated
+// asset (policy == ada_policy_id) the min-ADA reserve is excluded, so the conservation
+// math never drives a live, token-bearing UTxO's lovelace below min-ADA: on the final
+// round a member's contributable balance reaches 0 while `min_ada_reserve` lovelace
+// remains to carry the token. For native tokens the reserve is 0 — the token balance is
+// independent of the UTxO's lovelace — so token-denominated groups are unaffected.
+pub fn contributable_in(value: Value, policy: PolicyId, name: AssetName) -> Int {
+  let raw = assets.quantity_of(value, policy, name)
+  if policy == ada_policy_id {
+    raw - min_ada_reserve
+  } else {
+    raw
+  }
+}
+
+// ada_reserve_conserved
+// Pins the lovelace floor of a treasury UTxO across a value-preserving spend.
+// For a NATIVE-TOKEN group the contribution asset is the token, so the -fee
+// conservation (measured in the token by `contributable_in`) leaves the UTxO's
+// lovelace entirely unpinned: the membership token's min-ADA reserve, plus any
+// over-funded ADA, could be routed into a cranker's change. DistributeRound is
+// permissionless, so without this floor any party advancing a round on a
+// token-denominated group could skim each member's ADA down to the ledger min.
+// The output must retain at least the input's lovelace.
+//
+// For an ADA-denominated group the lovelace IS the contribution asset and is
+// already pinned by the -fee balance check (and legitimately *decreases* by the
+// fee each round), so this MUST NOT apply — it returns True (no-op).
+pub fn ada_reserve_conserved(
+  input_value: Value,
+  output_value: Value,
+  contribution_fee_policyid: PolicyId,
+) -> Bool {
+  if contribution_fee_policyid == ada_policy_id {
+    True
+  } else {
+    assets.lovelace_of(output_value) >= assets.lovelace_of(input_value)
+  }
+}
+
+// ─── Treasury Helpers ─────────────────────────────────────────────────────────
+
+// treasury_output_clean
+// The standard treasury-output guard, shared by handlers that produce a treasury
+// UTxO: it holds EXACTLY the one membership token (exact check — blocks
+// account-merge attacks) and carries no value beyond ADA + own policy + the
+// group's contribution asset.
+//
+// ADDRESS NOTE (AIK-4 fix, 2026-06-24): address checking has been removed from
+// this function. Each caller is responsible for asserting the correct address:
+//
+//   CONTINUATION callers (DistributeRound, Contribute, UpdatePayout, ExtendGrace,
+//   ClaimPayout, ExitGroup penalty, ApproveRecovery request, ExecuteRecovery
+//   rotated output): assert `own_output.address == own_input.output.address`
+//   (full-address equality — closes the stake-credential drain; MLabs #11 / AIK-4).
+//
+//   CREATION callers (JoinGroup member treasury, ProposeRecovery request):
+//   assert `payment_credential == Script(own_policy_id)` with stake credential
+//   UNCONSTRAINED — the member self-builds their own UTxO (no third-party drain),
+//   and leaving stake free preserves the member's future delegation option.
+pub fn treasury_output_clean(
+  own_output: Output,
+  own_policy_id: PolicyId,
+  member_reference_tokenname: AssetName,
+  contribution_fee_policyid: PolicyId,
+) -> Bool {
+  and {
+    dict.to_pairs(assets.tokens(own_output.value, own_policy_id)) == [
+      Pair(member_reference_tokenname, 1),
+    ],
+    only_allowed_policies(
+      own_output.value,
+      [ada_policy_id, own_policy_id, contribution_fee_policyid],
+    ),
+  }
+}
+
+// member_has_user_token
+// Verifies the input at member_input_index holds exactly 1 token of
+// member_reference_tokenname under the account_policy_id.
+pub fn member_has_user_token(
+  inputs: List<Input>,
+  member_input_index: Int,
+  member_reference_tokenname: AssetName,
+  account_policy_id: PolicyId,
+) -> Bool {
+  expect Some(member_input) = list.at(inputs, member_input_index)
+  assets.quantity_of(
+    member_input.output.value,
+    account_policy_id,
+    member_reference_tokenname,
+  ) == 1
+}
+
+// find_group_token_name
+// Extracts the group reference token name from a group UTxO's value.
+pub fn find_group_token_name(group_input: Input) -> AssetName {
+  expect Script(group_policy_id) = group_input.output.address.payment_credential
+  expect [Pair(group_token_name, 1)] = dict.to_pairs(
+    assets.tokens(group_input.output.value, group_policy_id),
+  )
+  group_token_name
+}
+
+// count_default_outputs
+// Counts how many of the given output indices carry a DefaultState datum. DistributeRound
+// uses this to decrement the group's cached active_member_count by exactly the number of
+// members that transitioned to InsufficientCollateral (DefaultState) this round — keeping
+// active_member_count == (count of live TreasuryState members) without an O(N²) re-scan.
+pub fn count_default_outputs(
+  output_indices: List<Int>,
+  outputs: List<Output>,
+) -> Int {
+  list.foldl(
+    output_indices,
+    0,
+    fn(idx, acc) {
+      when list.at(outputs, idx) is {
+        Some(o) -> {
+          expect InlineDatum(d) = o.datum
+          expect td: TreasuryDatum = d
+          when td is {
+            DefaultState { .. } -> acc + 1
+            _ -> acc
+          }
+        }
+        None -> acc
+      }
+    },
+  )
+}

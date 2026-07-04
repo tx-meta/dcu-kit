@@ -17,7 +17,7 @@
     "paths": {
       "@/*": ["./*"],
       "collections/*": ["./.source/*"],
-      "@tx-meta/dcu-sdk": ["../sdk/src/index.ts"]
+      "@tx-meta/dcu-kit": ["../sdk/src/index.ts"]
     },
     "plugins": [
       {

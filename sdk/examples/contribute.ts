@@ -18,7 +18,7 @@
  * Requires the Account NFT to be in the active wallet.
  */
 
-import { ContributeConfig, accountPolicyId } from "@tx-meta/dcu-sdk";
+import { ContributeConfig, accountPolicyId } from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,

@@ -9,9 +9,18 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
+  AdminAuthConfig,
+  applyAdminWitness,
+  payAdminReturn,
+} from "../multisig/index.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
+import {
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  LifecycleAction,
+  ReserveAction,
   GroupDatum,
   GroupSpendRedeemer,
 } from "../core/types.js";
@@ -31,6 +40,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  removeRegistryEntry,
+  reserveTokenName,
 } from "../core/utils/index.js";
 
 // --- Configuration ---
@@ -42,11 +53,8 @@ export type TerminateDefaultConfig = {
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, omit for live network
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO, keeping the tx under 16KB.
-  scriptRefs?: {
-    treasury?: UTxO;
-    group?: UTxO;
-  };
-};
+  scriptRefs?: ScriptRefs;
+} & AdminAuthConfig;
 
 // --- Endpoint ---
 
@@ -56,8 +64,10 @@ export type TerminateDefaultConfig = {
  *
  * **Functionality:**
  * - Spends the defaulter's DefaultState treasury UTxO (TerminateDefault redeemer).
- * - Burns the membership token and forfeits the locked collateral to the admin (it flows
- *   to the admin's wallet as change — the admin builds and signs this tx).
+ * - Burns the membership token; the forfeited contributable balance flows INTO the
+ *   group's mutual reserve (ReserveCover leg — defaulter's own assets first), and the
+ *   reserve's stand-in counter grows by the defaulter's remaining rounds this lap.
+ *   The admin keeps only the defaulter's min-ADA lovelace as change.
  * - Spends the Group UTxO with the Exit redeemer to decrement member_count and remove the
  *   member from the registry (keeping the `length(member_token_names) == member_count`
  *   invariant intact).
@@ -152,13 +162,91 @@ export const unsignedTerminateDefaultTxProgram = (
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
     const burnAssets: Assets = { [memberToken]: -1n };
 
+    // ─── Reserve leg (ReserveCover) ───────────────────────────────────────────
+    // The group's reserve UTxO receives the defaulter's forfeited contributable
+    // balance, and standin_rounds grows by their remaining rounds this lap.
+    const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
+    const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
+    const reserveUtxo = patchInlineDatum(reserveUtxoRaw);
+    const reserveDatum = (yield* parseSafeDatum(
+      reserveUtxo.datum,
+      TreasuryDatumSchema,
+    )) as unknown as TreasuryDatum;
+    if (!("ReserveState" in reserveDatum)) {
+      return yield* Effect.fail(
+        new InvalidDatumError({
+          field: "reserveDatum",
+          reason: "Expected ReserveState on the reserve UTxO",
+        }),
+      );
+    }
+
+    // Forfeit = the defaulter's contributable balance in the contribution asset
+    // (min-ADA excluded for ADA-denominated groups — it returns to the admin).
+    const feeIsAda = groupDatum.contribution_fee_policyid === "";
+    const contributionUnit = feeIsAda
+      ? "lovelace"
+      : toUnit(
+          groupDatum.contribution_fee_policyid,
+          groupDatum.contribution_fee_assetname,
+        );
+    const defaulterRaw = treasuryUtxo.assets[contributionUnit] ?? 0n;
+    const forfeit = feeIsAda ? defaulterRaw - 2_000_000n : defaulterRaw;
+
+    // standin increment: the defaulter's remaining contribution rounds this lap.
+    const remaining = groupDatum.is_started
+      ? groupDatum.era_start_round +
+        groupDatum.num_rounds -
+        (groupDatum.last_distributed_round + 1n)
+      : 0n;
+    const standinIncrement = remaining > 0n ? remaining : 0n;
+
+    const updatedReserveDatum: TreasuryDatum = {
+      ReserveState: {
+        ...reserveDatum.ReserveState,
+        standin_rounds:
+          reserveDatum.ReserveState.standin_rounds + standinIncrement,
+      },
+    };
+    const reserveOutAssets: Assets = {
+      ...reserveUtxo.assets,
+      [contributionUnit]:
+        (reserveUtxo.assets[contributionUnit] ?? 0n) + forfeit,
+    };
+
+    // Reserve spend — pinned to this genuine termination. Treasury split: field-less
+    // spend literal; the RESERVE CoverAction covers the reserve UTxO.
+    // Outputs: 0 = group, 1 = reserve (admin return follows).
+    const reserveCoverRedeemer = Data.to("ReserveCover", TreasuryRedeemer);
+    const coverAction: RedeemerBuilder = {
+      kind: "selected",
+      makeRedeemer: (inputIndices: bigint[]) =>
+        Data.to(
+          {
+            CoverAction: {
+              covered_inputs: [inputIndices[2]], // reserve
+              group_ref_input_index: inputIndices[0],
+              group_output_index: 0n,
+              defaulter_input_index: inputIndices[1],
+              reserve_output_index: 1n,
+            },
+          },
+          ReserveAction,
+        ),
+      inputs: [groupUtxo, treasuryUtxo, reserveUtxo],
+    };
+
     // Updated Group datum: decrement member_count and drop the member from the registry.
+    const remainingRegistry = removeRegistryEntry(
+      groupDatum.member_token_names,
+      groupDatum.member_slots,
+      memberRefName,
+    );
     const updatedGroupDatum: GroupDatum = {
       ...groupDatum,
       member_count: groupDatum.member_count - 1n,
-      member_token_names: groupDatum.member_token_names.filter(
-        (n) => n !== memberRefName,
-      ),
+      member_token_names: remainingRegistry.names,
+      member_slots: remainingRegistry.slots,
     };
 
     // Group validator redeemer: Exit (permissionless at the group level — authorised by the
@@ -181,43 +269,31 @@ export const unsignedTerminateDefaultTxProgram = (
       inputs: [groupUtxo],
     };
 
-    // Treasury validator redeemer: TerminateDefault. Indices resolve to the group spending
-    // input, the admin input, and the treasury (self) input. group_output_index is 0n.
-    const treasurySpendRedeemer: RedeemerBuilder = {
+    // Treasury split: field-less spend/burn literal; the LIFECYCLE TerminateDefaultAction
+    // covers the defaulter's treasury UTxO and points at the group spending input +
+    // admin input. group_output_index is 0n.
+    const terminateSpendRedeemer = Data.to(
+      "TerminateDefault",
+      TreasuryRedeemer,
+    );
+    const terminateDefaultAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            TerminateDefault: {
+            TerminateDefaultAction: {
+              covered_inputs: [inputIndices[2]], // treasury
               group_ref_input_index: inputIndices[0],
               group_output_index: 0n,
               admin_input_index: inputIndices[1],
-              treasury_input_index: inputIndices[2],
             },
           },
-          TreasuryRedeemer,
+          LifecycleAction,
         ),
       inputs: [groupUtxo, adminUtxo, treasuryUtxo],
     };
 
-    // Mint burn redeemer — validate_claim_penalty_mint ignores the redeemer fields.
-    const mintBurnRedeemer = Data.to(
-      {
-        TerminateDefault: {
-          group_ref_input_index: 0n,
-          group_output_index: 0n,
-          admin_input_index: 0n,
-          treasury_input_index: 0n,
-        },
-      },
-      TreasuryRedeemer,
-    );
-
     const address = yield* getWalletAddress(lucid);
-    const groupAddress = yield* getScriptAddress(
-      lucid,
-      groupValidator.spendGroup,
-    );
 
     // Grace gate: the validator requires get_lower_bound(tx) > grace_expires_at. Match the
     // slot-aligned validFrom used by exitGroup/distribute so the lower bound is deterministic.
@@ -225,14 +301,15 @@ export const unsignedTerminateDefaultTxProgram = (
       currentTime !== undefined ? currentTime : BigInt(Date.now()) - 120_000n;
     const now = currentTime !== undefined ? rawNow : rawNow - (rawNow % 1000n);
 
-    const baseTx = lucid
+    const baseTx0 = lucid
       .newTx()
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom([adminUtxo])
-      .collectFrom([treasuryUtxo], treasurySpendRedeemer)
+      .collectFrom([treasuryUtxo], terminateSpendRedeemer)
+      .collectFrom([reserveUtxo], reserveCoverRedeemer)
       .addSigner(address)
       .pay.ToContract(
-        groupAddress,
+        groupUtxo.address,
         {
           kind: "inline",
           value: buildGroupCip68Datum(
@@ -243,23 +320,61 @@ export const unsignedTerminateDefaultTxProgram = (
         },
         groupUtxo.assets,
       )
-      .mintAssets(burnAssets, mintBurnRedeemer)
+      .pay.ToContract(
+        reserveUtxo.address,
+        { kind: "inline", value: Data.to(updatedReserveDatum, TreasuryDatum) },
+        reserveOutAssets,
+      )
+      .mintAssets(burnAssets, terminateSpendRedeemer)
       .validFrom(Number(now));
 
-    // Reference scripts when provided — avoids inlining ~12KB of validator bytes.
-    const withValidators =
-      config.scriptRefs?.treasury || config.scriptRefs?.group
-        ? baseTx.readFrom(
-            [config.scriptRefs?.treasury, config.scriptRefs?.group].filter(
-              Boolean,
-            ) as UTxO[],
-          )
-        : baseTx.attach
-            .MintingPolicy(treasuryValidator.mintTreasury)
-            .attach.SpendingValidator(treasuryValidator.spendTreasury)
-            .attach.SpendingValidator(groupValidator.spendGroup);
+    const baseTx = payAdminReturn(baseTx0, config, adminUtxo);
 
-    const tx = yield* withValidators
+    // Reference scripts when provided — avoids inlining ~12KB of validator bytes.
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const network = lucid.config().network!;
+    const refUtxos = [scriptRefs.treasury, scriptRefs.group].filter(
+      Boolean,
+    ) as UTxO[];
+    let withValidators =
+      refUtxos.length > 0 ? baseTx.readFrom(refUtxos) : baseTx;
+    if (!scriptRefs.treasury)
+      withValidators = withValidators.attach
+        .MintingPolicy(treasuryValidator.mintTreasury)
+        .attach.SpendingValidator(treasuryValidator.spendTreasury);
+    if (!scriptRefs.group)
+      withValidators = withValidators.attach.SpendingValidator(
+        groupValidator.spendGroup,
+      );
+    // Lifecycle (TerminateDefaultAction) + reserve (CoverAction) both run once.
+    withValidators = attachFamilyWithdrawal(
+      withValidators,
+      protocol,
+      network,
+      "lifecycle",
+      terminateDefaultAction,
+      scriptRefs,
+    );
+    withValidators = attachFamilyWithdrawal(
+      withValidators,
+      protocol,
+      network,
+      "reserve",
+      coverAction,
+      scriptRefs,
+    );
+
+    const withSigners = applyAdminWitness(withValidators, config);
+
+    // The reserve continuation output (and, on the script path, the admin-token
+    // return) forces coin selection to pull a fee input AFTER the RedeemerBuilder
+    // indices were computed, which Lucid rejects ("Coin selection had to be updated
+    // after building redeemers"). Pre-setting a minimum fee makes the first selection
+    // pass reserve that input up front, keeping the selected-input indices stable.
+    // Excess over the real fee returns as change.
+    const withMinFee = withSigners.setMinFee(2_200_000n);
+
+    const tx = yield* withMinFee
       .readFrom([settingsUtxo])
       // Plain completeProgram (like exitGroup, which also spends the group + reads settings)
       // so local UPLC evaluation runs — the emulator then genuinely enforces the grace gate,

@@ -68,24 +68,39 @@ export const createDefaultGroupDatum = (
   // num_rounds is 0 at creation — assigned to member_count at startGroup.
   // Required by validate_create_group (num_rounds == 0 check).
   num_rounds: 0n,
-  max_members: 30n,
+  // Within the protocol ceiling (max_group_members = 20). Was 30 before the scale cap.
+  max_members: 20n,
   member_count: 0n,
+  // 0 at creation; startGroup sets it to member_count. Active-cycle tests override explicitly.
+  active_member_count: 0n,
   is_active: true,
   is_started: false,
   last_distributed_round: -1n,
   // start_time MUST be 0 at creation — validate_create_group enforces (start_time == 0).
   // startGroup sets it to get_lower_bound(tx) when sealing membership.
   start_time: 0n,
-  // Fixed 28-byte test placeholder for creator_payment_credential.
+  // Fixed 28-byte test placeholder for creator_payment_credential (VK kind).
   // With joining_fee: 0n this field is unused by the treasury validator,
-  // but validate_create_group requires exactly 28 bytes (56 hex chars).
-  creator_payment_credential:
-    "a0a1a2a3a4a5a6a7a8a9b0b1b2b3b4b5b6b7b8b9c0c1c2c3c4c5c6c7",
+  // but validate_create_group requires a 28-byte hash (56 hex chars).
+  creator_payment_credential: {
+    VerificationKey: [
+      "a0a1a2a3a4a5a6a7a8a9b0b1b2b3b4b5b6b7b8b9c0c1c2c3c4c5c6c7",
+    ] as [string],
+  },
   member_token_names: [],
   // 1 = PerRound (traditional ROSCA, default). Set to max_members for FullUpfront,
   // or any k in [1, max_members] for partial collateral.
   collateral_rounds: 1n,
   // Push = current direct-wallet-payout behaviour (default). Pull groups override this.
   payout_mode: "Push",
+  // 1 = at least one member must approve a recovery proposal.
+  recovery_threshold: 1n,
+  // 259_200_000 ms = 3 days veto window before a recovery can execute.
+  recovery_timelock: 259_200_000n,
+  member_slots: [],
+  era_start_round: 0n,
+  recommit_window: 259_200_000n,
+  reserve_join_levy: 0n,
+  reserve_round_levy: 0n,
   ...overrides,
 });

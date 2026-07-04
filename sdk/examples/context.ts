@@ -23,7 +23,10 @@ import {
   PROTOCOL_PARAMETERS_DEFAULT,
   generateEmulatorAccount,
   LucidEvolution,
+  UTxO,
 } from "@lucid-evolution/lucid";
+import { accountPolicyId, assetNameLabels } from "@tx-meta/dcu-kit";
+import { loadState } from "./state.js";
 
 export type ExampleContext = {
   lucid: LucidEvolution;
@@ -103,6 +106,98 @@ export async function logWalletInfo(
     );
   console.log(`Address: ${address}`);
   console.log(`Explorer: https://${subdomain}cexplorer.io/address/${address}`);
+}
+
+/**
+ * Selects the wallet named by ACTIVE_WALLET (default `fallback`) from .env
+ * seeds and prints its balance. Returns the wallet name for messages.
+ */
+export async function selectEnvWallet(
+  lucid: LucidEvolution,
+  fallback = "USER1",
+): Promise<string> {
+  const activeWallet = (process.env.ACTIVE_WALLET ?? fallback).toUpperCase();
+  const seed =
+    process.env[`${activeWallet}_SEED`] ?? process.env[`${fallback}_SEED`];
+  if (!seed) throw new Error(`${activeWallet}_SEED not found in .env`);
+  lucid.selectWallet.fromSeed(seed);
+  await logWalletInfo(lucid, activeWallet);
+  return activeWallet;
+}
+
+/**
+ * Resolves the treasury/group reference-script UTxOs recorded in state.json.
+ * Both validators exceed the inline tx-size budget on most endpoints, so
+ * examples pass the result as `scriptRefs`. Warns and returns {} when the
+ * refs are missing — run `pnpm run deploy-scripts` first.
+ */
+export async function loadScriptRefs(lucid: LucidEvolution): Promise<{
+  treasury?: UTxO;
+  group?: UTxO;
+  treasuryRounds?: UTxO;
+  treasuryLifecycle?: UTxO;
+  treasuryRecovery?: UTxO;
+  treasuryReserve?: UTxO;
+}> {
+  const state = loadState();
+  // The six rosca ref scripts: dispatcher, group, and the four family stake
+  // validators (treasury split). All are required — the dispatcher delegates
+  // every operation to a family withdrawal.
+  const entries = [
+    ["treasury", state.scriptRefTreasury],
+    ["group", state.scriptRefGroup],
+    ["treasuryRounds", state.scriptRefTreasuryRounds],
+    ["treasuryLifecycle", state.scriptRefTreasuryLifecycle],
+    ["treasuryRecovery", state.scriptRefTreasuryRecovery],
+    ["treasuryReserve", state.scriptRefTreasuryReserve],
+  ] as const;
+
+  if (entries.some(([, ref]) => !ref)) {
+    console.warn(
+      "No (complete) script refs in state.json — falling back to inline scripts (may exceed 16KB).",
+    );
+    console.warn("Run 'pnpm run deploy-scripts' first.");
+    return {};
+  }
+
+  const utxos = await lucid.utxosByOutRef(
+    entries.map(([, ref]) => ({
+      txHash: ref!.txHash,
+      outputIndex: ref!.outputIndex,
+    })),
+  );
+  if (utxos.some((u) => !u?.scriptRef)) {
+    console.warn(
+      "Reference script UTxOs not found on-chain — falling back to inline scripts.",
+    );
+    console.warn("Run 'pnpm run deploy-scripts' to redeploy them.");
+    return {};
+  }
+  console.log("Using reference scripts — tx will be under 16KB.");
+  return Object.fromEntries(entries.map(([key], i) => [key, utxos[i]]));
+}
+
+/**
+ * Scans the selected wallet for its account (222) token and returns the
+ * CIP-68 suffix, or undefined when the wallet holds none. The wallet UTxO is
+ * the authoritative source for "which member am I" — state.json can go stale.
+ */
+export async function discoverAccountSuffix(
+  lucid: LucidEvolution,
+): Promise<string | undefined> {
+  const utxos = await lucid.wallet().getUtxos();
+  for (const u of utxos) {
+    for (const k of Object.keys(u.assets)) {
+      if (
+        k.startsWith(accountPolicyId!) &&
+        k.slice(accountPolicyId!.length).startsWith(assetNameLabels.prefix222)
+      )
+        return k.slice(
+          accountPolicyId!.length + assetNameLabels.prefix222.length,
+        );
+    }
+  }
+  return undefined;
 }
 
 export function cexplorerTxUrl(txHash: string): string {

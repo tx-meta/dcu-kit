@@ -9,6 +9,7 @@ import {
   Maestro,
   Network,
   PROTOCOL_PARAMETERS_DEFAULT,
+  UTxO,
   validatorToAddress,
 } from "@lucid-evolution/lucid";
 import { ConfigurationError } from "../src/core/errors.js";
@@ -20,6 +21,12 @@ import {
   Protocol,
   settingsTokenName,
 } from "../src/core/validators/constants.js";
+import {
+  GROUP_REF_LOVELACE,
+  TREASURY_REF_LOVELACE,
+} from "../src/admin/deployScripts.js";
+import { registerTreasuryStake } from "../src/admin/registerTreasuryStake.js";
+import { ScriptRefs } from "../src/core/scripts.js";
 import { ProtocolSettings } from "../src/core/types.js";
 
 export type OnChainNetwork = Extract<
@@ -48,6 +55,12 @@ export type LucidContext = {
   // policy (env) rather than minting one; the emulator path always sets it.
   protocol?: Protocol;
   settingsUnit?: string;
+  // Reference-script UTxOs for the six rosca validators (treasury dispatcher, group,
+  // and the four treasury family stake validators), deployed once during emulator
+  // setup (mirrors the admin `deployScripts` flow). Lets size-sensitive endpoint
+  // tests pass `scriptRefs` instead of inlining the validator bytes. Undefined on
+  // live-network contexts (no auto-deploy).
+  scriptRefs?: ScriptRefs;
 };
 
 export type Provider = "Emulator" | "Maestro" | "Blockfrost" | "Kupmios";
@@ -119,6 +132,10 @@ const deployEmulatorSettings = (
         account_policy: protocol.accountPolicyId,
         group_policy: protocol.groupPolicyId,
         treasury_policy: protocol.treasuryPolicyId,
+        treasury_rounds_stake: protocol.treasuryStakeHashes.rounds,
+        treasury_lifecycle_stake: protocol.treasuryStakeHashes.lifecycle,
+        treasury_recovery_stake: protocol.treasuryStakeHashes.recovery,
+        treasury_reserve_stake: protocol.treasuryStakeHashes.reserve,
       },
       ProtocolSettings,
     );
@@ -138,7 +155,102 @@ const deployEmulatorSettings = (
     const signed = yield* Effect.promise(() => tx.sign.withWallet().complete());
     yield* Effect.promise(() => signed.submit());
     emulator.awaitBlock(1);
+
+    // Withdraw-zero prerequisite: register the treasury's own stake credential so that
+    // distribute txs can carry the 0-ADA reward withdrawal that triggers the treasury
+    // `withdraw` handler. The emulator's submit enforces that a withdrawal matches the
+    // registered reward balance, so an unregistered credential rejects even a 0 withdrawal.
+    // Uses the production helper, so every emulator run exercises the same registration
+    // path that `deployScripts` performs on Preprod/mainnet.
+    const registration = yield* registerTreasuryStake(protocol, lucid);
+    if (registration.alreadyRegistered)
+      yield* Effect.die(
+        "emulator settings deploy expected a fresh stake registration",
+      );
+    emulator.awaitBlock(1);
+
     return { protocol, settingsUnit };
+  });
+
+// Deploy the treasury + group validators as permanent reference-script UTxOs at the
+// always-fails address, mirroring the admin `deployScripts` flow (src/admin/deployScripts.ts)
+// but using emulator-native submit + awaitBlock instead of live-network awaitTx/indexer
+// polling. One UTxO per validator — each carries its own script (no witness, so the
+// deploy tx itself never approaches the size limit) and is later resolved via `.readFrom()`
+// by size-sensitive endpoint tests (join/start/recovery) instead of inlining the bytecode.
+// Must run with the admin wallet selected (the funding wallet for both deploy txs).
+const deployEmulatorScriptRefs = (
+  lucid: LucidEvolution,
+  emulator: Emulator,
+  protocol: Protocol,
+): Effect.Effect<ScriptRefs, never, never> =>
+  Effect.gen(function* () {
+    const { treasuryValidator, groupValidator, treasuryStakeValidators } =
+      protocol;
+    const deployAddress = validatorToAddress(
+      "Custom",
+      alwaysFailsValidator.elseAlwaysFails,
+    );
+
+    // One reference-script UTxO per validator (deposit scales loosely with size).
+    const deployments: Array<[keyof ScriptRefs, string, bigint]> = [
+      [
+        "treasury",
+        treasuryValidator.mintTreasury.script,
+        TREASURY_REF_LOVELACE,
+      ],
+      ["group", groupValidator.spendGroup.script, GROUP_REF_LOVELACE],
+      [
+        "treasuryRounds",
+        treasuryStakeValidators.rounds.script,
+        TREASURY_REF_LOVELACE,
+      ],
+      [
+        "treasuryLifecycle",
+        treasuryStakeValidators.lifecycle.script,
+        TREASURY_REF_LOVELACE,
+      ],
+      [
+        "treasuryRecovery",
+        treasuryStakeValidators.recovery.script,
+        TREASURY_REF_LOVELACE,
+      ],
+      [
+        "treasuryReserve",
+        treasuryStakeValidators.reserve.script,
+        TREASURY_REF_LOVELACE,
+      ],
+    ];
+
+    const refs: ScriptRefs = {};
+    for (const [key, script, deposit] of deployments) {
+      const tx = yield* Effect.promise(() =>
+        lucid
+          .newTx()
+          .pay.ToAddressWithData(
+            deployAddress,
+            { kind: "inline", value: Data.void() },
+            { lovelace: deposit },
+            { type: "PlutusV3", script },
+          )
+          .complete(),
+      );
+      const signed = yield* Effect.promise(() =>
+        tx.sign.withWallet().complete(),
+      );
+      const txHash = yield* Effect.promise(() => signed.submit());
+      emulator.awaitBlock(1);
+      const utxo = (yield* Effect.promise(() =>
+        lucid.utxosAt(deployAddress),
+      )).find((u) => u.txHash === txHash);
+      if (!utxo)
+        return yield* Effect.die(
+          new Error(`Reference-script UTxO for ${key} not found after deploy`),
+        );
+      refs[key] = utxo;
+    }
+
+    return refs;
   });
 
 const makeEmulatorContext = (seedAssets?: Record<string, bigint>) =>
@@ -172,6 +284,14 @@ const makeEmulatorContext = (seedAssets?: Record<string, bigint>) =>
       admin.seedPhrase,
     );
 
+    // Deploy treasury + group reference scripts once (admin wallet still selected from
+    // deployEmulatorSettings) — exposed as context.scriptRefs for size-sensitive endpoints.
+    const scriptRefs = yield* deployEmulatorScriptRefs(
+      lucid,
+      emulator,
+      protocol,
+    );
+
     return {
       lucid,
       users: {
@@ -182,7 +302,62 @@ const makeEmulatorContext = (seedAssets?: Record<string, bigint>) =>
       emulator,
       protocol,
       settingsUnit,
+      scriptRefs,
     } as LucidContext;
+  });
+
+// Benchmark helper: an emulator context with `memberCount` funded member wallets
+// (plus admin), exposed as `memberSeeds`. Used by the scale benchmark to build
+// N-member distribute rounds. maxTxSize defaults very high so transaction SIZE never
+// blocks the build — the benchmark measures EX-UNITS (mem/cpu), which are independent
+// of inline-vs-reference scripts and are the real per-tx constraint.
+export const makeEmulatorContextWithMembers = (
+  memberCount: number,
+  options?: { seedAssets?: Record<string, bigint>; maxTxSize?: number },
+) =>
+  Effect.gen(function* () {
+    const generate = () =>
+      generateEmulatorAccount({
+        lovelace: BigInt(10_000_000_000),
+        ...(options?.seedAssets ?? {}),
+      });
+
+    const admin = yield* Effect.sync(generate);
+    const members = yield* Effect.sync(() =>
+      Array.from({ length: memberCount }, generate),
+    );
+
+    const emulator = new Emulator([admin, ...members], {
+      ...PROTOCOL_PARAMETERS_DEFAULT,
+      maxTxSize: options?.maxTxSize ?? 5_000_000,
+    });
+
+    const lucid = yield* Effect.promise(() => Lucid(emulator, "Custom"));
+
+    const { protocol, settingsUnit } = yield* deployEmulatorSettings(
+      lucid,
+      emulator,
+      admin.seedPhrase,
+    );
+
+    return {
+      lucid,
+      users: {
+        admin: { seedPhrase: admin.seedPhrase, address: admin.address },
+        user1: {
+          seedPhrase: members[0]?.seedPhrase ?? admin.seedPhrase,
+          address: members[0]?.address,
+        },
+        user2: {
+          seedPhrase: members[1]?.seedPhrase ?? admin.seedPhrase,
+          address: members[1]?.address,
+        },
+      },
+      emulator,
+      protocol,
+      settingsUnit,
+      memberSeeds: members.map((m) => m.seedPhrase),
+    } as LucidContext & { memberSeeds: string[] };
   });
 
 const makeMaestroContext = (network: OnChainNetwork) =>
