@@ -2,9 +2,9 @@ import {
   LucidEvolution,
   validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
-import { Effect } from "effect";
+import { Effect, Schedule } from "effect";
 import { Protocol, TreasuryFamily } from "../core/validators/constants.js";
-import { DcuError, TransactionBuildError } from "../core/errors.js";
+import { DcuError, SetupError, TransactionBuildError } from "../core/errors.js";
 import { getWalletAddress } from "../core/utils/index.js";
 
 export type FamilyRegistration = {
@@ -39,6 +39,36 @@ const FAMILIES: TreasuryFamily[] = [
   "recovery",
   "reserve",
 ];
+
+/**
+ * Polls the wallet address until `txHash` appears in its UTxO set.
+ *
+ * The four registrations submit back-to-back; a provider's wallet UTxO endpoint
+ * (Blockfrost) can lag behind chain state even after awaitTx returns, so the
+ * NEXT registration's coin selection may pick an input the previous tx already
+ * spent ("All inputs are spent"). Waiting for the change UTxO to be indexed
+ * keeps each registration's coin selection on a fresh set. No-op on the emulator
+ * (the change is visible immediately). Retries every 3 s for up to 30 s.
+ */
+const awaitWalletIndexed = (
+  lucid: LucidEvolution,
+  address: string,
+  txHash: string,
+): Effect.Effect<void, SetupError, never> =>
+  Effect.retry(
+    Effect.tryPromise({
+      try: async () => {
+        const utxos = await lucid.utxosAt(address);
+        if (!utxos.some((u) => u.txHash === txHash))
+          throw new Error("not indexed yet");
+      },
+      catch: () =>
+        new SetupError({
+          message: `Timed out waiting for registration tx ${txHash.slice(0, 8)}... to appear in wallet UTxOs`,
+        }),
+    }),
+    Schedule.spaced(3_000).pipe(Schedule.upTo(30_000)),
+  );
 
 /**
  * Registers the four treasury family stake credentials (rounds / lifecycle /
@@ -115,6 +145,9 @@ export const registerTreasuryStake = (
               error: String(e),
             }),
         });
+        // Wait for the change UTxO to be indexed so the next family's coin
+        // selection does not reuse an input this tx just spent.
+        yield* awaitWalletIndexed(lucid, address, txHash);
 
         return {
           family,
