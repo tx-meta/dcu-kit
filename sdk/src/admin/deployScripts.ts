@@ -2,7 +2,6 @@ import {
   Data,
   LucidEvolution,
   validatorToAddress,
-  validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
 import { Effect, Schedule } from "effect";
 import {
@@ -11,6 +10,7 @@ import {
 } from "../core/validators/constants.js";
 import { DcuError, TransactionBuildError, SetupError } from "../core/errors.js";
 import { getWalletAddress } from "../core/utils/index.js";
+import { registerTreasuryStake } from "./registerTreasuryStake.js";
 
 /**
  * Lovelace to lock per reference-script UTxO.
@@ -84,9 +84,9 @@ const awaitWalletIndexed = (
  * Tx 1 + Tx 2 deposit the two reference scripts (~8 KB each — both together plus
  * the tx envelope exceed Cardano's 16,384-byte limit, so one per tx). Tx 3
  * registers the treasury stake credential, a one-time prerequisite for the
- * withdraw-zero round handlers (see below). Re-running this function on an
- * already-deployed protocol will fail at Tx 3 because the credential is already
- * registered — registration is one-time per deployment.
+ * withdraw-zero round handlers (via `registerTreasuryStake`, which treats a
+ * duplicate-registration rejection as success — re-running this function on an
+ * already-registered deployment does not fail at Tx 3).
  *
  * **Why poll between transactions?**
  * Blockfrost's wallet UTxO endpoint can lag behind the chain even after
@@ -221,52 +221,11 @@ export const deployScripts = (
     // Its withdraw handler runs the heavy round logic once per tx, triggered by a 0-ADA
     // reward withdrawal that each treasury spend asserts is present. A withdrawal from an
     // unregistered stake credential is rejected by the ledger, so this registration must
-    // happen once before any DistributeRound / NextCycle on this deployment.
-    const treasuryRewardAddress = validatorToRewardAddress(
-      network,
-      treasuryValidator.spendTreasury,
+    // happen once before any DistributeRound on this deployment.
+    const { treasuryRewardAddress } = yield* registerTreasuryStake(
+      protocol,
+      lucid,
     );
-
-    const stakeRegTxBuilder = yield* lucid
-      .newTx()
-      .register.Stake(treasuryRewardAddress)
-      .addSigner(address)
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "deployScripts:stakeRegister:build",
-              error: String(e),
-            }),
-        ),
-      );
-
-    const stakeRegSigned = yield* Effect.tryPromise({
-      try: () => stakeRegTxBuilder.sign.withWallet().complete(),
-      catch: (e) =>
-        new TransactionBuildError({
-          operation: "deployScripts:stakeRegister:sign",
-          error: String(e),
-        }),
-    });
-    const stakeRegTxHash = yield* Effect.tryPromise({
-      try: () => stakeRegSigned.submit(),
-      catch: (e) =>
-        new TransactionBuildError({
-          operation: "deployScripts:stakeRegister:submit",
-          error: String(e),
-        }),
-    });
-
-    yield* Effect.tryPromise({
-      try: () => lucid.awaitTx(stakeRegTxHash),
-      catch: (e) =>
-        new TransactionBuildError({
-          operation: "deployScripts:stakeRegister:confirm",
-          error: String(e),
-        }),
-    });
 
     return {
       treasuryRef: { txHash: treasuryTxHash, outputIndex: 0 },

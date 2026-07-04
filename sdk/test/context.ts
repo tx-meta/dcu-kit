@@ -11,7 +11,6 @@ import {
   PROTOCOL_PARAMETERS_DEFAULT,
   UTxO,
   validatorToAddress,
-  validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
 import { ConfigurationError } from "../src/core/errors.js";
 import { Effect } from "effect";
@@ -26,6 +25,7 @@ import {
   GROUP_REF_LOVELACE,
   TREASURY_REF_LOVELACE,
 } from "../src/admin/deployScripts.js";
+import { registerTreasuryStake } from "../src/admin/registerTreasuryStake.js";
 import { ProtocolSettings } from "../src/core/types.js";
 
 export type OnChainNetwork = Extract<
@@ -151,21 +151,16 @@ const deployEmulatorSettings = (
     emulator.awaitBlock(1);
 
     // Withdraw-zero prerequisite: register the treasury's own stake credential so that
-    // distribute / next-cycle txs can carry the 0-ADA reward withdrawal that triggers the
-    // treasury `withdraw` handler. The emulator's submit enforces that a withdrawal matches
-    // the registered reward balance, so an unregistered credential rejects even a 0 withdrawal.
-    // (Production: deploy-scripts must perform this same one-time registration on Preprod/mainnet.)
-    const treasuryRewardAddress = validatorToRewardAddress(
-      "Custom",
-      protocol.treasuryValidator.spendTreasury,
-    );
-    const regTx = yield* Effect.promise(() =>
-      lucid.newTx().register.Stake(treasuryRewardAddress).complete(),
-    );
-    const regSigned = yield* Effect.promise(() =>
-      regTx.sign.withWallet().complete(),
-    );
-    yield* Effect.promise(() => regSigned.submit());
+    // distribute txs can carry the 0-ADA reward withdrawal that triggers the treasury
+    // `withdraw` handler. The emulator's submit enforces that a withdrawal matches the
+    // registered reward balance, so an unregistered credential rejects even a 0 withdrawal.
+    // Uses the production helper, so every emulator run exercises the same registration
+    // path that `deployScripts` performs on Preprod/mainnet.
+    const registration = yield* registerTreasuryStake(protocol, lucid);
+    if (registration.alreadyRegistered)
+      yield* Effect.die(
+        "emulator settings deploy expected a fresh stake registration",
+      );
     emulator.awaitBlock(1);
 
     return { protocol, settingsUnit };

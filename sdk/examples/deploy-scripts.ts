@@ -12,9 +12,12 @@
  *   permanently locked. Reference scripts deposited here stay on-chain forever
  *   and cannot be accidentally spent or stolen.
  *
- * Why two transactions?
+ * Why three transactions?
  *   Each validator is ~8 KB. Combining both in one transaction (~16 KB of scripts
  *   plus the tx envelope) exceeds Cardano's 16,384-byte limit. One per tx is safe.
+ *   The third transaction registers the treasury validator's stake credential —
+ *   the withdraw-zero prerequisite without which no distribute-payout can run.
+ *   Registration is idempotent: re-runs treat "already registered" as success.
  *
  * Run this ONCE per validator set. The outRefs are saved to state.json and
  * loaded automatically by join-group.ts and exit-group.ts.
@@ -26,7 +29,11 @@
  */
 
 import { Effect } from "effect";
-import { deployScripts, verifyDeployment } from "@tx-meta/dcu-kit";
+import {
+  deployScripts,
+  registerTreasuryStake,
+  verifyDeployment,
+} from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
@@ -76,6 +83,18 @@ async function main() {
           `#${state.scriptRefGroup.outputIndex}`,
       );
       console.log("  address: ", result.treasuryUtxo?.address);
+
+      // The refs being on-chain does not prove Tx 3 (stake registration) ran —
+      // an interrupted deploy can leave the credential unregistered, and every
+      // distribute-payout would fail. Idempotent, so always safe to ensure here.
+      const stakeReg = await Effect.runPromise(
+        registerTreasuryStake(protocol, lucid),
+      );
+      console.log(
+        stakeReg.alreadyRegistered
+          ? "  stake:    treasury stake credential already registered."
+          : `  stake:    treasury stake credential registered now (${cexplorerTxUrl(stakeReg.txHash!)})`,
+      );
       return;
     }
 
@@ -83,9 +102,12 @@ async function main() {
     for (const issue of result.issues) console.warn(" ", issue);
   }
 
-  console.log("Deploying treasury validator (tx 1/2)...");
+  console.log("Deploying treasury validator (tx 1/3)...");
   console.log(
-    "Deploying group validator (tx 2/2, submitted after tx 1 confirms)...",
+    "Deploying group validator (tx 2/3, submitted after tx 1 confirms)...",
+  );
+  console.log(
+    "Registering treasury stake credential (tx 3/3, withdraw-zero prerequisite)...",
   );
   console.log(
     "Destination: alwaysFails address (scripts are permanently locked).",
@@ -103,6 +125,11 @@ async function main() {
   );
   console.log("  group tx:   ", cexplorerTxUrl(deployResult.groupRef.txHash));
   console.log("  address:    ", deployResult.deployAddress);
+  console.log(
+    "  stake:       registered",
+    deployResult.treasuryRewardAddress,
+    "(withdraw-zero prerequisite for distribute-payout)",
+  );
 
   saveState({
     scriptRefTreasury: deployResult.treasuryRef,
