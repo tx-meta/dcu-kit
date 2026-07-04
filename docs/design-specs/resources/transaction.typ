@@ -118,10 +118,14 @@
 
         // Now connect this output to the transaction
         place(dx: start.x + 10.5em, dy: start.y + 0.84em)[
-          #path(
+          #curve(
             stroke: if input.at("reference", default: false) { aqua } else { black },
-            ((0em, 0em), (0em, 0em), (8em, 0em)),
-            ((7.44em, (inputHeightEstimate / 1.25) - (inputHeight / 1.25)), (-4em, 0em))
+            curve.move((0em, 0em)),
+            curve.cubic(
+              (8em, 0em),
+              (3.44em, (inputHeightEstimate / 1.25) - (inputHeight / 1.25)),
+              (7.44em, (inputHeightEstimate / 1.25) - (inputHeight / 1.25)),
+            ),
           )
         ]
         place(dx: start.x + 10.26em, dy: start.y + 0.59em)[#circle(radius: 0.25em, fill: black)]
