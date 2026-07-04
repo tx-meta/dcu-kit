@@ -131,28 +131,42 @@ export async function selectEnvWallet(
  * examples pass the result as `scriptRefs`. Warns and returns {} when the
  * refs are missing — run `pnpm run deploy-scripts` first.
  */
-export async function loadScriptRefs(
-  lucid: LucidEvolution,
-): Promise<{ treasury?: UTxO; group?: UTxO }> {
+export async function loadScriptRefs(lucid: LucidEvolution): Promise<{
+  treasury?: UTxO;
+  group?: UTxO;
+  treasuryRounds?: UTxO;
+  treasuryLifecycle?: UTxO;
+  treasuryRecovery?: UTxO;
+  treasuryReserve?: UTxO;
+}> {
   const state = loadState();
-  if (!state.scriptRefTreasury || !state.scriptRefGroup) {
+  // The six rosca ref scripts: dispatcher, group, and the four family stake
+  // validators (treasury split). All are required — the dispatcher delegates
+  // every operation to a family withdrawal.
+  const entries = [
+    ["treasury", state.scriptRefTreasury],
+    ["group", state.scriptRefGroup],
+    ["treasuryRounds", state.scriptRefTreasuryRounds],
+    ["treasuryLifecycle", state.scriptRefTreasuryLifecycle],
+    ["treasuryRecovery", state.scriptRefTreasuryRecovery],
+    ["treasuryReserve", state.scriptRefTreasuryReserve],
+  ] as const;
+
+  if (entries.some(([, ref]) => !ref)) {
     console.warn(
-      "No script refs in state.json — falling back to inline scripts (may exceed 16KB).",
+      "No (complete) script refs in state.json — falling back to inline scripts (may exceed 16KB).",
     );
     console.warn("Run 'pnpm run deploy-scripts' first.");
     return {};
   }
-  const [tUtxo, gUtxo] = await lucid.utxosByOutRef([
-    {
-      txHash: state.scriptRefTreasury.txHash,
-      outputIndex: state.scriptRefTreasury.outputIndex,
-    },
-    {
-      txHash: state.scriptRefGroup.txHash,
-      outputIndex: state.scriptRefGroup.outputIndex,
-    },
-  ]);
-  if (!tUtxo?.scriptRef || !gUtxo?.scriptRef) {
+
+  const utxos = await lucid.utxosByOutRef(
+    entries.map(([, ref]) => ({
+      txHash: ref!.txHash,
+      outputIndex: ref!.outputIndex,
+    })),
+  );
+  if (utxos.some((u) => !u?.scriptRef)) {
     console.warn(
       "Reference script UTxOs not found on-chain — falling back to inline scripts.",
     );
@@ -160,7 +174,7 @@ export async function loadScriptRefs(
     return {};
   }
   console.log("Using reference scripts — tx will be under 16KB.");
-  return { treasury: tUtxo, group: gUtxo };
+  return Object.fromEntries(entries.map(([key], i) => [key, utxos[i]]));
 }
 
 /**
