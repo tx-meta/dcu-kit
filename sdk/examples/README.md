@@ -49,18 +49,18 @@ Base (settings-unapplied) hashes. The treasury split (2026-07-04) replaced the
 treasury monolith with a thin dispatcher + four withdraw-zero family stake
 validators; group, account, settings, and escrow are byte-unchanged.
 
-| Validator            | Policy ID / Hash                                           |
-| -------------------- | ---------------------------------------------------------- |
-| Account              | `d80e2e5a82cb60b3b2ee2faa1347337a9ff809207f7d8da2ca92bca3` |
-| Treasury (dispatch)  | `9c54823e…` (settings-parameterized; applied hash per deploy) |
-| Treasury rounds      | `f7a2262bcdf6240a0b0e0ea1af88a8eedb8b6ef4bc6d1b65ddc16474` |
-| Treasury lifecycle   | `b4090fbde4f5c070702ecfe5455cfb5e9ad3b9c8698daef5471eba96` |
-| Treasury recovery    | `f16fc034e7c2c7304824ccdac2838789e173abf25449cf1839997c26` |
-| Treasury reserve     | `2dff16b23a98aa2b200e131913d2fffa0376441f092c17fdd4cad49d` |
-| Group                | `32da6e881778a41582c97b839fe2f9c68933b16e03502c40c5083239` |
-| Settings             | `07a7cd9d64681a33c37b2acbbc0cef0d01eee9dca6b934ec8590c138` |
-| Escrow               | `3f04186ff52db2ab1844f9e7eeeab4f793089129b56cd5fae9a41b71` |
-| AlwaysFails          | `22c9a103ed3f2fa97c982d76d6e2af50c5d54ac306983b196c8fcdab` |
+| Validator           | Policy ID / Hash                                              |
+| ------------------- | ------------------------------------------------------------- |
+| Account             | `d80e2e5a82cb60b3b2ee2faa1347337a9ff809207f7d8da2ca92bca3`    |
+| Treasury (dispatch) | `9c54823e…` (settings-parameterized; applied hash per deploy) |
+| Treasury rounds     | `f7a2262bcdf6240a0b0e0ea1af88a8eedb8b6ef4bc6d1b65ddc16474`    |
+| Treasury lifecycle  | `b4090fbde4f5c070702ecfe5455cfb5e9ad3b9c8698daef5471eba96`    |
+| Treasury recovery   | `f16fc034e7c2c7304824ccdac2838789e173abf25449cf1839997c26`    |
+| Treasury reserve    | `2dff16b23a98aa2b200e131913d2fffa0376441f092c17fdd4cad49d`    |
+| Group               | `32da6e881778a41582c97b839fe2f9c68933b16e03502c40c5083239`    |
+| Settings            | `07a7cd9d64681a33c37b2acbbc0cef0d01eee9dca6b934ec8590c138`    |
+| Escrow              | `3f04186ff52db2ab1844f9e7eeeab4f793089129b56cd5fae9a41b71`    |
+| AlwaysFails         | `22c9a103ed3f2fa97c982d76d6e2af50c5d54ac306983b196c8fcdab`    |
 
 These hashes are NOT yet deployed to Preprod. Earlier deployments (and their
 reference-script UTxOs) belong to superseded validators — start from

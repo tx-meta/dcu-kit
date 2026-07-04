@@ -169,8 +169,7 @@ export const getGroupHistoryProgram = (
     // Classify each tx by the mint/burn action recorded against the ref token.
     const history =
       ((yield* bfGet(config, `/assets/${refUnit}/history`)) as
-        | BfHistoryAction[]
-        | null) ?? [];
+        BfHistoryAction[] | null) ?? [];
     const actionByTx = new Map(history.map((h) => [h.tx_hash, h.action]));
 
     // Blockfrost's `/transactions` lists only txs that leave the token in an

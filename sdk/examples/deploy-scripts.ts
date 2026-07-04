@@ -124,7 +124,10 @@ async function main() {
   const deployResult = await Effect.runPromise(deployScripts(protocol, lucid));
 
   console.log("\nAll reference scripts confirmed.");
-  console.log("  treasury tx:", cexplorerTxUrl(deployResult.refs.treasury.txHash));
+  console.log(
+    "  treasury tx:",
+    cexplorerTxUrl(deployResult.refs.treasury.txHash),
+  );
   console.log("  group tx:   ", cexplorerTxUrl(deployResult.refs.group.txHash));
   console.log("  address:    ", deployResult.deployAddress);
   for (const reg of deployResult.stakeRegistrations.registrations) {
@@ -143,7 +146,9 @@ async function main() {
   });
 
   console.log("\nReference scripts saved to state.json.");
-  console.log("Every treasury endpoint example will now use these automatically.");
+  console.log(
+    "Every treasury endpoint example will now use these automatically.",
+  );
 }
 
 main().catch((e) => {

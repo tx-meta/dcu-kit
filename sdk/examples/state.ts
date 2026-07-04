@@ -66,9 +66,7 @@ export type ExampleState = {
 };
 
 export type AccountSuffixKey =
-  | "accountTokenSuffix"
-  | "adminAccountTokenSuffix"
-  | "user2AccountTokenSuffix";
+  "accountTokenSuffix" | "adminAccountTokenSuffix" | "user2AccountTokenSuffix";
 
 /** Maps ACTIVE_WALLET value to its state.json key for the account token suffix. */
 export function accountSuffixKey(activeWallet: string): AccountSuffixKey {
