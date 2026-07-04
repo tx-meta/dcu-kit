@@ -209,10 +209,12 @@ export const unsignedProposeRecoveryTxProgram = (
       .pay.ToAddress(address, newAccountUtxo.assets)
       .addSigner(address);
 
-    // Each approver must also sign — addSigner declares the requirement; the caller
-    // gathers each approver's witness on the built tx before submission.
+    // Each approver must sign (declared via addSigner; the caller gathers the
+    // witness before submission) AND get their account UTxO assets returned — the
+    // account token is spent only as proof of approval, so without an explicit
+    // return it falls to the proposer's change address, taking custody from them.
     const withApproverSigners = approverUtxos.reduce(
-      (t, u) => t.addSigner(u.address),
+      (t, u) => t.addSigner(u.address).pay.ToAddress(u.address, u.assets),
       baseTx0,
     );
 
