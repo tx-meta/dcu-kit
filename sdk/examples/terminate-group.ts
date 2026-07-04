@@ -15,6 +15,7 @@ import {
   cexplorerTxUrl,
   logError,
   logWalletInfo,
+  loadScriptRefs,
 } from "./context.js";
 import {
   loadState,
@@ -64,6 +65,7 @@ async function main() {
   const config: TerminateGroupConfig = {
     groupTokenSuffix,
     memberAccountTokenSuffix,
+    scriptRefs: await loadScriptRefs(lucid),
   };
 
   console.log("Building terminate transaction...");

@@ -17,6 +17,7 @@ import {
   cexplorerTxUrl,
   logError,
   logWalletInfo,
+  loadScriptRefs,
 } from "./context.js";
 import {
   loadState,
@@ -79,6 +80,7 @@ async function main() {
 
   const config: DeleteGroupConfig = {
     groupTokenSuffix,
+    scriptRefs: await loadScriptRefs(lucid),
   };
 
   console.log("Building transaction...");

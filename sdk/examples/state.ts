@@ -54,6 +54,10 @@ export type ExampleState = {
   // Same for group.mint === group.spend.
   scriptRefTreasury?: ScriptRefOutRef;
   scriptRefGroup?: ScriptRefOutRef;
+
+  // Escrow (standalone family — @tx-meta/dcu-kit/escrow). The permanent
+  // identity of the last escrow created by escrow-create.ts.
+  escrowStateTokenName?: string;
 };
 
 export type AccountSuffixKey =
