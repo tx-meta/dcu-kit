@@ -23,6 +23,7 @@ import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
+  loadScriptRefs,
   logError,
   logWalletInfo,
 } from "./context.js";
@@ -82,10 +83,15 @@ async function main() {
     "Note: only valid when the treasury UTxO is in TreasuryState (not DefaultState).",
   );
 
+  // Contribute carries the treasury lifecycle family withdrawal; on live
+  // networks the family reference script is required.
+  const scriptRefs = await loadScriptRefs(lucid);
+
   const config: ContributeConfig = {
     groupTokenSuffix,
     accountTokenSuffix,
     topUpAmount,
+    scriptRefs,
   };
 
   console.log("Building contribute transaction...");
