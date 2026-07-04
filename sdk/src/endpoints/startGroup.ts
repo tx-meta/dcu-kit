@@ -128,7 +128,7 @@ export const unsignedStartGroupTxProgram = (
     };
 
     const adminTokenReturnAddress = config.adminScript
-      ? config.adminReturnAddress ?? adminUtxo.address
+      ? (config.adminReturnAddress ?? adminUtxo.address)
       : adminAddress;
     const adminTokenReturnAssets = config.adminScript
       ? adminUtxo.assets
@@ -166,17 +166,15 @@ export const unsignedStartGroupTxProgram = (
 
     const withSigners = applyAdminWitness(withValidators, config);
 
-    const tx = yield* withSigners
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "startGroup",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withSigners.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "startGroup",
+            error: String(e),
+          }),
+      ),
+    );
 
     return tx;
   });

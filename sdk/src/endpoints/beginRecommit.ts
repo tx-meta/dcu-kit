@@ -138,7 +138,7 @@ export const unsignedBeginRecommitTxProgram = (
     };
 
     const adminTokenReturnAddress = config.adminScript
-      ? config.adminReturnAddress ?? adminUtxo.address
+      ? (config.adminReturnAddress ?? adminUtxo.address)
       : adminAddress;
     const adminTokenReturnAssets = config.adminScript
       ? adminUtxo.assets
@@ -174,17 +174,15 @@ export const unsignedBeginRecommitTxProgram = (
 
     const withSigners = applyAdminWitness(withValidators, config);
 
-    const tx = yield* withSigners
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "beginRecommit",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withSigners.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "beginRecommit",
+            error: String(e),
+          }),
+      ),
+    );
 
     return tx;
   });

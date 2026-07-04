@@ -49,9 +49,7 @@ async function main() {
 
   const newAccountTokenSuffix = process.env.NEW_ACCOUNT_SUFFIX;
   if (!newAccountTokenSuffix)
-    throw new Error(
-      "NEW_ACCOUNT_SUFFIX is required — see the header comment.",
-    );
+    throw new Error("NEW_ACCOUNT_SUFFIX is required — see the header comment.");
 
   const { treasury } = await loadScriptRefs(lucid);
   const config: CancelRecoveryConfig = {

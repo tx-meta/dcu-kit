@@ -1,11 +1,7 @@
 import { describe, expect } from "vitest";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import {
-  BaseSetup,
-  setupBase,
-  setupGroup,
-} from "./setup.js";
+import { BaseSetup, setupBase, setupGroup } from "./setup.js";
 import {
   createAccountTestCase,
   joinGroupTestCase,
@@ -15,21 +11,24 @@ import {
 } from "./actions.js";
 import { advanceBlock } from "./effects.js";
 import { extractTokenSuffix } from "./utils.js";
-import { selectWalletFromSeed, signAndSubmit } from "../src/core/utils/index.js";
+import {
+  selectWalletFromSeed,
+  signAndSubmit,
+} from "../src/core/utils/index.js";
 import { assetNameLabels } from "../src/core/utils/index.js";
 import { unsignedBeginRecommitTxProgram } from "../src/endpoints/beginRecommit.js";
 import { unsignedDistributePayoutTxProgram } from "../src/endpoints/distributePayout.js";
-import { parseGroupCip68Datum, getScriptAddress } from "../src/core/utils/index.js";
+import {
+  parseGroupCip68Datum,
+  getScriptAddress,
+} from "../src/core/utils/index.js";
 import { UTxO } from "@lucid-evolution/lucid";
 
 // Recommit lifecycle on the emulator. interval_length = 20_000ms (one block);
 // recommit_window = 40_000ms (two blocks) so re-seals are reachable in-test.
 // collateral_rounds = 4 covers two full 2-member laps without defaults.
 
-const beginRecommitAction = (
-  context: BaseSetup["context"],
-  groupUtxo: UTxO,
-) =>
+const beginRecommitAction = (context: BaseSetup["context"], groupUtxo: UTxO) =>
   Effect.gen(function* () {
     const { lucid, users } = context;
     selectWalletFromSeed(lucid, users.admin.seedPhrase);

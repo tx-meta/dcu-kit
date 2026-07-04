@@ -1,9 +1,6 @@
 import { LucidEvolution, toUnit } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import {
-  TreasuryDatum,
-  TreasuryDatumSchema,
-} from "../core/types.js";
+import { TreasuryDatum, TreasuryDatumSchema } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
   parseGroupCip68Datum,
@@ -81,13 +78,13 @@ export const getReserveStateProgram = (
 
     const isAdaFee = groupDatum.contribution_fee_policyid === "";
     const raw = isAdaFee
-      ? reserveUtxo.assets.lovelace ?? 0n
-      : reserveUtxo.assets[
+      ? (reserveUtxo.assets.lovelace ?? 0n)
+      : (reserveUtxo.assets[
           toUnit(
             groupDatum.contribution_fee_policyid,
             groupDatum.contribution_fee_assetname,
           )
-        ] ?? 0n;
+        ] ?? 0n);
     const balance = isAdaFee ? raw - MIN_ADA_RESERVE : raw;
 
     return {

@@ -125,7 +125,10 @@ export const unsignedReleaseMilestoneTxProgram = (
 
     const withOutputs = isFinal
       ? baseTx
-          .mintAssets({ [stateUnit]: -1n }, Data.to("BurnEscrow", EscrowMintRedeemer))
+          .mintAssets(
+            { [stateUnit]: -1n },
+            Data.to("BurnEscrow", EscrowMintRedeemer),
+          )
           .attach.MintingPolicy(escrowValidator.mintEscrow)
           .pay.ToAddress(beneficiaryAddress, payoutAssets)
       : (() => {
@@ -136,8 +139,8 @@ export const unsignedReleaseMilestoneTxProgram = (
             ...datum,
             released_count: datum.released_count + 1n,
           };
-          return baseTx
-            .pay.ToContract(
+          return baseTx.pay
+            .ToContract(
               escrowUtxo.address,
               { kind: "inline", value: Data.to(updatedDatum, EscrowDatum) },
               continuationAssets,

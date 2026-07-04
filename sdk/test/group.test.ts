@@ -349,7 +349,10 @@ describe("VK-default admin (regression)", () => {
       );
       const tx = yield* unsignedUpdateGroupTxProgram(context.protocol!, lucid, {
         groupTokenSuffix,
-        updatedDatum: { ...groupDatum, penalty_fee: groupDatum.penalty_fee + 1_000_000n },
+        updatedDatum: {
+          ...groupDatum,
+          penalty_fee: groupDatum.penalty_fee + 1_000_000n,
+        },
       });
       const txHash = yield* signAndSubmit(tx);
       yield* advanceBlock(context.emulator);
@@ -466,9 +469,11 @@ describe("VK-default admin (regression)", () => {
         } else {
           // Acceptable: the member isn't in DefaultState yet in this emulator run.
           // The VK code path was executed (no type error, no wrong-signer rejection).
-          expect(["InvalidDatumError", "UtxoNotFoundError", "TransactionBuildError"]).toContain(
-            result.left._tag,
-          );
+          expect([
+            "InvalidDatumError",
+            "UtxoNotFoundError",
+            "TransactionBuildError",
+          ]).toContain(result.left._tag);
         }
       }),
   );
@@ -546,73 +551,71 @@ describe("VK-default admin (regression)", () => {
   );
 
   // --- terminateGroup (claimPenalty) ---
-  it.effect(
-    "terminateGroup: VK admin can claim penalty after early exit",
-    () =>
-      Effect.gen(function* () {
-        const base = yield* setupBase();
-        const { context, groupUtxo } = yield* setupGroup(base);
-        const { lucid, users } = context;
+  it.effect("terminateGroup: VK admin can claim penalty after early exit", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const { context, groupUtxo } = yield* setupGroup(base);
+      const { lucid, users } = context;
 
-        const {
-          outputs: { userUtxo: u1 },
-        } = yield* createAccountTestCase(context, {
-          userSeed: users.user1.seedPhrase,
-        });
-        const {
-          outputs: { userUtxo: u2 },
-        } = yield* createAccountTestCase(context, {
-          userSeed: users.user2.seedPhrase,
-        });
+      const {
+        outputs: { userUtxo: u1 },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const {
+        outputs: { userUtxo: u2 },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
 
-        yield* joinGroupTestCase(context, {
-          groupUtxo,
-          accountUtxo: u1,
-          userSeed: users.user1.seedPhrase,
-        });
-        yield* joinGroupTestCase(context, {
-          groupUtxo,
-          accountUtxo: u2,
-          userSeed: users.user2.seedPhrase,
-        });
-        yield* startGroupTestCase(context, { groupUtxo });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: u1,
+        userSeed: users.user1.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: u2,
+        userSeed: users.user2.seedPhrase,
+      });
+      yield* startGroupTestCase(context, { groupUtxo });
 
-        // Early exit → creates PenaltyState
-        const currentTime = BigInt(context.emulator!.now());
-        const groupTokenSuffix = extractTokenSuffix(
-          groupUtxo,
-          context.protocol!.groupPolicyId,
-          assetNameLabels.prefix100,
-        );
-        const memberAccountTokenSuffix = extractTokenSuffix(
-          u1,
-          accountPolicyId,
-          assetNameLabels.prefix222,
-        );
+      // Early exit → creates PenaltyState
+      const currentTime = BigInt(context.emulator!.now());
+      const groupTokenSuffix = extractTokenSuffix(
+        groupUtxo,
+        context.protocol!.groupPolicyId,
+        assetNameLabels.prefix100,
+      );
+      const memberAccountTokenSuffix = extractTokenSuffix(
+        u1,
+        accountPolicyId,
+        assetNameLabels.prefix222,
+      );
 
-        selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const exitTx = yield* unsignedExitGroupTxProgram(
-          context.protocol!,
-          lucid,
-          {
-            groupTokenSuffix,
-            accountTokenSuffix: memberAccountTokenSuffix,
-            currentTime,
-            scriptRefs: context.scriptRefs,
-          },
-        );
-        yield* signAndSubmit(exitTx);
-        yield* advanceBlock(context.emulator);
+      selectWalletFromSeed(lucid, users.user1.seedPhrase);
+      const exitTx = yield* unsignedExitGroupTxProgram(
+        context.protocol!,
+        lucid,
+        {
+          groupTokenSuffix,
+          accountTokenSuffix: memberAccountTokenSuffix,
+          currentTime,
+          scriptRefs: context.scriptRefs,
+        },
+      );
+      yield* signAndSubmit(exitTx);
+      yield* advanceBlock(context.emulator);
 
-        selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const terminateTx = yield* unsignedTerminateGroupTxProgram(
-          context.protocol!,
-          lucid,
-          { groupTokenSuffix, memberAccountTokenSuffix },
-        );
-        const txHash = yield* signAndSubmit(terminateTx);
-        yield* advanceBlock(context.emulator);
-        expect(txHash).toHaveLength(64);
-      }),
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const terminateTx = yield* unsignedTerminateGroupTxProgram(
+        context.protocol!,
+        lucid,
+        { groupTokenSuffix, memberAccountTokenSuffix },
+      );
+      const txHash = yield* signAndSubmit(terminateTx);
+      yield* advanceBlock(context.emulator);
+      expect(txHash).toHaveLength(64);
+    }),
   );
 });

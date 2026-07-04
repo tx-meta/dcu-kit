@@ -133,16 +133,14 @@ export const unsignedUpdateGroupTxProgram = (
       config,
     );
 
-    const tx = yield* withSigners
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "updateGroup",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withSigners.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "updateGroup",
+            error: String(e),
+          }),
+      ),
+    );
     return tx;
   });

@@ -284,8 +284,13 @@ export const createGroupTestCase = (
 > =>
   Effect.gen(function* () {
     const { lucid, users } = context;
-    const { datumOverride, creatorSeed, groupName, groupDescription, creatorScript } =
-      params;
+    const {
+      datumOverride,
+      creatorSeed,
+      groupName,
+      groupDescription,
+      creatorScript,
+    } = params;
 
     selectWalletFromSeed(lucid, creatorSeed ?? users.admin.seedPhrase);
 
@@ -429,7 +434,7 @@ export const joinGroupTestCase = (
         ? { overrideDepositLovelace: params.overrideDepositLovelace }
         : {}),
       scriptRefs:
-        scriptRefs === null ? undefined : scriptRefs ?? context.scriptRefs,
+        scriptRefs === null ? undefined : (scriptRefs ?? context.scriptRefs),
     };
 
     const joinTx = yield* unsignedJoinGroupTxProgram(
@@ -475,7 +480,7 @@ export const startGroupTestCase = (
       groupTokenSuffix,
       currentTime: currentTimeFinal,
       scriptRefs:
-        scriptRefs === null ? undefined : scriptRefs ?? context.scriptRefs,
+        scriptRefs === null ? undefined : (scriptRefs ?? context.scriptRefs),
     };
 
     const startTx = yield* unsignedStartGroupTxProgram(
@@ -516,7 +521,7 @@ export const distributePayoutTestCase = (
     const payoutConfig: DistributePayoutConfig = {
       groupTokenSuffix,
       scriptRefs:
-        scriptRefs === null ? undefined : scriptRefs ?? context.scriptRefs,
+        scriptRefs === null ? undefined : (scriptRefs ?? context.scriptRefs),
     };
 
     const payoutTx = yield* unsignedDistributePayoutTxProgram(
@@ -580,7 +585,7 @@ export const exitGroupTestCase = (
       accountTokenSuffix,
       currentTime,
       scriptRefs:
-        scriptRefs === null ? undefined : scriptRefs ?? context.scriptRefs,
+        scriptRefs === null ? undefined : (scriptRefs ?? context.scriptRefs),
     };
 
     const exitTx = yield* unsignedExitGroupTxProgram(

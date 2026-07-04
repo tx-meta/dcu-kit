@@ -95,7 +95,10 @@ export const unsignedReclaimEscrowTxProgram = (
       .newTx()
       .collectFrom([escrowUtxo], redeemer)
       .attach.SpendingValidator(escrowValidator.spendEscrow)
-      .mintAssets({ [stateUnit]: -1n }, Data.to("BurnEscrow", EscrowMintRedeemer))
+      .mintAssets(
+        { [stateUnit]: -1n },
+        Data.to("BurnEscrow", EscrowMintRedeemer),
+      )
       .attach.MintingPolicy(escrowValidator.mintEscrow)
       .pay.ToAddress(funderAddress, refundAssets)
       .validFrom(validFrom);

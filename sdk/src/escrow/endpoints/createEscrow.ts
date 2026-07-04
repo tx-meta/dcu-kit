@@ -18,11 +18,7 @@ import {
   makeReturn,
   sortUtxos,
 } from "../../core/utils/index.js";
-import {
-  EscrowDatum,
-  EscrowMintRedeemer,
-  toOnchainAddress,
-} from "../types.js";
+import { EscrowDatum, EscrowMintRedeemer, toOnchainAddress } from "../types.js";
 import { escrowPolicyId, escrowValidator } from "../validators.js";
 import { escrowAddress, escrowStateTokenName } from "../utils.js";
 

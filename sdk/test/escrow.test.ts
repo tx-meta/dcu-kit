@@ -13,7 +13,10 @@ import {
   PROTOCOL_PARAMETERS_DEFAULT,
   TxSignBuilder,
 } from "@lucid-evolution/lucid";
-import { selectWalletFromSeed, signAndSubmit } from "../src/core/utils/index.js";
+import {
+  selectWalletFromSeed,
+  signAndSubmit,
+} from "../src/core/utils/index.js";
 import { buildMultisig } from "../src/multisig/index.js";
 import { unsignedCreateEscrowTxProgram } from "../src/escrow/endpoints/createEscrow.js";
 import { unsignedReleaseMilestoneTxProgram } from "../src/escrow/endpoints/releaseMilestone.js";
@@ -49,36 +52,37 @@ const rawKeyWallet = () => {
   };
 };
 
-const makeEscrowContext = Effect.gen(
-  function* () {
-    const funder = generateEmulatorAccount({ lovelace: 2_000_000_000n });
-    const beneficiary = rawKeyWallet();
-    const verifier = rawKeyWallet();
-    const emulator = new Emulator([funder], PROTOCOL_PARAMETERS_DEFAULT);
-    const lucid = yield* Effect.promise(() => Lucid(emulator, "Custom"));
+const makeEscrowContext = Effect.gen(function* () {
+  const funder = generateEmulatorAccount({ lovelace: 2_000_000_000n });
+  const beneficiary = rawKeyWallet();
+  const verifier = rawKeyWallet();
+  const emulator = new Emulator([funder], PROTOCOL_PARAMETERS_DEFAULT);
+  const lucid = yield* Effect.promise(() => Lucid(emulator, "Custom"));
 
-    // Fund the raw-key wallets (the verifier pays release fees).
-    selectWalletFromSeed(lucid, funder.seedPhrase);
-    const fundTx = yield* Effect.promise(() =>
-      lucid
-        .newTx()
-        .pay.ToAddress(beneficiary.address, { lovelace: 100_000_000n })
-        .pay.ToAddress(verifier.address, { lovelace: 100_000_000n })
-        .complete(),
-    );
-    yield* signAndSubmit(fundTx);
-    yield* advanceBlock(emulator);
+  // Fund the raw-key wallets (the verifier pays release fees).
+  selectWalletFromSeed(lucid, funder.seedPhrase);
+  const fundTx = yield* Effect.promise(() =>
+    lucid
+      .newTx()
+      .pay.ToAddress(beneficiary.address, { lovelace: 100_000_000n })
+      .pay.ToAddress(verifier.address, { lovelace: 100_000_000n })
+      .complete(),
+  );
+  yield* signAndSubmit(fundTx);
+  yield* advanceBlock(emulator);
 
-    return { lucid, emulator, funder, beneficiary, verifier };
-  },
-);
+  return { lucid, emulator, funder, beneficiary, verifier };
+});
 
 const keyHash = (address: string) => paymentCredentialOf(address).hash;
 
 /** Default 3-tranche ADA escrow: 40 + 40 + 20 ADA, expiry 1h out. */
 const createDefaultEscrow = (
   ctx: EscrowContext,
-  overrides?: { expiry?: bigint; verifier?: { type: "Key" | "Script"; hash: string } },
+  overrides?: {
+    expiry?: bigint;
+    verifier?: { type: "Key" | "Script"; hash: string };
+  },
 ) =>
   Effect.gen(function* () {
     selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);

@@ -63,7 +63,10 @@ export const unsignedAbortEscrowTxProgram = (
       .newTx()
       .collectFrom([escrowUtxo], redeemer)
       .attach.SpendingValidator(escrowValidator.spendEscrow)
-      .mintAssets({ [stateUnit]: -1n }, Data.to("BurnEscrow", EscrowMintRedeemer))
+      .mintAssets(
+        { [stateUnit]: -1n },
+        Data.to("BurnEscrow", EscrowMintRedeemer),
+      )
       .attach.MintingPolicy(escrowValidator.mintEscrow);
 
     const withPayouts = config.payouts.reduce(

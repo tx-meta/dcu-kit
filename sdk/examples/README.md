@@ -205,31 +205,31 @@ pnpm run delete-group
 
 ### Recommit & mutual reserve
 
-| Script            | Default wallet | What it does                                                                                                     |
-| ----------------- | -------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `begin-recommit`  | ADMIN          | Opens the recommit window: distribution pauses, joins re-open, exits are free. Re-seal with `start-group`.        |
-| `top-up-reserve`  | USER1          | Donates to the group's mutual reserve (permissionless). `RESERVE_TOPUP=<amount>` (default 1 ADA).                 |
-| `inspect-reserve` | —              | Read-only: reserve balance, pending stand-in cover, configured levies.                                            |
+| Script            | Default wallet | What it does                                                                                               |
+| ----------------- | -------------- | ---------------------------------------------------------------------------------------------------------- |
+| `begin-recommit`  | ADMIN          | Opens the recommit window: distribution pauses, joins re-open, exits are free. Re-seal with `start-group`. |
+| `top-up-reserve`  | USER1          | Donates to the group's mutual reserve (permissionless). `RESERVE_TOPUP=<amount>` (default 1 ADA).          |
+| `inspect-reserve` | —              | Read-only: reserve balance, pending stand-in cover, configured levies.                                     |
 
 ### Admin & recovery
 
-| Script             | Default wallet | What it does                                                                                                      |
-| ------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `assign-admin`     | ADMIN          | Transfers the group admin (222) token to `NEW_ADMIN_ADDRESS`. One-way door.                                        |
+| Script             | Default wallet | What it does                                                                                                                     |
+| ------------------ | -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `assign-admin`     | ADMIN          | Transfers the group admin (222) token to `NEW_ADMIN_ADDRESS`. One-way door.                                                      |
 | `propose-recovery` | USER2          | Opens a lost-member recovery (N → N'). Needs `TARGET_SUFFIX`, `NEW_ACCOUNT_SUFFIX`, `NEW_PAYMENT_KEY_HASH`, `APPROVER_SUFFIXES`. |
-| `approve-recovery` | USER1          | A quorum member vouches for the pending request (one run per approver).                                            |
-| `execute-recovery` | USER1          | Finalizes after the timelock — run from the recoveree's wallet (holds N').                                         |
-| `cancel-recovery`  | USER1          | Veto by the original member N — proves the identity was never lost.                                                |
+| `approve-recovery` | USER1          | A quorum member vouches for the pending request (one run per approver).                                                          |
+| `execute-recovery` | USER1          | Finalizes after the timelock — run from the recoveree's wallet (holds N').                                                       |
+| `cancel-recovery`  | USER1          | Veto by the original member N — proves the identity was never lost.                                                              |
 
 ### Escrow (standalone — `@tx-meta/dcu-kit/escrow`)
 
-| Script           | Default wallet | What it does                                                                                                        |
-| ---------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `escrow-create`  | USER1 (funder) | Locks `MILESTONES` (csv lovelace) until `EXPIRY_DAYS`. Requires `BENEFICIARY_ADDRESS`. Saves `escrowStateTokenName`.   |
-| `escrow-release` | USER1 (verifier) | Releases the next tranche to the beneficiary. Sequential; stops at expiry.                                            |
-| `escrow-reclaim` | USER1 (funder) | Strictly after expiry: takes back whatever was never released and closes the escrow.                                   |
-| `escrow-abort`   | USER1 (funder) | Mutual-consent early end — funder + beneficiary co-sign one tx (`COSIGNER_SEED`, `BENEFICIARY_LOVELACE`).              |
-| `inspect-escrow` | —              | Read-only: milestone progress, locked balance, expiry.                                                                  |
+| Script           | Default wallet   | What it does                                                                                                         |
+| ---------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `escrow-create`  | USER1 (funder)   | Locks `MILESTONES` (csv lovelace) until `EXPIRY_DAYS`. Requires `BENEFICIARY_ADDRESS`. Saves `escrowStateTokenName`. |
+| `escrow-release` | USER1 (verifier) | Releases the next tranche to the beneficiary. Sequential; stops at expiry.                                           |
+| `escrow-reclaim` | USER1 (funder)   | Strictly after expiry: takes back whatever was never released and closes the escrow.                                 |
+| `escrow-abort`   | USER1 (funder)   | Mutual-consent early end — funder + beneficiary co-sign one tx (`COSIGNER_SEED`, `BENEFICIARY_LOVELACE`).            |
+| `inspect-escrow` | —                | Read-only: milestone progress, locked balance, expiry.                                                               |
 
 ---
 

@@ -26,11 +26,7 @@ import { unsignedExtendGraceWindowTxProgram } from "../src/endpoints/extendGrace
 import { unsignedTerminateDefaultTxProgram } from "../src/endpoints/terminateDefault.js";
 import { unsignedTerminateGroupTxProgram } from "../src/endpoints/terminateGroup.js";
 import { unsignedExitGroupTxProgram } from "../src/endpoints/exitGroup.js";
-import {
-  BaseSetup,
-  setupBase,
-  setupGroup,
-} from "./setup.js";
+import { BaseSetup, setupBase, setupGroup } from "./setup.js";
 import {
   createAccountTestCase,
   createGroupTestCase,
@@ -92,8 +88,7 @@ const expectAdminTokenBurned = (lucid: LucidEvolution, adminUnit: string) =>
     const result = yield* Effect.tryPromise(() =>
       lucid.utxoByUnit(adminUnit),
     ).pipe(Effect.either);
-    const stillExists =
-      result._tag === "Right" && result.right !== undefined;
+    const stillExists = result._tag === "Right" && result.right !== undefined;
     expect(stillExists).toBe(false);
   });
 
@@ -123,7 +118,10 @@ const setupMultisigAdmin = (
     const { context } = base;
     const { lucid, users } = context;
 
-    const { groupUtxo, groupDatum } = yield* setupGroup(base, groupDatumOverride);
+    const { groupUtxo, groupDatum } = yield* setupGroup(
+      base,
+      groupDatumOverride,
+    );
 
     const { pkA, pkB, pkC, khA, khB, khC } = makeRealMultisigKeys();
 
@@ -139,11 +137,15 @@ const setupMultisigAdmin = (
       assetNameLabels.prefix100,
     );
 
-    const assignTx = yield* unsignedAssignAdminTxProgram(context.protocol!, lucid, {
-      groupTokenSuffix,
-      destinationAddress: multisig.address,
-      destinationScript: multisig.script,
-    });
+    const assignTx = yield* unsignedAssignAdminTxProgram(
+      context.protocol!,
+      lucid,
+      {
+        groupTokenSuffix,
+        destinationAddress: multisig.address,
+        destinationScript: multisig.script,
+      },
+    );
     yield* signAndSubmit(assignTx);
     yield* advanceBlock(context.emulator);
 
@@ -272,9 +274,7 @@ describe("buildMultisig", () => {
     const lucid = await Effect.runPromise(makeTestLucid());
 
     const result = await Effect.runPromise(
-      Effect.either(
-        buildMultisig(lucid, { signers: [], required: 1 }),
-      ),
+      Effect.either(buildMultisig(lucid, { signers: [], required: 1 })),
     );
 
     expect(result._tag).toBe("Left");
@@ -490,11 +490,15 @@ describe("assignAdmin destination guard", () => {
         });
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
 
-        const tx = yield* unsignedAssignAdminTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          destinationAddress: multisig.address,
-          force: true,
-        });
+        const tx = yield* unsignedAssignAdminTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            destinationAddress: multisig.address,
+            force: true,
+          },
+        );
         expect(tx).toBeDefined();
       }),
   );
@@ -511,33 +515,42 @@ describe("assignAdmin destination guard", () => {
 
 describe("script-held admin ops", () => {
   // --- updateGroup ---
-  it.effect(
-    "updateGroup: succeeds with 2-of-3 multisig admin",
-    () =>
-      Effect.gen(function* () {
-        const base = yield* setupBase();
-        const { context, groupTokenSuffix, groupDatum, multisig, pkA, pkB, khA, khB } =
-          yield* setupMultisigAdmin(base);
-        const { lucid, users } = context;
+  it.effect("updateGroup: succeeds with 2-of-3 multisig admin", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const {
+        context,
+        groupTokenSuffix,
+        groupDatum,
+        multisig,
+        pkA,
+        pkB,
+        khA,
+        khB,
+      } = yield* setupMultisigAdmin(base);
+      const { lucid, users } = context;
 
-        selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const tx = yield* unsignedUpdateGroupTxProgram(context.protocol!, lucid, {
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const tx = yield* unsignedUpdateGroupTxProgram(context.protocol!, lucid, {
+        groupTokenSuffix,
+        updatedDatum: {
+          ...groupDatum,
+          penalty_fee: groupDatum.penalty_fee + 1_000_000n,
+        },
+        adminScript: multisig.script,
+        adminSignerKeyHashes: [khA, khB],
+      });
+      const txHash = yield* signMultisigAndSubmit(tx, [pkA, pkB]);
+      yield* advanceBlock(context.emulator);
+      expect(txHash).toHaveLength(64);
+      yield* expectAdminTokenAt(
+        lucid,
+        multisig.address,
+        context.protocol!.groupPolicyId +
+          assetNameLabels.prefix222 +
           groupTokenSuffix,
-          updatedDatum: { ...groupDatum, penalty_fee: groupDatum.penalty_fee + 1_000_000n },
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
-        const txHash = yield* signMultisigAndSubmit(tx, [pkA, pkB]);
-        yield* advanceBlock(context.emulator);
-        expect(txHash).toHaveLength(64);
-        yield* expectAdminTokenAt(
-          lucid,
-          multisig.address,
-          context.protocol!.groupPolicyId +
-            assetNameLabels.prefix222 +
-            groupTokenSuffix,
-        );
-      }),
+      );
+    }),
   );
 
   it.effect(
@@ -545,17 +558,31 @@ describe("script-held admin ops", () => {
     () =>
       Effect.gen(function* () {
         const base = yield* setupBase();
-        const { context, groupTokenSuffix, groupDatum, multisig, pkA, khA, khB } =
-          yield* setupMultisigAdmin(base);
+        const {
+          context,
+          groupTokenSuffix,
+          groupDatum,
+          multisig,
+          pkA,
+          khA,
+          khB,
+        } = yield* setupMultisigAdmin(base);
         const { lucid, users } = context;
 
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const tx = yield* unsignedUpdateGroupTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          updatedDatum: { ...groupDatum, penalty_fee: groupDatum.penalty_fee + 1_000_000n },
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
+        const tx = yield* unsignedUpdateGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            updatedDatum: {
+              ...groupDatum,
+              penalty_fee: groupDatum.penalty_fee + 1_000_000n,
+            },
+            adminScript: multisig.script,
+            adminSignerKeyHashes: [khA, khB],
+          },
+        );
         // Only 1 signer — native script requires 2
         const result = yield* Effect.either(signMultisigAndSubmit(tx, [pkA]));
         expect(result._tag).toBe("Left");
@@ -563,147 +590,205 @@ describe("script-held admin ops", () => {
   );
 
   // --- startGroup ---
-  it.effect(
-    "startGroup: succeeds with 2-of-3 multisig admin",
-    () =>
-      Effect.gen(function* () {
-        const base = yield* setupBase();
-        const { context, groupUtxo, groupTokenSuffix, multisig, pkA, pkB, khA, khB } =
-          yield* setupMultisigAdmin(base);
-        const { lucid, users } = context;
+  it.effect("startGroup: succeeds with 2-of-3 multisig admin", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const {
+        context,
+        groupUtxo,
+        groupTokenSuffix,
+        multisig,
+        pkA,
+        pkB,
+        khA,
+        khB,
+      } = yield* setupMultisigAdmin(base);
+      const { lucid, users } = context;
 
-        // Need 2 members to call startGroup
-        const { outputs: { userUtxo: u1 } } = yield* createAccountTestCase(context, {
-          userSeed: users.user1.seedPhrase,
-        });
-        const { outputs: { userUtxo: u2 } } = yield* createAccountTestCase(context, {
-          userSeed: users.user2.seedPhrase,
-        });
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u1, userSeed: users.user1.seedPhrase });
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u2, userSeed: users.user2.seedPhrase });
+      // Need 2 members to call startGroup
+      const {
+        outputs: { userUtxo: u1 },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const {
+        outputs: { userUtxo: u2 },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: u1,
+        userSeed: users.user1.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: u2,
+        userSeed: users.user2.seedPhrase,
+      });
 
-        selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const currentTime = BigInt(context.emulator!.now());
-        const tx = yield* unsignedStartGroupTxProgram(context.protocol!, lucid, {
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const currentTime = BigInt(context.emulator!.now());
+      const tx = yield* unsignedStartGroupTxProgram(context.protocol!, lucid, {
+        groupTokenSuffix,
+        currentTime,
+        adminScript: multisig.script,
+        adminSignerKeyHashes: [khA, khB],
+      });
+      const txHash = yield* signMultisigAndSubmit(tx, [pkA, pkB]);
+      yield* advanceBlock(context.emulator);
+      expect(txHash).toHaveLength(64);
+      yield* expectAdminTokenAt(
+        lucid,
+        multisig.address,
+        context.protocol!.groupPolicyId +
+          assetNameLabels.prefix222 +
           groupTokenSuffix,
-          currentTime,
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
-        const txHash = yield* signMultisigAndSubmit(tx, [pkA, pkB]);
-        yield* advanceBlock(context.emulator);
-        expect(txHash).toHaveLength(64);
-        yield* expectAdminTokenAt(
-          lucid,
-          multisig.address,
-          context.protocol!.groupPolicyId +
-            assetNameLabels.prefix222 +
-            groupTokenSuffix,
-        );
-      }),
+      );
+    }),
   );
 
-  it.effect(
-    "startGroup: fails with only 1-of-3 signers",
-    () =>
-      Effect.gen(function* () {
-        const base = yield* setupBase();
-        const { context, groupUtxo, groupTokenSuffix, multisig, pkA, khA, khB } =
-          yield* setupMultisigAdmin(base);
-        const { lucid, users } = context;
+  it.effect("startGroup: fails with only 1-of-3 signers", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const { context, groupUtxo, groupTokenSuffix, multisig, pkA, khA, khB } =
+        yield* setupMultisigAdmin(base);
+      const { lucid, users } = context;
 
-        const { outputs: { userUtxo: u1 } } = yield* createAccountTestCase(context, {
-          userSeed: users.user1.seedPhrase,
-        });
-        const { outputs: { userUtxo: u2 } } = yield* createAccountTestCase(context, {
-          userSeed: users.user2.seedPhrase,
-        });
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u1, userSeed: users.user1.seedPhrase });
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u2, userSeed: users.user2.seedPhrase });
+      const {
+        outputs: { userUtxo: u1 },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const {
+        outputs: { userUtxo: u2 },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: u1,
+        userSeed: users.user1.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: u2,
+        userSeed: users.user2.seedPhrase,
+      });
 
-        selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const currentTime = BigInt(context.emulator!.now());
-        const tx = yield* unsignedStartGroupTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          currentTime,
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
-        const result = yield* Effect.either(signMultisigAndSubmit(tx, [pkA]));
-        expect(result._tag).toBe("Left");
-      }),
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const currentTime = BigInt(context.emulator!.now());
+      const tx = yield* unsignedStartGroupTxProgram(context.protocol!, lucid, {
+        groupTokenSuffix,
+        currentTime,
+        adminScript: multisig.script,
+        adminSignerKeyHashes: [khA, khB],
+      });
+      const result = yield* Effect.either(signMultisigAndSubmit(tx, [pkA]));
+      expect(result._tag).toBe("Left");
+    }),
   );
 
   // --- deleteGroup ---
-  it.effect(
-    "deleteGroup: succeeds with 2-of-3 multisig admin",
-    () =>
-      Effect.gen(function* () {
-        const base = yield* setupBase();
-        const { context, groupTokenSuffix, groupDatum, multisig, pkA, pkB, khA, khB } =
-          yield* setupMultisigAdmin(base);
-        const { lucid, users } = context;
+  it.effect("deleteGroup: succeeds with 2-of-3 multisig admin", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const {
+        context,
+        groupTokenSuffix,
+        groupDatum,
+        multisig,
+        pkA,
+        pkB,
+        khA,
+        khB,
+      } = yield* setupMultisigAdmin(base);
+      const { lucid, users } = context;
 
-        // Deactivate first (also via multisig)
-        selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const deactivateTx = yield* unsignedUpdateGroupTxProgram(context.protocol!, lucid, {
+      // Deactivate first (also via multisig)
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const deactivateTx = yield* unsignedUpdateGroupTxProgram(
+        context.protocol!,
+        lucid,
+        {
           groupTokenSuffix,
           updatedDatum: { ...groupDatum, is_active: false },
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
-        });
-        yield* signMultisigAndSubmit(deactivateTx, [pkA, pkB]);
-        yield* advanceBlock(context.emulator);
+        },
+      );
+      yield* signMultisigAndSubmit(deactivateTx, [pkA, pkB]);
+      yield* advanceBlock(context.emulator);
 
-        selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const deleteTx = yield* unsignedDeleteGroupTxProgram(context.protocol!, lucid, {
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const deleteTx = yield* unsignedDeleteGroupTxProgram(
+        context.protocol!,
+        lucid,
+        {
           groupTokenSuffix,
           scriptRefs: context.scriptRefs,
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
-        });
-        const txHash = yield* signMultisigAndSubmit(deleteTx, [pkA, pkB]);
-        yield* advanceBlock(context.emulator);
-        expect(txHash).toHaveLength(64);
-        // closeGroup burns the admin 222 token — it must no longer exist on chain.
-        yield* expectAdminTokenBurned(
-          lucid,
-          context.protocol!.groupPolicyId +
-            assetNameLabels.prefix222 +
-            groupTokenSuffix,
-        );
-      }),
+        },
+      );
+      const txHash = yield* signMultisigAndSubmit(deleteTx, [pkA, pkB]);
+      yield* advanceBlock(context.emulator);
+      expect(txHash).toHaveLength(64);
+      // closeGroup burns the admin 222 token — it must no longer exist on chain.
+      yield* expectAdminTokenBurned(
+        lucid,
+        context.protocol!.groupPolicyId +
+          assetNameLabels.prefix222 +
+          groupTokenSuffix,
+      );
+    }),
   );
 
-  it.effect(
-    "deleteGroup: fails with only 1-of-3 signers",
-    () =>
-      Effect.gen(function* () {
-        const base = yield* setupBase();
-        const { context, groupTokenSuffix, groupDatum, multisig, pkA, pkB, khA, khB } =
-          yield* setupMultisigAdmin(base);
-        const { lucid, users } = context;
+  it.effect("deleteGroup: fails with only 1-of-3 signers", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const {
+        context,
+        groupTokenSuffix,
+        groupDatum,
+        multisig,
+        pkA,
+        pkB,
+        khA,
+        khB,
+      } = yield* setupMultisigAdmin(base);
+      const { lucid, users } = context;
 
-        selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const deactivateTx = yield* unsignedUpdateGroupTxProgram(context.protocol!, lucid, {
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const deactivateTx = yield* unsignedUpdateGroupTxProgram(
+        context.protocol!,
+        lucid,
+        {
           groupTokenSuffix,
           updatedDatum: { ...groupDatum, is_active: false },
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
-        });
-        yield* signMultisigAndSubmit(deactivateTx, [pkA, pkB]);
-        yield* advanceBlock(context.emulator);
+        },
+      );
+      yield* signMultisigAndSubmit(deactivateTx, [pkA, pkB]);
+      yield* advanceBlock(context.emulator);
 
-        selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const deleteTx = yield* unsignedDeleteGroupTxProgram(context.protocol!, lucid, {
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const deleteTx = yield* unsignedDeleteGroupTxProgram(
+        context.protocol!,
+        lucid,
+        {
           groupTokenSuffix,
           scriptRefs: context.scriptRefs,
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
-        });
-        const result = yield* Effect.either(signMultisigAndSubmit(deleteTx, [pkA]));
-        expect(result._tag).toBe("Left");
-      }),
+        },
+      );
+      const result = yield* Effect.either(
+        signMultisigAndSubmit(deleteTx, [pkA]),
+      );
+      expect(result._tag).toBe("Left");
+    }),
   );
 
   // --- extendGraceWindow ---
@@ -714,28 +799,52 @@ describe("script-held admin ops", () => {
     () =>
       Effect.gen(function* () {
         const base = yield* setupBase();
-        const { context, groupUtxo, groupTokenSuffix, multisig, pkA, pkB, khA, khB } =
-          yield* setupMultisigAdmin(base, { interval_length: 20_000n });
+        const {
+          context,
+          groupUtxo,
+          groupTokenSuffix,
+          multisig,
+          pkA,
+          pkB,
+          khA,
+          khB,
+        } = yield* setupMultisigAdmin(base, { interval_length: 20_000n });
         const { lucid, users } = context;
 
-        const { outputs: { userUtxo: u1 } } = yield* createAccountTestCase(context, {
+        const {
+          outputs: { userUtxo: u1 },
+        } = yield* createAccountTestCase(context, {
           userSeed: users.user1.seedPhrase,
         });
-        const { outputs: { userUtxo: u2 } } = yield* createAccountTestCase(context, {
+        const {
+          outputs: { userUtxo: u2 },
+        } = yield* createAccountTestCase(context, {
           userSeed: users.user2.seedPhrase,
         });
 
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u1, userSeed: users.user1.seedPhrase });
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u2, userSeed: users.user2.seedPhrase });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: u1,
+          userSeed: users.user1.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: u2,
+          userSeed: users.user2.seedPhrase,
+        });
 
         // startGroup via multisig path — admin token stays script-held through the chain.
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const startTx = yield* unsignedStartGroupTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          currentTime: BigInt(context.emulator!.now()),
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
+        const startTx = yield* unsignedStartGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            currentTime: BigInt(context.emulator!.now()),
+            adminScript: multisig.script,
+            adminSignerKeyHashes: [khA, khB],
+          },
+        );
         yield* signMultisigAndSubmit(startTx, [pkA, pkB]);
         yield* advanceBlock(context.emulator);
 
@@ -752,13 +861,17 @@ describe("script-held admin ops", () => {
         );
 
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const tx = yield* unsignedExtendGraceWindowTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          memberAccountTokenSuffix,
-          scriptRefs: context.scriptRefs,
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
+        const tx = yield* unsignedExtendGraceWindowTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            memberAccountTokenSuffix,
+            scriptRefs: context.scriptRefs,
+            adminScript: multisig.script,
+            adminSignerKeyHashes: [khA, khB],
+          },
+        );
         const txHash = yield* signMultisigAndSubmit(tx, [pkA, pkB]);
         yield* advanceBlock(context.emulator);
         expect(txHash).toHaveLength(64);
@@ -777,27 +890,51 @@ describe("script-held admin ops", () => {
     () =>
       Effect.gen(function* () {
         const base = yield* setupBase();
-        const { context, groupUtxo, groupTokenSuffix, multisig, pkA, pkB, khA, khB } =
-          yield* setupMultisigAdmin(base, { interval_length: 20_000n });
+        const {
+          context,
+          groupUtxo,
+          groupTokenSuffix,
+          multisig,
+          pkA,
+          pkB,
+          khA,
+          khB,
+        } = yield* setupMultisigAdmin(base, { interval_length: 20_000n });
         const { lucid, users } = context;
 
-        const { outputs: { userUtxo: u1 } } = yield* createAccountTestCase(context, {
+        const {
+          outputs: { userUtxo: u1 },
+        } = yield* createAccountTestCase(context, {
           userSeed: users.user1.seedPhrase,
         });
-        const { outputs: { userUtxo: u2 } } = yield* createAccountTestCase(context, {
+        const {
+          outputs: { userUtxo: u2 },
+        } = yield* createAccountTestCase(context, {
           userSeed: users.user2.seedPhrase,
         });
 
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u1, userSeed: users.user1.seedPhrase });
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u2, userSeed: users.user2.seedPhrase });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: u1,
+          userSeed: users.user1.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: u2,
+          userSeed: users.user2.seedPhrase,
+        });
 
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const startTx = yield* unsignedStartGroupTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          currentTime: BigInt(context.emulator!.now()),
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
+        const startTx = yield* unsignedStartGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            currentTime: BigInt(context.emulator!.now()),
+            adminScript: multisig.script,
+            adminSignerKeyHashes: [khA, khB],
+          },
+        );
         yield* signMultisigAndSubmit(startTx, [pkA, pkB]);
         yield* advanceBlock(context.emulator);
 
@@ -813,13 +950,17 @@ describe("script-held admin ops", () => {
         );
 
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const tx = yield* unsignedExtendGraceWindowTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          memberAccountTokenSuffix,
-          scriptRefs: context.scriptRefs,
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
+        const tx = yield* unsignedExtendGraceWindowTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            memberAccountTokenSuffix,
+            scriptRefs: context.scriptRefs,
+            adminScript: multisig.script,
+            adminSignerKeyHashes: [khA, khB],
+          },
+        );
         // Build succeeded (member IS in DefaultState); signing with only 1 of 2 required
         // co-signers must be rejected by the native-script quorum check.
         const submitResult = yield* Effect.either(
@@ -835,28 +976,52 @@ describe("script-held admin ops", () => {
     () =>
       Effect.gen(function* () {
         const base = yield* setupBase();
-        const { context, groupUtxo, groupTokenSuffix, multisig, pkA, pkB, khA, khB } =
-          yield* setupMultisigAdmin(base, { interval_length: 20_000n });
+        const {
+          context,
+          groupUtxo,
+          groupTokenSuffix,
+          multisig,
+          pkA,
+          pkB,
+          khA,
+          khB,
+        } = yield* setupMultisigAdmin(base, { interval_length: 20_000n });
         const { lucid, users } = context;
 
-        const { outputs: { userUtxo: u1 } } = yield* createAccountTestCase(context, {
+        const {
+          outputs: { userUtxo: u1 },
+        } = yield* createAccountTestCase(context, {
           userSeed: users.user1.seedPhrase,
         });
-        const { outputs: { userUtxo: u2 } } = yield* createAccountTestCase(context, {
+        const {
+          outputs: { userUtxo: u2 },
+        } = yield* createAccountTestCase(context, {
           userSeed: users.user2.seedPhrase,
         });
 
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u1, userSeed: users.user1.seedPhrase });
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u2, userSeed: users.user2.seedPhrase });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: u1,
+          userSeed: users.user1.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: u2,
+          userSeed: users.user2.seedPhrase,
+        });
 
         // startGroup via multisig path — admin token stays script-held through the chain.
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const startTx = yield* unsignedStartGroupTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          currentTime: BigInt(context.emulator!.now()),
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
+        const startTx = yield* unsignedStartGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            currentTime: BigInt(context.emulator!.now()),
+            adminScript: multisig.script,
+            adminSignerKeyHashes: [khA, khB],
+          },
+        );
         yield* signMultisigAndSubmit(startTx, [pkA, pkB]);
         yield* advanceBlock(context.emulator);
 
@@ -877,14 +1042,18 @@ describe("script-held admin ops", () => {
         );
 
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const tx = yield* unsignedTerminateDefaultTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          memberAccountTokenSuffix,
-          currentTime,
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-          scriptRefs: context.scriptRefs,
-        });
+        const tx = yield* unsignedTerminateDefaultTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            memberAccountTokenSuffix,
+            currentTime,
+            adminScript: multisig.script,
+            adminSignerKeyHashes: [khA, khB],
+            scriptRefs: context.scriptRefs,
+          },
+        );
         const txHash = yield* signMultisigAndSubmit(tx, [pkA, pkB]);
         yield* advanceBlock(context.emulator);
         expect(txHash).toHaveLength(64);
@@ -903,27 +1072,51 @@ describe("script-held admin ops", () => {
     () =>
       Effect.gen(function* () {
         const base = yield* setupBase();
-        const { context, groupUtxo, groupTokenSuffix, multisig, pkA, pkB, khA, khB } =
-          yield* setupMultisigAdmin(base, { interval_length: 20_000n });
+        const {
+          context,
+          groupUtxo,
+          groupTokenSuffix,
+          multisig,
+          pkA,
+          pkB,
+          khA,
+          khB,
+        } = yield* setupMultisigAdmin(base, { interval_length: 20_000n });
         const { lucid, users } = context;
 
-        const { outputs: { userUtxo: u1 } } = yield* createAccountTestCase(context, {
+        const {
+          outputs: { userUtxo: u1 },
+        } = yield* createAccountTestCase(context, {
           userSeed: users.user1.seedPhrase,
         });
-        const { outputs: { userUtxo: u2 } } = yield* createAccountTestCase(context, {
+        const {
+          outputs: { userUtxo: u2 },
+        } = yield* createAccountTestCase(context, {
           userSeed: users.user2.seedPhrase,
         });
 
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u1, userSeed: users.user1.seedPhrase });
-        yield* joinGroupTestCase(context, { groupUtxo, accountUtxo: u2, userSeed: users.user2.seedPhrase });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: u1,
+          userSeed: users.user1.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: u2,
+          userSeed: users.user2.seedPhrase,
+        });
 
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const startTx = yield* unsignedStartGroupTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          currentTime: BigInt(context.emulator!.now()),
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
+        const startTx = yield* unsignedStartGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            currentTime: BigInt(context.emulator!.now()),
+            adminScript: multisig.script,
+            adminSignerKeyHashes: [khA, khB],
+          },
+        );
         yield* signMultisigAndSubmit(startTx, [pkA, pkB]);
         yield* advanceBlock(context.emulator);
 
@@ -941,14 +1134,18 @@ describe("script-held admin ops", () => {
         );
 
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const tx = yield* unsignedTerminateDefaultTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          memberAccountTokenSuffix,
-          currentTime,
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-          scriptRefs: context.scriptRefs,
-        });
+        const tx = yield* unsignedTerminateDefaultTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            memberAccountTokenSuffix,
+            currentTime,
+            adminScript: multisig.script,
+            adminSignerKeyHashes: [khA, khB],
+            scriptRefs: context.scriptRefs,
+          },
+        );
         // Build succeeded (member IS in DefaultState past grace); 1-of-2 signing must be
         // rejected by the native-script quorum check.
         const submitResult = yield* Effect.either(
@@ -968,10 +1165,14 @@ describe("script-held admin ops", () => {
           yield* setupMultisigAdmin(base);
         const { lucid, users } = context;
 
-        const { outputs: { userUtxo: u1 } } = yield* createAccountTestCase(context, {
+        const {
+          outputs: { userUtxo: u1 },
+        } = yield* createAccountTestCase(context, {
           userSeed: users.user1.seedPhrase,
         });
-        const { outputs: { userUtxo: u2 } } = yield* createAccountTestCase(context, {
+        const {
+          outputs: { userUtxo: u2 },
+        } = yield* createAccountTestCase(context, {
           userSeed: users.user2.seedPhrase,
         });
 
@@ -979,19 +1180,33 @@ describe("script-held admin ops", () => {
           context.protocol!.groupPolicyId +
           assetNameLabels.prefix100 +
           groupTokenSuffix;
-        const groupUtxo2 = yield* Effect.promise<UTxO>(() => lucid.utxoByUnit(groupRefUnit));
+        const groupUtxo2 = yield* Effect.promise<UTxO>(() =>
+          lucid.utxoByUnit(groupRefUnit),
+        );
 
-        yield* joinGroupTestCase(context, { groupUtxo: groupUtxo2, accountUtxo: u1, userSeed: users.user1.seedPhrase });
-        yield* joinGroupTestCase(context, { groupUtxo: groupUtxo2, accountUtxo: u2, userSeed: users.user2.seedPhrase });
+        yield* joinGroupTestCase(context, {
+          groupUtxo: groupUtxo2,
+          accountUtxo: u1,
+          userSeed: users.user1.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo: groupUtxo2,
+          accountUtxo: u2,
+          userSeed: users.user2.seedPhrase,
+        });
 
         // startGroup via multisig path — admin token is at script address after setupMultisigAdmin
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const startTx5 = yield* unsignedStartGroupTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          currentTime: BigInt(context.emulator!.now()),
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
+        const startTx5 = yield* unsignedStartGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            currentTime: BigInt(context.emulator!.now()),
+            adminScript: multisig.script,
+            adminSignerKeyHashes: [khA, khB],
+          },
+        );
         yield* signMultisigAndSubmit(startTx5, [pkA, pkB]);
         yield* advanceBlock(context.emulator);
 
@@ -1003,23 +1218,31 @@ describe("script-held admin ops", () => {
           assetNameLabels.prefix222,
         );
         selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const exitTx = yield* unsignedExitGroupTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          accountTokenSuffix: memberAccountTokenSuffix,
-          currentTime,
-          scriptRefs: context.scriptRefs,
-        });
+        const exitTx = yield* unsignedExitGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix: memberAccountTokenSuffix,
+            currentTime,
+            scriptRefs: context.scriptRefs,
+          },
+        );
         yield* signAndSubmit(exitTx);
         yield* advanceBlock(context.emulator);
 
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const terminateTx = yield* unsignedTerminateGroupTxProgram(context.protocol!, lucid, {
-          groupTokenSuffix,
-          memberAccountTokenSuffix,
-          scriptRefs: context.scriptRefs,
-          adminScript: multisig.script,
-          adminSignerKeyHashes: [khA, khB],
-        });
+        const terminateTx = yield* unsignedTerminateGroupTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            memberAccountTokenSuffix,
+            scriptRefs: context.scriptRefs,
+            adminScript: multisig.script,
+            adminSignerKeyHashes: [khA, khB],
+          },
+        );
         const txHash = yield* signMultisigAndSubmit(terminateTx, [pkA, pkB]);
         yield* advanceBlock(context.emulator);
         expect(txHash).toHaveLength(64);
@@ -1033,68 +1256,94 @@ describe("script-held admin ops", () => {
       }),
   );
 
-  it.effect(
-    "terminateGroup: fails with only 1-of-3 signers",
-    () =>
-      Effect.gen(function* () {
-        const base = yield* setupBase();
-        const { context, groupTokenSuffix, multisig, pkA, pkB, khA, khB } =
-          yield* setupMultisigAdmin(base);
-        const { lucid, users } = context;
+  it.effect("terminateGroup: fails with only 1-of-3 signers", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const { context, groupTokenSuffix, multisig, pkA, pkB, khA, khB } =
+        yield* setupMultisigAdmin(base);
+      const { lucid, users } = context;
 
-        const { outputs: { userUtxo: u1 } } = yield* createAccountTestCase(context, {
-          userSeed: users.user1.seedPhrase,
-        });
-        const { outputs: { userUtxo: u2 } } = yield* createAccountTestCase(context, {
-          userSeed: users.user2.seedPhrase,
-        });
+      const {
+        outputs: { userUtxo: u1 },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const {
+        outputs: { userUtxo: u2 },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
 
-        const groupRefUnit =
-          context.protocol!.groupPolicyId +
-          assetNameLabels.prefix100 +
-          groupTokenSuffix;
-        const groupUtxo2 = yield* Effect.promise<UTxO>(() => lucid.utxoByUnit(groupRefUnit));
+      const groupRefUnit =
+        context.protocol!.groupPolicyId +
+        assetNameLabels.prefix100 +
+        groupTokenSuffix;
+      const groupUtxo2 = yield* Effect.promise<UTxO>(() =>
+        lucid.utxoByUnit(groupRefUnit),
+      );
 
-        yield* joinGroupTestCase(context, { groupUtxo: groupUtxo2, accountUtxo: u1, userSeed: users.user1.seedPhrase });
-        yield* joinGroupTestCase(context, { groupUtxo: groupUtxo2, accountUtxo: u2, userSeed: users.user2.seedPhrase });
+      yield* joinGroupTestCase(context, {
+        groupUtxo: groupUtxo2,
+        accountUtxo: u1,
+        userSeed: users.user1.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo: groupUtxo2,
+        accountUtxo: u2,
+        userSeed: users.user2.seedPhrase,
+      });
 
-        // startGroup via multisig path — admin token is at script address after setupMultisigAdmin
-        selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const startTx6 = yield* unsignedStartGroupTxProgram(context.protocol!, lucid, {
+      // startGroup via multisig path — admin token is at script address after setupMultisigAdmin
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const startTx6 = yield* unsignedStartGroupTxProgram(
+        context.protocol!,
+        lucid,
+        {
           groupTokenSuffix,
           currentTime: BigInt(context.emulator!.now()),
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
-        });
-        yield* signMultisigAndSubmit(startTx6, [pkA, pkB]);
-        yield* advanceBlock(context.emulator);
+        },
+      );
+      yield* signMultisigAndSubmit(startTx6, [pkA, pkB]);
+      yield* advanceBlock(context.emulator);
 
-        const currentTime = BigInt(context.emulator!.now());
-        const memberAccountTokenSuffix = extractTokenSuffix(
-          u1,
-          accountPolicyId,
-          assetNameLabels.prefix222,
-        );
-        selectWalletFromSeed(lucid, users.user1.seedPhrase);
-        const exitTx = yield* unsignedExitGroupTxProgram(context.protocol!, lucid, {
+      const currentTime = BigInt(context.emulator!.now());
+      const memberAccountTokenSuffix = extractTokenSuffix(
+        u1,
+        accountPolicyId,
+        assetNameLabels.prefix222,
+      );
+      selectWalletFromSeed(lucid, users.user1.seedPhrase);
+      const exitTx = yield* unsignedExitGroupTxProgram(
+        context.protocol!,
+        lucid,
+        {
           groupTokenSuffix,
           accountTokenSuffix: memberAccountTokenSuffix,
           currentTime,
           scriptRefs: context.scriptRefs,
-        });
-        yield* signAndSubmit(exitTx);
-        yield* advanceBlock(context.emulator);
+        },
+      );
+      yield* signAndSubmit(exitTx);
+      yield* advanceBlock(context.emulator);
 
-        selectWalletFromSeed(lucid, users.admin.seedPhrase);
-        const terminateTx = yield* unsignedTerminateGroupTxProgram(context.protocol!, lucid, {
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const terminateTx = yield* unsignedTerminateGroupTxProgram(
+        context.protocol!,
+        lucid,
+        {
           groupTokenSuffix,
           memberAccountTokenSuffix,
           scriptRefs: context.scriptRefs,
           adminScript: multisig.script,
           adminSignerKeyHashes: [khA, khB],
-        });
-        const result = yield* Effect.either(signMultisigAndSubmit(terminateTx, [pkA]));
-        expect(result._tag).toBe("Left");
-      }),
+        },
+      );
+      const result = yield* Effect.either(
+        signMultisigAndSubmit(terminateTx, [pkA]),
+      );
+      expect(result._tag).toBe("Left");
+    }),
   );
 });
