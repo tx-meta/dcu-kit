@@ -9,7 +9,8 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { AdminAuthConfig, applyAdminWitness } from "../multisig/index.js";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   DcuError,
   TransactionBuildError,
@@ -21,7 +22,7 @@ import {
   resolveUtxoByUnit,
   reserveTokenName,
 } from "../core/utils/index.js";
-import { TreasuryRedeemer } from "../core/types.js";
+import { TreasuryRedeemer, ReserveAction } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 
 /**
@@ -50,10 +51,7 @@ export type DeleteGroupConfig = {
    * Deployed reference scripts. Deletion now also runs the treasury validator
    * (ReserveClose); the two attached inline exceed the tx size limit.
    */
-  scriptRefs?: {
-    treasury?: UTxO;
-    group?: UTxO;
-  };
+  scriptRefs?: ScriptRefs;
 } & AdminAuthConfig;
 
 export const unsignedDeleteGroupTxProgram = (
@@ -62,8 +60,13 @@ export const unsignedDeleteGroupTxProgram = (
   config: DeleteGroupConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { groupValidator, groupPolicyId, treasuryValidator, treasuryPolicyId, settingsUnit } =
-      protocol;
+    const {
+      groupValidator,
+      groupPolicyId,
+      treasuryValidator,
+      treasuryPolicyId,
+      settingsUnit,
+    } = protocol;
     const { groupTokenSuffix } = config;
 
     const groupRefUnit =
@@ -115,56 +118,70 @@ export const unsignedDeleteGroupTxProgram = (
     };
 
     // Reserve spend + burn: ReserveClose pins the deletion shape on-chain.
-    const reserveSpendRedeemer: RedeemerBuilder = {
+    // Treasury split: field-less spend/burn literals; the RESERVE CloseAction
+    // covers the reserve UTxO and points at the spent group input.
+    const reserveCloseRedeemer = Data.to("ReserveClose", TreasuryRedeemer);
+    const closeAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
-          { ReserveClose: { group_input_index: inputIndices[0] } },
-          TreasuryRedeemer,
+          {
+            CloseAction: {
+              covered_inputs: [inputIndices[0]], // reserve
+              group_input_index: inputIndices[1], // group
+            },
+          },
+          ReserveAction,
         ),
-      inputs: [groupUtxo],
+      inputs: [reserveUtxo, groupUtxo],
     };
     const reserveBurnAssets: Assets = {
       [reserveUnit]: -1n,
     };
-    const reserveBurnRedeemer = Data.to(
-      { ReserveClose: { group_input_index: 0n } },
-      TreasuryRedeemer,
-    );
 
     const baseTx = lucid
       .newTx()
       .collectFrom([adminUtxo])
       .collectFrom([groupUtxo], spendRedeemer)
-      .collectFrom([reserveUtxo], reserveSpendRedeemer)
+      .collectFrom([reserveUtxo], reserveCloseRedeemer)
       .mintAssets(burnAssets, burnRedeemer)
-      .mintAssets(reserveBurnAssets, reserveBurnRedeemer)
+      .mintAssets(reserveBurnAssets, reserveCloseRedeemer)
       .readFrom([settingsUtxo]);
 
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const withValidators =
-      scriptRefs.treasury || scriptRefs.group
-        ? baseTx.readFrom(
-            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
-          )
-        : baseTx.attach
-            .MintingPolicy(groupValidator.mintGroup)
-            .attach.SpendingValidator(groupValidator.spendGroup)
-            .attach.MintingPolicy(treasuryValidator.mintTreasury)
-            .attach.SpendingValidator(treasuryValidator.spendTreasury);
+    const network = lucid.config().network!;
+    const refUtxos = [scriptRefs.treasury, scriptRefs.group].filter(
+      Boolean,
+    ) as UTxO[];
+    let withValidators =
+      refUtxos.length > 0 ? baseTx.readFrom(refUtxos) : baseTx;
+    if (!scriptRefs.group)
+      withValidators = withValidators.attach
+        .MintingPolicy(groupValidator.mintGroup)
+        .attach.SpendingValidator(groupValidator.spendGroup);
+    if (!scriptRefs.treasury)
+      withValidators = withValidators.attach.SpendingValidator(
+        treasuryValidator.spendTreasury,
+      );
+    withValidators = attachFamilyWithdrawal(
+      withValidators,
+      protocol,
+      network,
+      "reserve",
+      closeAction,
+      scriptRefs,
+    );
 
     const withSigners = applyAdminWitness(withValidators, config);
 
-    const tx = yield* withSigners
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "deleteGroup",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withSigners.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "deleteGroup",
+            error: String(e),
+          }),
+      ),
+    );
     return tx;
   });

@@ -26,6 +26,7 @@ import {
   TREASURY_REF_LOVELACE,
 } from "../src/admin/deployScripts.js";
 import { registerTreasuryStake } from "../src/admin/registerTreasuryStake.js";
+import { ScriptRefs } from "../src/core/scripts.js";
 import { ProtocolSettings } from "../src/core/types.js";
 
 export type OnChainNetwork = Extract<
@@ -54,11 +55,12 @@ export type LucidContext = {
   // policy (env) rather than minting one; the emulator path always sets it.
   protocol?: Protocol;
   settingsUnit?: string;
-  // Reference-script UTxOs for the treasury/group validators, deployed once during
-  // emulator setup (mirrors the admin `deployScripts` flow). Lets size-sensitive
-  // endpoint tests (join/start/recovery) pass `scriptRefs` instead of inlining the
-  // ~12-15 KB validator bytes. Undefined on live-network contexts (no auto-deploy).
-  scriptRefs?: { treasury: UTxO; group: UTxO };
+  // Reference-script UTxOs for the six rosca validators (treasury dispatcher, group,
+  // and the four treasury family stake validators), deployed once during emulator
+  // setup (mirrors the admin `deployScripts` flow). Lets size-sensitive endpoint
+  // tests pass `scriptRefs` instead of inlining the validator bytes. Undefined on
+  // live-network contexts (no auto-deploy).
+  scriptRefs?: ScriptRefs;
 };
 
 export type Provider = "Emulator" | "Maestro" | "Blockfrost" | "Kupmios";
@@ -130,6 +132,10 @@ const deployEmulatorSettings = (
         account_policy: protocol.accountPolicyId,
         group_policy: protocol.groupPolicyId,
         treasury_policy: protocol.treasuryPolicyId,
+        treasury_rounds_stake: protocol.treasuryStakeHashes.rounds,
+        treasury_lifecycle_stake: protocol.treasuryStakeHashes.lifecycle,
+        treasury_recovery_stake: protocol.treasuryStakeHashes.recovery,
+        treasury_reserve_stake: protocol.treasuryStakeHashes.reserve,
       },
       ProtocolSettings,
     );
@@ -177,59 +183,74 @@ const deployEmulatorScriptRefs = (
   lucid: LucidEvolution,
   emulator: Emulator,
   protocol: Protocol,
-): Effect.Effect<{ treasury: UTxO; group: UTxO }, never, never> =>
+): Effect.Effect<ScriptRefs, never, never> =>
   Effect.gen(function* () {
-    const { treasuryValidator, groupValidator } = protocol;
+    const { treasuryValidator, groupValidator, treasuryStakeValidators } =
+      protocol;
     const deployAddress = validatorToAddress(
       "Custom",
       alwaysFailsValidator.elseAlwaysFails,
     );
 
-    const treasuryTx = yield* Effect.promise(() =>
-      lucid
-        .newTx()
-        .pay.ToAddressWithData(
-          deployAddress,
-          { kind: "inline", value: Data.void() },
-          { lovelace: TREASURY_REF_LOVELACE },
-          { type: "PlutusV3", script: treasuryValidator.mintTreasury.script },
-        )
-        .complete(),
-    );
-    const treasurySigned = yield* Effect.promise(() =>
-      treasuryTx.sign.withWallet().complete(),
-    );
-    const treasuryTxHash = yield* Effect.promise(() => treasurySigned.submit());
-    emulator.awaitBlock(1);
+    // One reference-script UTxO per validator (deposit scales loosely with size).
+    const deployments: Array<[keyof ScriptRefs, string, bigint]> = [
+      [
+        "treasury",
+        treasuryValidator.mintTreasury.script,
+        TREASURY_REF_LOVELACE,
+      ],
+      ["group", groupValidator.spendGroup.script, GROUP_REF_LOVELACE],
+      [
+        "treasuryRounds",
+        treasuryStakeValidators.rounds.script,
+        TREASURY_REF_LOVELACE,
+      ],
+      [
+        "treasuryLifecycle",
+        treasuryStakeValidators.lifecycle.script,
+        TREASURY_REF_LOVELACE,
+      ],
+      [
+        "treasuryRecovery",
+        treasuryStakeValidators.recovery.script,
+        TREASURY_REF_LOVELACE,
+      ],
+      [
+        "treasuryReserve",
+        treasuryStakeValidators.reserve.script,
+        TREASURY_REF_LOVELACE,
+      ],
+    ];
 
-    const groupTx = yield* Effect.promise(() =>
-      lucid
-        .newTx()
-        .pay.ToAddressWithData(
-          deployAddress,
-          { kind: "inline", value: Data.void() },
-          { lovelace: GROUP_REF_LOVELACE },
-          { type: "PlutusV3", script: groupValidator.spendGroup.script },
-        )
-        .complete(),
-    );
-    const groupSigned = yield* Effect.promise(() =>
-      groupTx.sign.withWallet().complete(),
-    );
-    const groupTxHash = yield* Effect.promise(() => groupSigned.submit());
-    emulator.awaitBlock(1);
-
-    const deployUtxos = yield* Effect.promise(() =>
-      lucid.utxosAt(deployAddress),
-    );
-    const treasury = deployUtxos.find((u) => u.txHash === treasuryTxHash);
-    const group = deployUtxos.find((u) => u.txHash === groupTxHash);
-    if (!treasury || !group)
-      return yield* Effect.die(
-        new Error("Reference-script UTxOs not found after emulator deploy"),
+    const refs: ScriptRefs = {};
+    for (const [key, script, deposit] of deployments) {
+      const tx = yield* Effect.promise(() =>
+        lucid
+          .newTx()
+          .pay.ToAddressWithData(
+            deployAddress,
+            { kind: "inline", value: Data.void() },
+            { lovelace: deposit },
+            { type: "PlutusV3", script },
+          )
+          .complete(),
       );
+      const signed = yield* Effect.promise(() =>
+        tx.sign.withWallet().complete(),
+      );
+      const txHash = yield* Effect.promise(() => signed.submit());
+      emulator.awaitBlock(1);
+      const utxo = (yield* Effect.promise(() =>
+        lucid.utxosAt(deployAddress),
+      )).find((u) => u.txHash === txHash);
+      if (!utxo)
+        return yield* Effect.die(
+          new Error(`Reference-script UTxO for ${key} not found after deploy`),
+        );
+      refs[key] = utxo;
+    }
 
-    return { treasury, group };
+    return refs;
   });
 
 const makeEmulatorContext = (seedAssets?: Record<string, bigint>) =>

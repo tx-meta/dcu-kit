@@ -117,7 +117,13 @@ export class SetupError extends Data.TaggedError("SetupError")<{
 export class ReferenceScriptMismatchError extends Data.TaggedError(
   "ReferenceScriptMismatchError",
 )<{
-  readonly validator: "treasury" | "group";
+  readonly validator:
+    | "treasury"
+    | "group"
+    | "treasuryRounds"
+    | "treasuryLifecycle"
+    | "treasuryRecovery"
+    | "treasuryReserve";
   readonly expectedHash: string;
   readonly actualHash: string;
   readonly reason: string;

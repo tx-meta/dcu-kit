@@ -8,12 +8,14 @@ import {
   UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   GroupSpendRedeemer,
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  RecoveryAction,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -60,10 +62,7 @@ export type ExecuteRecoveryConfig = {
   targetTokenSuffix: string; // N — the lost member's account token suffix
   newAccountTokenSuffix: string; // N' — the recovered member's new account token suffix
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, Date.now() for live
-  scriptRefs?: {
-    treasury?: UTxO;
-    group?: UTxO;
-  };
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedExecuteRecoveryTxProgram = (
@@ -188,37 +187,30 @@ export const unsignedExecuteRecoveryTxProgram = (
     const now =
       config.currentTime !== undefined ? rawNow : rawNow - (rawNow % 1000n);
 
-    // Treasury ExecuteRecovery redeemer — carried by BOTH the request and member
-    // treasury spending inputs (the validator's self-reference check accepts either).
-    // Output layout: [0] group (registry swap), [1] rotated member treasury.
-    //
-    // NOTE: Lucid Evolution's `completePartialPrograms` keys its internal
-    // `partialPrograms` Map by `RedeemerBuilder` OBJECT IDENTITY (one entry per
-    // `collectFrom` call). Passing the SAME object to two separate `collectFrom`
-    // calls makes the second overwrite the first in that Map, silently dropping one
-    // input's `add_input` — the UTxO is still counted for value-balance accounting
-    // but never actually added to the tx, producing a balance mismatch. Two
-    // structurally-identical-but-distinct objects are required.
-    const makeExecuteRecoveryRedeemer = (): RedeemerBuilder => ({
+    // Treasury split: field-less spend literal, carried by BOTH the request and
+    // member treasury spending inputs (a plain redeemer string, so — unlike the
+    // old RedeemerBuilder — it can be shared across both collectFrom calls without
+    // the object-identity hazard). The RECOVERY ExecuteAction runs the heavy
+    // validation once, covering BOTH spent inputs in
+    // [request, member_treasury] order. Output layout: [0] group (registry swap),
+    // [1] rotated member treasury.
+    const executeSpendRedeemer = Data.to("ExecuteRecovery", TreasuryRedeemer);
+    const executeAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (idx: bigint[]) =>
         Data.to(
           {
-            ExecuteRecovery: {
+            ExecuteAction: {
+              covered_inputs: [idx[0], idx[1]], // request, member treasury
               group_ref_input_index: idx[2], // group (spending input)
               group_output_index: 0n,
-              request_input_index: idx[0], // request
-              member_treasury_input_index: idx[1], // member treasury
               member_treasury_output_index: 1n,
             },
           },
-          TreasuryRedeemer,
+          RecoveryAction,
         ),
       inputs: [requestUtxo, memberTreasuryUtxo, groupUtxo],
-    });
-    const executeRecoveryRedeemerForRequest = makeExecuteRecoveryRedeemer();
-    const executeRecoveryRedeemerForMemberTreasury =
-      makeExecuteRecoveryRedeemer();
+    };
 
     // Group RecoverMember redeemer — performs the registry swap N -> N'.
     const recoverMemberRedeemer: RedeemerBuilder = {
@@ -241,29 +233,12 @@ export const unsignedExecuteRecoveryTxProgram = (
       inputs: [groupUtxo, memberTreasuryUtxo],
     };
 
-    // Mint burn redeemer — validate_claim_penalty_mint ignores the redeemer fields.
-    const mintBurnRedeemer = Data.to(
-      {
-        ExecuteRecovery: {
-          group_ref_input_index: 0n,
-          group_output_index: 0n,
-          request_input_index: 0n,
-          member_treasury_input_index: 0n,
-          member_treasury_output_index: 0n,
-        },
-      },
-      TreasuryRedeemer,
-    );
-
     const baseTx0 = lucid
       .newTx()
-      .collectFrom([requestUtxo], executeRecoveryRedeemerForRequest)
-      .collectFrom(
-        [memberTreasuryUtxo],
-        executeRecoveryRedeemerForMemberTreasury,
-      )
+      .collectFrom([requestUtxo], executeSpendRedeemer)
+      .collectFrom([memberTreasuryUtxo], executeSpendRedeemer)
       .collectFrom([groupUtxo], recoverMemberRedeemer)
-      .mintAssets(burnAssets, mintBurnRedeemer)
+      .mintAssets(burnAssets, executeSpendRedeemer)
       .pay.ToContract(
         groupUtxo.address,
         {
@@ -293,14 +268,28 @@ export const unsignedExecuteRecoveryTxProgram = (
     const baseTx1 = baseTx0.setMinFee(2_000_000n);
 
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const withValidators =
-      scriptRefs.treasury || scriptRefs.group
-        ? baseTx1.readFrom(
-            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
-          )
-        : baseTx1.attach
-            .SpendingValidator(treasuryValidator.spendTreasury)
-            .attach.SpendingValidator(groupValidator.spendGroup);
+    const network = lucid.config().network!;
+    const refUtxos = [scriptRefs.treasury, scriptRefs.group].filter(
+      Boolean,
+    ) as UTxO[];
+    let withValidators =
+      refUtxos.length > 0 ? baseTx1.readFrom(refUtxos) : baseTx1;
+    if (!scriptRefs.treasury)
+      withValidators = withValidators.attach.SpendingValidator(
+        treasuryValidator.spendTreasury,
+      );
+    if (!scriptRefs.group)
+      withValidators = withValidators.attach.SpendingValidator(
+        groupValidator.spendGroup,
+      );
+    withValidators = attachFamilyWithdrawal(
+      withValidators,
+      protocol,
+      network,
+      "recovery",
+      executeAction,
+      scriptRefs,
+    );
 
     const tx = yield* withValidators
       .completeProgram(

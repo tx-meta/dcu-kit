@@ -8,13 +8,16 @@ import {
   toUnit,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   GroupDatum,
   GroupSpendRedeemer,
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  LifecycleAction,
+  ReserveAction,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -72,10 +75,7 @@ export type ExitGroupConfig = {
   claimReserveShare?: boolean;
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO, keeping the tx under 16KB.
-  scriptRefs?: {
-    treasury?: UTxO;
-    group?: UTxO;
-  };
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedExitGroupTxProgram = (
@@ -273,42 +273,27 @@ export const unsignedExitGroupTxProgram = (
       inputs: [groupUtxo],
     };
 
-    // Treasury validator spend redeemer: ExitGroup
+    // Treasury split: field-less spend/burn literal; the LIFECYCLE ExitAction runs
+    // the validation once, covering the leaver's treasury UTxO.
     // Output layout: [0] Group UTxO, [1] Penalty (early exit only)
-    const treasurySpendRedeemer: RedeemerBuilder = {
+    const exitSpendRedeemer = Data.to("ExitGroup", TreasuryRedeemer);
+    const exitAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            ExitGroup: {
+            ExitAction: {
+              covered_inputs: [inputIndices[2]], // treasury
               group_ref_input_index: inputIndices[0],
               group_output_index: 0n,
               member_input_index: inputIndices[1],
-              treasury_input_index: inputIndices[2],
               penalty_output_index: isEarlyExit ? 1n : 0n,
             },
           },
-          TreasuryRedeemer,
+          LifecycleAction,
         ),
       inputs: [groupUtxo, accountUtxo, treasuryUtxo],
     };
-
-    // Mint redeemer for mature exit burn — the mint handler (ExitGroup branch) calls
-    // validate_terminate_group which ignores all index fields; any valid ExitGroup
-    // redeemer works here. Using a plain Data value avoids sharing a RedeemerBuilder
-    // between spend and mint contexts, which can cause index resolution issues in Lucid.
-    const mintBurnRedeemer = Data.to(
-      {
-        ExitGroup: {
-          group_ref_input_index: 0n,
-          group_output_index: 0n,
-          member_input_index: 0n,
-          treasury_input_index: 0n,
-          penalty_output_index: 0n,
-        },
-      },
-      TreasuryRedeemer,
-    );
 
     const address = yield* getWalletAddress(lucid);
 
@@ -325,7 +310,7 @@ export const unsignedExitGroupTxProgram = (
       .newTx()
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom([accountUtxo])
-      .collectFrom([treasuryUtxo], treasurySpendRedeemer)
+      .collectFrom([treasuryUtxo], exitSpendRedeemer)
       .addSigner(address)
       .pay.ToContract(
         groupUtxo.address,
@@ -349,7 +334,7 @@ export const unsignedExitGroupTxProgram = (
           { kind: "inline", value: Data.to(penaltyDatum, TreasuryDatum) },
           penaltyAssets,
         )
-      : baseTx.mintAssets(burnAssets, mintBurnRedeemer);
+      : baseTx.mintAssets(burnAssets, exitSpendRedeemer);
 
     // ─── Wind-down reserve share (ReserveRefund leg) ──────────────────────────
     // Deactivated group only: take floor(balance / pre-exit member_count) of the
@@ -363,6 +348,7 @@ export const unsignedExitGroupTxProgram = (
           groupDatum.contribution_fee_assetname,
         );
     let withReserveShare = withPenaltyOrBurn;
+    let reserveRefundAction: RedeemerBuilder | null = null;
     if (!groupDatum.is_active && config.claimReserveShare !== false) {
       const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
       const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
@@ -377,20 +363,21 @@ export const unsignedExitGroupTxProgram = (
           : 0n;
       if (share > 0n) {
         // Outputs on this (burn) path: 0 = group, 1 = reserve, account return follows.
-        const reserveRedeemer: RedeemerBuilder = {
+        // Treasury split: the RESERVE RefundAction covers the reserve UTxO.
+        reserveRefundAction = {
           kind: "selected",
           makeRedeemer: (indices: bigint[]) =>
             Data.to(
               {
-                ReserveRefund: {
+                RefundAction: {
+                  covered_inputs: [indices[2]], // reserve
                   group_ref_input_index: indices[0],
                   group_output_index: 0n,
                   exiting_treasury_input_index: indices[1],
-                  reserve_input_index: indices[2],
                   reserve_output_index: 1n,
                 },
               },
-              TreasuryRedeemer,
+              ReserveAction,
             ),
           inputs: [groupUtxo, treasuryUtxo, reserveUtxo],
         };
@@ -399,7 +386,10 @@ export const unsignedExitGroupTxProgram = (
           [feeUnit]: reserveRaw - share,
         };
         withReserveShare = withPenaltyOrBurn
-          .collectFrom([reserveUtxo], reserveRedeemer)
+          .collectFrom(
+            [reserveUtxo],
+            Data.to("ReserveRefund", TreasuryRedeemer),
+          )
           .pay.ToContract(
             reserveUtxo.address,
             { kind: "inline", value: reserveUtxo.datum! },
@@ -420,15 +410,39 @@ export const unsignedExitGroupTxProgram = (
 
     // Use reference scripts when provided — avoids ~12KB of inline script bytes.
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const withValidators =
-      scriptRefs.treasury || scriptRefs.group
-        ? afterPath.readFrom(
-            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
-          )
-        : afterPath.attach
-            .MintingPolicy(treasuryValidator.mintTreasury)
-            .attach.SpendingValidator(treasuryValidator.spendTreasury)
-            .attach.SpendingValidator(groupValidator.spendGroup);
+    const network = lucid.config().network!;
+    const refUtxos = [scriptRefs.treasury, scriptRefs.group].filter(
+      Boolean,
+    ) as UTxO[];
+    let withValidators =
+      refUtxos.length > 0 ? afterPath.readFrom(refUtxos) : afterPath;
+    if (!scriptRefs.treasury)
+      withValidators = withValidators.attach.SpendingValidator(
+        treasuryValidator.spendTreasury,
+      );
+    if (!scriptRefs.group)
+      withValidators = withValidators.attach.SpendingValidator(
+        groupValidator.spendGroup,
+      );
+    // Lifecycle family withdrawal (ExitAction) always; reserve (RefundAction)
+    // only on the wind-down share path.
+    withValidators = attachFamilyWithdrawal(
+      withValidators,
+      protocol,
+      network,
+      "lifecycle",
+      exitAction,
+      scriptRefs,
+    );
+    if (reserveRefundAction)
+      withValidators = attachFamilyWithdrawal(
+        withValidators,
+        protocol,
+        network,
+        "reserve",
+        reserveRefundAction,
+        scriptRefs,
+      );
 
     const tx = yield* withValidators
       .readFrom([settingsUtxo])

@@ -8,7 +8,8 @@ import {
   UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   AdminAuthConfig,
   applyAdminWitness,
@@ -18,6 +19,7 @@ import {
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  LifecycleAction,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -33,7 +35,6 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
-  referenceInputIndex,
 } from "../core/utils/index.js";
 
 // --- Configuration ---
@@ -42,7 +43,7 @@ export type TerminateGroupConfig = {
   groupTokenSuffix: string;
   memberAccountTokenSuffix: string;
   /** Deployed treasury reference script — the treasury no longer fits inline. */
-  scriptRefs?: { treasury?: UTxO };
+  scriptRefs?: ScriptRefs;
 } & AdminAuthConfig;
 
 // --- Endpoint ---
@@ -137,51 +138,50 @@ export const unsignedTerminateGroupTxProgram = (
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
     const burnAssets: Assets = { [memberToken]: -1n };
 
-    // Group's canonical position among the reference inputs (group + settings) — see note
-    // in contribute/claimPayout: hardcoding 0n breaks now that settings is also referenced.
-    const groupRefInputIndex = referenceInputIndex(
-      [groupUtxo, settingsUtxo],
-      groupUtxo,
-    );
-
-    const treasurySpendRedeemer: RedeemerBuilder = {
+    // Treasury split: field-less spend/burn literal; the LIFECYCLE ClaimPenaltyAction
+    // covers the PenaltyState treasury UTxO being spent. (The trusted group policy
+    // comes from settings, so no group_ref_input_index is needed.)
+    const claimPenaltyRedeemer = Data.to("ClaimPenalty", TreasuryRedeemer);
+    const claimPenaltyAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            ClaimPenalty: {
-              group_ref_input_index: groupRefInputIndex,
+            ClaimPenaltyAction: {
+              covered_inputs: [inputIndices[1]], // treasury
               admin_input_index: inputIndices[0],
             },
           },
-          TreasuryRedeemer,
+          LifecycleAction,
         ),
-      inputs: [adminUtxo],
+      inputs: [adminUtxo, treasuryUtxo],
     };
-
-    // Mint redeemer — validate_claim_penalty_mint ignores redeemer fields
-    const mintBurnRedeemer = Data.to(
-      { ClaimPenalty: { group_ref_input_index: 0n, admin_input_index: 0n } },
-      TreasuryRedeemer,
-    );
 
     const address = yield* getWalletAddress(lucid);
 
     const baseTx0 = lucid
       .newTx()
       .collectFrom([adminUtxo])
-      .collectFrom([treasuryUtxo], treasurySpendRedeemer)
+      .collectFrom([treasuryUtxo], claimPenaltyRedeemer)
       .readFrom([groupUtxo])
-      .mintAssets(burnAssets, mintBurnRedeemer)
+      .mintAssets(burnAssets, claimPenaltyRedeemer)
       .addSigner(address)
       .readFrom([settingsUtxo]);
 
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const withValidator = scriptRefs.treasury
-      ? baseTx0.readFrom([scriptRefs.treasury])
-      : baseTx0.attach
-          .MintingPolicy(treasuryValidator.mintTreasury)
-          .attach.SpendingValidator(treasuryValidator.spendTreasury);
+    const network = lucid.config().network!;
+    const withValidator = attachFamilyWithdrawal(
+      scriptRefs.treasury
+        ? baseTx0.readFrom([scriptRefs.treasury])
+        : baseTx0.attach
+            .MintingPolicy(treasuryValidator.mintTreasury)
+            .attach.SpendingValidator(treasuryValidator.spendTreasury),
+      protocol,
+      network,
+      "lifecycle",
+      claimPenaltyAction,
+      scriptRefs,
+    );
 
     const withSigners = applyAdminWitness(
       payAdminReturn(withValidator, config, adminUtxo),

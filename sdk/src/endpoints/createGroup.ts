@@ -7,14 +7,19 @@ import {
   Constr,
   Assets,
   Script,
-  UTxO,
   toUnit,
   fromText,
   validatorToScriptHash,
 } from "@lucid-evolution/lucid";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import { Effect } from "effect";
-import { GroupDatum, TreasuryDatum, TreasuryRedeemer } from "../core/types.js";
+import {
+  GroupDatum,
+  TreasuryDatum,
+  TreasuryRedeemer,
+  ReserveAction,
+} from "../core/types.js";
 import {
   buildGroupCip68Datum,
   getScriptAddress,
@@ -68,10 +73,7 @@ export type CreateGroupConfig = {
    * (group + treasury CreateReserve), and the two attached inline exceed the tx size
    * limit — pass refs (or register a session) for real deployments.
    */
-  scriptRefs?: {
-    treasury?: UTxO;
-    group?: UTxO;
-  };
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedCreateGroupTxProgram = (
@@ -182,7 +184,10 @@ export const unsignedCreateGroupTxProgram = (
     // same tx (CreateReserve, one-shot). The treasury mint reads the trusted
     // group policy from the settings UTxO (reference input).
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
-    const reserveToken = toUnit(treasuryPolicyId, reserveTokenName(refTokenName));
+    const reserveToken = toUnit(
+      treasuryPolicyId,
+      reserveTokenName(refTokenName),
+    );
     const reserveDatum: TreasuryDatum = {
       ReserveState: {
         group_reference_tokenname: refTokenName,
@@ -198,14 +203,21 @@ export const unsignedCreateGroupTxProgram = (
     // staking rewards. getScriptAddress builds enterprise addresses already.
     const reserveAssets: Assets = { [reserveToken]: 1n, lovelace: 2_000_000n };
     // Outputs: 0 = group UTxO, 1 = admin (222) to wallet, 2 = reserve.
-    const createReserveRedeemer = Data.to(
+    // Treasury split: field-less mint literal; the RESERVE CreateAction (constr
+    // tag 0) runs the validation once. Create spends no treasury input → covered = [].
+    const createReserveMintRedeemer = Data.to(
+      "CreateReserve",
+      TreasuryRedeemer,
+    );
+    const createReserveAction = Data.to(
       {
-        CreateReserve: {
+        CreateAction: {
+          covered_inputs: [],
           group_output_index: 0n,
           reserve_output_index: 2n,
         },
       },
-      TreasuryRedeemer,
+      ReserveAction,
     );
     // Lock creator_bond lovelace alongside the ref token so it is held for
     // the group's lifetime and returned to the admin on deleteGroup.
@@ -228,7 +240,7 @@ export const unsignedCreateGroupTxProgram = (
       .newTx()
       .collectFrom([utxo])
       .mintAssets(mintingAssets, redeemer)
-      .mintAssets({ [reserveToken]: 1n }, createReserveRedeemer)
+      .mintAssets({ [reserveToken]: 1n }, createReserveMintRedeemer)
       .pay.ToContract(
         groupAddress,
         { kind: "inline", value: datum },
@@ -245,23 +257,31 @@ export const unsignedCreateGroupTxProgram = (
     // Two minting policies run in this tx; attached inline together they exceed
     // the tx size limit — prefer reference scripts when available.
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const network = lucid.config().network!;
     const withGroupValidator = scriptRefs.group
       ? baseTx.readFrom([scriptRefs.group])
       : baseTx.attach.MintingPolicy(groupValidator.mintGroup);
     const withTreasuryValidator = scriptRefs.treasury
       ? withGroupValidator.readFrom([scriptRefs.treasury])
       : withGroupValidator.attach.MintingPolicy(treasuryValidator.mintTreasury);
+    // Reserve family withdrawal runs the CreateAction (one-shot with the mint).
+    const withReserveWithdrawal = attachFamilyWithdrawal(
+      withTreasuryValidator,
+      protocol,
+      network,
+      "reserve",
+      createReserveAction,
+      scriptRefs,
+    );
 
-    const tx = yield* withTreasuryValidator
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "createGroup",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withReserveWithdrawal.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "createGroup",
+            error: String(e),
+          }),
+      ),
+    );
     return { tx, groupTokenSuffix };
   });

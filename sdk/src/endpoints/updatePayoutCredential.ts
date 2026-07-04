@@ -5,14 +5,15 @@ import {
   RedeemerBuilder,
   paymentCredentialOf,
   toUnit,
-  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  LifecycleAction,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -44,8 +45,8 @@ import {
  */
 export type UpdatePayoutCredentialConfig = {
   accountTokenSuffix: string;
-  /** Deployed treasury reference script — the treasury no longer fits inline. */
-  scriptRefs?: { treasury?: UTxO };
+  /** Deployed treasury reference scripts — the treasury no longer fits inline. */
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedUpdatePayoutCredentialTxProgram = (
@@ -98,18 +99,20 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
       TreasuryState: { ...ts, member_payment_credential: newPkh },
     };
 
-    const redeemer: RedeemerBuilder = {
+    // Treasury split: field-less spend literal; the LIFECYCLE UpdatePayoutAction
+    // covers the treasury UTxO being spent.
+    const updatePayoutAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            UpdatePayout: {
+            UpdatePayoutAction: {
+              covered_inputs: [inputIndices[1]],
               member_input_index: inputIndices[0],
-              treasury_input_index: inputIndices[1],
               treasury_output_index: 0n,
             },
           },
-          TreasuryRedeemer,
+          LifecycleAction,
         ),
       inputs: [accountUtxo, treasuryUtxo],
     };
@@ -117,7 +120,7 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
     const baseTx = lucid
       .newTx()
       .collectFrom([accountUtxo])
-      .collectFrom([treasuryUtxo], redeemer)
+      .collectFrom([treasuryUtxo], Data.to("UpdatePayout", TreasuryRedeemer))
       .addSigner(address)
       .pay.ToContract(
         treasuryUtxo.address,
@@ -132,21 +135,27 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
       .readFrom([settingsUtxo]);
 
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const withValidator = scriptRefs.treasury
-      ? baseTx.readFrom([scriptRefs.treasury])
-      : baseTx.attach.SpendingValidator(treasuryValidator.spendTreasury);
+    const network = lucid.config().network!;
+    const withValidator = attachFamilyWithdrawal(
+      scriptRefs.treasury
+        ? baseTx.readFrom([scriptRefs.treasury])
+        : baseTx.attach.SpendingValidator(treasuryValidator.spendTreasury),
+      protocol,
+      network,
+      "lifecycle",
+      updatePayoutAction,
+      scriptRefs,
+    );
 
-    const tx = yield* withValidator
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "updatePayout",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withValidator.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "updatePayout",
+            error: String(e),
+          }),
+      ),
+    );
 
     return tx;
   });

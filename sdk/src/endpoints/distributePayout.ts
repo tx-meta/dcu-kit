@@ -10,7 +10,7 @@ import {
   validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
 import {
   GroupDatum,
   GroupSpendRedeemer,
@@ -53,10 +53,7 @@ export type DistributePayoutConfig = {
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO rather than included inline,
   // keeping the transaction well under the 16KB Cardano size limit.
-  scriptRefs?: {
-    treasury?: UTxO;
-    group?: UTxO;
-  };
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedDistributePayoutTxProgram = (
@@ -315,7 +312,13 @@ export const unsignedDistributePayoutTxProgram = (
     const legs: Leg[] = [
       ...memberStates,
       ...(reserveNeeded
-        ? [{ utxo: reserveUtxo, datum: reserveDatumParsed, isReserve: true } as ReserveLeg]
+        ? [
+            {
+              utxo: reserveUtxo,
+              datum: reserveDatumParsed,
+              isReserve: true,
+            } as ReserveLeg,
+          ]
         : []),
     ].sort((a, b) => {
       const cmp = a.utxo.txHash.localeCompare(b.utxo.txHash);
@@ -407,11 +410,12 @@ export const unsignedDistributePayoutTxProgram = (
       inputs: allInputs,
     };
 
-    // The treasury's own stake credential (self-coupled withdraw-zero). Must be registered
-    // on-chain (done at deploy time). A 0-ADA withdrawal here triggers the `withdraw` handler.
-    const treasuryRewardAddress = validatorToRewardAddress(
+    // The ROUNDS family stake credential (treasury split): the heavy round
+    // validation runs once in its `withdraw` handler. Must be registered
+    // on-chain (done at deploy time). A 0-ADA withdrawal here triggers it.
+    const roundsRewardAddress = validatorToRewardAddress(
       lucid.config().network!,
-      treasuryValidator.spendTreasury,
+      protocol.treasuryStakeValidators.rounds,
     );
 
     // Build the transaction: group output first, then the indexer legs, then borrower
@@ -422,19 +426,28 @@ export const unsignedDistributePayoutTxProgram = (
         legs.map((s) => s.utxo),
         treasurySpendRedeemer,
       )
-      .withdraw(treasuryRewardAddress, 0n, distributeWithdrawRedeemer);
+      .withdraw(roundsRewardAddress, 0n, distributeWithdrawRedeemer);
 
-    // Use reference scripts when provided — avoids including ~15KB of script bytes
+    // Use reference scripts when provided — avoids including ~20KB of script bytes
     // inline, keeping the tx under Cardano's 16,384-byte size limit.
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const baseTx =
-      scriptRefs.treasury || scriptRefs.group
-        ? baseTxNoValidators.readFrom(
-            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
-          )
-        : baseTxNoValidators.attach
-            .SpendingValidator(groupValidator.spendGroup)
-            .attach.SpendingValidator(treasuryValidator.spendTreasury);
+    const refUtxos = [
+      scriptRefs.treasury,
+      scriptRefs.group,
+      scriptRefs.treasuryRounds,
+    ].filter(Boolean) as UTxO[];
+    let baseTx =
+      refUtxos.length > 0
+        ? baseTxNoValidators.readFrom(refUtxos)
+        : baseTxNoValidators;
+    if (!scriptRefs.treasury)
+      baseTx = baseTx.attach.SpendingValidator(treasuryValidator.spendTreasury);
+    if (!scriptRefs.group)
+      baseTx = baseTx.attach.SpendingValidator(groupValidator.spendGroup);
+    if (!scriptRefs.treasuryRounds)
+      baseTx = baseTx.attach.WithdrawalValidator(
+        protocol.treasuryStakeValidators.rounds,
+      );
 
     const baseTxWithGroup = baseTx.pay.ToContract(
       groupUtxo.address,
@@ -457,8 +470,14 @@ export const unsignedDistributePayoutTxProgram = (
       if (state.isReserve) {
         const updatedReserve: TreasuryDatum = {
           ReserveState: {
-            ...(state.datum as { ReserveState: { group_reference_tokenname: string; standin_rounds: bigint } })
-              .ReserveState,
+            ...(
+              state.datum as {
+                ReserveState: {
+                  group_reference_tokenname: string;
+                  standin_rounds: bigint;
+                };
+              }
+            ).ReserveState,
             standin_rounds: standinOut,
           },
         };

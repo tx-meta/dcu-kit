@@ -4,10 +4,10 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   toUnit,
-  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   AdminAuthConfig,
   applyAdminWitness,
@@ -17,6 +17,7 @@ import {
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  LifecycleAction,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -52,7 +53,7 @@ export type ExtendGraceWindowConfig = {
   groupTokenSuffix: string;
   memberAccountTokenSuffix: string;
   /** Deployed treasury reference script — the treasury no longer fits inline. */
-  scriptRefs?: { treasury?: UTxO };
+  scriptRefs?: ScriptRefs;
 } & AdminAuthConfig;
 
 export const unsignedExtendGraceWindowTxProgram = (
@@ -114,26 +115,30 @@ export const unsignedExtendGraceWindowTxProgram = (
     };
 
     // ExtendGraceWindow uses group_ref_input_index into reference_inputs (not spending inputs).
-    // The redeemer indices are: [0] = group ref input index in reference_inputs,
-    // [1] = admin spending input index in inputs, [2] = treasury spending input index in inputs.
-    const groupRefInputIndex = referenceInputIndex(
-      [groupUtxo, settingsUtxo],
-      groupUtxo,
-    );
+    // Compute the group's position over the COMPLETE reference set (settings + any
+    // deployed ref scripts read from: treasury dispatcher + LIFECYCLE stake validator).
+    const graceRefs = effectiveScriptRefs(config.scriptRefs);
+    const graceRefInputs = [groupUtxo, settingsUtxo];
+    if (graceRefs.treasury) graceRefInputs.push(graceRefs.treasury);
+    if (graceRefs.treasuryLifecycle)
+      graceRefInputs.push(graceRefs.treasuryLifecycle);
+    const groupRefInputIndex = referenceInputIndex(graceRefInputs, groupUtxo);
 
-    const redeemer: RedeemerBuilder = {
+    // Treasury split: field-less spend literal; the LIFECYCLE ExtendGraceAction
+    // covers the treasury UTxO. Group is a reference input.
+    const extendGraceAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            ExtendGrace: {
+            ExtendGraceAction: {
+              covered_inputs: [inputIndices[1]],
               group_ref_input_index: groupRefInputIndex,
               admin_input_index: inputIndices[0],
-              treasury_input_index: inputIndices[1],
               treasury_output_index: 0n,
             },
           },
-          TreasuryRedeemer,
+          LifecycleAction,
         ),
       inputs: [adminUtxo, treasuryUtxo],
     };
@@ -142,7 +147,7 @@ export const unsignedExtendGraceWindowTxProgram = (
     const baseTx0 = lucid
       .newTx()
       .collectFrom([adminUtxo])
-      .collectFrom([treasuryUtxo], redeemer)
+      .collectFrom([treasuryUtxo], Data.to("ExtendGrace", TreasuryRedeemer))
       .readFrom([groupUtxo])
       .addSigner(address)
       .pay.ToContract(
@@ -152,10 +157,17 @@ export const unsignedExtendGraceWindowTxProgram = (
       )
       .readFrom([settingsUtxo]);
 
-    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const withValidator = scriptRefs.treasury
-      ? baseTx0.readFrom([scriptRefs.treasury])
-      : baseTx0.attach.SpendingValidator(treasuryValidator.spendTreasury);
+    const network = lucid.config().network!;
+    const withValidator = attachFamilyWithdrawal(
+      graceRefs.treasury
+        ? baseTx0.readFrom([graceRefs.treasury])
+        : baseTx0.attach.SpendingValidator(treasuryValidator.spendTreasury),
+      protocol,
+      network,
+      "lifecycle",
+      extendGraceAction,
+      graceRefs,
+    );
 
     const withSigners = applyAdminWitness(
       payAdminReturn(withValidator, config, adminUtxo),

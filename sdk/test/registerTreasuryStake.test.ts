@@ -21,9 +21,15 @@ describe("registerTreasuryStake (emulator)", () => {
         context.lucid,
       );
 
+      // All four treasury family stake credentials were registered by the
+      // emulator context setup, so re-running absorbs every duplicate.
       expect(result.alreadyRegistered).toBe(true);
-      expect(result.txHash).toBeNull();
-      expect(result.treasuryRewardAddress.startsWith("stake")).toBe(true);
+      expect(result.registrations).toHaveLength(4);
+      for (const reg of result.registrations) {
+        expect(reg.alreadyRegistered).toBe(true);
+        expect(reg.txHash).toBeNull();
+        expect(reg.rewardAddress.startsWith("stake")).toBe(true);
+      }
     }),
   );
 });

@@ -21,6 +21,10 @@ export type VerifySettingsResult = {
     account_policy: string;
     group_policy: string;
     treasury_policy: string;
+    treasury_rounds_stake: string;
+    treasury_lifecycle_stake: string;
+    treasury_recovery_stake: string;
+    treasury_reserve_stake: string;
   };
   /** True if the published treasury/group policies match buildProtocol(settingsPolicy). */
   consistent?: boolean;
@@ -60,7 +64,13 @@ export const unsignedVerifySettingsProgram = (
     const consistent =
       parsed.treasury_policy === expected.treasuryPolicyId &&
       parsed.group_policy === expected.groupPolicyId &&
-      parsed.account_policy === expected.accountPolicyId;
+      parsed.account_policy === expected.accountPolicyId &&
+      parsed.treasury_rounds_stake === expected.treasuryStakeHashes.rounds &&
+      parsed.treasury_lifecycle_stake ===
+        expected.treasuryStakeHashes.lifecycle &&
+      parsed.treasury_recovery_stake ===
+        expected.treasuryStakeHashes.recovery &&
+      parsed.treasury_reserve_stake === expected.treasuryStakeHashes.reserve;
 
     return {
       found: true,
@@ -70,6 +80,10 @@ export const unsignedVerifySettingsProgram = (
         account_policy: parsed.account_policy,
         group_policy: parsed.group_policy,
         treasury_policy: parsed.treasury_policy,
+        treasury_rounds_stake: parsed.treasury_rounds_stake,
+        treasury_lifecycle_stake: parsed.treasury_lifecycle_stake,
+        treasury_recovery_stake: parsed.treasury_recovery_stake,
+        treasury_reserve_stake: parsed.treasury_reserve_stake,
       },
       consistent,
     };

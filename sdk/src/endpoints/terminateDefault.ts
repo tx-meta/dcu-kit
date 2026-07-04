@@ -13,11 +13,14 @@ import {
   applyAdminWitness,
   payAdminReturn,
 } from "../multisig/index.js";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  LifecycleAction,
+  ReserveAction,
   GroupDatum,
   GroupSpendRedeemer,
 } from "../core/types.js";
@@ -50,10 +53,7 @@ export type TerminateDefaultConfig = {
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, omit for live network
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO, keeping the tx under 16KB.
-  scriptRefs?: {
-    treasury?: UTxO;
-    group?: UTxO;
-  };
+  scriptRefs?: ScriptRefs;
 } & AdminAuthConfig;
 
 // --- Endpoint ---
@@ -210,25 +210,28 @@ export const unsignedTerminateDefaultTxProgram = (
     };
     const reserveOutAssets: Assets = {
       ...reserveUtxo.assets,
-      [contributionUnit]: (reserveUtxo.assets[contributionUnit] ?? 0n) + forfeit,
+      [contributionUnit]:
+        (reserveUtxo.assets[contributionUnit] ?? 0n) + forfeit,
     };
 
-    // Reserve spend redeemer — pinned to this genuine termination.
+    // Reserve spend — pinned to this genuine termination. Treasury split: field-less
+    // spend literal; the RESERVE CoverAction covers the reserve UTxO.
     // Outputs: 0 = group, 1 = reserve (admin return follows).
-    const reserveSpendRedeemer: RedeemerBuilder = {
+    const reserveCoverRedeemer = Data.to("ReserveCover", TreasuryRedeemer);
+    const coverAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            ReserveCover: {
+            CoverAction: {
+              covered_inputs: [inputIndices[2]], // reserve
               group_ref_input_index: inputIndices[0],
               group_output_index: 0n,
               defaulter_input_index: inputIndices[1],
-              reserve_input_index: inputIndices[2],
               reserve_output_index: 1n,
             },
           },
-          TreasuryRedeemer,
+          ReserveAction,
         ),
       inputs: [groupUtxo, treasuryUtxo, reserveUtxo],
     };
@@ -266,37 +269,29 @@ export const unsignedTerminateDefaultTxProgram = (
       inputs: [groupUtxo],
     };
 
-    // Treasury validator redeemer: TerminateDefault. Indices resolve to the group spending
-    // input, the admin input, and the treasury (self) input. group_output_index is 0n.
-    const treasurySpendRedeemer: RedeemerBuilder = {
+    // Treasury split: field-less spend/burn literal; the LIFECYCLE TerminateDefaultAction
+    // covers the defaulter's treasury UTxO and points at the group spending input +
+    // admin input. group_output_index is 0n.
+    const terminateSpendRedeemer = Data.to(
+      "TerminateDefault",
+      TreasuryRedeemer,
+    );
+    const terminateDefaultAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            TerminateDefault: {
+            TerminateDefaultAction: {
+              covered_inputs: [inputIndices[2]], // treasury
               group_ref_input_index: inputIndices[0],
               group_output_index: 0n,
               admin_input_index: inputIndices[1],
-              treasury_input_index: inputIndices[2],
             },
           },
-          TreasuryRedeemer,
+          LifecycleAction,
         ),
       inputs: [groupUtxo, adminUtxo, treasuryUtxo],
     };
-
-    // Mint burn redeemer — validate_claim_penalty_mint ignores the redeemer fields.
-    const mintBurnRedeemer = Data.to(
-      {
-        TerminateDefault: {
-          group_ref_input_index: 0n,
-          group_output_index: 0n,
-          admin_input_index: 0n,
-          treasury_input_index: 0n,
-        },
-      },
-      TreasuryRedeemer,
-    );
 
     const address = yield* getWalletAddress(lucid);
 
@@ -310,8 +305,8 @@ export const unsignedTerminateDefaultTxProgram = (
       .newTx()
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom([adminUtxo])
-      .collectFrom([treasuryUtxo], treasurySpendRedeemer)
-      .collectFrom([reserveUtxo], reserveSpendRedeemer)
+      .collectFrom([treasuryUtxo], terminateSpendRedeemer)
+      .collectFrom([reserveUtxo], reserveCoverRedeemer)
       .addSigner(address)
       .pay.ToContract(
         groupUtxo.address,
@@ -330,22 +325,44 @@ export const unsignedTerminateDefaultTxProgram = (
         { kind: "inline", value: Data.to(updatedReserveDatum, TreasuryDatum) },
         reserveOutAssets,
       )
-      .mintAssets(burnAssets, mintBurnRedeemer)
+      .mintAssets(burnAssets, terminateSpendRedeemer)
       .validFrom(Number(now));
 
     const baseTx = payAdminReturn(baseTx0, config, adminUtxo);
 
     // Reference scripts when provided — avoids inlining ~12KB of validator bytes.
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const withValidators =
-      scriptRefs.treasury || scriptRefs.group
-        ? baseTx.readFrom(
-            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
-          )
-        : baseTx.attach
-            .MintingPolicy(treasuryValidator.mintTreasury)
-            .attach.SpendingValidator(treasuryValidator.spendTreasury)
-            .attach.SpendingValidator(groupValidator.spendGroup);
+    const network = lucid.config().network!;
+    const refUtxos = [scriptRefs.treasury, scriptRefs.group].filter(
+      Boolean,
+    ) as UTxO[];
+    let withValidators =
+      refUtxos.length > 0 ? baseTx.readFrom(refUtxos) : baseTx;
+    if (!scriptRefs.treasury)
+      withValidators = withValidators.attach
+        .MintingPolicy(treasuryValidator.mintTreasury)
+        .attach.SpendingValidator(treasuryValidator.spendTreasury);
+    if (!scriptRefs.group)
+      withValidators = withValidators.attach.SpendingValidator(
+        groupValidator.spendGroup,
+      );
+    // Lifecycle (TerminateDefaultAction) + reserve (CoverAction) both run once.
+    withValidators = attachFamilyWithdrawal(
+      withValidators,
+      protocol,
+      network,
+      "lifecycle",
+      terminateDefaultAction,
+      scriptRefs,
+    );
+    withValidators = attachFamilyWithdrawal(
+      withValidators,
+      protocol,
+      network,
+      "reserve",
+      coverAction,
+      scriptRefs,
+    );
 
     const withSigners = applyAdminWitness(withValidators, config);
 

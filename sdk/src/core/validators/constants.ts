@@ -1,6 +1,7 @@
 import {
   mintingPolicyToId,
   applyParamsToScript,
+  validatorToScriptHash,
   Constr,
   Script,
 } from "@lucid-evolution/lucid";
@@ -76,6 +77,9 @@ export const buildSettingsNft = (seed: {
   return { validator, policyId: mintingPolicyToId(validator) };
 };
 
+/** The four treasury family stake validators (treasury split, spec 2026-07-04). */
+export type TreasuryFamily = "rounds" | "lifecycle" | "recovery" | "reserve";
+
 export interface Protocol {
   settingsPolicy: string;
   // unit (policyId + assetName) of the singleton settings NFT to .readFrom() / locate.
@@ -85,6 +89,11 @@ export interface Protocol {
   treasuryValidator: { spendTreasury: Script; mintTreasury: Script };
   treasuryPolicyId: string;
   treasuryScript: { spending: string; minting: string };
+  // Withdraw-zero family stake validators carrying the treasury validation logic,
+  // split by redeemer family. Parameterized by the settings policy like the
+  // dispatcher; their hashes are published in the ProtocolSettings datum.
+  treasuryStakeValidators: Record<TreasuryFamily, Script>;
+  treasuryStakeHashes: Record<TreasuryFamily, string>;
   groupValidator: { spendGroup: Script; mintGroup: Script };
   groupPolicyId: string;
   groupScript: { spending: string; minting: string };
@@ -106,6 +115,30 @@ export const buildProtocol = (settingsPolicy: string): Protocol => {
     ),
   };
   const tPolicy = mintingPolicyToId(treasury.mintTreasury);
+  const treasuryStakeValidators: Record<TreasuryFamily, Script> = {
+    rounds: withPolicyParam(
+      raw("treasury_rounds.treasury_rounds.withdraw"),
+      settingsPolicy,
+    ),
+    lifecycle: withPolicyParam(
+      raw("treasury_lifecycle.treasury_lifecycle.withdraw"),
+      settingsPolicy,
+    ),
+    recovery: withPolicyParam(
+      raw("treasury_recovery.treasury_recovery.withdraw"),
+      settingsPolicy,
+    ),
+    reserve: withPolicyParam(
+      raw("treasury_reserve.treasury_reserve.withdraw"),
+      settingsPolicy,
+    ),
+  };
+  const treasuryStakeHashes: Record<TreasuryFamily, string> = {
+    rounds: validatorToScriptHash(treasuryStakeValidators.rounds),
+    lifecycle: validatorToScriptHash(treasuryStakeValidators.lifecycle),
+    recovery: validatorToScriptHash(treasuryStakeValidators.recovery),
+    reserve: validatorToScriptHash(treasuryStakeValidators.reserve),
+  };
   const group = {
     spendGroup: withPolicyParam(
       raw("group_validator.group_validator.spend"),
@@ -128,6 +161,8 @@ export const buildProtocol = (settingsPolicy: string): Protocol => {
       spending: treasury.spendTreasury.script,
       minting: treasury.mintTreasury.script,
     },
+    treasuryStakeValidators,
+    treasuryStakeHashes,
     groupValidator: group,
     groupPolicyId: gPolicy,
     groupScript: {

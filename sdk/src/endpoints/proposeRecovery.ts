@@ -8,8 +8,13 @@ import {
   UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { effectiveScriptRefs } from "../core/scripts.js";
-import { TreasuryDatum, TreasuryRedeemer } from "../core/types.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
+import {
+  TreasuryDatum,
+  TreasuryRedeemer,
+  RecoveryAction,
+} from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
   getScriptAddress,
@@ -56,10 +61,7 @@ export type ProposeRecoveryConfig = {
   newPaymentCredential: string; // recoveree's payment key hash — binds future payouts
   approverTokenSuffixes: string[]; // at least 1 — quorum members vouching for this recovery
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, Date.now() for live
-  scriptRefs?: {
-    treasury?: UTxO;
-    group?: UTxO;
-  };
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedProposeRecoveryTxProgram = (
@@ -164,24 +166,30 @@ export const unsignedProposeRecoveryTxProgram = (
       [newMemberToken]: 1n,
     };
 
-    const groupRefInputIndex = referenceInputIndex(
-      [groupUtxo, settingsUtxo],
-      groupUtxo,
-    );
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const proposeRefInputs = [groupUtxo, settingsUtxo];
+    if (scriptRefs.treasury) proposeRefInputs.push(scriptRefs.treasury);
+    if (scriptRefs.treasuryRecovery)
+      proposeRefInputs.push(scriptRefs.treasuryRecovery);
+    const groupRefInputIndex = referenceInputIndex(proposeRefInputs, groupUtxo);
 
-    const redeemer: RedeemerBuilder = {
+    // Treasury split: field-less mint literal; the RECOVERY ProposeAction runs the
+    // heavy validation once. Propose spends no treasury input, so covered = [].
+    const proposeMintRedeemer = Data.to("ProposeRecovery", TreasuryRedeemer);
+    const proposeAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            ProposeRecovery: {
+            ProposeAction: {
+              covered_inputs: [],
               group_ref_input_index: groupRefInputIndex,
               request_output_index: 0n,
               // approver indices follow the recoveree input (index 0) in `inputs`.
               approver_input_indices: inputIndices.slice(1),
             },
           },
-          TreasuryRedeemer,
+          RecoveryAction,
         ),
       inputs: [newAccountUtxo, ...approverUtxos],
     };
@@ -190,7 +198,7 @@ export const unsignedProposeRecoveryTxProgram = (
       .newTx()
       .collectFrom([newAccountUtxo])
       .collectFrom(approverUtxos)
-      .mintAssets(mintingAssets, redeemer)
+      .mintAssets(mintingAssets, proposeMintRedeemer)
       .readFrom([groupUtxo])
       .pay.ToContract(
         treasuryAddress,
@@ -208,12 +216,19 @@ export const unsignedProposeRecoveryTxProgram = (
       baseTx0,
     );
 
-    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const withValidators = scriptRefs.treasury
-      ? withApproverSigners.readFrom([scriptRefs.treasury])
-      : withApproverSigners.attach.MintingPolicy(
-          treasuryValidator.mintTreasury,
-        );
+    const network = lucid.config().network!;
+    const withValidators = attachFamilyWithdrawal(
+      scriptRefs.treasury
+        ? withApproverSigners.readFrom([scriptRefs.treasury])
+        : withApproverSigners.attach.MintingPolicy(
+            treasuryValidator.mintTreasury,
+          ),
+      protocol,
+      network,
+      "recovery",
+      proposeAction,
+      scriptRefs,
+    );
 
     const tx = yield* withValidators
       .readFrom([settingsUtxo])

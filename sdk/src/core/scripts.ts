@@ -19,6 +19,14 @@ import type { Protocol } from "./validators/constants.js";
 export type ScriptRefs = {
   treasury?: UTxO;
   group?: UTxO;
+  // Treasury family stake validators (treasury split, spec 2026-07-04). Every
+  // treasury endpoint attaches a 0-ADA withdrawal from its family's credential;
+  // the family script rides as a reference script (or is attached inline when
+  // its ref is absent).
+  treasuryRounds?: UTxO;
+  treasuryLifecycle?: UTxO;
+  treasuryRecovery?: UTxO;
+  treasuryReserve?: UTxO;
 };
 
 /** Where a resolved set of reference scripts came from (see {@link resolveScriptRefs}). */
@@ -32,7 +40,13 @@ export type ScriptRefSource = "override" | "session" | "bundled" | "inline";
 let sessionRefs: ScriptRefs | undefined;
 
 const hasRefs = (refs?: ScriptRefs): refs is ScriptRefs =>
-  !!refs && (!!refs.treasury || !!refs.group);
+  !!refs &&
+  (!!refs.treasury ||
+    !!refs.group ||
+    !!refs.treasuryRounds ||
+    !!refs.treasuryLifecycle ||
+    !!refs.treasuryRecovery ||
+    !!refs.treasuryReserve);
 
 /**
  * Sets the session-default reference scripts used by every endpoint that takes a
@@ -121,9 +135,42 @@ export const verifyReferenceScripts = (
   refs: ScriptRefs,
 ): Effect.Effect<void, ReferenceScriptMismatchError> =>
   Effect.gen(function* () {
-    const checks: Array<["treasury" | "group", UTxO | undefined, string]> = [
+    const checks: Array<
+      [
+        (
+          | "treasury"
+          | "group"
+          | "treasuryRounds"
+          | "treasuryLifecycle"
+          | "treasuryRecovery"
+          | "treasuryReserve"
+        ),
+        UTxO | undefined,
+        string,
+      ]
+    > = [
       ["treasury", refs.treasury, protocol.treasuryPolicyId],
       ["group", refs.group, protocol.groupPolicyId],
+      [
+        "treasuryRounds",
+        refs.treasuryRounds,
+        protocol.treasuryStakeHashes.rounds,
+      ],
+      [
+        "treasuryLifecycle",
+        refs.treasuryLifecycle,
+        protocol.treasuryStakeHashes.lifecycle,
+      ],
+      [
+        "treasuryRecovery",
+        refs.treasuryRecovery,
+        protocol.treasuryStakeHashes.recovery,
+      ],
+      [
+        "treasuryReserve",
+        refs.treasuryReserve,
+        protocol.treasuryStakeHashes.reserve,
+      ],
     ];
 
     for (const [validator, utxo, expectedHash] of checks) {

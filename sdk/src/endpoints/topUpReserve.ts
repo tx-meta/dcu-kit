@@ -4,12 +4,12 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   Assets,
-  UTxO,
   toUnit,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { effectiveScriptRefs } from "../core/scripts.js";
-import { TreasuryRedeemer } from "../core/types.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
+import { TreasuryRedeemer, ReserveAction } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
   getWalletAddress,
@@ -45,7 +45,7 @@ export type TopUpReserveConfig = {
   /** Donation amount in the group's CONTRIBUTION asset (lovelace for ADA groups). */
   amount: bigint;
   /** Deployed treasury reference script — the treasury no longer fits inline. */
-  scriptRefs?: { treasury?: UTxO };
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedTopUpReserveTxProgram = (
@@ -93,17 +93,19 @@ export const unsignedTopUpReserveTxProgram = (
       [contributionUnit]: (reserveUtxo.assets[contributionUnit] ?? 0n) + amount,
     };
 
-    const redeemer: RedeemerBuilder = {
+    // Treasury split: field-less spend literal; the RESERVE TopUpAction covers
+    // the reserve UTxO being spent.
+    const topUpAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (indices: bigint[]) =>
         Data.to(
           {
-            ReserveTopUp: {
-              reserve_input_index: indices[0],
+            TopUpAction: {
+              covered_inputs: [indices[0]],
               reserve_output_index: 0n,
             },
           },
-          TreasuryRedeemer,
+          ReserveAction,
         ),
       inputs: [reserveUtxo],
     };
@@ -112,7 +114,7 @@ export const unsignedTopUpReserveTxProgram = (
 
     const baseTx = lucid
       .newTx()
-      .collectFrom([reserveUtxo], redeemer)
+      .collectFrom([reserveUtxo], Data.to("ReserveTopUp", TreasuryRedeemer))
       .pay.ToContract(
         reserveUtxo.address,
         // Datum is frozen by the validator — carry it through unchanged.
@@ -123,20 +125,26 @@ export const unsignedTopUpReserveTxProgram = (
       .readFrom([groupUtxo, settingsUtxo]);
 
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const withValidator = scriptRefs.treasury
-      ? baseTx.readFrom([scriptRefs.treasury])
-      : baseTx.attach.SpendingValidator(treasuryValidator.spendTreasury);
+    const network = lucid.config().network!;
+    const withValidator = attachFamilyWithdrawal(
+      scriptRefs.treasury
+        ? baseTx.readFrom([scriptRefs.treasury])
+        : baseTx.attach.SpendingValidator(treasuryValidator.spendTreasury),
+      protocol,
+      network,
+      "reserve",
+      topUpAction,
+      scriptRefs,
+    );
 
-    const tx = yield* withValidator
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "topUpReserve",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withValidator.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "topUpReserve",
+            error: String(e),
+          }),
+      ),
+    );
     return tx;
   });

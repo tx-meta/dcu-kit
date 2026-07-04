@@ -10,11 +10,14 @@ import {
   UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   GroupDatum,
   TreasuryDatum,
   TreasuryRedeemer,
+  LifecycleAction,
+  ReserveAction,
   GroupSpendRedeemer,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
@@ -69,10 +72,7 @@ export type JoinGroupConfig = {
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO rather than included inline,
   // keeping the transaction well under the 16KB Cardano size limit.
-  scriptRefs?: {
-    treasury?: UTxO; // UTxO with scriptRef for treasury validator
-    group?: UTxO; // UTxO with scriptRef for group validator
-  };
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedJoinGroupTxProgram = (
@@ -217,19 +217,24 @@ export const unsignedJoinGroupTxProgram = (
       inputs: [groupUtxo],
     };
 
-    const treasuryRedeemer: RedeemerBuilder = {
+    // Treasury split: the mint carries a field-less JoinGroup literal; the heavy
+    // validation runs once in the LIFECYCLE stake validator via the JoinAction
+    // withdrawal below. Join spends no treasury input, so covered_inputs = [].
+    const treasuryMintRedeemer = Data.to("JoinGroup", TreasuryRedeemer);
+    const joinActionRedeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            JoinGroup: {
+            JoinAction: {
+              covered_inputs: [],
               group_ref_input_index: inputIndices[0],
               group_output_index: 0n,
               member_input_index: inputIndices[1],
               treasury_output_index: 1n,
             },
           },
-          TreasuryRedeemer,
+          LifecycleAction,
         ),
       inputs: [groupUtxo, accountUtxo],
     };
@@ -276,8 +281,11 @@ export const unsignedJoinGroupTxProgram = (
           groupDatum.contribution_fee_policyid,
           groupDatum.contribution_fee_assetname,
         );
-    let reserveLeg: { utxo: UTxO; redeemer: RedeemerBuilder; assets: Assets } | null =
-      null;
+    let reserveLeg: {
+      utxo: UTxO;
+      action: RedeemerBuilder;
+      assets: Assets;
+    } | null = null;
     if (joinLevy > 0n) {
       const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
       const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
@@ -288,23 +296,25 @@ export const unsignedJoinGroupTxProgram = (
           (reserveUtxo.assets[contributionUnit] ?? 0n) + joinLevy,
       };
       // Outputs: 0 = group, 1 = treasury, 2 = reserve (member return follows).
-      const reserveRedeemer: RedeemerBuilder = {
+      // Treasury split: field-less spend literal; the RESERVE stake validator
+      // runs the TopUpAction once, covering the reserve UTxO being spent.
+      const reserveTopUpAction: RedeemerBuilder = {
         kind: "selected",
         makeRedeemer: (indices: bigint[]) =>
           Data.to(
             {
-              ReserveTopUp: {
-                reserve_input_index: indices[0],
+              TopUpAction: {
+                covered_inputs: [indices[0]],
                 reserve_output_index: 2n,
               },
             },
-            TreasuryRedeemer,
+            ReserveAction,
           ),
         inputs: [reserveUtxo],
       };
       reserveLeg = {
         utxo: reserveUtxo,
-        redeemer: reserveRedeemer,
+        action: reserveTopUpAction,
         assets: reserveOutAssets,
       };
     }
@@ -313,7 +323,7 @@ export const unsignedJoinGroupTxProgram = (
       .newTx()
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom([accountUtxo])
-      .mintAssets(mintingAssets, treasuryRedeemer)
+      .mintAssets(mintingAssets, treasuryMintRedeemer)
       .pay.ToContract(
         groupUtxo.address,
         {
@@ -332,9 +342,10 @@ export const unsignedJoinGroupTxProgram = (
         treasuryAssets,
       );
 
+    const reserveSpendRedeemer = Data.to("ReserveTopUp", TreasuryRedeemer);
     const baseTx = reserveLeg
       ? baseTx0
-          .collectFrom([reserveLeg.utxo], reserveLeg.redeemer)
+          .collectFrom([reserveLeg.utxo], reserveSpendRedeemer)
           .pay.ToContract(
             reserveLeg.utxo.address,
             { kind: "inline", value: reserveLeg.utxo.datum! },
@@ -342,18 +353,16 @@ export const unsignedJoinGroupTxProgram = (
           )
       : baseTx0;
 
-    const withMemberReturn = baseTx
-      // Return only the account token + minimum lovelace.
-      // accountUtxo may hold hundreds of ADA (e.g. if the wallet's change from
-      // create-account landed in the same UTxO). Returning accountUtxo.assets
-      // intact makes the account UTxO a net-zero ADA contributor — the same ADA
-      // goes in and straight back out, leaving no surplus for the ~22 ADA treasury
-      // deposit. Paying back min lovelace (2 ADA) frees the excess for coin
-      // selection via the change output.
-      .pay.ToAddress(address, {
-        lovelace: 2_000_000n,
-        [accountAssetEntry]: 1n,
-      });
+    // Return only the account token + minimum lovelace. accountUtxo may hold
+    // hundreds of ADA (e.g. if the wallet's change from create-account landed in
+    // the same UTxO). Returning accountUtxo.assets intact makes the account UTxO a
+    // net-zero ADA contributor — the same ADA goes in and straight back out,
+    // leaving no surplus for the ~22 ADA treasury deposit. Paying back min lovelace
+    // (2 ADA) frees the excess for coin selection via the change output.
+    const withMemberReturn = baseTx.pay.ToAddress(address, {
+      lovelace: 2_000_000n,
+      [accountAssetEntry]: 1n,
+    });
 
     // collectFrom([]) throws EMPTY_UTXO in Lucid Evolution — only add when non-empty
     const withFunding =
@@ -369,14 +378,39 @@ export const unsignedJoinGroupTxProgram = (
     // Use reference scripts when provided — avoids including ~12KB of script bytes
     // inline, keeping the tx under Cardano's 16,384-byte size limit.
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const withValidators =
-      scriptRefs.treasury || scriptRefs.group
-        ? withFee.readFrom(
-            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
-          )
-        : withFee.attach
-            .MintingPolicy(treasuryValidator.mintTreasury)
-            .attach.SpendingValidator(groupValidator.spendGroup);
+    const refUtxos = [scriptRefs.treasury, scriptRefs.group].filter(
+      Boolean,
+    ) as UTxO[];
+    let withValidators =
+      refUtxos.length > 0 ? withFee.readFrom(refUtxos) : withFee;
+    if (!scriptRefs.treasury)
+      withValidators = withValidators.attach.MintingPolicy(
+        treasuryValidator.mintTreasury,
+      );
+    if (!scriptRefs.group)
+      withValidators = withValidators.attach.SpendingValidator(
+        groupValidator.spendGroup,
+      );
+
+    // Lifecycle family withdrawal (the JoinAction runs the heavy validation once).
+    withValidators = attachFamilyWithdrawal(
+      withValidators,
+      protocol,
+      network,
+      "lifecycle",
+      joinActionRedeemer,
+      scriptRefs,
+    );
+    // Reserve family withdrawal only when a join levy tops up the reserve.
+    if (reserveLeg)
+      withValidators = attachFamilyWithdrawal(
+        withValidators,
+        protocol,
+        network,
+        "reserve",
+        reserveLeg.action,
+        scriptRefs,
+      );
 
     const tx = yield* withValidators
       .readFrom([settingsUtxo])

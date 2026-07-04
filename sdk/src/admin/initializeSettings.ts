@@ -22,6 +22,13 @@ export type InitializeSettingsResult = {
   accountPolicy: string;
   groupPolicy: string;
   treasuryPolicy: string;
+  /** The four treasury family stake-validator hashes recorded in the datum. */
+  treasuryStakeHashes: {
+    rounds: string;
+    lifecycle: string;
+    recovery: string;
+    reserve: string;
+  };
 };
 
 /**
@@ -77,6 +84,10 @@ export const unsignedInitializeSettingsProgram = (
         account_policy: protocol.accountPolicyId,
         group_policy: protocol.groupPolicyId,
         treasury_policy: protocol.treasuryPolicyId,
+        treasury_rounds_stake: protocol.treasuryStakeHashes.rounds,
+        treasury_lifecycle_stake: protocol.treasuryStakeHashes.lifecycle,
+        treasury_recovery_stake: protocol.treasuryStakeHashes.recovery,
+        treasury_reserve_stake: protocol.treasuryStakeHashes.reserve,
       },
       ProtocolSettings,
     );
@@ -126,5 +137,6 @@ export const deriveSettings = (seed: {
     accountPolicy: protocol.accountPolicyId,
     groupPolicy: protocol.groupPolicyId,
     treasuryPolicy: protocol.treasuryPolicyId,
+    treasuryStakeHashes: protocol.treasuryStakeHashes,
   };
 };

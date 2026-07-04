@@ -59,13 +59,18 @@ export const PayoutMode = PayoutModeSchema as unknown as PayoutMode;
 
 // --- Protocol Settings (P5 trusted binding) ---
 // Datum of the immutable settings UTxO. Holds the trusted policy IDs of the three
-// DCU validators, read by the treasury validator (via the singleton settings NFT)
-// to authenticate cross-validator inputs. Field order MUST mirror the Aiken
-// ProtocolSettings type (account, group, treasury).
+// DCU validators plus the four treasury family stake-validator hashes (the
+// treasury split — spec 2026-07-04), read via the singleton settings NFT to
+// authenticate cross-validator inputs and route redeemer families. Field order
+// MUST mirror the Aiken ProtocolSettings type.
 export const ProtocolSettingsSchema = Data.Object({
   account_policy: Data.Bytes(),
   group_policy: Data.Bytes(),
   treasury_policy: Data.Bytes(),
+  treasury_rounds_stake: Data.Bytes(),
+  treasury_lifecycle_stake: Data.Bytes(),
+  treasury_recovery_stake: Data.Bytes(),
+  treasury_reserve_stake: Data.Bytes(),
 });
 export type ProtocolSettings = Data.Static<typeof ProtocolSettingsSchema>;
 export const ProtocolSettings =
@@ -388,152 +393,35 @@ export const TreasuryDatumSchema = Data.Enum([
 export type TreasuryDatum = Data.Static<typeof TreasuryDatumSchema>;
 export const TreasuryDatum = TreasuryDatumSchema as unknown as TreasuryDatum;
 
+// Treasury dispatcher redeemer (treasury split — spec 2026-07-04). The treasury
+// script dispatches by redeemer family to the withdraw-zero stake validators;
+// all action indices live on the family withdraw redeemers (Lifecycle/Recovery/
+// ReserveAction below), located on-chain BY PURPOSE — so every variant here is
+// field-less except DistributeRound (withdrawal_index into tx.withdrawals,
+// unchanged shape). Variant ORDER mirrors the Aiken type exactly.
 export const TreasuryRedeemerSchema = Data.Enum([
+  Data.Literal("JoinGroup"),
+  Data.Literal("ClaimPenalty"),
   Data.Object({
-    JoinGroup: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      member_input_index: Data.Integer(),
-      treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    ClaimPenalty: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      admin_input_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    // Withdraw-zero coupling: the heavy round validation runs once in the treasury
-    // `withdraw` handler (DistributeWithdraw). Each spend only asserts that withdrawal is
-    // present, found by its index in the tx redeemer list.
     DistributeRound: Data.Object({
       withdrawal_index: Data.Integer(),
     }),
   }),
-  Data.Object({
-    ExitGroup: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      member_input_index: Data.Integer(),
-      treasury_input_index: Data.Integer(),
-      penalty_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    Contribute: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      member_input_index: Data.Integer(),
-      treasury_input_index: Data.Integer(),
-      treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    UpdatePayout: Data.Object({
-      member_input_index: Data.Integer(),
-      treasury_input_index: Data.Integer(),
-      treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    ExtendGrace: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      admin_input_index: Data.Integer(),
-      treasury_input_index: Data.Integer(),
-      treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    // Pull mode: member withdraws their earmarked payout (claimable_balance).
-    ClaimPayout: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      member_input_index: Data.Integer(),
-      treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    // Admin terminates a defaulter (DefaultState) after grace expires: burns the
-    // membership token, decrements member_count (group spent with Exit), forfeits the
-    // collateral to the admin. Appended LAST to keep existing Constr indices stable.
-    TerminateDefault: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      admin_input_index: Data.Integer(),
-      treasury_input_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    ProposeRecovery: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      request_output_index: Data.Integer(),
-      approver_input_indices: Data.Array(Data.Integer()),
-    }),
-  }),
-  Data.Object({
-    ApproveRecovery: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      request_input_index: Data.Integer(),
-      request_output_index: Data.Integer(),
-      approver_input_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    CancelRecovery: Data.Object({
-      request_input_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    ExecuteRecovery: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      request_input_index: Data.Integer(),
-      member_treasury_input_index: Data.Integer(),
-      member_treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    // Mints the group's reserve token + creates the ReserveState UTxO. Valid only
-    // in the same tx as the group-creation mint (one-shot coupling). Mint-only.
-    CreateReserve: Data.Object({
-      group_output_index: Data.Integer(),
-      reserve_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    // Increase-only reserve spend: the join levy leg and voluntary top-ups.
-    ReserveTopUp: Data.Object({
-      reserve_input_index: Data.Integer(),
-      reserve_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    // Reserve leg of a terminateDefault: forfeit flows in, standin_rounds grows
-    // by the defaulter's remaining rounds this lap.
-    ReserveCover: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      defaulter_input_index: Data.Integer(),
-      reserve_input_index: Data.Integer(),
-      reserve_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    // Wind-down refund riding a member exit: at most floor(balance / pre-exit
-    // member_count) leaves the pot.
-    ReserveRefund: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      exiting_treasury_input_index: Data.Integer(),
-      reserve_input_index: Data.Integer(),
-      reserve_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    // Closes the reserve in the deleteGroup tx (group ref + reserve tokens burn together).
-    ReserveClose: Data.Object({
-      group_input_index: Data.Integer(),
-    }),
-  }),
+  Data.Literal("ExitGroup"),
+  Data.Literal("Contribute"),
+  Data.Literal("UpdatePayout"),
+  Data.Literal("ExtendGrace"),
+  Data.Literal("ClaimPayout"),
+  Data.Literal("TerminateDefault"),
+  Data.Literal("ProposeRecovery"),
+  Data.Literal("ApproveRecovery"),
+  Data.Literal("CancelRecovery"),
+  Data.Literal("ExecuteRecovery"),
+  Data.Literal("CreateReserve"),
+  Data.Literal("ReserveTopUp"),
+  Data.Literal("ReserveCover"),
+  Data.Literal("ReserveRefund"),
+  Data.Literal("ReserveClose"),
 ]);
 
 export type TreasuryRedeemer = Data.Static<typeof TreasuryRedeemerSchema>;
@@ -563,3 +451,156 @@ export type TreasuryWithdrawRedeemer = Data.Static<
 >;
 export const TreasuryWithdrawRedeemer =
   TreasuryWithdrawRedeemerSchema as unknown as TreasuryWithdrawRedeemer;
+
+// ─── Treasury family stake-validator actions (treasury split, spec 2026-07-04) ──
+// Withdraw redeemers of the four family stake validators. CONVENTION (enforced
+// on-chain): the FIRST field of every variant is `covered_inputs` — the treasury
+// spending inputs that action validates (the dispatcher's pin rule); the
+// mint-triggering variant of each type is the FIRST constructor (constr tag 0).
+// Field order MUST mirror the Aiken types in dcu/treasury_actions exactly.
+// (The rounds family keeps TreasuryWithdrawRedeemer above, unchanged.)
+
+export const LifecycleActionSchema = Data.Enum([
+  Data.Object({
+    JoinAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ExitAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      penalty_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ContributeAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    UpdatePayoutAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      member_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ExtendGraceAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      admin_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ClaimPayoutAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ClaimPenaltyAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      admin_input_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    TerminateDefaultAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      admin_input_index: Data.Integer(),
+    }),
+  }),
+]);
+export type LifecycleAction = Data.Static<typeof LifecycleActionSchema>;
+export const LifecycleAction =
+  LifecycleActionSchema as unknown as LifecycleAction;
+
+export const RecoveryActionSchema = Data.Enum([
+  Data.Object({
+    ProposeAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      request_output_index: Data.Integer(),
+      approver_input_indices: Data.Array(Data.Integer()),
+    }),
+  }),
+  Data.Object({
+    ApproveAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      request_output_index: Data.Integer(),
+      approver_input_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    CancelAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+    }),
+  }),
+  Data.Object({
+    ExecuteAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      member_treasury_output_index: Data.Integer(),
+    }),
+  }),
+]);
+export type RecoveryAction = Data.Static<typeof RecoveryActionSchema>;
+export const RecoveryAction = RecoveryActionSchema as unknown as RecoveryAction;
+
+export const ReserveActionSchema = Data.Enum([
+  Data.Object({
+    CreateAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_output_index: Data.Integer(),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    TopUpAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    CoverAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      defaulter_input_index: Data.Integer(),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    RefundAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      exiting_treasury_input_index: Data.Integer(),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    CloseAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_input_index: Data.Integer(),
+    }),
+  }),
+]);
+export type ReserveAction = Data.Static<typeof ReserveActionSchema>;
+export const ReserveAction = ReserveActionSchema as unknown as ReserveAction;

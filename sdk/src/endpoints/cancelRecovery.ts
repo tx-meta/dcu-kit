@@ -5,14 +5,15 @@ import {
   RedeemerBuilder,
   Assets,
   toUnit,
-  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  RecoveryAction,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -50,9 +51,7 @@ import {
 export type CancelRecoveryConfig = {
   targetTokenSuffix: string; // N — the lost member's account token suffix
   newAccountTokenSuffix: string; // N' — the pending request's authenticating token
-  scriptRefs?: {
-    treasury?: UTxO;
-  };
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedCancelRecoveryTxProgram = (
@@ -96,39 +95,40 @@ export const unsignedCancelRecoveryTxProgram = (
 
     const address = yield* getWalletAddress(lucid);
 
-    const redeemer: RedeemerBuilder = {
+    // Treasury split: field-less literals for both the spend and the burn; the
+    // RECOVERY CancelAction covers the RecoveryRequest UTxO being spent.
+    const cancelSpendRedeemer = Data.to("CancelRecovery", TreasuryRedeemer);
+    const cancelAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
-          {
-            CancelRecovery: {
-              request_input_index: inputIndices[0],
-            },
-          },
-          TreasuryRedeemer,
+          { CancelAction: { covered_inputs: [inputIndices[0]] } },
+          RecoveryAction,
         ),
       inputs: [requestUtxo],
     };
 
-    // Mint burn redeemer — validate_cancel_recovery_mint ignores the redeemer fields.
-    const mintBurnRedeemer = Data.to(
-      { CancelRecovery: { request_input_index: 0n } },
-      TreasuryRedeemer,
-    );
-
     const baseTx0 = lucid
       .newTx()
-      .collectFrom([requestUtxo], redeemer)
+      .collectFrom([requestUtxo], cancelSpendRedeemer)
       .collectFrom([targetAccountUtxo])
-      .mintAssets(burnAssets, mintBurnRedeemer)
+      .mintAssets(burnAssets, cancelSpendRedeemer)
       // Return the target token holder's account token + its original lovelace.
       .pay.ToAddress(targetAccountUtxo.address, targetAccountUtxo.assets)
       .addSigner(address);
 
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
-    const withValidators = scriptRefs.treasury
-      ? baseTx0.readFrom([scriptRefs.treasury])
-      : baseTx0.attach.SpendingValidator(treasuryValidator.spendTreasury);
+    const network = lucid.config().network!;
+    const withValidators = attachFamilyWithdrawal(
+      scriptRefs.treasury
+        ? baseTx0.readFrom([scriptRefs.treasury])
+        : baseTx0.attach.SpendingValidator(treasuryValidator.spendTreasury),
+      protocol,
+      network,
+      "recovery",
+      cancelAction,
+      scriptRefs,
+    );
 
     const tx = yield* withValidators
       .completeProgram(
