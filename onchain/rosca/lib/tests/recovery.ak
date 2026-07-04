@@ -2357,3 +2357,37 @@ test recovery_runner__rejects_execute_single_coverage() fail {
     valid_tx(),
   )
 }
+
+test recovery_runner__rejects_approve_empty_coverage() fail {
+  run_recovery_action(
+    treasury_actions.ApproveAction {
+      covered_inputs: [],
+      group_ref_input_index: 0,
+      request_output_index: 0,
+      approver_input_index: 0,
+    },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}
+
+test recovery_runner__rejects_cancel_empty_coverage() fail {
+  run_recovery_action(
+    treasury_actions.CancelAction { covered_inputs: [] },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}
+
+test recovery_runner__rejects_execute_empty_coverage() fail {
+  run_recovery_action(
+    treasury_actions.ExecuteAction {
+      covered_inputs: [],
+      group_ref_input_index: 0,
+      group_output_index: 0,
+      member_treasury_output_index: 0,
+    },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}

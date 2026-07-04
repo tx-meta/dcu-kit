@@ -1184,3 +1184,42 @@ test reserve_runner__rejects_create_claiming_coverage() fail {
     tx,
   )
 }
+
+test reserve_runner__rejects_cover_empty_coverage() fail {
+  run_reserve_action(
+    treasury_actions.CoverAction {
+      covered_inputs: [],
+      group_ref_input_index: 0,
+      group_output_index: 0,
+      defaulter_input_index: 0,
+      reserve_output_index: 0,
+    },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}
+
+test reserve_runner__rejects_refund_empty_coverage() fail {
+  run_reserve_action(
+    treasury_actions.RefundAction {
+      covered_inputs: [],
+      group_ref_input_index: 0,
+      group_output_index: 0,
+      exiting_treasury_input_index: 0,
+      reserve_output_index: 0,
+    },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}
+
+test reserve_runner__rejects_close_double_coverage() fail {
+  run_reserve_action(
+    treasury_actions.CloseAction {
+      covered_inputs: [0, 1],
+      group_input_index: 0,
+    },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}

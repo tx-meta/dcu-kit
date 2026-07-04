@@ -5333,3 +5333,82 @@ test lifecycle_runner__rejects_exit_covering_foreign_input() fail {
     mature_exit_tx_with_treasury_input(),
   )
 }
+
+// Per-variant covered-arity bindings: every runner branch destructures
+// covered_inputs BEFORE any input resolution, so a placeholder tx suffices —
+// the wrong arity must crash the expect.
+
+test lifecycle_runner__rejects_contribute_empty_coverage() fail {
+  run_lifecycle_action(
+    treasury_actions.ContributeAction {
+      covered_inputs: [],
+      group_ref_input_index: 0,
+      member_input_index: 0,
+      treasury_output_index: 0,
+    },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}
+
+test lifecycle_runner__rejects_update_payout_double_coverage() fail {
+  run_lifecycle_action(
+    treasury_actions.UpdatePayoutAction {
+      covered_inputs: [0, 1],
+      member_input_index: 0,
+      treasury_output_index: 0,
+    },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}
+
+test lifecycle_runner__rejects_extend_grace_empty_coverage() fail {
+  run_lifecycle_action(
+    treasury_actions.ExtendGraceAction {
+      covered_inputs: [],
+      group_ref_input_index: 0,
+      admin_input_index: 0,
+      treasury_output_index: 0,
+    },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}
+
+test lifecycle_runner__rejects_claim_payout_empty_coverage() fail {
+  run_lifecycle_action(
+    treasury_actions.ClaimPayoutAction {
+      covered_inputs: [],
+      group_ref_input_index: 0,
+      member_input_index: 0,
+      treasury_output_index: 0,
+    },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}
+
+test lifecycle_runner__rejects_claim_penalty_empty_coverage() fail {
+  run_lifecycle_action(
+    treasury_actions.ClaimPenaltyAction {
+      covered_inputs: [],
+      admin_input_index: 0,
+    },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}
+
+test lifecycle_runner__rejects_terminate_default_empty_coverage() fail {
+  run_lifecycle_action(
+    treasury_actions.TerminateDefaultAction {
+      covered_inputs: [],
+      group_ref_input_index: 0,
+      group_output_index: 0,
+      admin_input_index: 0,
+    },
+    runner_settings(),
+    transaction.placeholder,
+  )
+}
