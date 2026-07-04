@@ -22,6 +22,7 @@
  */
 
 import { Effect } from "effect";
+import { walletFromSeed } from "@lucid-evolution/lucid";
 import {
   AbortEscrowConfig,
   abortEscrow,
@@ -85,11 +86,15 @@ async function main() {
   const tx = await abortEscrow(lucid, config).unsafeRun();
 
   console.log("Collecting both signatures...");
-  const funderWitness = await tx.partialSign.withWallet();
-  lucid.selectWallet.fromSeed(cosignerSeed);
-  const beneficiaryWitness = await tx.partialSign.withWallet();
-  const signed = await tx
-    .assemble([funderWitness, beneficiaryWitness])
+  // The sign builder captures the wallet at build time, so re-selecting the
+  // lucid wallet cannot add the cosigner's witness — sign with their raw
+  // payment key instead (same pattern as the SDK's co-sign tests).
+  const { paymentKey: cosignerKey } = walletFromSeed(cosignerSeed, {
+    network: process.env.NETWORK === "Mainnet" ? "Mainnet" : "Preprod",
+  });
+  const signed = await tx.sign
+    .withWallet()
+    .sign.withPrivateKey(cosignerKey)
     .complete();
 
   const txHash = await signed.submit();
