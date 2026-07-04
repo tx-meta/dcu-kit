@@ -43,7 +43,7 @@ Rule of thumb:
 
 ---
 
-## Current validator hashes (pending Preprod redeploy)
+## Current validator hashes (deployed to Preprod 2026-07-04)
 
 Base (settings-unapplied) hashes. The treasury split (2026-07-04) replaced the
 treasury monolith with a thin dispatcher + four withdraw-zero family stake
@@ -62,10 +62,11 @@ validators; group, account, settings, and escrow are byte-unchanged.
 | Escrow              | `3f04186ff52db2ab1844f9e7eeeab4f793089129b56cd5fae9a41b71`    |
 | AlwaysFails         | `22c9a103ed3f2fa97c982d76d6e2af50c5d54ac306983b196c8fcdab`    |
 
-These hashes are NOT yet deployed to Preprod. Earlier deployments (and their
-reference-script UTxOs) belong to superseded validators — start from
-`pnpm run reset-state`, then `initialize-settings` + `deploy-scripts` on the
-current SDK before anything else.
+These hashes ARE live on Preprod: settings policy `f90df179…`, six reference
+scripts at the alwaysFails address, and all four family stake credentials
+registered. `state.json` carries the deployment (settingsPolicy, settingsSeed,
+six scriptRef outrefs) — do not reset it and do not redeploy unless the
+validator hashes change.
 
 > **Stale state?** If `state.json` has a different `accountPolicyId` or `groupPolicyId`, the
 > validators changed since your last session. Run `pnpm run reset-state` before starting.
@@ -186,7 +187,7 @@ pnpm run delete-group
 | `show-wallets`     | Print ADMIN/USER1/USER2 addresses, balances, and DCU tokens                       |
 | `generate-wallets` | Generate fresh seed phrases (first-time setup only)                               |
 | `send-ada`         | Send ADA between wallets: `FROM_WALLET=ADMIN TO_WALLET=USER1 AMOUNT=5000000`      |
-| `deploy-scripts`   | Deploy treasury + group reference scripts (~56 ADA, permanent). Run once.         |
+| `deploy-scripts`   | Deploy the six reference scripts (~233 ADA min-ADA, permanently locked). Run once. |
 | `reset-state`      | Wipe `state.json` to start a fresh test session                                   |
 | `purge-nfts`       | Burn all account/group NFTs held by a wallet (emergency cleanup)                  |
 | `cron-daemon`      | Long-running process that auto-submits `distribute-payout` when each round opens. |
@@ -357,20 +358,21 @@ Wait ~1 minute for confirmation.
 pnpm run deploy-scripts
 ```
 
-Deploys each validator in its own transaction (both scripts together exceed Cardano's
-16,384-byte limit, so they are split: treasury first, group second after confirmation).
-
-- **Tx 1/2** — treasury validator → alwaysFails address, 30 ADA locked, waits ~1 min
-- **Tx 2/2** — group validator → alwaysFails address, 26 ADA locked
+Deploys each of the SIX validators in its own transaction (treasury dispatcher,
+group, and the four family stake validators — any two together would exceed
+Cardano's 16,384-byte limit), then registers the four family stake credentials.
 
 **alwaysFails address** (Preprod):
 `addr_test1wq3vnggra5ljl2tunqkhd4hz4agvt422cvrfswcedj8um2cwsu3l3`
 
-Cost: **~56 ADA total** — permanently locked. ADA cannot be reclaimed, but scripts are
-accessible forever. Re-deploy only when the SDK upgrades to new validator hashes.
+Cost: **~233 ADA total** min-ADA — permanently locked (min-ADA scales with script
+size). The 4 × 2 ADA stake-key deposits are reclaimable. ADA cannot be reclaimed,
+but scripts are accessible forever. Re-deploy only when the SDK upgrades to new
+validator hashes.
 
 Re-running is safe — `verifyDeployment` checks the stored OutRefs on-chain and skips
-re-deployment if both UTxOs are still valid.
+re-deployment for every UTxO that is still valid, and the stake registration treats
+"already registered" as success.
 
 ---
 
