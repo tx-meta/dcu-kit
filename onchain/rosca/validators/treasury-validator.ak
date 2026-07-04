@@ -20,16 +20,20 @@ use dcu/treasury_validation.{
 // treasury UTxO sits at its script address. It validates NOTHING heavy itself —
 // all validation lives in the four family stake validators (rounds / lifecycle /
 // recovery / reserve, hashes published in ProtocolSettings) and runs ONCE per tx
-// in their withdraw handlers (withdraw-zero).
+// in their withdraw handlers (withdraw-zero). The family withdrawal's action is
+// located by PURPOSE in tx.redeemers (one withdrawal per credential per tx).
 //
-// spend — requires the family withdrawal to be present AND its action to COVER
-//         this UTxO (pin rule, dcu/dispatch). DistributeRound needs presence
-//         only: the rounds indexer enforces completeness over every spent
-//         treasury UTxO globally.
-// mint  — JoinGroup / ProposeRecovery / CreateReserve require the family
-//         withdrawal's action to be the mint-triggering variant (constr tag 0);
-//         burn paths keep their inline exact-burn checks (the corresponding
-//         spend input already forces the full family validation).
+// spend — requires the family action to COVER this UTxO (pin rule, dcu/dispatch).
+//         DistributeRound needs presence only: the rounds indexer enforces
+//         completeness over every spent treasury UTxO globally.
+// mint  — JoinGroup / ProposeRecovery / CreateReserve require the family action
+//         to be the mint-triggering variant (constr tag 0); burn paths keep
+//         their inline exact-burn checks (the corresponding spend input already
+//         forces the full family validation).
+//
+// Within a family, the spend variant name does not gate anything extra — the
+// family ACTION defines and validates the semantics either way. The variants are
+// kept for wire-level readability and history/indexer classification.
 validator treasury(settings_policy: PolicyId) {
   mint(redeemer: TreasuryRedeemer, policy_id: PolicyId, tx: Transaction) {
     let settings = read_settings(tx.reference_inputs, settings_policy)
@@ -39,13 +43,8 @@ validator treasury(settings_policy: PolicyId) {
       // it validates the minted token, the group transition, and the created
       // treasury UTxO. Without the tag check, any lifecycle action would
       // license this mint.
-      JoinGroup { withdraw_redeemer_index } ->
-        action_tag_is(
-          settings.treasury_lifecycle_stake,
-          tx.redeemers,
-          withdraw_redeemer_index,
-          0,
-        )
+      JoinGroup ->
+        action_tag_is(settings.treasury_lifecycle_stake, tx.redeemers, 0)
 
       // ClaimPenalty covers the PenaltyWithdraw burn path.
       // ExitGroup covers the mature (inactive/past-rotation) burn path.
@@ -55,36 +54,26 @@ validator treasury(settings_policy: PolicyId) {
       // All require exactly 1 token burned under this policy; the spend handler
       // of the covered treasury input forces the full family validation, which
       // pins the burned name.
-      ClaimPenalty { .. } -> validate_claim_penalty_mint(policy_id, tx.mint)
-      ExitGroup { .. } -> validate_claim_penalty_mint(policy_id, tx.mint)
-      TerminateDefault { .. } -> validate_claim_penalty_mint(policy_id, tx.mint)
-      ExecuteRecovery { .. } -> validate_claim_penalty_mint(policy_id, tx.mint)
-      ReserveClose { .. } -> validate_claim_penalty_mint(policy_id, tx.mint)
+      ClaimPenalty -> validate_claim_penalty_mint(policy_id, tx.mint)
+      ExitGroup -> validate_claim_penalty_mint(policy_id, tx.mint)
+      TerminateDefault -> validate_claim_penalty_mint(policy_id, tx.mint)
+      ExecuteRecovery -> validate_claim_penalty_mint(policy_id, tx.mint)
+      ReserveClose -> validate_claim_penalty_mint(policy_id, tx.mint)
 
       // CancelRecovery burns exactly N' (the authenticating token for the
       // request); the spend handler forces the full recovery validation.
-      CancelRecovery { .. } -> validate_cancel_recovery_mint(policy_id, tx.mint)
+      CancelRecovery -> validate_cancel_recovery_mint(policy_id, tx.mint)
 
       // [security]: the recovery withdrawal must run a ProposeAction (tag 0) —
       // it validates the minted N' and the created RecoveryRequest UTxO.
-      ProposeRecovery { withdraw_redeemer_index } ->
-        action_tag_is(
-          settings.treasury_recovery_stake,
-          tx.redeemers,
-          withdraw_redeemer_index,
-          0,
-        )
+      ProposeRecovery ->
+        action_tag_is(settings.treasury_recovery_stake, tx.redeemers, 0)
 
       // [security]: the reserve withdrawal must run a CreateAction (tag 0) —
       // it validates the minted reserve token and its one-shot coupling to the
       // group-creation mint.
-      CreateReserve { withdraw_redeemer_index } ->
-        action_tag_is(
-          settings.treasury_reserve_stake,
-          tx.redeemers,
-          withdraw_redeemer_index,
-          0,
-        )
+      CreateReserve ->
+        action_tag_is(settings.treasury_reserve_stake, tx.redeemers, 0)
 
       // All other redeemers are spend-only — reject at mint.
       _ -> fail
@@ -119,117 +108,103 @@ validator treasury(settings_policy: PolicyId) {
 
       // [security]: pin rule — the family action must explicitly cover THIS
       // UTxO (see dcu/dispatch for the attack a presence-only check allows).
-      ExitGroup { withdraw_redeemer_index } ->
+      ExitGroup ->
         action_covers_own_input(
           settings.treasury_lifecycle_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
-      Contribute { withdraw_redeemer_index } ->
+      Contribute ->
         action_covers_own_input(
           settings.treasury_lifecycle_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
-      UpdatePayout { withdraw_redeemer_index } ->
+      UpdatePayout ->
         action_covers_own_input(
           settings.treasury_lifecycle_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
-      ExtendGrace { withdraw_redeemer_index } ->
+      ExtendGrace ->
         action_covers_own_input(
           settings.treasury_lifecycle_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
-      ClaimPayout { withdraw_redeemer_index } ->
+      ClaimPayout ->
         action_covers_own_input(
           settings.treasury_lifecycle_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
-      ClaimPenalty { withdraw_redeemer_index } ->
+      ClaimPenalty ->
         action_covers_own_input(
           settings.treasury_lifecycle_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
-      TerminateDefault { withdraw_redeemer_index } ->
+      TerminateDefault ->
         action_covers_own_input(
           settings.treasury_lifecycle_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
 
-      ApproveRecovery { withdraw_redeemer_index } ->
+      ApproveRecovery ->
         action_covers_own_input(
           settings.treasury_recovery_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
-      CancelRecovery { withdraw_redeemer_index } ->
+      CancelRecovery ->
         action_covers_own_input(
           settings.treasury_recovery_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
-      ExecuteRecovery { withdraw_redeemer_index } ->
+      ExecuteRecovery ->
         action_covers_own_input(
           settings.treasury_recovery_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
 
-      ReserveTopUp { withdraw_redeemer_index } ->
+      ReserveTopUp ->
         action_covers_own_input(
           settings.treasury_reserve_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
-      ReserveCover { withdraw_redeemer_index } ->
+      ReserveCover ->
         action_covers_own_input(
           settings.treasury_reserve_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
-      ReserveRefund { withdraw_redeemer_index } ->
+      ReserveRefund ->
         action_covers_own_input(
           settings.treasury_reserve_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )
-      ReserveClose { withdraw_redeemer_index } ->
+      ReserveClose ->
         action_covers_own_input(
           settings.treasury_reserve_stake,
           self.redeemers,
-          withdraw_redeemer_index,
           self.inputs,
           utxo,
         )

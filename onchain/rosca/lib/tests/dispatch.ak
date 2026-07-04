@@ -106,7 +106,6 @@ test action_covers__accepts_covered_input() {
   action_covers_own_input(
     family_hash(),
     redeemers,
-    0,
     test_inputs(2),
     input_ref(0),
   )
@@ -120,7 +119,6 @@ test action_covers__rejects_input_covered_elsewhere() {
   !action_covers_own_input(
     family_hash(),
     redeemers,
-    0,
     test_inputs(2),
     input_ref(0),
   )
@@ -132,7 +130,6 @@ test action_covers__rejects_empty_coverage() {
   !action_covers_own_input(
     family_hash(),
     redeemers,
-    0,
     test_inputs(2),
     input_ref(0),
   )
@@ -148,7 +145,6 @@ test action_covers__rejects_wrong_family() fail {
   action_covers_own_input(
     family_hash(),
     redeemers,
-    0,
     test_inputs(2),
     input_ref(0),
   )
@@ -160,7 +156,6 @@ test action_covers__rejects_non_withdraw_purpose() fail {
   action_covers_own_input(
     family_hash(),
     redeemers,
-    0,
     test_inputs(2),
     input_ref(0),
   )
@@ -168,7 +163,7 @@ test action_covers__rejects_non_withdraw_purpose() fail {
 
 // Reject (hard): no redeemer at the claimed index.
 test action_covers__rejects_missing_redeemer() fail {
-  action_covers_own_input(family_hash(), [], 0, test_inputs(2), input_ref(0))
+  action_covers_own_input(family_hash(), [], test_inputs(2), input_ref(0))
 }
 
 // Property: coverage holds exactly when the spent UTxO's input index is in the
@@ -184,7 +179,6 @@ test prop_action_covers__iff_membership(
   let covers = action_covers_own_input(
     family_hash(),
     redeemers,
-    0,
     test_inputs(4),
     input_ref(target),
   )
@@ -202,7 +196,7 @@ test action_tag_is__accepts_expected_tag() {
     member_input_index: 1,
     treasury_output_index: 0,
   }
-  action_tag_is(family_hash(), family_redeemers(join), 0, 0)
+  action_tag_is(family_hash(), family_redeemers(join), 0)
 }
 
 // Reject: a different action of the SAME family must not license the mint —
@@ -215,7 +209,7 @@ test action_tag_is__rejects_wrong_variant() {
     member_input_index: 1,
     penalty_output_index: 0,
   }
-  !action_tag_is(family_hash(), family_redeemers(exit), 0, 0)
+  !action_tag_is(family_hash(), family_redeemers(exit), 0)
 }
 
 // Reject (hard): a foreign family's withdrawal cannot license the mint.
@@ -228,5 +222,5 @@ test action_tag_is__rejects_wrong_family() fail {
     treasury_output_index: 0,
   }
   let redeemers = [Pair(Withdraw(Script(common.test_hash_06())), join)]
-  action_tag_is(family_hash(), redeemers, 0, 0)
+  action_tag_is(family_hash(), redeemers, 0)
 }
