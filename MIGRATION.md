@@ -8,6 +8,49 @@ cryptic script errors. Validator hashes for each release are tabled at the botto
 
 ---
 
+## Unreleased (Coop-SDK — Treasury split)
+
+The treasury validator is now a dispatcher (`9c54823e…`) plus four withdraw-zero family
+stake validators: rounds `f7a2262b…` / lifecycle `b4090fbd…` / recovery `f16fc034…` /
+reserve `2dff16b2…`. Group / account / settings / escrow hashes and `TreasuryDatum` are
+unchanged. Re-run `deploy-scripts`: it deploys **six** reference scripts and registers the
+four family stake credentials (all four registrations are required before any treasury
+endpoint works — the ledger rejects withdrawals from unregistered credentials).
+
+### `TreasuryRedeemer` ABI break (wire format)
+
+Every variant is field-less except `DistributeRound { withdrawal_index }`. Constructor
+order is unchanged. Anything decoding treasury redeemers (indexers, explorers) must drop
+the old field layouts; the operation's indices now live on the family action redeemer of
+the tx's 0-ADA family withdrawal.
+
+```ts
+// before
+Data.to({ ExitGroup: { member_input_index: 0n, ... } }, TreasuryRedeemer)
+// after — spend redeemer is a bare literal…
+Data.to("ExitGroup", TreasuryRedeemer)
+// …and the indices ride on the family withdrawal (built by attachFamilyWithdrawal)
+```
+
+### `ProtocolSettings` gains four appended fields
+
+`treasury_rounds_stake`, `treasury_lifecycle_stake`, `treasury_recovery_stake`,
+`treasury_reserve_stake` (28-byte script hashes). Existing field order unchanged.
+`initializeSettings` writes them; `verifySettings` checks them.
+
+### One family action per family per tx
+
+The dispatcher finds the family withdrawal by purpose (stake credential), so a tx carries
+at most one action per family. Composite operations pair different families (join =
+lifecycle + reserve levy; terminate-default = lifecycle + reserve cover; wind-down exit =
+lifecycle + reserve refund).
+
+### Deploy deposits
+
+Six reference scripts lock **~233 ADA** min-ADA permanently at the alwaysFails address
+(the old two-script deploy locked ~56 ADA). The 4 × 2 ADA stake-key deposits are
+reclaimable. Budget this per deployment: any future hash change means a fresh ~233 ADA.
+
 ## Unreleased (Coop-SDK Phase 6 — Mutual reserve, Cluster C)
 
 New validator hashes (group `32da6e88…`, treasury `d829dda8…`) superseding the Phase-5
@@ -361,6 +404,11 @@ redeploy of that validator's reference script.
 | account | `394027d4084e26f5` | `e32328b8dd296c53` | `d80e2e5a82cb60b3` | `d80e2e5a82cb60b3` |
 | settings | — | `0dd2c77a083ca729` | `07a7cd9d64681a33` | `07a7cd9d64681a33` |
 | always_fails | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` |
+
+Unreleased (treasury split): treasury becomes `9c54823e010820a8` (dispatcher) plus
+`f7a2262bcdf6240a` (rounds), `b4090fbde4f5c070` (lifecycle), `f16fc034e7c2c730`
+(recovery), `2dff16b23a98aa2b` (reserve); group `32da6e881778a415`, account, settings,
+and escrow `3f04186f…` unchanged from the Phase-6 row.
 
 From v0.2.6 the group/treasury policy IDs are additionally parameterized by the
 deployment's settings NFT (`createDcuSdk(settingsPolicy)`); see the v0.2.6 notes below.

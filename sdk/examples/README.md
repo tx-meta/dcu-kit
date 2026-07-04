@@ -128,17 +128,32 @@ pnpm run start-group
 # → validator now rejects any further join-group calls
 
 # ── 6. Distribute payouts (permissionless — any wallet can submit) ────────────
+#
+# COLLATERAL NOTE — the default create-group config uses PerRound collateral
+# (collateral_rounds: 1n): each member locks only ONE round's contribution_fee.
+# Paying round 0 zeroes every balance, which correctly moves all members to
+# DefaultState — round 1 will then report "No treasury UTxOs ready" and the
+# only path forward is terminate-default after the grace window. This is the
+# insufficient-collateral system working as designed, not a bug.
+#
+# To run all three rounds through, do ONE of:
+#   a) FullUpfront — set `collateral_rounds: 3n` (= num rounds) in create-group.ts
+#      before step 3, so the whole obligation is locked at join; or
+#   b) PerRound + top-ups — run `contribute` for EVERY member between rounds:
+#      pnpm run contribute && ACTIVE_WALLET=USER1 pnpm run contribute && \
+#      ACTIVE_WALLET=USER2 pnpm run contribute
+#
 # Wait 5 minutes after start-group, then:
 pnpm run distribute-payout
 # → round 0: ADMIN (slot 0) receives 3 × 5 ADA = 15 ADA
 #    all treasury UTxOs: rounds_paid 0 → 1
 
-# Wait another 5 minutes:
+# (PerRound only) top up all three members, then wait another 5 minutes:
 pnpm run distribute-payout
 # → round 1: USER1 (slot 1) receives 15 ADA
 #    all treasury UTxOs: rounds_paid 1 → 2
 
-# Wait another 5 minutes:
+# (PerRound only) top up again, wait another 5 minutes:
 pnpm run distribute-payout
 # → round 2: USER2 (slot 2) receives 15 ADA
 #    all treasury UTxOs: rounds_paid 2 → 3 (group now mature)

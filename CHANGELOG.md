@@ -6,6 +6,55 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+### Coop-SDK — Treasury split (deploy unblock, R4)
+
+**Immutable-contract change → new treasury hashes.** The 25,262-byte treasury validator
+exceeded the ~16,128-byte deployable-reference-script ceiling and could never go on-chain
+as compiled. It is now a thin dispatcher plus four withdraw-zero family stake validators,
+partitioned by redeemer family:
+
+| Validator | Hash | Size |
+|---|---|---|
+| treasury dispatcher | `9c54823e010820a8…` | 2,592 B |
+| treasury_rounds (distribute) | `f7a2262bcdf6240a…` | 5,771 B |
+| treasury_lifecycle (join/exit/contribute/payout/grace/claims/terminate) | `b4090fbde4f5c070…` | 11,200 B |
+| treasury_recovery (propose/approve/cancel/execute) | `f16fc034e7c2c730…` | 7,310 B |
+| treasury_reserve (create/top-up/cover/refund/close) | `2dff16b23a98aa2b…` | 7,267 B |
+
+Group `32da6e88…`, account `d80e2e5a…`, settings `07a7cd9d…`, and escrow `3f04186f…` are
+byte-unchanged. `TreasuryDatum` is unchanged — no indexer datum migration.
+
+#### Added
+- Four treasury family stake validators; every treasury operation now carries one 0-ADA
+  reward withdrawal from its family, whose action redeemer holds the tx indices plus
+  `covered_inputs` — the list of treasury spend positions the action authorizes (the pin
+  rule). The dispatcher requires every spent treasury UTxO to be covered.
+- `ProtocolSettings` gains four appended `ScriptHash` fields:
+  `treasury_rounds_stake` / `treasury_lifecycle_stake` / `treasury_recovery_stake` /
+  `treasury_reserve_stake`.
+- SDK: `attachFamilyWithdrawal` / `familyRewardAddress` (`core/familyWithdraw`),
+  `registerTreasuryStake` (registers the four family stake credentials; idempotent),
+  `ScriptRefs` extended to all six protocol scripts, `MAX_REF_SCRIPT_BYTES` deploy guard,
+  `MAX_TX_BYTES` submit guard in `signAndSubmit`, and a blueprint-wide script-size test.
+
+#### Changed
+- **`TreasuryRedeemer` ABI break**: every variant is now field-less except
+  `DistributeRound { withdrawal_index }` — constructor order unchanged. All indices moved
+  to the family action redeemers.
+- One family action per family per tx: the family validator is located by withdrawal
+  purpose, so a tx may carry at most one withdrawal per family credential (composite
+  operations combine different families, e.g. join = lifecycle + reserve).
+- `deployScripts` deploys six reference scripts (one tx each) and then registers the four
+  stake credentials. Deposits: **~233 ADA** min-ADA locked permanently at the alwaysFails
+  address (scales with script size), plus 4 × 2 ADA stake deposits (reclaimable).
+- Reference scripts are required on live networks for every treasury endpoint;
+  `attachFamilyWithdrawal` rejects a missing family ref outside the emulator.
+
+#### Deployed
+- **Preprod (2026-07-04)**: settings policy `f90df179…`, six reference scripts, four stake
+  registrations. Full live lifecycle validated — create / join ×3 / distribute
+  (8,022 B, 49% of budget) / terminate ×3 / delete — all under the tx-size limit.
+
 ### Coop-SDK Phase 6 — Mutual reserve (Cluster C)
 
 **Immutable-contract change → new hashes** (group `32da6e88…`, treasury `d829dda8…`; account and
