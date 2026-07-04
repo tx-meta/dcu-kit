@@ -43,6 +43,10 @@ export const familyRewardAddress = (
  * attaches the family stake validator inline unless its reference script is
  * supplied in `refs`. Returns the extended tx builder.
  *
+ * On live networks the reference script is required: inline family validators
+ * push composite transactions past the 16,384-byte limit (terminate reached
+ * 19,934 bytes inline). The inline fallback is emulator-only (`Custom`).
+ *
  * @param actionRedeemer - the family action; a {@link RedeemerBuilder} when its
  *   `covered_inputs`/index fields depend on resolved input positions.
  */
@@ -60,6 +64,12 @@ export const attachFamilyWithdrawal = (
     actionRedeemer,
   );
   const ref = refs[REF_KEY[family]] as UTxO | undefined;
+  if (!ref && network !== "Custom")
+    throw new Error(
+      `Missing reference script for the treasury ${family} family on ${network}. ` +
+        `Pass the full scriptRefs from deployScripts/loadScriptRefs — attaching the ` +
+        `family validator inline exceeds the transaction size limit.`,
+    );
   return ref
     ? withWithdraw.readFrom([ref])
     : withWithdraw.attach.WithdrawalValidator(
