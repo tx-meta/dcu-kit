@@ -60,7 +60,8 @@ export const unsignedCancelRecoveryTxProgram = (
   config: CancelRecoveryConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { accountPolicyId, treasuryValidator, treasuryPolicyId } = protocol;
+    const { accountPolicyId, treasuryValidator, treasuryPolicyId, settingsUnit } =
+      protocol;
     const { targetTokenSuffix, newAccountTokenSuffix } = config;
 
     const requestUnit =
@@ -73,6 +74,7 @@ export const unsignedCancelRecoveryTxProgram = (
       lucid,
       targetAccountUnit,
     );
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const requestUtxo = patchInlineDatum(requestUtxoRaw);
     const targetAccountUtxo = patchInlineDatum(targetAccountUtxoRaw);
 
@@ -113,6 +115,9 @@ export const unsignedCancelRecoveryTxProgram = (
       .collectFrom([requestUtxo], cancelSpendRedeemer)
       .collectFrom([targetAccountUtxo])
       .mintAssets(burnAssets, cancelSpendRedeemer)
+      // The dispatcher's spend and mint handlers read ProtocolSettings from the
+      // reference inputs to resolve the recovery family's stake hash.
+      .readFrom([settingsUtxo])
       // Return the target token holder's account token + its original lovelace.
       .pay.ToAddress(targetAccountUtxo.address, targetAccountUtxo.assets)
       .addSigner(address);
