@@ -68,11 +68,14 @@ jobs:
   # Job: Verify On-chain (Aiken)
   # ------------------------------------------------------------
   aiken-verify:
-    name: 🛡️ Verify Aiken
+    name: 🛡️ Verify Aiken (${{ matrix.project }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: [rosca, escrow]
     defaults:
       run:
-        working-directory: ./onchain
+        working-directory: ./onchain/${{ matrix.project }}
 
     steps:
       - name: 📥 Checkout Repository

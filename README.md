@@ -10,7 +10,7 @@ An open-source **developer toolkit** for building cooperative finance applicatio
 The toolkit is organized into three interoperable layers:
 
 ### 1. Smart Contract Infrastructure ([onchain/](onchain/))
-Modular **Aiken** validators for:
+Two sibling Aiken projects — [onchain/rosca/](onchain/rosca/) (group, treasury, account, settings) and [onchain/escrow/](onchain/escrow/) (milestone escrow) — each with its own `aiken.toml` and compiled blueprint. Modular **Aiken** validators for:
 - **Dynamic Group Formation**: Parameterizable group sizes, contribution schedules, and governance rules.
 - **Automated ROSCA Rotation**: Trustless fund distribution and linear vesting logic.
 - **CIP-68 Membership System**: Verifiable on-chain identity and reputation tracking.
@@ -57,7 +57,7 @@ NETWORK=Emulator pnpm test  # Run full test suite against Lucid emulator
 
 Aiken on-chain checks:
 ```sh
-# From onchain/
+# From onchain/rosca/ (repeat in onchain/escrow/)
 aiken fmt --check
 aiken build
 aiken check

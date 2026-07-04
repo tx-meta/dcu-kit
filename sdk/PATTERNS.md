@@ -38,7 +38,7 @@ sdk/src/
 
 **Module boundaries (enforced by review):** `core/`, `multisig/`, and `escrow/` NEVER import
 from `endpoints/`; `escrow/` imports only `core/` (it has its OWN blueprint — `src/escrow/
-plutus.json` from the standalone `escrow/` Aiken project, never the DCU one). Layering is
+plutus.json` from the standalone `onchain/escrow/` Aiken project, never the DCU one). Layering is
 `core` ← `multisig` / `escrow` ← `endpoints`. All three are published as subpath exports
 (`@tx-meta/dcu-kit/multisig`, `/core`, `/escrow`) so other apps consume them without the ROSCA
 endpoints; keeping the boundary clean is what makes the future package split

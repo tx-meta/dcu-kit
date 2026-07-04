@@ -67,7 +67,7 @@ try {
   blueprint = JSON.parse(readFileSync(PLUTUS_PATH, "utf-8"));
 } catch {
   console.error(`Could not read plutus.json at ${PLUTUS_PATH}`);
-  console.error("Run 'aiken build' from the onchain/ directory first.");
+  console.error("Run 'aiken build' from the onchain/rosca/ directory first.");
   process.exit(1);
 }
 

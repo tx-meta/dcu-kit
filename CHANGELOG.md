@@ -85,7 +85,7 @@ A new standalone product in the cooperative-finance family. Own Aiken project an
 (escrow validator `3f04186f…`) — DCU protocol hashes are untouched.
 
 #### Added
-- **Escrow validator family** (`escrow/`): funder locks ADA or a native token; a configurable
+- **Escrow validator family** (`onchain/escrow/`): funder locks ADA or a native token; a configurable
   verifier releases sequential milestone tranches to the beneficiary's pinned full address; the
   funder reclaims the remainder strictly after expiry; funder + beneficiary co-sign aborts. One
   one-shot state token per escrow; one escrow input per tx (double-satisfaction excluded);
