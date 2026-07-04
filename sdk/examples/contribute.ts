@@ -1,9 +1,11 @@
 /**
  * Contribute Example
  *
- * Tops up a member's treasury UTxO balance by adding ADA without changing
- * any other datum fields. Used when a member's balance is running low
- * (but they are still in TreasuryState — not yet in DefaultState).
+ * Tops up a member's treasury UTxO balance. Two on-chain paths:
+ *   TreasuryState — plain top-up; no other datum fields change.
+ *   DefaultState  — recovery: the output transitions back to TreasuryState
+ *                   (the balance must reach contribution_fee) and the group
+ *                   is spent alongside to re-admit the member (Recover).
  *
  * Wallet selection:
  *   Default (USER1): uses USER1_SEED
