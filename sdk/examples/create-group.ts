@@ -116,8 +116,9 @@ async function main() {
     payout_mode: process.env.PAYOUT_MODE === "Pull" ? "Pull" : "Push",
     // Minimum approvals required to authorize a lost-member recovery (absolute count).
     recovery_threshold: 1n,
-    // Veto window before a recovery proposal can execute (POSIX ms). 3 days default.
-    recovery_timelock: 259_200_000n,
+    // Veto window before a recovery proposal can execute (POSIX ms). 3 days default;
+    // RECOVERY_TIMELOCK_MS shortens it for live testing.
+    recovery_timelock: BigInt(process.env.RECOVERY_TIMELOCK_MS ?? "259200000"),
 
     member_count: 0n,
     // Cached count of members in good standing — maintained by the validators;
@@ -129,8 +130,9 @@ async function main() {
     // The round number the current era (rotation lap numbering) started at.
     era_start_round: 0n,
     // Minimum duration of a recommit window (POSIX ms) — the guaranteed free-exit
-    // period between eras. 3 days default.
-    recommit_window: 259_200_000n,
+    // period between eras. 3 days default; RECOMMIT_WINDOW_MS shortens it for
+    // live testing.
+    recommit_window: BigInt(process.env.RECOMMIT_WINDOW_MS ?? "259200000"),
     // Mutual reserve levies, in the CONTRIBUTION asset. 0n = off. Frozen once a
     // member joins. RESERVE_JOIN_LEVY fires once per join; RESERVE_ROUND_LEVY per
     // contributing member per round (comes out of the pot, not on top).
@@ -141,7 +143,10 @@ async function main() {
     // start_time MUST be 0 at creation — set to tx lower bound by StartGroup.
     start_time: 0n,
     last_distributed_round: -1n,
-    grace_period_length: 0n,
+    // Grace period after entering DefaultState before termination opens (POSIX ms).
+    // 0 = immediate enforcement; extend-grace-window adds one grace_period_length,
+    // so a nonzero value (GRACE_PERIOD_MS) is needed to observe the extension.
+    grace_period_length: BigInt(process.env.GRACE_PERIOD_MS ?? "0"),
     // Joining fees route to this credential forever (frozen at first join).
     // A VerificationKey credential pays a wallet; a Script credential (e.g. a
     // native multisig) needs `creatorScript` in the config as spendability proof.
