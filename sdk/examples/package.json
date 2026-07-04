@@ -51,7 +51,7 @@
     "@lucid-evolution/lucid": "0.4.31",
     "@tx-meta/dcu-kit": "file:../dcu-kit-0.4.0.tgz",
     "dotenv": "^16.6.1",
-    "effect": "3.21.2"
+    "effect": "3.21.4"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
