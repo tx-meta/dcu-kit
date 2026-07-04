@@ -16,7 +16,11 @@ pub type EscrowDatum {
 }
 
 pub type EscrowSpendRedeemer {
-  Release { escrow_input_index: Int, continuation_index: Int, payout_index: Int }
+  Release {
+    escrow_input_index: Int,
+    continuation_index: Int,
+    payout_index: Int,
+  }
   Reclaim { escrow_input_index: Int, refund_index: Int }
   Abort { escrow_input_index: Int }
 }

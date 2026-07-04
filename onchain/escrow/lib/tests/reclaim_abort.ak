@@ -58,28 +58,25 @@ test reclaim__after_expiry_mid_schedule_accepted() {
 }
 
 test reclaim__native_token_remainder_accepted() {
-  let datum =
-    EscrowDatum {
-      ..mid_datum(),
-      asset_policy: token_policy(),
-      asset_name: "USDM",
-      milestones: [500, 300, 200],
-    }
-  let own =
-    escrow_input(
-      0,
-      escrow_output(
-        escrow_policy(),
-        datum,
-        escrow_utxo_value(escrow_policy(), 2_000_000)
-          |> assets.add(token_policy(), "USDM", 500),
-      ),
-    )
-  let refund =
-    user_output(
-      funder_address(),
-      assets.from_lovelace(2_000_000) |> assets.add(token_policy(), "USDM", 500),
-    )
+  let datum = EscrowDatum {
+    ..mid_datum(),
+    asset_policy: token_policy(),
+    asset_name: "USDM",
+    milestones: [500, 300, 200],
+  }
+  let own = escrow_input(
+    0,
+    escrow_output(
+      escrow_policy(),
+      datum,
+      escrow_utxo_value(escrow_policy(), 2_000_000)
+        |> assets.add(token_policy(), "USDM", 500),
+    ),
+  )
+  let refund = user_output(
+    funder_address(),
+    assets.from_lovelace(2_000_000) |> assets.add(token_policy(), "USDM", 500),
+  )
   validate_reclaim(
     escrow_policy(),
     datum,
@@ -92,31 +89,27 @@ test reclaim__native_token_remainder_accepted() {
 }
 
 test reclaim__script_funder_via_spent_input_accepted() {
-  let datum =
-    EscrowDatum {
-      ..mid_datum(),
-      funder: addr.from_script(funder_script_hash()),
-    }
-  let refund =
+  let datum = EscrowDatum {
+    ..mid_datum(),
+    funder: addr.from_script(funder_script_hash()),
+  }
+  let refund = user_output(
+    addr.from_script(funder_script_hash()),
+    assets.from_lovelace(62_000_000),
+  )
+  let dust = escrow_input(
+    7,
     user_output(
       addr.from_script(funder_script_hash()),
-      assets.from_lovelace(62_000_000),
-    )
-  let dust =
-    escrow_input(
-      7,
-      user_output(
-        addr.from_script(funder_script_hash()),
-        assets.from_lovelace(2_000_000),
-      ),
-    )
-  let tx =
-    Transaction {
-      ..placeholder,
-      inputs: [mid_input(), dust],
-      validity_range: range_after(expiry + 1),
-      mint: burn(),
-    }
+      assets.from_lovelace(2_000_000),
+    ),
+  )
+  let tx = Transaction {
+    ..placeholder,
+    inputs: [mid_input(), dust],
+    validity_range: range_after(expiry + 1),
+    mint: burn(),
+  }
   validate_reclaim(escrow_policy(), datum, mid_input(), 0, [refund], burn(), tx)
 }
 
@@ -148,13 +141,12 @@ test reclaim__at_expiry_rejected() {
 
 test reclaim__without_funder_auth_rejected() {
   let refund = user_output(funder_address(), assets.from_lovelace(62_000_000))
-  let tx =
-    Transaction {
-      ..placeholder,
-      extra_signatories: [beneficiary_pkh()],
-      validity_range: range_after(expiry + 1),
-      mint: burn(),
-    }
+  let tx = Transaction {
+    ..placeholder,
+    extra_signatories: [beneficiary_pkh()],
+    validity_range: range_after(expiry + 1),
+    mint: burn(),
+  }
   !validate_reclaim(
     escrow_policy(),
     mid_datum(),
@@ -167,8 +159,10 @@ test reclaim__without_funder_auth_rejected() {
 }
 
 test reclaim__refund_to_non_funder_rejected() {
-  let refund =
-    user_output(beneficiary_address(), assets.from_lovelace(62_000_000))
+  let refund = user_output(
+    beneficiary_address(),
+    assets.from_lovelace(62_000_000),
+  )
   !validate_reclaim(
     escrow_policy(),
     mid_datum(),
@@ -195,12 +189,11 @@ test reclaim__short_refund_rejected() {
 
 test reclaim__without_burn_rejected() {
   let refund = user_output(funder_address(), assets.from_lovelace(62_000_000))
-  let tx =
-    Transaction {
-      ..placeholder,
-      extra_signatories: [funder_pkh()],
-      validity_range: range_after(expiry + 1),
-    }
+  let tx = Transaction {
+    ..placeholder,
+    extra_signatories: [funder_pkh()],
+    validity_range: range_after(expiry + 1),
+  }
   !validate_reclaim(
     escrow_policy(),
     mid_datum(),
@@ -215,8 +208,11 @@ test reclaim__without_burn_rejected() {
 // No Finite lower bound: the expect errors.
 test reclaim__unbounded_lower_rejected() fail {
   let refund = user_output(funder_address(), assets.from_lovelace(62_000_000))
-  let tx =
-    Transaction { ..placeholder, extra_signatories: [funder_pkh()], mint: burn() }
+  let tx = Transaction {
+    ..placeholder,
+    extra_signatories: [funder_pkh()],
+    mint: burn(),
+  }
   validate_reclaim(
     escrow_policy(),
     mid_datum(),
@@ -229,61 +225,58 @@ test reclaim__unbounded_lower_rejected() fail {
 }
 
 test abort__co_signed_accepted() {
-  let tx =
-    Transaction {
-      ..placeholder,
-      extra_signatories: [funder_pkh(), beneficiary_pkh()],
-      mint: burn(),
-    }
+  let tx = Transaction {
+    ..placeholder,
+    extra_signatories: [funder_pkh(), beneficiary_pkh()],
+    mint: burn(),
+  }
   validate_abort(escrow_policy(), mid_datum(), mid_input(), burn(), tx)
 }
 
 test abort__script_funder_plus_vk_beneficiary_accepted() {
-  let datum =
-    EscrowDatum {
-      ..mid_datum(),
-      funder: addr.from_script(funder_script_hash()),
-    }
-  let dust =
-    escrow_input(
-      7,
-      user_output(
-        addr.from_script(funder_script_hash()),
-        assets.from_lovelace(2_000_000),
-      ),
-    )
-  let tx =
-    Transaction {
-      ..placeholder,
-      inputs: [mid_input(), dust],
-      extra_signatories: [beneficiary_pkh()],
-      mint: burn(),
-    }
+  let datum = EscrowDatum {
+    ..mid_datum(),
+    funder: addr.from_script(funder_script_hash()),
+  }
+  let dust = escrow_input(
+    7,
+    user_output(
+      addr.from_script(funder_script_hash()),
+      assets.from_lovelace(2_000_000),
+    ),
+  )
+  let tx = Transaction {
+    ..placeholder,
+    inputs: [mid_input(), dust],
+    extra_signatories: [beneficiary_pkh()],
+    mint: burn(),
+  }
   validate_abort(escrow_policy(), datum, mid_input(), burn(), tx)
 }
 
 test abort__funder_only_rejected() {
-  let tx =
-    Transaction { ..placeholder, extra_signatories: [funder_pkh()], mint: burn() }
+  let tx = Transaction {
+    ..placeholder,
+    extra_signatories: [funder_pkh()],
+    mint: burn(),
+  }
   !validate_abort(escrow_policy(), mid_datum(), mid_input(), burn(), tx)
 }
 
 test abort__beneficiary_only_rejected() {
-  let tx =
-    Transaction {
-      ..placeholder,
-      extra_signatories: [beneficiary_pkh()],
-      mint: burn(),
-    }
+  let tx = Transaction {
+    ..placeholder,
+    extra_signatories: [beneficiary_pkh()],
+    mint: burn(),
+  }
   !validate_abort(escrow_policy(), mid_datum(), mid_input(), burn(), tx)
 }
 
 test abort__without_burn_rejected() {
-  let tx =
-    Transaction {
-      ..placeholder,
-      extra_signatories: [funder_pkh(), beneficiary_pkh()],
-    }
+  let tx = Transaction {
+    ..placeholder,
+    extra_signatories: [funder_pkh(), beneficiary_pkh()],
+  }
   !validate_abort(escrow_policy(), mid_datum(), mid_input(), assets.zero, tx)
 }
 
@@ -293,33 +286,34 @@ test only_own_input__single_accepted() {
 }
 
 test only_own_input__two_escrow_inputs_rejected() {
-  let second =
-    escrow_input(
-      1,
-      escrow_output(
-        escrow_policy(),
-        test_escrow_datum(),
-        escrow_utxo_value(escrow_policy(), 102_000_000),
-      ),
-    )
+  let second = escrow_input(
+    1,
+    escrow_output(
+      escrow_policy(),
+      test_escrow_datum(),
+      escrow_utxo_value(escrow_policy(), 102_000_000),
+    ),
+  )
   !only_own_input(escrow_policy(), [mid_input(), second])
 }
 
 // A stake-credential appearance of the escrow script must not count as a second
 // escrow input (payment credential is the discriminator).
 test only_own_input__stake_appearance_not_counted() {
-  let stake_side =
-    escrow_input(
-      2,
-      user_output(
-        addr.from_verification_key(funder_pkh())
-          |> addr.with_delegation_script(escrow_policy()),
-        assets.from_lovelace(5_000_000),
-      ),
-    )
+  let stake_side = escrow_input(
+    2,
+    user_output(
+      addr.from_verification_key(funder_pkh())
+        |> addr.with_delegation_script(escrow_policy()),
+      assets.from_lovelace(5_000_000),
+    ),
+  )
   only_own_input(escrow_policy(), [mid_input(), stake_side])
 }
 
 fn tests_dust() {
-  escrow_input(9, user_output(funder_address(), assets.from_lovelace(5_000_000)))
+  escrow_input(
+    9,
+    user_output(funder_address(), assets.from_lovelace(5_000_000)),
+  )
 }

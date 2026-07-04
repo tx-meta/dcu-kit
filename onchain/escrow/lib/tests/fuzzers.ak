@@ -60,8 +60,9 @@ pub fn gen_escrow_datum() -> Fuzzer<EscrowDatum> {
   let verifier <- fuzz.and_then(gen_credential())
   let (asset_policy, asset_name) <- fuzz.and_then(gen_asset())
   let milestones <- fuzz.and_then(gen_milestones())
-  let released_count <-
-    fuzz.and_then(fuzz.int_between(0, list.length(milestones) - 1))
+  let released_count <- fuzz.and_then(
+    fuzz.int_between(0, list.length(milestones) - 1),
+  )
   let expiry <- fuzz.and_then(fuzz.int_between(1, 4_000_000_000_000))
   fuzz.constant(
     EscrowDatum {

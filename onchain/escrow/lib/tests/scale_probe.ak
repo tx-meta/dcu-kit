@@ -20,47 +20,40 @@ const expiry = 1_800_000_000_000
 fn release_at_n(n: Int) -> Bool {
   let milestones = list.repeat(10_000_000, n)
   let released_count = n / 2
-  let datum =
-    EscrowDatum { ..test_escrow_datum(), milestones, released_count }
-  let remaining =
-    milestones_total(list.drop(milestones, released_count))
-  let own =
-    escrow_input(
-      0,
-      escrow_output(
-        escrow_policy(),
-        datum,
-        escrow_utxo_value(escrow_policy(), remaining + 2_000_000),
-      ),
-    )
-  let payout =
-    user_output(datum.beneficiary, assets.from_lovelace(10_000_000))
+  let datum = EscrowDatum { ..test_escrow_datum(), milestones, released_count }
+  let remaining = milestones_total(list.drop(milestones, released_count))
+  let own = escrow_input(
+    0,
+    escrow_output(
+      escrow_policy(),
+      datum,
+      escrow_utxo_value(escrow_policy(), remaining + 2_000_000),
+    ),
+  )
+  let payout = user_output(datum.beneficiary, assets.from_lovelace(10_000_000))
   let is_final = released_count + 1 == n
   if is_final {
     let burn = assets.from_asset(escrow_policy(), common_token_name(), -1)
-    let tx =
-      Transaction {
-        ..placeholder,
-        outputs: [payout],
-        mint: burn,
-        extra_signatories: [verifier_pkh()],
-        validity_range: range_before(expiry - 1),
-      }
+    let tx = Transaction {
+      ..placeholder,
+      outputs: [payout],
+      mint: burn,
+      extra_signatories: [verifier_pkh()],
+      validity_range: range_before(expiry - 1),
+    }
     validate_release(escrow_policy(), datum, own, 99, 0, [payout], burn, tx)
   } else {
-    let cont =
-      escrow_output(
-        escrow_policy(),
-        EscrowDatum { ..datum, released_count: released_count + 1 },
-        escrow_utxo_value(escrow_policy(), remaining - 10_000_000 + 2_000_000),
-      )
-    let tx =
-      Transaction {
-        ..placeholder,
-        outputs: [cont, payout],
-        extra_signatories: [verifier_pkh()],
-        validity_range: range_before(expiry - 1),
-      }
+    let cont = escrow_output(
+      escrow_policy(),
+      EscrowDatum { ..datum, released_count: released_count + 1 },
+      escrow_utxo_value(escrow_policy(), remaining - 10_000_000 + 2_000_000),
+    )
+    let tx = Transaction {
+      ..placeholder,
+      outputs: [cont, payout],
+      extra_signatories: [verifier_pkh()],
+      validity_range: range_before(expiry - 1),
+    }
     validate_release(
       escrow_policy(),
       datum,

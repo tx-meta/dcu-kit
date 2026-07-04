@@ -2,8 +2,8 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/interval.{Finite, Interval}
 use aiken/primitive/bytearray
-use cardano/assets.{PolicyId, Value}
 use cardano/address.{Script, VerificationKey}
+use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use escrow/credential.{credential_authorized, state_token_name}
 use escrow/types.{EscrowDatum}
@@ -97,38 +97,40 @@ pub fn validate_release(
   // Deterministic boundary: releases require a pinned upper bound at/before expiry.
   expect Finite(upper) = tx.validity_range.upper_bound.bound_type
   expect Some(tranche) = list.at(datum.milestones, datum.released_count)
-  expect [Pair(state_name, 1)] =
-    dict.to_pairs(assets.tokens(own_input.output.value, policy_id))
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
   expect Some(payout) = list.at(outputs, payout_index)
   let in_value = own_input.output.value
   let is_final = datum.released_count + 1 == list.length(datum.milestones)
   let base = and {
-      (upper <= datum.expiry)?,
-      credential_authorized(datum.verifier, tx)?,
-      (payout.address == datum.beneficiary)?,
-      (assets.quantity_of(payout.value, datum.asset_policy, datum.asset_name) >= tranche)?,
-    }
+    (upper <= datum.expiry)?,
+    credential_authorized(datum.verifier, tx)?,
+    (payout.address == datum.beneficiary)?,
+    (assets.quantity_of(payout.value, datum.asset_policy, datum.asset_name) >= tranche)?,
+  }
   if is_final {
     base && (assets.quantity_of(mint, policy_id, state_name) == -1)?
   } else {
     expect Some(cont) = list.at(outputs, continuation_index)
     expect InlineDatum(raw) = cont.datum
     expect cont_datum: EscrowDatum = raw
-    let expected =
-      EscrowDatum { ..datum, released_count: datum.released_count + 1 }
-    let value_ok =
-      if datum.asset_policy == assets.ada_policy_id {
-        assets.lovelace_of(cont.value) >= assets.lovelace_of(in_value) - tranche
-      } else {
-        and {
-          assets.quantity_of(cont.value, datum.asset_policy, datum.asset_name) >= assets.quantity_of(
-            in_value,
-            datum.asset_policy,
-            datum.asset_name,
-          ) - tranche,
-          assets.lovelace_of(cont.value) >= assets.lovelace_of(in_value),
-        }
+    let expected = EscrowDatum {
+      ..datum,
+      released_count: datum.released_count + 1,
+    }
+    let value_ok = if datum.asset_policy == assets.ada_policy_id {
+      assets.lovelace_of(cont.value) >= assets.lovelace_of(in_value) - tranche
+    } else {
+      and {
+        assets.quantity_of(cont.value, datum.asset_policy, datum.asset_name) >= assets.quantity_of(
+          in_value,
+          datum.asset_policy,
+          datum.asset_name,
+        ) - tranche,
+        assets.lovelace_of(cont.value) >= assets.lovelace_of(in_value),
       }
+    }
     base && and {
       // [AIK-4]: continuation pinned to the spent input's FULL address.
       (cont.address == own_input.output.address)?,
@@ -151,8 +153,9 @@ pub fn validate_reclaim(
   tx: Transaction,
 ) -> Bool {
   expect Finite(lower) = tx.validity_range.lower_bound.bound_type
-  expect [Pair(state_name, 1)] =
-    dict.to_pairs(assets.tokens(own_input.output.value, policy_id))
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
   expect Some(refund) = list.at(outputs, refund_index)
   let in_value = own_input.output.value
   and {
@@ -177,8 +180,9 @@ pub fn validate_abort(
   mint: Value,
   tx: Transaction,
 ) -> Bool {
-  expect [Pair(state_name, 1)] =
-    dict.to_pairs(assets.tokens(own_input.output.value, policy_id))
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
   and {
     credential_authorized(datum.funder.payment_credential, tx)?,
     credential_authorized(datum.beneficiary.payment_credential, tx)?,

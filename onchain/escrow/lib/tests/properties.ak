@@ -45,37 +45,34 @@ fn remaining_total(datum: EscrowDatum) {
 test prop_create__exact_funding_boundary(datum0 via gen_escrow_datum()) {
   let datum = EscrowDatum { ..datum0, released_count: 0 }
   let total = milestones_total(datum.milestones)
-  let funded =
-    if datum.asset_policy == assets.ada_policy_id {
-      assets.from_lovelace(total)
-        |> assets.add(escrow_policy(), seed_token_name(), 1)
-    } else {
-      assets.from_lovelace(2_000_000)
-        |> assets.add(datum.asset_policy, datum.asset_name, total)
-        |> assets.add(escrow_policy(), seed_token_name(), 1)
-    }
-  let short =
-    if datum.asset_policy == assets.ada_policy_id {
-      assets.from_lovelace(total - 1)
-        |> assets.add(escrow_policy(), seed_token_name(), 1)
-    } else {
-      assets.from_lovelace(2_000_000)
-        |> assets.add(datum.asset_policy, datum.asset_name, total - 1)
-        |> assets.add(escrow_policy(), seed_token_name(), 1)
-    }
+  let funded = if datum.asset_policy == assets.ada_policy_id {
+    assets.from_lovelace(total)
+      |> assets.add(escrow_policy(), seed_token_name(), 1)
+  } else {
+    assets.from_lovelace(2_000_000)
+      |> assets.add(datum.asset_policy, datum.asset_name, total)
+      |> assets.add(escrow_policy(), seed_token_name(), 1)
+  }
+  let short = if datum.asset_policy == assets.ada_policy_id {
+    assets.from_lovelace(total - 1)
+      |> assets.add(escrow_policy(), seed_token_name(), 1)
+  } else {
+    assets.from_lovelace(2_000_000)
+      |> assets.add(datum.asset_policy, datum.asset_name, total - 1)
+      |> assets.add(escrow_policy(), seed_token_name(), 1)
+  }
   let mint = assets.from_asset(escrow_policy(), seed_token_name(), 1)
-  let accepts =
-    fn(value) {
-      validate_create_escrow(
-        escrow_policy(),
-        0,
-        0,
-        [seed_input()],
-        [escrow_output(escrow_policy(), datum, value)],
-        mint,
-        range_before(datum.expiry - 1),
-      )
-    }
+  let accepts = fn(value) {
+    validate_create_escrow(
+      escrow_policy(),
+      0,
+      0,
+      [seed_input()],
+      [escrow_output(escrow_policy(), datum, value)],
+      mint,
+      range_before(datum.expiry - 1),
+    )
+  }
   accepts(funded) && !accepts(short)
 }
 
@@ -83,14 +80,14 @@ test prop_create__exact_funding_boundary(datum0 via gen_escrow_datum()) {
 // VK verifier (credential kinds are covered by direct tests and the create prop).
 fn gen_release_case() -> Fuzzer<EscrowDatum> {
   let datum0 <- fuzz.and_then(gen_escrow_datum())
-  let milestones =
-    if list.length(datum0.milestones) < 2 {
-      list.concat(datum0.milestones, datum0.milestones)
-    } else {
-      datum0.milestones
-    }
-  let released_count <-
-    fuzz.and_then(fuzz.int_between(0, list.length(milestones) - 2))
+  let milestones = if list.length(datum0.milestones) < 2 {
+    list.concat(datum0.milestones, datum0.milestones)
+  } else {
+    datum0.milestones
+  }
+  let released_count <- fuzz.and_then(
+    fuzz.int_between(0, list.length(milestones) - 2),
+  )
   fuzz.constant(
     EscrowDatum {
       ..datum0,
@@ -104,7 +101,7 @@ fn gen_release_case() -> Fuzzer<EscrowDatum> {
 fn release_tx(datum: EscrowDatum, outputs) -> Transaction {
   Transaction {
     ..placeholder,
-    outputs: outputs,
+    outputs,
     extra_signatories: [verifier_pkh()],
     validity_range: range_before(datum.expiry - 1),
   }
@@ -115,39 +112,45 @@ fn release_tx(datum: EscrowDatum, outputs) -> Transaction {
 test prop_release__exact_tranche_boundary(datum via gen_release_case()) {
   expect Some(tranche) = list.at(datum.milestones, datum.released_count)
   let remaining = remaining_total(datum)
-  let own = escrow_input(0, escrow_output(escrow_policy(), datum, held_value(datum, remaining)))
+  let own = escrow_input(
+    0,
+    escrow_output(escrow_policy(), datum, held_value(datum, remaining)),
+  )
   let next = EscrowDatum { ..datum, released_count: datum.released_count + 1 }
-  let cont_good =
-    escrow_output(escrow_policy(), next, held_value(datum, remaining - tranche))
-  let cont_short =
-    escrow_output(
-      escrow_policy(),
-      next,
-      held_value(datum, remaining - tranche)
-        |> assets.merge(
-            if datum.asset_policy == assets.ada_policy_id {
-              assets.from_lovelace(-1)
-            } else {
-              assets.from_asset(datum.asset_policy, datum.asset_name, -1)
-            },
-          ),
-    )
+  let cont_good = escrow_output(
+    escrow_policy(),
+    next,
+    held_value(datum, remaining - tranche),
+  )
+  let cont_short = escrow_output(
+    escrow_policy(),
+    next,
+    held_value(datum, remaining - tranche)
+      |> assets.merge(
+          if datum.asset_policy == assets.ada_policy_id {
+            assets.from_lovelace(-1)
+          } else {
+            assets.from_asset(datum.asset_policy, datum.asset_name, -1)
+          },
+        ),
+  )
   let payout_good = user_output(datum.beneficiary, asset_only(datum, tranche))
-  let payout_short =
-    user_output(datum.beneficiary, asset_only(datum, tranche - 1))
-  let run =
-    fn(cont, payout) {
-      validate_release(
-        escrow_policy(),
-        datum,
-        own,
-        0,
-        1,
-        [cont, payout],
-        assets.zero,
-        release_tx(datum, [cont, payout]),
-      )
-    }
+  let payout_short = user_output(
+    datum.beneficiary,
+    asset_only(datum, tranche - 1),
+  )
+  let run = fn(cont, payout) {
+    validate_release(
+      escrow_policy(),
+      datum,
+      own,
+      0,
+      1,
+      [cont, payout],
+      assets.zero,
+      release_tx(datum, [cont, payout]),
+    )
+  }
   and {
     run(cont_good, payout_good)?,
     !run(cont_good, payout_short)?,
@@ -171,11 +174,19 @@ test prop_release__count_only_advances_by_one(
   expect Some(delta) = list.at([-2, -1, 0, 2, 3], delta_ix)
   expect Some(tranche) = list.at(datum.milestones, datum.released_count)
   let remaining = remaining_total(datum)
-  let own = escrow_input(0, escrow_output(escrow_policy(), datum, held_value(datum, remaining)))
-  let mutated =
-    EscrowDatum { ..datum, released_count: datum.released_count + delta }
-  let cont =
-    escrow_output(escrow_policy(), mutated, held_value(datum, remaining - tranche))
+  let own = escrow_input(
+    0,
+    escrow_output(escrow_policy(), datum, held_value(datum, remaining)),
+  )
+  let mutated = EscrowDatum {
+    ..datum,
+    released_count: datum.released_count + delta,
+  }
+  let cont = escrow_output(
+    escrow_policy(),
+    mutated,
+    held_value(datum, remaining - tranche),
+  )
   let payout = user_output(datum.beneficiary, asset_only(datum, tranche))
   !validate_release(
     escrow_policy(),
@@ -195,25 +206,26 @@ test prop_reclaim__expiry_boundary(case via gen_reclaim_boundary_case()) {
   let (datum0, offset) = case
   let datum = EscrowDatum { ..datum0, funder: funder_address() }
   let remaining = remaining_total(datum)
-  let own = escrow_input(0, escrow_output(escrow_policy(), datum, held_value(datum, remaining)))
-  let refund =
-    user_output(
-      datum.funder,
-      if datum.asset_policy == assets.ada_policy_id {
-        assets.from_lovelace(remaining + 2_000_000)
-      } else {
-        assets.from_lovelace(2_000_000)
-          |> assets.add(datum.asset_policy, datum.asset_name, remaining)
-      },
-    )
+  let own = escrow_input(
+    0,
+    escrow_output(escrow_policy(), datum, held_value(datum, remaining)),
+  )
+  let refund = user_output(
+    datum.funder,
+    if datum.asset_policy == assets.ada_policy_id {
+      assets.from_lovelace(remaining + 2_000_000)
+    } else {
+      assets.from_lovelace(2_000_000)
+        |> assets.add(datum.asset_policy, datum.asset_name, remaining)
+    },
+  )
   let burn = assets.from_asset(escrow_policy(), seed_token_name(), -1)
-  let tx =
-    Transaction {
-      ..placeholder,
-      extra_signatories: [funder_pkh()],
-      validity_range: range_after(datum.expiry + offset),
-      mint: burn,
-    }
+  let tx = Transaction {
+    ..placeholder,
+    extra_signatories: [funder_pkh()],
+    validity_range: range_after(datum.expiry + offset),
+    mint: burn,
+  }
   validate_reclaim(escrow_policy(), datum, own, 0, [refund], burn, tx) == (
     offset > 0
   )
