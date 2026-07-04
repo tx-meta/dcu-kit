@@ -10,29 +10,35 @@
     "postinstall": "fumadocs-mdx"
   },
   "dependencies": {
-    "@tx-meta/dcu-sdk": "link:../../sdk",
-    "@shikijs/twoslash": "^4.0.2",
+    "@shikijs/twoslash": "^4.3.1",
     "@takumi-rs/image-response": "^0.72.0",
+    "@tx-meta/dcu-kit": "link:../../sdk",
     "fumadocs-core": "16.6.17",
     "fumadocs-mdx": "14.2.10",
-    "fumadocs-twoslash": "^3.1.15",
+    "fumadocs-twoslash": "^3.2.1",
     "fumadocs-ui": "16.6.17",
     "lucide-react": "^0.577.0",
-    "mermaid": "^11.14.0",
-    "next": "16.1.6",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "tailwind-merge": "^3.5.0",
-    "twoslash": "^0.3.6"
+    "mermaid": "^11.16.0",
+    "next": "16.2.10",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tailwind-merge": "^3.6.0",
+    "twoslash": "^0.3.9"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.2.2",
-    "@types/mdx": "^2.0.13",
-    "@types/node": "^25.5.2",
-    "@types/react": "^19.2.14",
+    "@tailwindcss/postcss": "^4.3.2",
+    "@types/mdx": "^2.0.14",
+    "@types/node": "^25.9.4",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "postcss": "^8.5.8",
-    "tailwindcss": "^4.2.2",
+    "postcss": "^8.5.16",
+    "tailwindcss": "^4.3.2",
     "typescript": "^5.9.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "next>postcss": "^8.5.10",
+      "fumadocs-mdx>esbuild": "^0.28.1"
+    }
   }
 }

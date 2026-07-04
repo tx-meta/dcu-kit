@@ -1,4 +1,4 @@
-import { Network, UTxO } from "@lucid-evolution/lucid";
+import { Network, Script, UTxO } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
   DcuValidators,
@@ -67,6 +67,20 @@ export const setupBase = (
         new SetupError({ message: "Invalid Network selection" }),
       );
 
+    // The test suite runs on the Lucid emulator, which deploys the protocol settings
+    // and exposes `protocol`. A live NETWORK (e.g. .env's NETWORK=Preprod) skips that
+    // deployment, leaving `protocol` undefined. Fail with a clear, actionable message
+    // instead of a cryptic "Cannot destructure property 'groupValidator'" downstream.
+    if (!context.protocol)
+      return yield* Effect.fail(
+        new SetupError({
+          message:
+            `Emulator protocol context missing — the test suite must run on the Lucid ` +
+            `emulator. Set NETWORK=Emulator (current NETWORK=${process.env.NETWORK ?? "unset"}). ` +
+            `Tip: \`pnpm test\` sets NETWORK=Emulator for you.`,
+        }),
+      );
+
     const scripts = yield* makeValidators(network);
 
     return {
@@ -95,6 +109,7 @@ export const setupAccount = (
 export const setupGroup = (
   base: BaseSetup,
   datumOverride?: Partial<GroupDatum>,
+  opts?: { creatorScript?: Script },
 ): Effect.Effect<GroupSetupResult, Error, never> =>
   Effect.gen(function* () {
     const { lucid, users, emulator } = base.context;
@@ -103,6 +118,7 @@ export const setupGroup = (
     const { txHash, groupDatum } = yield* createGroupTestCase(base.context, {
       datumOverride,
       creatorSeed: users.admin.seedPhrase,
+      ...(opts?.creatorScript ? { creatorScript: opts.creatorScript } : {}),
     });
 
     yield* advanceBlock(emulator, 5);

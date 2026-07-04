@@ -1,0 +1,110 @@
+---
+title: Rotation, Exits & Halts
+description: What happens to a group's payout rotation when members default or leave, and how to wind a group down.
+---
+
+This page explains what happens to a group's payout rotation when members default or
+leave, and the procedures that reset or wind a group down. It documents **current
+protocol behavior**: the continuous-round model plus the **Recommit** reset window
+(the structural fix for vacant slots).
+
+## How the rotation works
+
+- `startGroup` seals membership and fixes the schedule: `num_rounds = member_count`,
+  and each member keeps the `assigned_slot` they got at join (first-come, first-served).
+- Rounds run indefinitely: round `r` pays the member whose slot is `r % num_rounds`.
+  A **cycle** is one full lap of `num_rounds` rounds.
+- `distributePayout` (permissionless) requires the round's borrower to be present as a
+  healthy (`TreasuryState`) member. **Slots are never re-packed after start.**
+
+## What blocks a round — and for how long
+
+| Situation at the borrower's slot | Effect on the rotation | Release valve |
+| --- | --- | --- |
+| Borrower is healthy | Round proceeds | — |
+| Borrower is in `DefaultState` (grace window) | Rounds **pause** at their turn | Member tops up (`contribute` recovery) — the ONLY valve that resumes rounds; `extendGraceWindow` (max 2) buys time for it |
+| Borrower **exited** (penalty exit, terminated via `terminateDefault`, or mature exit while the group keeps cycling) | Rounds **halt** when the rotation reaches the vacant slot | **`beginRecommit`** — the halt provably opens the reset gate (the vacancy is visible on the group datum); see the Recommit window below. Wind-down remains the fallback |
+
+<Callout title="terminateDefault vacates the slot" type="warn">
+Terminating the blocked borrower frees their collateral and the member count, but it
+**vacates the slot** — the rotation halts there until the group recommits (or winds
+down). It never resumes rounds by itself.
+</Callout>
+
+Key nuance on exits:
+
+- **Exit after their turn in the current cycle:** the remaining rounds of this cycle
+  don't need their slot, so the current cycle completes. The halt arrives next lap.
+- **Exit before their turn:** the halt arrives within the current cycle, so members who
+  haven't completed the cycle cannot free-exit (free exit requires a completed cycle) —
+  they either penalty-exit or wait for wind-down.
+
+## The Recommit window (reset in place)
+
+When the rotation stands at a completed lap — or is halted at a vacant slot with every
+remaining member clean — the admin opens a **recommit window** (`beginRecommit`):
+
+1. **Distribution pauses and joining re-opens.** The group is temporarily un-sealed.
+2. **Every exit is free** during the window — leaving is simply not staying. Staying
+   costs nothing (opt-out, like a real chama between cycles). The window lasts at least
+   `recommit_window` (default 3 days) — that guaranteed exit period IS the consent
+   mechanism, so no votes are needed.
+3. **`startGroup` re-seals**: everyone still in the registry gets a fresh
+   first-come-first-served slot (join/stay order), and the rotation resumes on the same
+   monotonic round counter with a new era. Collateral never moves; unclaimed Pull
+   earmarks ride through untouched.
+
+The gate is objective and defaulter-proof: it only opens when `active_member_count ==
+member_count` (nobody mid-default — a reset is never an escape hatch from obligations),
+and only at a lap boundary or a provable halt.
+
+## Wind-down procedure (the fallback)
+
+If the group prefers to dissolve rather than reset, the admin winds it down cleanly.
+No funds are lost:
+
+1. `updateGroup` with `is_active: false` — deactivation is one-way and always allowed.
+2. Every member calls `exitGroup` — with the group inactive, all exits are **free**
+   (token burned, full remaining balance returned, no penalty).
+3. Admin claims any outstanding `PenaltyState` UTxOs (`terminateGroup`) and handles any
+   expired defaulters (`terminateDefault`).
+4. `deleteGroup` — burns the group tokens and returns the creator bond.
+
+The group can then be re-created from scratch — but in almost every case the Recommit
+window above achieves the same outcome in two transactions instead of N+3, keeping the
+group's identity and history intact.
+
+## Group size ceiling (measured)
+
+The distribute transaction validates every active member's treasury in one pass, so the
+per-transaction execution budget caps group size. Measured with real UPLC execution
+(`aiken check -m scale_probe`, full round validation):
+
+| Members | Memory (of 14M limit) | CPU (of 10B limit) |
+| --- | --- | --- |
+| 5 | 2.81M — 20% | 0.88B — 9% |
+| 10 | 5.01M — 36% | 1.55B — 16% |
+| 15 | 7.37M — 53% | 2.28B — 23% |
+| 20 | 9.88M — 71% | 3.05B — 31% |
+| 20 + reserve leg active | 10.54M — 75% | 3.25B — 33% |
+| 30 | 15.36M — over the limit | 4.73B — 47% |
+
+The protocol cap (`max_group_members = 20`) keeps the heaviest transaction — a round
+with the [mutual reserve](/docs/reserve) levy on and a stand-in draw active — at ~75%
+of the memory budget, leaving headroom for the per-input spend checks and network
+variance. Groups larger than ~20 need the batching/linked-list design tracked for a
+future major version.
+
+## Operator guidance
+
+- Prefer **Pull mode**: a paused rotation never strands an already-earmarked payout —
+  `claimPayout` works regardless of later rounds.
+- Treat any exit mid-lifetime as a signal to plan a boundary: recommit at the end of
+  the current lap (or at the halt itself — the gate opens either way).
+- A defaulting borrower is not an emergency: the grace ladder exists for exactly that,
+  and rounds resume as soon as the member tops back up. Termination, by contrast,
+  vacates the slot — plan a recommit after it. The terminated member's forfeited
+  balance funds the [mutual reserve](/docs/reserve), which then stands in for their
+  remaining contributions this lap — later borrowers still receive full pots up to
+  what the reserve holds. The recommit gate additionally waits for that cover to
+  finish paying out (`standin_rounds == 0`).

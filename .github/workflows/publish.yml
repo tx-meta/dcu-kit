@@ -11,7 +11,7 @@ on:
 
 jobs:
   publish:
-    name: 📦 Publish @tx-meta/dcu-sdk
+    name: 📦 Publish @tx-meta/dcu-kit
     runs-on: ubuntu-latest
     defaults:
       run:

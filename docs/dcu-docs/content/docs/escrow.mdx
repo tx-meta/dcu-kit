@@ -1,0 +1,107 @@
+---
+title: "Escrow: Milestone Payments"
+description: Lock funds that release in verified tranches — procurement, land purchases, prepayments, and pooled funding on one contract.
+---
+
+The escrow module (`@tx-meta/dcu-kit/escrow`) is a standalone validator family —
+its own blueprint, independent of the ROSCA protocol. One contract shape covers
+every configuration: a **funder** locks an asset, a **beneficiary** earns it in
+sequential milestone tranches, and a **verifier** approves each release.
+
+## Why on-chain escrow
+
+In conventional practice the escrow agent *holds* the money — and agent fraud is
+a documented failure mode. Here the verifier is **authority-only, never a
+custodian**: an approval can only move the next tranche to the beneficiary. The
+verifier cannot redirect funds, cannot withhold them past expiry (the funder
+reclaims), and cannot take them. That guarantee is structural, not contractual.
+
+## The contract in one table
+
+| Party | Datum field | Power |
+| --- | --- | --- |
+| Funder | `funder` (full address) | Reclaim the remainder strictly after `expiry`; co-sign an abort |
+| Beneficiary | `beneficiary` (full address) | Receives tranches; co-signs an abort |
+| Verifier | `verifier` (credential) | Approve the next tranche — nothing else |
+
+Rules enforced by the validator:
+
+- Tranches release **sequentially** (`released_count` advances by exactly 1),
+  each paying `milestones[released_count]` of the escrowed asset to the
+  beneficiary's full address (stake credential pinned — no reward skimming).
+- Releases are valid only **before `expiry`**; reclaim only **strictly after** —
+  no race at the boundary.
+- The final release burns the escrow's state token; so do reclaim and abort.
+- Abort needs **both** funder and beneficiary authorization; the distribution is
+  whatever the two parties co-signed.
+- One escrow per transaction (double-satisfaction is structurally excluded).
+- At creation: the locked value must cover the milestone total, every tranche is
+  positive, at most 100 milestones, and the transaction must prove it happened
+  before `expiry` — an escrow can never be born already reclaimable.
+
+## Any party can be a multisig
+
+`funder`, `beneficiary`, and `verifier` are credentials — a wallet key or a
+script hash. Point them at a native `atLeast M-of-N` script (see
+[`buildMultisig`](/docs/api-reference)) and boards, banks, and investor pools
+work with no extra protocol:
+
+| Configuration | funder | verifier | milestones | expiry |
+| --- | --- | --- | --- | --- |
+| Bank → property developer | bank | bank's inspector | construction stages + retention last | project deadline |
+| Chama land purchase | chama multisig | lawyer or chama board | deposit, balance on title transfer | transfer deadline |
+| Supplier prepayment | buyer | buyer or inspector | one milestone (full amount) | delivery deadline |
+| Startup funding round | investor-pool multisig | investor quorum | tranche draws | round deadline |
+
+**Retention needs no feature:** make the last milestone the holdback (5–10% in
+construction practice) and release it at final acceptance.
+
+### The dust-UTxO pattern (script parties)
+
+A script credential authorizes by **spending an input at its address** — that is
+what forces the multisig to validate. Script verifiers and funders should keep a
+small (~2 ADA) UTxO at the script address; the SDK's `verifierWitness` /
+`funderWitness` options spend it and pay it straight back:
+
+```ts
+await releaseMilestone(lucid, {
+  stateTokenName,
+  verifierWitness: {
+    script: multisig.script,
+    signerKeyHashes: [keyHashA, keyHashB], // the M signers of the atLeast script
+  },
+}).unsafeRun();
+```
+
+## Endpoint tour
+
+```ts
+import {
+  createEscrow, releaseMilestone, reclaimEscrow, abortEscrow, getEscrowState,
+} from "@tx-meta/dcu-kit/escrow";
+
+// Funder locks 100 ADA in three tranches, verified by an inspector's key.
+const { tx, stateTokenName } = await createEscrow(lucid, {
+  beneficiaryAddress: developer,
+  verifier: { type: "Key", hash: inspectorKeyHash },
+  milestones: [40_000_000n, 40_000_000n, 20_000_000n],
+  expiry: BigInt(Date.now()) + 90n * 86_400_000n, // 90 days
+}).unsafeRun();
+// Persist stateTokenName — it is the escrow's permanent identity.
+```
+
+`releaseMilestone` (verifier-signed) pays the next tranche; `reclaimEscrow`
+(funder, after expiry) recovers the remainder; `abortEscrow` (co-signed)
+dissolves by mutual consent; `getEscrowState` reads progress, next tranche, and
+remaining balance.
+
+The escrowed asset can be ADA or any native token (e.g. a stablecoin) — set
+`assetPolicy` / `assetName` at creation.
+
+## v1 boundaries
+
+Deliberately excluded (each is a clean, additive later step): per-milestone
+deadlines (the single `expiry` covers the failure mode), amendable milestone
+schedules, on-chain evidence hashes, per-contributor pooled accounting (designed
+together with the reserve feature), and arbiter/dispute windows (mutual-consent
+abort plus expiry reclaim cover v1 disputes).

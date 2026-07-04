@@ -14,6 +14,15 @@ export const patchInlineDatum = (utxo: UTxO): UTxO =>
  */
 
 /**
+ * The Cardano `maxTxSize` protocol parameter (mainnet and Preprod). The node
+ * rejects larger transactions; the Lucid emulator does not enforce it, so
+ * {@link signAndSubmit} checks it explicitly — an oversize tx (usually a
+ * validator attached inline instead of via reference script) fails here with a
+ * clear message on every network, including in the emulator suite.
+ */
+export const MAX_TX_BYTES = 16_384;
+
+/**
  * Signs a transaction with the currently selected wallet and submits it to the network.
  *
  * @param tx - The unsigned transaction builder.
@@ -23,6 +32,16 @@ export const signAndSubmit = (
   tx: TxSignBuilder,
 ): Effect.Effect<string, LucidError, never> =>
   Effect.gen(function* () {
+    const txBytes = tx.toCBOR().length / 2;
+    if (txBytes > MAX_TX_BYTES)
+      return yield* Effect.fail(
+        new LucidError({
+          message:
+            `Transaction is ${txBytes} bytes, over the ${MAX_TX_BYTES}-byte ` +
+            `maxTxSize limit. Use reference scripts (scriptRefs) instead of ` +
+            `inline validators.`,
+        }),
+      );
     const signed = yield* Effect.tryPromise({
       try: () => tx.sign.withWallet().complete(),
       catch: (error) =>

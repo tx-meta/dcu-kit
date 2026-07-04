@@ -11,7 +11,7 @@ Each error has a `_tag` field for exhaustive matching:
 
 ```ts
 import { Either } from "effect";
-import { createAccount } from "@tx-meta/dcu-sdk";
+import { createAccount } from "@tx-meta/dcu-kit";
 
 const result = await createAccount(lucid, config).safeRun();
 
@@ -121,7 +121,7 @@ These errors indicate misconfiguration rather than user input errors:
 ## Full `DcuError` Union
 
 ```ts
-import type { DcuError } from "@tx-meta/dcu-sdk";
+import type { DcuError } from "@tx-meta/dcu-kit";
 
 // DcuError is:
 type DcuError =

@@ -33,6 +33,10 @@ import {
   DistributePayoutConfig,
 } from "./distributePayout.js";
 import { unsignedStartGroupTxProgram, StartGroupConfig } from "./startGroup.js";
+import {
+  unsignedBeginRecommitTxProgram,
+  BeginRecommitConfig,
+} from "./beginRecommit.js";
 import { unsignedExitGroupTxProgram, ExitGroupConfig } from "./exitGroup.js";
 import {
   unsignedTerminateGroupTxProgram,
@@ -44,6 +48,10 @@ import {
 } from "./terminateDefault.js";
 import { unsignedContributeTxProgram, ContributeConfig } from "./contribute.js";
 import {
+  unsignedTopUpReserveTxProgram,
+  TopUpReserveConfig,
+} from "./topUpReserve.js";
+import {
   unsignedUpdatePayoutCredentialTxProgram,
   UpdatePayoutCredentialConfig,
 } from "./updatePayoutCredential.js";
@@ -51,11 +59,30 @@ import {
   unsignedExtendGraceWindowTxProgram,
   ExtendGraceWindowConfig,
 } from "./extendGraceWindow.js";
-import { unsignedNextCycleTxProgram, NextCycleConfig } from "./nextCycle.js";
 import {
   unsignedClaimPayoutTxProgram,
   ClaimPayoutConfig,
 } from "./claimPayout.js";
+import {
+  unsignedAssignAdminTxProgram,
+  AssignAdminConfig,
+} from "./assignAdmin.js";
+import {
+  unsignedProposeRecoveryTxProgram,
+  ProposeRecoveryConfig,
+} from "./proposeRecovery.js";
+import {
+  unsignedApproveRecoveryTxProgram,
+  ApproveRecoveryConfig,
+} from "./approveRecovery.js";
+import {
+  unsignedCancelRecoveryTxProgram,
+  CancelRecoveryConfig,
+} from "./cancelRecovery.js";
+import {
+  unsignedExecuteRecoveryTxProgram,
+  ExecuteRecoveryConfig,
+} from "./executeRecovery.js";
 
 // ─── Account create/update (settings-independent — account validator is a root) ──
 
@@ -114,6 +141,9 @@ export const createDcuSdk = (settingsPolicy: string) => {
     startGroup: (lucid: LucidEvolution, config: StartGroupConfig) =>
       makeReturn(unsignedStartGroupTxProgram(protocol, lucid, config)),
 
+    beginRecommit: (lucid: LucidEvolution, config: BeginRecommitConfig) =>
+      makeReturn(unsignedBeginRecommitTxProgram(protocol, lucid, config)),
+
     distributePayout: (lucid: LucidEvolution, config: DistributePayoutConfig) =>
       makeReturn(unsignedDistributePayoutTxProgram(protocol, lucid, config)),
 
@@ -129,6 +159,9 @@ export const createDcuSdk = (settingsPolicy: string) => {
     contribute: (lucid: LucidEvolution, config: ContributeConfig) =>
       makeReturn(unsignedContributeTxProgram(protocol, lucid, config)),
 
+    topUpReserve: (lucid: LucidEvolution, config: TopUpReserveConfig) =>
+      makeReturn(unsignedTopUpReserveTxProgram(protocol, lucid, config)),
+
     updatePayoutCredential: (
       lucid: LucidEvolution,
       config: UpdatePayoutCredentialConfig,
@@ -143,13 +176,103 @@ export const createDcuSdk = (settingsPolicy: string) => {
     ) =>
       makeReturn(unsignedExtendGraceWindowTxProgram(protocol, lucid, config)),
 
-    nextCycle: (lucid: LucidEvolution, config: NextCycleConfig) =>
-      makeReturn(unsignedNextCycleTxProgram(protocol, lucid, config)),
-
     claimPayout: (lucid: LucidEvolution, config: ClaimPayoutConfig) =>
       makeReturn(unsignedClaimPayoutTxProgram(protocol, lucid, config)),
+
+    assignAdmin: (lucid: LucidEvolution, config: AssignAdminConfig) =>
+      makeReturn(unsignedAssignAdminTxProgram(protocol, lucid, config)),
+
+    proposeRecovery: (lucid: LucidEvolution, config: ProposeRecoveryConfig) =>
+      makeReturn(unsignedProposeRecoveryTxProgram(protocol, lucid, config)),
+
+    approveRecovery: (lucid: LucidEvolution, config: ApproveRecoveryConfig) =>
+      makeReturn(unsignedApproveRecoveryTxProgram(protocol, lucid, config)),
+
+    cancelRecovery: (lucid: LucidEvolution, config: CancelRecoveryConfig) =>
+      makeReturn(unsignedCancelRecoveryTxProgram(protocol, lucid, config)),
+
+    executeRecovery: (lucid: LucidEvolution, config: ExecuteRecoveryConfig) =>
+      makeReturn(unsignedExecuteRecoveryTxProgram(protocol, lucid, config)),
   };
 };
 
 /** The bound group/treasury endpoint set returned by {@link createDcuSdk}. */
 export type DcuSdk = ReturnType<typeof createDcuSdk>;
+
+// ─── Session pattern ─────────────────────────────────────────────────────────
+
+/**
+ * Binds a `LucidEvolution` instance and a deployment's settings policy once, and
+ * returns every endpoint as a method that takes only its config — no repeated
+ * `lucid` first argument, no repeated `settingsPolicy`.
+ *
+ * This removes the noisiest boilerplate at the call site and the most common bug
+ * source (passing the wrong/stale lucid instance). The bound instance's wallet is
+ * read at call time, so re-selecting the wallet between calls works as expected.
+ *
+ * Account endpoints are settings-independent and are included for convenience;
+ * the group/treasury endpoints use the settings-bound protocol (P5).
+ *
+ * NOTE: this binds a concrete `LucidEvolution`. A backend-agnostic `DCUProvider`
+ * abstraction (issue #44 Part 2) is intentionally deferred until a second tx
+ * backend (e.g. Blaze) actually exists — abstracting over a single implementation
+ * now would be speculative surface area.
+ *
+ * @example
+ * const dcu = createDcuSession(lucid, settingsPolicy);
+ * await dcu.joinGroup(config).unsafeRun();
+ * await dcu.createAccount({ selected_out_ref }).unsafeRun();
+ */
+export const createDcuSession = (
+  lucid: LucidEvolution,
+  settingsPolicy: string,
+) => {
+  const sdk = createDcuSdk(settingsPolicy);
+  return {
+    /** The settings-bound protocol context (validators/policies). */
+    protocol: sdk.protocol,
+
+    // Account (settings-independent root validator)
+    createAccount: (config: CreateAccountConfig) =>
+      createAccount(lucid, config),
+    updateAccount: (config: UpdateAccountConfig) =>
+      updateAccount(lucid, config),
+    deleteAccount: (config: DeleteAccountConfig) =>
+      sdk.deleteAccount(lucid, config),
+
+    // Group + treasury (settings-bound)
+    createGroup: (config: CreateGroupConfig) => sdk.createGroup(lucid, config),
+    updateGroup: (config: UpdateGroupConfig) => sdk.updateGroup(lucid, config),
+    deleteGroup: (config: DeleteGroupConfig) => sdk.deleteGroup(lucid, config),
+    joinGroup: (config: JoinGroupConfig) => sdk.joinGroup(lucid, config),
+    startGroup: (config: StartGroupConfig) => sdk.startGroup(lucid, config),
+    distributePayout: (config: DistributePayoutConfig) =>
+      sdk.distributePayout(lucid, config),
+    exitGroup: (config: ExitGroupConfig) => sdk.exitGroup(lucid, config),
+    terminateGroup: (config: TerminateGroupConfig) =>
+      sdk.terminateGroup(lucid, config),
+    terminateDefault: (config: TerminateDefaultConfig) =>
+      sdk.terminateDefault(lucid, config),
+    contribute: (config: ContributeConfig) => sdk.contribute(lucid, config),
+    topUpReserve: (config: TopUpReserveConfig) =>
+      sdk.topUpReserve(lucid, config),
+    updatePayoutCredential: (config: UpdatePayoutCredentialConfig) =>
+      sdk.updatePayoutCredential(lucid, config),
+    extendGraceWindow: (config: ExtendGraceWindowConfig) =>
+      sdk.extendGraceWindow(lucid, config),
+    claimPayout: (config: ClaimPayoutConfig) => sdk.claimPayout(lucid, config),
+    assignAdmin: (config: AssignAdminConfig) => sdk.assignAdmin(lucid, config),
+
+    proposeRecovery: (config: ProposeRecoveryConfig) =>
+      sdk.proposeRecovery(lucid, config),
+    approveRecovery: (config: ApproveRecoveryConfig) =>
+      sdk.approveRecovery(lucid, config),
+    cancelRecovery: (config: CancelRecoveryConfig) =>
+      sdk.cancelRecovery(lucid, config),
+    executeRecovery: (config: ExecuteRecoveryConfig) =>
+      sdk.executeRecovery(lucid, config),
+  };
+};
+
+/** The bound, lucid-and-settings session returned by {@link createDcuSession}. */
+export type DcuSession = ReturnType<typeof createDcuSession>;

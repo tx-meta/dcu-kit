@@ -6,6 +6,11 @@ import {
   Assets,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import {
+  AdminAuthConfig,
+  applyAdminWitness,
+  payAdminReturn,
+} from "../multisig/index.js";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import {
   DcuError,
@@ -13,7 +18,6 @@ import {
   UtxoNotFoundError,
 } from "../core/errors.js";
 import {
-  getScriptAddress,
   parseGroupCip68Datum,
   buildGroupCip68Datum,
   patchInlineDatum,
@@ -46,7 +50,7 @@ import { Protocol } from "../core/validators/constants.js";
 export type UpdateGroupConfig = {
   groupTokenSuffix: string;
   updatedDatum: GroupDatum;
-};
+} & AdminAuthConfig;
 
 export const unsignedUpdateGroupTxProgram = (
   protocol: Protocol,
@@ -65,7 +69,6 @@ export const unsignedUpdateGroupTxProgram = (
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const adminUtxo = yield* resolveUtxoByUnit(lucid, adminUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
-    const address = yield* getScriptAddress(lucid, groupValidator.spendGroup);
 
     const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
 
@@ -107,12 +110,12 @@ export const unsignedUpdateGroupTxProgram = (
       inputs: [adminUtxo, groupUtxo],
     };
 
-    const tx = yield* lucid
+    const baseTx0 = lucid
       .newTx()
       .collectFrom([adminUtxo])
       .collectFrom([groupUtxo], redeemer)
       .pay.ToContract(
-        address,
+        groupUtxo.address,
         {
           kind: "inline",
           value: buildGroupCip68Datum(
@@ -123,16 +126,21 @@ export const unsignedUpdateGroupTxProgram = (
         },
         groupAssets,
       )
-      .attach.SpendingValidator(groupValidator.spendGroup)
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "updateGroup",
-              error: String(e),
-            }),
-        ),
-      );
+      .attach.SpendingValidator(groupValidator.spendGroup);
+
+    const withSigners = applyAdminWitness(
+      payAdminReturn(baseTx0, config, adminUtxo),
+      config,
+    );
+
+    const tx = yield* withSigners.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "updateGroup",
+            error: String(e),
+          }),
+      ),
+    );
     return tx;
   });

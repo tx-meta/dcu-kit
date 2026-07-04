@@ -67,7 +67,7 @@ try {
   blueprint = JSON.parse(readFileSync(PLUTUS_PATH, "utf-8"));
 } catch {
   console.error(`Could not read plutus.json at ${PLUTUS_PATH}`);
-  console.error("Run 'aiken build' from the onchain/ directory first.");
+  console.error("Run 'aiken build' from the onchain/rosca/ directory first.");
   process.exit(1);
 }
 
@@ -160,7 +160,7 @@ if (treasury)
 if (group && treasury) {
   const combined = group.bytes + treasury.bytes;
   rows.push({
-    op: "joinGroup / exitGroup / distributePayout / nextCycle",
+    op: "joinGroup / exitGroup / distributePayout",
     bytes: combined,
     note: `group + treasury = ${fmt(combined)}`,
   });
@@ -199,7 +199,7 @@ if (group && treasury) {
   console.log();
   const saved = combined;
   console.log(
-    `  Bytes saved per distributePayout / nextCycle : ${GRN}${saved.toLocaleString()} bytes (${(saved / 1024).toFixed(1)} KB)${RST}`,
+    `  Bytes saved per distributePayout : ${GRN}${saved.toLocaleString()} bytes (${(saved / 1024).toFixed(1)} KB)${RST}`,
   );
   if (alwaysFails) {
     console.log(

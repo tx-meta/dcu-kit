@@ -2,7 +2,7 @@ import {
   CreateGroupConfig,
   GroupDatum,
   assetNameLabels,
-} from "@tx-meta/dcu-sdk";
+} from "@tx-meta/dcu-kit";
 import { getAddressDetails } from "@lucid-evolution/lucid";
 import { loadSdk } from "./sdk.js";
 import {
@@ -10,6 +10,7 @@ import {
   cexplorerTxUrl,
   logError,
   logWalletInfo,
+  loadScriptRefs,
 } from "./context.js";
 import { saveState, checkValidatorStaleness } from "./state.js";
 
@@ -113,15 +114,38 @@ async function main() {
     //       and withdrawn later via ClaimPayout — the lost-wallet-safe mode.
     // Set PAYOUT_MODE=Pull to create a Pull-mode group.
     payout_mode: process.env.PAYOUT_MODE === "Pull" ? "Pull" : "Push",
+    // Minimum approvals required to authorize a lost-member recovery (absolute count).
+    recovery_threshold: 1n,
+    // Veto window before a recovery proposal can execute (POSIX ms). 3 days default.
+    recovery_timelock: 259_200_000n,
 
     member_count: 0n,
+    // Cached count of members in good standing — maintained by the validators;
+    // MUST equal member_count at creation (both 0).
+    active_member_count: 0n,
+    // Slot ownership registry, parallel to member_token_names. Empty until
+    // StartGroup seals membership and assigns slots.
+    member_slots: [],
+    // The round number the current era (rotation lap numbering) started at.
+    era_start_round: 0n,
+    // Minimum duration of a recommit window (POSIX ms) — the guaranteed free-exit
+    // period between eras. 3 days default.
+    recommit_window: 259_200_000n,
+    // Mutual reserve levies, in the CONTRIBUTION asset. 0n = off. Frozen once a
+    // member joins. RESERVE_JOIN_LEVY fires once per join; RESERVE_ROUND_LEVY per
+    // contributing member per round (comes out of the pot, not on top).
+    reserve_join_levy: BigInt(process.env.RESERVE_JOIN_LEVY ?? "0"),
+    reserve_round_levy: BigInt(process.env.RESERVE_ROUND_LEVY ?? "0"),
     is_active: true,
     is_started: false,
     // start_time MUST be 0 at creation — set to tx lower bound by StartGroup.
     start_time: 0n,
     last_distributed_round: -1n,
     grace_period_length: 0n,
-    creator_payment_credential: adminPkh,
+    // Joining fees route to this credential forever (frozen at first join).
+    // A VerificationKey credential pays a wallet; a Script credential (e.g. a
+    // native multisig) needs `creatorScript` in the config as spendability proof.
+    creator_payment_credential: { VerificationKey: [adminPkh] },
     member_token_names: [],
   };
 
@@ -135,10 +159,13 @@ async function main() {
       process.env.GROUP_DESCRIPTION ?? "A rotating savings group (chama).",
     groupDatum,
     utxoToSpend: utxos[0],
+    // Creating a group invokes BOTH minting policies (group + treasury reserve);
+    // the two no longer fit inline — deploy refs first with `pnpm run deploy-scripts`.
+    scriptRefs: await loadScriptRefs(lucid),
   };
 
   console.log("Building transaction...");
-  const tx = await sdk.createGroup(lucid, config).unsafeRun();
+  const { tx } = await sdk.createGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();

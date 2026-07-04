@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { UTxO } from "@lucid-evolution/lucid";
+import { Script, UTxO } from "@lucid-evolution/lucid";
 import {
   unsignedCreateAccountTxProgram,
   CreateAccountConfig,
@@ -40,10 +40,6 @@ import {
   unsignedExitGroupTxProgram,
   ExitGroupConfig,
 } from "../src/endpoints/exitGroup.js";
-import {
-  unsignedNextCycleTxProgram,
-  NextCycleConfig,
-} from "../src/endpoints/nextCycle.js";
 import { GroupDatum } from "../src/core/types.js";
 import { LucidContext } from "./context.js";
 import {
@@ -97,7 +93,10 @@ export const createAccountTestCase = (
   context: LucidContext,
   params: CreateAccountTestParams = {},
 ): Effect.Effect<
-  CreateAccountResult & { outputs: { accountUtxo: UTxO; userUtxo: UTxO } },
+  CreateAccountResult & {
+    outputs: { accountUtxo: UTxO; userUtxo: UTxO };
+    accountTokenSuffix: string;
+  },
   Error,
   never
 > =>
@@ -134,19 +133,17 @@ export const createAccountTestCase = (
       contact,
     };
 
-    const createAccountTx = yield* unsignedCreateAccountTxProgram(
-      lucid,
-      accountConfig,
-    ).pipe(
-      Effect.timeout("60 seconds"),
-      Effect.catchTag("TimeoutException", () =>
-        Effect.fail(
-          new SetupError({
-            message: "createAccount completeProgram timed out",
-          }),
+    const { tx: createAccountTx, accountTokenSuffix } =
+      yield* unsignedCreateAccountTxProgram(lucid, accountConfig).pipe(
+        Effect.timeout("60 seconds"),
+        Effect.catchTag("TimeoutException", () =>
+          Effect.fail(
+            new SetupError({
+              message: "createAccount completeProgram timed out",
+            }),
+          ),
         ),
-      ),
-    );
+      );
     const txHash = yield* signAndSubmit(createAccountTx);
     yield* advanceBlock(context.emulator);
 
@@ -173,7 +170,11 @@ export const createAccountTestCase = (
       ),
     ]);
 
-    return { txHash, outputs: { accountUtxo, userUtxo } };
+    return {
+      txHash,
+      outputs: { accountUtxo, userUtxo },
+      accountTokenSuffix,
+    };
   });
 
 export type UpdateAccountTestParams = {
@@ -269,15 +270,27 @@ export type CreateGroupTestParams = {
   creatorSeed?: string;
   groupName?: string;
   groupDescription?: string;
+  /** Proof script when the datum's creator_payment_credential is a Script credential. */
+  creatorScript?: Script;
 };
 
 export const createGroupTestCase = (
   context: LucidContext,
   params: CreateGroupTestParams = {},
-): Effect.Effect<CreateGroupResult, Error, never> =>
+): Effect.Effect<
+  CreateGroupResult & { groupTokenSuffix: string },
+  Error,
+  never
+> =>
   Effect.gen(function* () {
     const { lucid, users } = context;
-    const { datumOverride, creatorSeed, groupName, groupDescription } = params;
+    const {
+      datumOverride,
+      creatorSeed,
+      groupName,
+      groupDescription,
+      creatorScript,
+    } = params;
 
     selectWalletFromSeed(lucid, creatorSeed ?? users.admin.seedPhrase);
 
@@ -292,19 +305,24 @@ export const createGroupTestCase = (
     const groupConfig: CreateGroupConfig = {
       groupName: groupName ?? "Test Group",
       ...(groupDescription !== undefined ? { groupDescription } : {}),
+      ...(creatorScript !== undefined ? { creatorScript } : {}),
       groupDatum,
       utxoToSpend: selectedUTxO,
+      // Creating a group invokes both minting policies (group + treasury
+      // CreateReserve); inline together they exceed the tx size limit.
+      scriptRefs: context.scriptRefs,
     };
 
-    const createGroupTx = yield* unsignedCreateGroupTxProgram(
-      context.protocol!,
-      lucid,
-      groupConfig,
-    );
+    const { tx: createGroupTx, groupTokenSuffix } =
+      yield* unsignedCreateGroupTxProgram(
+        context.protocol!,
+        lucid,
+        groupConfig,
+      );
     const txHash = yield* signAndSubmit(createGroupTx);
     yield* advanceBlock(context.emulator);
 
-    return { txHash, groupDatum };
+    return { txHash, groupDatum, groupTokenSuffix };
   });
 
 export type UpdateGroupTestParams = {
@@ -353,7 +371,10 @@ export const deleteGroupTestCase = (
       context.protocol!.groupPolicyId,
       assetNameLabels.prefix100,
     );
-    const deleteConfig: DeleteGroupConfig = { groupTokenSuffix };
+    const deleteConfig: DeleteGroupConfig = {
+      groupTokenSuffix,
+      scriptRefs: context.scriptRefs,
+    };
 
     const deleteGroupTx = yield* unsignedDeleteGroupTxProgram(
       context.protocol!,
@@ -372,6 +393,12 @@ export type JoinGroupTestParams = {
   groupUtxo: UTxO;
   accountUtxo: UTxO;
   userSeed: string;
+  // Optional deposit override (ADA groups) — prefund more rounds than the floor.
+  overrideDepositLovelace?: bigint;
+  // Defaults to context.scriptRefs (deployed once per emulator context — see
+  // test/context.ts) so join txs stay well under the inline size limit. Pass
+  // `null` to force the inline-attach path for a specific test.
+  scriptRefs?: JoinGroupConfig["scriptRefs"] | null;
 };
 
 export const joinGroupTestCase = (
@@ -380,7 +407,7 @@ export const joinGroupTestCase = (
 ): Effect.Effect<JoinGroupResult, Error, never> =>
   Effect.gen(function* () {
     const { lucid } = context;
-    const { groupUtxo, accountUtxo, userSeed } = params;
+    const { groupUtxo, accountUtxo, userSeed, scriptRefs } = params;
 
     selectWalletFromSeed(lucid, userSeed);
 
@@ -403,6 +430,11 @@ export const joinGroupTestCase = (
       groupTokenSuffix,
       accountTokenSuffix,
       currentTime,
+      ...(params.overrideDepositLovelace !== undefined
+        ? { overrideDepositLovelace: params.overrideDepositLovelace }
+        : {}),
+      scriptRefs:
+        scriptRefs === null ? undefined : (scriptRefs ?? context.scriptRefs),
     };
 
     const joinTx = yield* unsignedJoinGroupTxProgram(
@@ -420,6 +452,10 @@ export type StartGroupTestParams = {
   groupUtxo: UTxO;
   adminSeed?: string;
   currentTime?: bigint;
+  // Defaults to context.scriptRefs (deployed once per emulator context — see
+  // test/context.ts) so start txs stay well under the inline size limit. Pass
+  // `null` to force the inline-attach path for a specific test.
+  scriptRefs?: StartGroupConfig["scriptRefs"] | null;
 };
 
 export const startGroupTestCase = (
@@ -428,7 +464,7 @@ export const startGroupTestCase = (
 ): Effect.Effect<{ txHash: string }, Error, never> =>
   Effect.gen(function* () {
     const { lucid, users } = context;
-    const { groupUtxo, adminSeed, currentTime } = params;
+    const { groupUtxo, adminSeed, currentTime, scriptRefs } = params;
 
     selectWalletFromSeed(lucid, adminSeed ?? users.admin.seedPhrase);
 
@@ -443,6 +479,8 @@ export const startGroupTestCase = (
     const startConfig: StartGroupConfig = {
       groupTokenSuffix,
       currentTime: currentTimeFinal,
+      scriptRefs:
+        scriptRefs === null ? undefined : (scriptRefs ?? context.scriptRefs),
     };
 
     const startTx = yield* unsignedStartGroupTxProgram(
@@ -459,6 +497,10 @@ export const startGroupTestCase = (
 export type DistributePayoutTestParams = {
   groupUtxo: UTxO;
   callerSeed: string;
+  // Defaults to context.scriptRefs (deployed once per emulator context — see
+  // test/context.ts) so distribute txs stay well under the inline size limit.
+  // Pass `null` to force the inline-attach path for a specific test.
+  scriptRefs?: DistributePayoutConfig["scriptRefs"] | null;
 };
 
 export const distributePayoutTestCase = (
@@ -467,7 +509,7 @@ export const distributePayoutTestCase = (
 ): Effect.Effect<DistributePayoutResult, Error, never> =>
   Effect.gen(function* () {
     const { lucid } = context;
-    const { groupUtxo, callerSeed } = params;
+    const { groupUtxo, callerSeed, scriptRefs } = params;
 
     selectWalletFromSeed(lucid, callerSeed);
 
@@ -476,7 +518,11 @@ export const distributePayoutTestCase = (
       context.protocol!.groupPolicyId,
       assetNameLabels.prefix100,
     );
-    const payoutConfig: DistributePayoutConfig = { groupTokenSuffix };
+    const payoutConfig: DistributePayoutConfig = {
+      groupTokenSuffix,
+      scriptRefs:
+        scriptRefs === null ? undefined : (scriptRefs ?? context.scriptRefs),
+    };
 
     const payoutTx = yield* unsignedDistributePayoutTxProgram(
       context.protocol!,
@@ -504,6 +550,10 @@ export type ExitGroupTestParams = {
   groupUtxo: UTxO;
   accountUtxo: UTxO;
   userSeed: string;
+  // Defaults to context.scriptRefs (deployed once per emulator context — see
+  // test/context.ts) so exit txs stay well under the inline size limit. Pass
+  // `null` to force the inline-attach path for a specific test.
+  scriptRefs?: ExitGroupConfig["scriptRefs"] | null;
 };
 
 export const exitGroupTestCase = (
@@ -512,7 +562,7 @@ export const exitGroupTestCase = (
 ): Effect.Effect<ExitGroupResult, Error, never> =>
   Effect.gen(function* () {
     const { lucid } = context;
-    const { groupUtxo, accountUtxo, userSeed } = params;
+    const { groupUtxo, accountUtxo, userSeed, scriptRefs } = params;
 
     selectWalletFromSeed(lucid, userSeed);
 
@@ -534,6 +584,8 @@ export const exitGroupTestCase = (
       groupTokenSuffix,
       accountTokenSuffix,
       currentTime,
+      scriptRefs:
+        scriptRefs === null ? undefined : (scriptRefs ?? context.scriptRefs),
     };
 
     const exitTx = yield* unsignedExitGroupTxProgram(
@@ -542,36 +594,6 @@ export const exitGroupTestCase = (
       exitConfig,
     );
     const txHash = yield* signAndSubmit(exitTx);
-    yield* advanceBlock(context.emulator);
-
-    return { txHash };
-  });
-
-export type NextCycleResult = { txHash: string };
-
-export const nextCycleTestCase = (
-  context: LucidContext,
-  params: { groupUtxo: UTxO; adminSeed: string },
-): Effect.Effect<NextCycleResult, Error, never> =>
-  Effect.gen(function* () {
-    const { lucid } = context;
-    const { groupUtxo, adminSeed } = params;
-
-    selectWalletFromSeed(lucid, adminSeed);
-
-    const groupTokenSuffix = extractTokenSuffix(
-      groupUtxo,
-      context.protocol!.groupPolicyId,
-      assetNameLabels.prefix100,
-    );
-    const nextCycleConfig: NextCycleConfig = { groupTokenSuffix };
-
-    const tx = yield* unsignedNextCycleTxProgram(
-      context.protocol!,
-      lucid,
-      nextCycleConfig,
-    );
-    const txHash = yield* signAndSubmit(tx);
     yield* advanceBlock(context.emulator);
 
     return { txHash };

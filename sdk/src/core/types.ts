@@ -59,17 +59,32 @@ export const PayoutMode = PayoutModeSchema as unknown as PayoutMode;
 
 // --- Protocol Settings (P5 trusted binding) ---
 // Datum of the immutable settings UTxO. Holds the trusted policy IDs of the three
-// DCU validators, read by the treasury validator (via the singleton settings NFT)
-// to authenticate cross-validator inputs. Field order MUST mirror the Aiken
-// ProtocolSettings type (account, group, treasury).
+// DCU validators plus the four treasury family stake-validator hashes (the
+// treasury split — spec 2026-07-04), read via the singleton settings NFT to
+// authenticate cross-validator inputs and route redeemer families. Field order
+// MUST mirror the Aiken ProtocolSettings type.
 export const ProtocolSettingsSchema = Data.Object({
   account_policy: Data.Bytes(),
   group_policy: Data.Bytes(),
   treasury_policy: Data.Bytes(),
+  treasury_rounds_stake: Data.Bytes(),
+  treasury_lifecycle_stake: Data.Bytes(),
+  treasury_recovery_stake: Data.Bytes(),
+  treasury_reserve_stake: Data.Bytes(),
 });
 export type ProtocolSettings = Data.Static<typeof ProtocolSettingsSchema>;
 export const ProtocolSettings =
   ProtocolSettingsSchema as unknown as ProtocolSettings;
+
+// --- Credential (mirrors Aiken's cardano/address.Credential) ---
+// VerificationKey(hash) = Constr(0, [bytes]) — a wallet payment key hash.
+// Script(hash)          = Constr(1, [bytes]) — a native/Plutus script hash (e.g. multisig).
+export const CredentialSchema = Data.Enum([
+  Data.Object({ VerificationKey: Data.Tuple([Data.Bytes()]) }),
+  Data.Object({ Script: Data.Tuple([Data.Bytes()]) }),
+]);
+export type CredentialD = Data.Static<typeof CredentialSchema>;
+export const CredentialD = CredentialSchema as unknown as CredentialD;
 
 export const GroupDatumSchema = Data.Object({
   /** Policy ID of the contribution asset. Empty string (`""`) means ADA (lovelace). */
@@ -107,8 +122,15 @@ export const GroupDatumSchema = Data.Object({
   num_rounds: Data.Integer(),
   /** Maximum number of members allowed. Recommended ≤ 30 to stay within tx execution limits. */
   max_members: Data.Integer(),
-  /** Current active member count. Incremented by `joinGroup`, decremented by `exitGroup`. */
+  /** Total members in the group (the membership registry size). +1 join, -1 exit/terminate. */
   member_count: Data.Integer(),
+  /**
+   * Cached count of members currently in `TreasuryState` (contributing). Distribute reads it
+   * in O(1) for the pro-rata pot. 0 at creation; set to `member_count` by `startGroup`; +1 on
+   * join and contribute-recovery; -1 on exit and per ICS transition in distribute (terminate
+   * of a defaulter leaves it unchanged — they already left the active set at ICS).
+   */
+  active_member_count: Data.Integer(),
   /** False once deactivated by `updateGroup`. Deactivation is one-way — cannot be reversed. */
   is_active: Data.Boolean(),
   /**
@@ -127,8 +149,12 @@ export const GroupDatumSchema = Data.Object({
    * incremented atomically with each `distributeRound` call.
    */
   last_distributed_round: Data.Integer(),
-  /** 28-byte payment key hash of the group creator. Joining fees are routed here. */
-  creator_payment_credential: Data.Bytes(),
+  /**
+   * Payment credential of the group creator — `{ VerificationKey: [pkh] }` for a wallet
+   * or `{ Script: [hash] }` for a multisig/contract. Joining fees are routed here, so a
+   * multisig-governed group can receive fees at the multisig itself.
+   */
+  creator_payment_credential: CredentialSchema,
   /** On-chain membership registry — one CIP-68 token name per active member. */
   member_token_names: Data.Array(Data.Bytes()),
   /**
@@ -142,6 +168,26 @@ export const GroupDatumSchema = Data.Object({
    * See {@link PayoutModeSchema}.
    */
   payout_mode: PayoutModeSchema,
+  /** M-of-N member approvals required to authorize a lost-member recovery (absolute count). */
+  recovery_threshold: Data.Integer(),
+  /** Recovery veto window in **POSIX milliseconds** (propose→execute delay). e.g. 259_200_000n = 3 days. */
+  recovery_timelock: Data.Integer(),
+  /** Authoritative slot map, parallel to member_token_names ([] whenever !is_started). */
+  member_slots: Data.Array(Data.Integer()),
+  /** round_number at which the current era's rotation began (re-based at each re-seal). */
+  era_start_round: Data.Integer(),
+  /** Min POSIX-ms between BeginRecommit and the re-sealing startGroup (opt-out window). */
+  recommit_window: Data.Integer(),
+  /**
+   * One-time amount (in the CONTRIBUTION asset) each joiner pays into the group's
+   * mutual reserve at join. 0n = off. Distinct from joining_fee (creator-routed).
+   */
+  reserve_join_levy: Data.Integer(),
+  /**
+   * Per contributing member per round (in the CONTRIBUTION asset) routed to the
+   * mutual reserve at distribute; the round's pot shrinks by the same total. 0n = off.
+   */
+  reserve_round_levy: Data.Integer(),
 });
 
 /**
@@ -229,11 +275,45 @@ export const GroupSpendRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    NextCycle: Data.Object({
+    // Re-admits a recovering member to the active set (active_member_count + 1). Spent
+    // atomically with the treasury Contribute recovery (DefaultState -> TreasuryState).
+    Recover: Data.Object({
+      group_ref_token_name: Data.Bytes(),
+      group_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      treasury_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    // Lost-member recovery: swaps the membership registry entry old (N) -> new (N')
+    // when a member's identity is rotated by treasury ExecuteRecovery in the same tx.
+    // member_count and active_member_count frozen. The treasury indices couple this
+    // registry edit to a genuine rotation: the named treasury input must hold N and
+    // the named treasury output must hold N'.
+    RecoverMember: Data.Object({
+      group_ref_token_name: Data.Bytes(),
+      group_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      old_member_token_name: Data.Bytes(),
+      new_member_token_name: Data.Bytes(),
+      treasury_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    // Opens the opt-out reset window (Recommit): blocks distribute, re-opens joining,
+    // makes every exit free; startGroup re-seals after recommit_window elapses.
+    BeginRecommit: Data.Object({
       group_ref_token_name: Data.Bytes(),
       admin_input_index: Data.Integer(),
       group_input_index: Data.Integer(),
       group_output_index: Data.Integer(),
+      /**
+       * The group's reserve UTxO as a REFERENCE input — the clean gate requires
+       * standin_rounds == 0n (owed default cover must finish before a reset).
+       */
+      reserve_ref_input_index: Data.Integer(),
     }),
   }),
 ]);
@@ -249,7 +329,6 @@ export const TreasuryDatumSchema = Data.Enum([
     TreasuryState: Data.Object({
       group_reference_tokenname: Data.Bytes(),
       member_reference_tokenname: Data.Bytes(),
-      assigned_slot: Data.Integer(),
       rounds_paid: Data.Integer(),
       member_payment_credential: Data.Bytes(),
       /**
@@ -272,7 +351,6 @@ export const TreasuryDatumSchema = Data.Enum([
       grace_expires_at: Data.Integer(),
       grace_extensions_used: Data.Integer(),
       rounds_paid: Data.Integer(),
-      assigned_slot: Data.Integer(),
       member_payment_credential: Data.Bytes(),
       /**
        * Pull mode: unclaimed earmark carried in from TreasuryState when the member
@@ -282,97 +360,247 @@ export const TreasuryDatumSchema = Data.Enum([
       claimable_balance: Data.Integer(),
     }),
   }),
+  Data.Object({
+    // Pending lost-member recovery. Authenticated by holding exactly the freshly-minted
+    // treasury-side token `new_member_tokenname` (N') — same pattern as a treasury UTxO
+    // holding its membership token. Consumed by ApproveRecovery (re-created with one more
+    // approval), CancelRecovery (veto), or ExecuteRecovery (rotates the lost member's position).
+    RecoveryRequest: Data.Object({
+      group_reference_tokenname: Data.Bytes(),
+      target_token: Data.Bytes(),
+      new_member_tokenname: Data.Bytes(),
+      new_payment_credential: Data.Bytes(),
+      earliest_execution_slot: Data.Integer(),
+      approvals: Data.Array(Data.Bytes()),
+    }),
+  }),
+  Data.Object({
+    // Mutual reserve pot — exactly one per group, created in the createGroup tx.
+    // Identity: holds the reserve token (prefix "RSVE" + the group ref token's
+    // unique part) under the treasury policy. Appended LAST (Constr index 4).
+    ReserveState: Data.Object({
+      group_reference_tokenname: Data.Bytes(),
+      /**
+       * Remaining fee-units the reserve stands in for terminated defaulters —
+       * one unit drawn per distribute round while > 0n (decrements even when the
+       * pot is dry). Flat pool: overlapping defaults extend duration, not depth.
+       */
+      standin_rounds: Data.Integer(),
+    }),
+  }),
 ]);
 
 export type TreasuryDatum = Data.Static<typeof TreasuryDatumSchema>;
 export const TreasuryDatum = TreasuryDatumSchema as unknown as TreasuryDatum;
 
+// Treasury dispatcher redeemer (treasury split — spec 2026-07-04). The treasury
+// script dispatches by redeemer family to the withdraw-zero stake validators;
+// all action indices live on the family withdraw redeemers (Lifecycle/Recovery/
+// ReserveAction below), located on-chain BY PURPOSE — so every variant here is
+// field-less except DistributeRound (withdrawal_index into tx.withdrawals,
+// unchanged shape). Variant ORDER mirrors the Aiken type exactly.
 export const TreasuryRedeemerSchema = Data.Enum([
-  Data.Object({
-    JoinGroup: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      member_input_index: Data.Integer(),
-      treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    ClaimPenalty: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      admin_input_index: Data.Integer(),
-    }),
-  }),
+  Data.Literal("JoinGroup"),
+  Data.Literal("ClaimPenalty"),
   Data.Object({
     DistributeRound: Data.Object({
-      round_number: Data.Integer(),
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      treasury_input_indices: Data.Array(Data.Integer()),
-      treasury_output_indices: Data.Array(Data.Integer()),
-      borrower_output_index: Data.Integer(),
+      withdrawal_index: Data.Integer(),
     }),
   }),
-  Data.Object({
-    ExitGroup: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      member_input_index: Data.Integer(),
-      treasury_input_index: Data.Integer(),
-      penalty_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    Contribute: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      member_input_index: Data.Integer(),
-      treasury_input_index: Data.Integer(),
-      treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    UpdatePayout: Data.Object({
-      member_input_index: Data.Integer(),
-      treasury_input_index: Data.Integer(),
-      treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    ExtendGrace: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      admin_input_index: Data.Integer(),
-      treasury_input_index: Data.Integer(),
-      treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    NextCycle: Data.Object({
-      group_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      treasury_input_indices: Data.Array(Data.Integer()),
-      treasury_output_indices: Data.Array(Data.Integer()),
-    }),
-  }),
-  Data.Object({
-    // Pull mode: member withdraws their earmarked payout (claimable_balance).
-    ClaimPayout: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      member_input_index: Data.Integer(),
-      treasury_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    // Admin terminates a defaulter (DefaultState) after grace expires: burns the
-    // membership token, decrements member_count (group spent with Exit), forfeits the
-    // collateral to the admin. Appended LAST to keep existing Constr indices stable.
-    TerminateDefault: Data.Object({
-      group_ref_input_index: Data.Integer(),
-      group_output_index: Data.Integer(),
-      admin_input_index: Data.Integer(),
-      treasury_input_index: Data.Integer(),
-    }),
-  }),
+  Data.Literal("ExitGroup"),
+  Data.Literal("Contribute"),
+  Data.Literal("UpdatePayout"),
+  Data.Literal("ExtendGrace"),
+  Data.Literal("ClaimPayout"),
+  Data.Literal("TerminateDefault"),
+  Data.Literal("ProposeRecovery"),
+  Data.Literal("ApproveRecovery"),
+  Data.Literal("CancelRecovery"),
+  Data.Literal("ExecuteRecovery"),
+  Data.Literal("CreateReserve"),
+  Data.Literal("ReserveTopUp"),
+  Data.Literal("ReserveCover"),
+  Data.Literal("ReserveRefund"),
+  Data.Literal("ReserveClose"),
 ]);
 
 export type TreasuryRedeemer = Data.Static<typeof TreasuryRedeemerSchema>;
 export const TreasuryRedeemer =
   TreasuryRedeemerSchema as unknown as TreasuryRedeemer;
+
+/**
+ * Treasury withdraw-validator redeemer (the withdraw-zero coupling). Carried by the 0-ADA
+ * reward withdrawal from the treasury's own stake credential; the heavy round validation
+ * runs once here instead of per spend input. DistributeWithdraw is the only constructor
+ * (NextCycleWithdraw was removed with the continuous-round model), so this is a single-
+ * constructor type — encoded as `Constr(0, fields)`, i.e. `Data.Object` (NOT a `Data.Enum`,
+ * which Lucid Evolution cannot cast when it has only one variant). Field order must match the
+ * Aiken `DistributeWithdraw` constructor exactly.
+ */
+export const TreasuryWithdrawRedeemerSchema = Data.Object({
+  round_number: Data.Integer(),
+  group_ref_input_index: Data.Integer(),
+  group_output_index: Data.Integer(),
+  treasury_input_indices: Data.Array(Data.Integer()),
+  treasury_output_indices: Data.Array(Data.Integer()),
+  borrower_output_index: Data.Integer(),
+});
+
+export type TreasuryWithdrawRedeemer = Data.Static<
+  typeof TreasuryWithdrawRedeemerSchema
+>;
+export const TreasuryWithdrawRedeemer =
+  TreasuryWithdrawRedeemerSchema as unknown as TreasuryWithdrawRedeemer;
+
+// ─── Treasury family stake-validator actions (treasury split, spec 2026-07-04) ──
+// Withdraw redeemers of the four family stake validators. CONVENTION (enforced
+// on-chain): the FIRST field of every variant is `covered_inputs` — the treasury
+// spending inputs that action validates (the dispatcher's pin rule); the
+// mint-triggering variant of each type is the FIRST constructor (constr tag 0).
+// Field order MUST mirror the Aiken types in dcu/treasury_actions exactly.
+// (The rounds family keeps TreasuryWithdrawRedeemer above, unchanged.)
+
+export const LifecycleActionSchema = Data.Enum([
+  Data.Object({
+    JoinAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ExitAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      penalty_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ContributeAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    UpdatePayoutAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      member_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ExtendGraceAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      admin_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ClaimPayoutAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      treasury_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ClaimPenaltyAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      admin_input_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    TerminateDefaultAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      admin_input_index: Data.Integer(),
+    }),
+  }),
+]);
+export type LifecycleAction = Data.Static<typeof LifecycleActionSchema>;
+export const LifecycleAction =
+  LifecycleActionSchema as unknown as LifecycleAction;
+
+export const RecoveryActionSchema = Data.Enum([
+  Data.Object({
+    ProposeAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      request_output_index: Data.Integer(),
+      approver_input_indices: Data.Array(Data.Integer()),
+    }),
+  }),
+  Data.Object({
+    ApproveAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      request_output_index: Data.Integer(),
+      approver_input_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    CancelAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+    }),
+  }),
+  Data.Object({
+    ExecuteAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      member_treasury_output_index: Data.Integer(),
+    }),
+  }),
+]);
+export type RecoveryAction = Data.Static<typeof RecoveryActionSchema>;
+export const RecoveryAction = RecoveryActionSchema as unknown as RecoveryAction;
+
+export const ReserveActionSchema = Data.Enum([
+  Data.Object({
+    CreateAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_output_index: Data.Integer(),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    TopUpAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    CoverAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      defaulter_input_index: Data.Integer(),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    RefundAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_ref_input_index: Data.Integer(),
+      group_output_index: Data.Integer(),
+      exiting_treasury_input_index: Data.Integer(),
+      reserve_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    CloseAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      group_input_index: Data.Integer(),
+    }),
+  }),
+]);
+export type ReserveAction = Data.Static<typeof ReserveActionSchema>;
+export const ReserveAction = ReserveActionSchema as unknown as ReserveAction;

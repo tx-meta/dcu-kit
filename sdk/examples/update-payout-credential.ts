@@ -20,13 +20,14 @@
 import {
   UpdatePayoutCredentialConfig,
   accountPolicyId,
-} from "@tx-meta/dcu-sdk";
+} from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
   logError,
   logWalletInfo,
+  loadScriptRefs,
 } from "./context.js";
 import {
   loadState,
@@ -72,7 +73,10 @@ async function main() {
     "Future distribute-payout calls will send the payout to the signing wallet.",
   );
 
-  const config: UpdatePayoutCredentialConfig = { accountTokenSuffix };
+  const config: UpdatePayoutCredentialConfig = {
+    accountTokenSuffix,
+    scriptRefs: await loadScriptRefs(lucid),
+  };
 
   console.log("Building update-payout-credential transaction...");
   const tx = await sdk.updatePayoutCredential(lucid, config).unsafeRun();

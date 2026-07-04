@@ -8,7 +8,7 @@ description: How to install, configure, initialize, and call the DCU Toolkit SDK
 The DCU SDK requires `@lucid-evolution/lucid` and `effect` as peer dependencies. Install all three:
 
 ```bash
-pnpm install @tx-meta/dcu-sdk @lucid-evolution/lucid effect
+pnpm install @tx-meta/dcu-kit @lucid-evolution/lucid effect
 ```
 
 ## Initializing Lucid Evolution
@@ -58,7 +58,7 @@ import {
   deriveSettings,
   deployScripts,
   createDcuSdk,
-} from "@tx-meta/dcu-sdk";
+} from "@tx-meta/dcu-kit";
 import { Effect } from "effect";
 
 // 1. Pick a seed UTxO explicitly so the resulting policy is deterministic.
@@ -91,7 +91,7 @@ The SDK exposes endpoints in two ways depending on whether they need the deploym
 `createAccount` and `updateAccount` operate on a user's own CIP-68 account tokens and do **not** depend on a deployment. Import and call them directly:
 
 ```ts
-import { createAccount, updateAccount } from "@tx-meta/dcu-sdk";
+import { createAccount, updateAccount } from "@tx-meta/dcu-kit";
 
 const [utxo] = await lucid.wallet().getUtxos();
 const tx = await createAccount(lucid, { selected_out_ref: utxo }).unsafeRun();
@@ -102,7 +102,7 @@ const tx = await createAccount(lucid, { selected_out_ref: utxo }).unsafeRun();
 Everything else — `createGroup`, `joinGroup`, `startGroup`, `distributePayout`, `claimPayout`, `contribute`, `exitGroup`, `terminateGroup`, `nextCycle`, `extendGraceWindow`, `updatePayoutCredential`, `updateGroup`, `deleteGroup`, and `deleteAccount` — is produced by `createDcuSdk(settingsPolicy)`, because the validators are parameterized by the deployment's settings policy:
 
 ```ts
-import { createDcuSdk } from "@tx-meta/dcu-sdk";
+import { createDcuSdk } from "@tx-meta/dcu-kit";
 
 const sdk = createDcuSdk(settingsPolicy); // the policy ID from Protocol setup
 
@@ -122,7 +122,7 @@ await sdk.distributePayout(lucid, config).unsafeRun();
 All endpoints follow the same execution pattern, powered by the `ProgramRunner`. Instead of returning a plain `Promise`, every endpoint returns an object that lets you choose how to execute and handle errors.
 
 ```ts
-import { createAccount } from "@tx-meta/dcu-sdk";
+import { createAccount } from "@tx-meta/dcu-kit";
 import { Either } from "effect";
 
 // lucid is your initialised LucidEvolution instance (see above)

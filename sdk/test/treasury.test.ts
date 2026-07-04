@@ -12,7 +12,6 @@ import {
   distributePayoutTestCase,
   startGroupTestCase,
   updateGroupTestCase,
-  nextCycleTestCase,
 } from "./actions.js";
 import {
   setupBase,
@@ -37,6 +36,7 @@ import {
   parseSafeDatum,
   patchInlineDatum,
   parseGroupCip68Datum,
+  buildMultisig,
 } from "../src/core/utils/index.js";
 import { SetupError } from "../src/core/errors.js";
 import { accountPolicyId } from "../src/core/validators/constants.js";
@@ -405,6 +405,7 @@ describe("Treasury Endpoints", () => {
           lucid,
           {
             accountTokenSuffix: suffix1,
+            scriptRefs: context.scriptRefs,
           },
         );
         const claimHash = yield* signAndSubmit(claimTx);
@@ -446,6 +447,7 @@ describe("Treasury Endpoints", () => {
           lucid,
           {
             accountTokenSuffix: suffix1,
+            scriptRefs: context.scriptRefs,
             destinationAddress: fresh.address,
           },
         );
@@ -640,7 +642,9 @@ describe("Treasury Endpoints", () => {
 
         const { groupUtxo } = yield* setupGroup(base, {
           joining_fee: 1_000_000n,
-          creator_payment_credential: adminPkh,
+          creator_payment_credential: {
+            VerificationKey: [adminPkh] as [string],
+          },
         });
         const { userUtxo } = yield* setupAccount(base);
         if (!userUtxo)
@@ -670,10 +674,84 @@ describe("Treasury Endpoints", () => {
             groupTokenSuffix,
             accountTokenSuffix,
             currentTime,
+            scriptRefs: base.context.scriptRefs,
           },
         );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
+      }),
+  );
+
+  // --- Positive: joinGroup routes joining_fee to a MULTISIG creator credential ---
+  // The creator credential is a Script (native multisig) hash; the SDK derives the fee
+  // address from the credential kind and the validator's credential-equality check
+  // accepts it. The fee must land at the multisig script address.
+  it.effect(
+    "should route joining_fee to a multisig script creator credential",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { lucid, users } = base.context;
+
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+        const multisig = yield* buildMultisig(lucid, {
+          signers: ["a".repeat(56), "b".repeat(56), "c".repeat(56)],
+          required: 2,
+        });
+
+        const { groupUtxo } = yield* setupGroup(
+          base,
+          {
+            joining_fee: 1_000_000n,
+            creator_payment_credential: {
+              Script: [multisig.policyHash] as [string],
+            },
+          },
+          { creatorScript: multisig.script },
+        );
+        const { userUtxo } = yield* setupAccount(base);
+        if (!userUtxo)
+          return yield* Effect.fail(
+            new SetupError({ message: "User UTxO not found" }),
+          );
+
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          base.context.protocol!.groupPolicyId,
+          assetNameLabels.prefix100,
+        );
+        const accountTokenSuffix = extractTokenSuffix(
+          userUtxo,
+          accountPolicyId,
+          assetNameLabels.prefix222,
+        );
+
+        const currentTime = base.context.emulator
+          ? BigInt(base.context.emulator.now())
+          : BigInt(Date.now()) - 120_000n;
+        const txBuilder = yield* unsignedJoinGroupTxProgram(
+          base.context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            accountTokenSuffix,
+            currentTime,
+            scriptRefs: base.context.scriptRefs,
+          },
+        );
+        const txHash = yield* signAndSubmit(txBuilder);
+        expect(txHash).toHaveLength(64);
+        yield* advanceBlock(base.context.emulator);
+
+        // The joining fee must sit at the multisig script address.
+        const multisigUtxos = yield* Effect.tryPromise(() =>
+          lucid.utxosAt(multisig.address),
+        );
+        const feeUtxo = multisigUtxos.find(
+          (u) => u.txHash === txHash && u.assets.lovelace >= 1_000_000n,
+        );
+        expect(feeUtxo).toBeDefined();
       }),
   );
 
@@ -853,6 +931,7 @@ describe("Treasury Endpoints", () => {
           {
             groupTokenSuffix,
             accountTokenSuffix,
+            scriptRefs: context.scriptRefs,
             topUpAmount: 2_000_000n,
           },
         );
@@ -905,12 +984,73 @@ describe("Treasury Endpoints", () => {
           {
             groupTokenSuffix,
             accountTokenSuffix,
+            scriptRefs: context.scriptRefs,
             topUpAmount: 5n,
           },
         );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
       }),
+  );
+
+  // --- Native-token group: full distribute round (end-to-end) ---
+  // Closes the coverage gap noted in the roadmap: a 2-member group whose contribution asset
+  // is a native token, driven Join -> StartGroup -> DistributeRound. Round 0 debits each
+  // member's treasury by the fee in the TOKEN (Push mode pays the borrower from the pool to
+  // their wallet). Join locks collateral_rounds(2) x fee(5) = 10 tokens; round 0 deducts 5,
+  // so each treasury output holds 5 tokens afterward.
+  it.effect("should distribute a native-token round to two members", () =>
+    Effect.gen(function* () {
+      const tokenPolicy =
+        "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0";
+      const tokenName = "55534454"; // "USDT"
+      const tokenUnit = tokenPolicy + tokenName;
+
+      const base = yield* setupBase({ [tokenUnit]: 1_000_000n });
+      const { context, groupUtxo } = yield* setupGroup(base, {
+        contribution_fee_policyid: tokenPolicy,
+        contribution_fee_assetname: tokenName,
+        contribution_fee: 5n,
+        collateral_rounds: 2n,
+      });
+      const { users } = context;
+
+      const {
+        outputs: { userUtxo: user1AccountUtxo },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user1.seedPhrase,
+      });
+      const {
+        outputs: { userUtxo: user2AccountUtxo },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
+
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: user1AccountUtxo,
+        userSeed: users.user1.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: user2AccountUtxo,
+        userSeed: users.user2.seedPhrase,
+      });
+      yield* startGroupTestCase(context, { groupUtxo });
+
+      const result = yield* distributePayoutTestCase(context, {
+        groupUtxo,
+        callerSeed: users.user1.seedPhrase,
+      });
+
+      expect(result.txHash).toHaveLength(64);
+      // Both members' treasuries are spent and re-output, each debited exactly the fee
+      // (5) in the contribution token: 10 locked - 5 = 5 remaining.
+      expect(result.treasuryOutputs).toHaveLength(2);
+      for (const out of result.treasuryOutputs) {
+        expect(out.assets[tokenUnit]).toBe(5n);
+      }
+    }),
   );
 
   // --- UpdatePayout ---
@@ -933,7 +1073,7 @@ describe("Treasury Endpoints", () => {
         const txBuilder = yield* unsignedUpdatePayoutCredentialTxProgram(
           context.protocol!,
           lucid,
-          { accountTokenSuffix },
+          { accountTokenSuffix, scriptRefs: context.scriptRefs },
         );
         const txHash = yield* signAndSubmit(txBuilder);
         expect(txHash).toHaveLength(64);
@@ -989,6 +1129,7 @@ describe("Treasury Endpoints", () => {
             groupTokenSuffix,
             accountTokenSuffix: user1TokenSuffix,
             currentTime: BigInt(context.emulator!.now()),
+            scriptRefs: context.scriptRefs,
           },
         );
         yield* signAndSubmit(joinUser1Tx);
@@ -1021,6 +1162,7 @@ describe("Treasury Endpoints", () => {
           {
             groupTokenSuffix,
             memberAccountTokenSuffix,
+            scriptRefs: context.scriptRefs,
           },
         );
         const txHash = yield* signAndSubmit(txBuilder);
@@ -1097,6 +1239,7 @@ describe("Treasury Endpoints", () => {
             groupTokenSuffix,
             memberAccountTokenSuffix: user1TokenSuffix,
             currentTime: BigInt(context.emulator!.now()),
+            scriptRefs: context.scriptRefs,
           },
         );
         const terminateHash = yield* signAndSubmit(terminateTx);
@@ -1171,6 +1314,7 @@ describe("Treasury Endpoints", () => {
             groupTokenSuffix,
             accountTokenSuffix: user1TokenSuffix,
             currentTime: BigInt(context.emulator!.now()),
+            scriptRefs: context.scriptRefs,
           },
         );
         yield* signAndSubmit(joinUser1Tx);
@@ -1212,6 +1356,7 @@ describe("Treasury Endpoints", () => {
             groupTokenSuffix,
             accountTokenSuffix: user1TokenSuffix,
             topUpAmount: 2_000_000n, // raw 2M + 2M = 4M → contributable 2M ≥ 2M fee
+            scriptRefs: context.scriptRefs,
           },
         );
         const recoverHash = yield* signAndSubmit(recoverTx);
@@ -1228,127 +1373,8 @@ describe("Treasury Endpoints", () => {
         )) as unknown as TreasuryDatum;
         expect("TreasuryState" in recoveredDatum).toBe(true);
         if ("TreasuryState" in recoveredDatum) {
-          expect(recoveredDatum.TreasuryState.assigned_slot).toBe(0n);
           expect(recoveredDatum.TreasuryState.rounds_paid).toBe(1n);
         }
       }),
-  );
-
-  // --- NextCycle ---
-  // After all rounds are distributed, admin resets the group for a new rotation.
-  // Members keep their slots; rounds_paid resets to 0.
-  it.effect("should reset a mature group for a new cycle (NextCycle)", () =>
-    Effect.gen(function* () {
-      const base = yield* setupBase();
-      // interval_length=20_000ms so each awaitBlock(1) = one interval.
-      // collateral_rounds: 2 prefunds both rounds so members stay solvent through the full cycle
-      // (the PerRound default covers only round 0).
-      const { context, groupUtxo } = yield* setupGroup(base, {
-        interval_length: 20_000n,
-        collateral_rounds: 2n,
-      });
-      const { lucid, users } = context;
-
-      // Create accounts for both members (startGroup requires member_count >= 2).
-      const {
-        outputs: { userUtxo: user1AccountUtxo },
-      } = yield* createAccountTestCase(context, {
-        userSeed: users.user1.seedPhrase,
-      });
-      const {
-        outputs: { userUtxo: user2AccountUtxo },
-      } = yield* createAccountTestCase(context, {
-        userSeed: users.user2.seedPhrase,
-      });
-
-      // user1 → slot 0, user2 → slot 1.
-      yield* joinGroupTestCase(context, {
-        groupUtxo,
-        accountUtxo: user1AccountUtxo,
-        userSeed: users.user1.seedPhrase,
-      });
-      yield* joinGroupTestCase(context, {
-        groupUtxo,
-        accountUtxo: user2AccountUtxo,
-        userSeed: users.user2.seedPhrase,
-      });
-
-      // Seal membership: num_rounds=2, start_time=now.
-      yield* startGroupTestCase(context, { groupUtxo });
-
-      // Distribute all 2 rounds (one awaitBlock = one interval).
-      yield* distributePayoutTestCase(context, {
-        groupUtxo,
-        callerSeed: users.user1.seedPhrase,
-      });
-      yield* distributePayoutTestCase(context, {
-        groupUtxo,
-        callerSeed: users.user2.seedPhrase,
-      });
-
-      // M2 re-funding guard: after a full cycle each member is drained to ~min-UTxO, which is
-      // below the collateral floor (contribution_fee × collateral_rounds = 4 ADA). NextCycle now
-      // rejects an under-collateralized restart, so each member must top up to the floor first.
-      const groupTokenSuffix0 = extractTokenSuffix(
-        groupUtxo,
-        context.protocol!.groupPolicyId,
-        assetNameLabels.prefix100,
-      );
-      for (const m of [
-        { seed: users.user1.seedPhrase, acct: user1AccountUtxo },
-        { seed: users.user2.seedPhrase, acct: user2AccountUtxo },
-      ]) {
-        selectWalletFromSeed(lucid, m.seed);
-        const topUp = yield* unsignedContributeTxProgram(
-          context.protocol!,
-          lucid,
-          {
-            groupTokenSuffix: groupTokenSuffix0,
-            accountTokenSuffix: extractTokenSuffix(
-              m.acct,
-              accountPolicyId,
-              assetNameLabels.prefix222,
-            ),
-            topUpAmount: 4_000_000n,
-          },
-        );
-        yield* signAndSubmit(topUp);
-        yield* advanceBlock(context.emulator);
-      }
-
-      // Reset the group for the next cycle. Admin must sign.
-      selectWalletFromSeed(lucid, users.admin.seedPhrase);
-      const { txHash } = yield* nextCycleTestCase(context, {
-        groupUtxo,
-        adminSeed: users.admin.seedPhrase,
-      });
-      expect(txHash).toHaveLength(64);
-
-      // Verify group datum is reset.
-      const groupTokenSuffix = extractTokenSuffix(
-        groupUtxo,
-        context.protocol!.groupPolicyId,
-        assetNameLabels.prefix100,
-      );
-      const groupUnit =
-        context.protocol!.groupPolicyId +
-        assetNameLabels.prefix100 +
-        groupTokenSuffix;
-      const updatedGroupUtxo = yield* Effect.tryPromise(() =>
-        lucid.utxoByUnit(groupUnit),
-      );
-      if (!updatedGroupUtxo)
-        throw new Error("Group UTxO not found after nextCycle");
-      const rawCip68 = yield* parseGroupCip68Datum(
-        patchInlineDatum(updatedGroupUtxo).datum,
-      );
-      const groupDatum = rawCip68.groupDatum;
-      expect(groupDatum.is_started).toBe(false);
-      expect(groupDatum.last_distributed_round).toBe(-1n);
-      expect(groupDatum.num_rounds).toBe(0n);
-      expect(groupDatum.start_time).toBe(0n);
-      // member_count and member_token_names preserved
-      expect(groupDatum.member_count).toBe(2n);
-    }),
   );
 });

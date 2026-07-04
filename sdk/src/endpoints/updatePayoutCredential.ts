@@ -7,10 +7,13 @@ import {
   toUnit,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  LifecycleAction,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -19,7 +22,6 @@ import {
   TransactionBuildError,
 } from "../core/errors.js";
 import {
-  getScriptAddress,
   getWalletAddress,
   parseSafeDatum,
   patchInlineDatum,
@@ -43,6 +45,8 @@ import {
  */
 export type UpdatePayoutCredentialConfig = {
   accountTokenSuffix: string;
+  /** Deployed treasury reference scripts — the treasury no longer fits inline. */
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedUpdatePayoutCredentialTxProgram = (
@@ -89,40 +93,37 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
     // so the SDK value must match the key that signs the transaction.
     const address = yield* getWalletAddress(lucid);
     const newPkh = paymentCredentialOf(address).hash;
-
-    const treasuryAddress = yield* getScriptAddress(
-      lucid,
-      treasuryValidator.spendTreasury,
-    );
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
 
     const updatedDatum: TreasuryDatum = {
       TreasuryState: { ...ts, member_payment_credential: newPkh },
     };
 
-    const redeemer: RedeemerBuilder = {
+    // Treasury split: field-less spend literal; the LIFECYCLE UpdatePayoutAction
+    // covers the treasury UTxO being spent.
+    const updatePayoutAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            UpdatePayout: {
+            UpdatePayoutAction: {
+              covered_inputs: [inputIndices[1]],
               member_input_index: inputIndices[0],
-              treasury_input_index: inputIndices[1],
               treasury_output_index: 0n,
             },
           },
-          TreasuryRedeemer,
+          LifecycleAction,
         ),
       inputs: [accountUtxo, treasuryUtxo],
     };
 
-    const tx = yield* lucid
+    const baseTx = lucid
       .newTx()
       .collectFrom([accountUtxo])
-      .collectFrom([treasuryUtxo], redeemer)
+      .collectFrom([treasuryUtxo], Data.to("UpdatePayout", TreasuryRedeemer))
       .addSigner(address)
       .pay.ToContract(
-        treasuryAddress,
+        treasuryUtxo.address,
         { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
         { lovelace: treasuryUtxo.assets.lovelace, [memberToken]: 1n },
       )
@@ -131,18 +132,30 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
       // change leaves too little to satisfy the token output's min-ADA once fees are
       // paid; an explicit output forces coin selection to fund it from the wallet.
       .pay.ToAddress(address, { [accountUnit]: 1n })
-      .attach.SpendingValidator(treasuryValidator.spendTreasury)
-      .readFrom([settingsUtxo])
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "updatePayout",
-              error: String(e),
-            }),
-        ),
-      );
+      .readFrom([settingsUtxo]);
+
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const network = lucid.config().network!;
+    const withValidator = attachFamilyWithdrawal(
+      scriptRefs.treasury
+        ? baseTx.readFrom([scriptRefs.treasury])
+        : baseTx.attach.SpendingValidator(treasuryValidator.spendTreasury),
+      protocol,
+      network,
+      "lifecycle",
+      updatePayoutAction,
+      scriptRefs,
+    );
+
+    const tx = yield* withValidator.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "updatePayout",
+            error: String(e),
+          }),
+      ),
+    );
 
     return tx;
   });

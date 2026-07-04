@@ -1,0 +1,89 @@
+---
+title: "Mutual Reserve: The Group's Welfare Fund"
+description: A shared on-chain pot that cushions defaults — funded by small levies, paid out by objective rules, refunded at wind-down.
+---
+
+Every group is created with a **mutual reserve** — one `ReserveState` UTxO under
+the treasury validator, identified by a permanent reserve token (`"RSVE"` + the
+group's suffix). It is the on-chain form of the welfare fund most real-world
+chamas already keep: everyone chips in a little, and the pot absorbs the shock
+when a member drops out.
+
+## Why it exists
+
+When a defaulter is terminated, their forfeited collateral rarely covers what
+they still owed the rotation — an early borrower can walk away owing most of a
+lap. Without a reserve that loss is silently socialized: every later borrower
+receives a pro-rata-shrunk pot. The reserve turns that implicit loss into an
+explicit, pre-funded cushion with rules the validator enforces.
+
+## Funding — two configurable levies
+
+| Knob (`GroupDatum`) | When it fires | Real-world analogue |
+| --- | --- | --- |
+| `reserve_join_levy` | once, at each `joinGroup` | registration fee |
+| `reserve_round_levy` | per contributing member, each `distributePayout` | per-meeting welfare contribution |
+
+Both are denominated in the **contribution asset**, either may be `0`, and both
+freeze once a member joins — like every other economic term. The round levy
+comes out of the pot (the borrower receives `gross − levy_total`), so nobody
+pays anything on top of their normal contribution.
+
+Anyone may also donate at any time with `topUpReserve` (harambee) — the
+validator only allows the pot to grow through that door. Note that a top-up
+cannot share a transaction with a distribute round; sequence them.
+
+## Paying out — objective rules only
+
+The reserve has **no discretionary spending**. It moves money in exactly three
+situations:
+
+1. **Default cover (the stand-in).** `terminateDefault` routes the defaulter's
+   forfeited balance INTO the reserve (defaulter's own assets first) and adds
+   their remaining rounds this lap to a `standin_rounds` counter. While the
+   counter is positive, each round draws `min(contribution_fee, pot)` into the
+   payout — every remaining borrower gets the pot they were promised, up to
+   what the reserve holds. The counter decrements every round **even when the
+   pot is dry**, so owed cover always drains and a `beginRecommit` reset (which
+   requires `standin_rounds == 0`) is always eventually reachable.
+2. **Wind-down refunds.** Once the group is deactivated, each exiting member may
+   take `floor(balance / pre-exit member_count)` on the way out
+   (`exitGroup`'s `claimReserveShare`, on by default) — a self-adjusting equal
+   split; remainders roll forward and the last exiter may take everything left.
+   Exits while the group is **active** never touch the reserve: welfare
+   contributions are insurance, not a deposit.
+3. **Close-out.** `deleteGroup` burns the reserve token with the group tokens;
+   any residue returns to the deleting admin as change.
+
+## Honest limits
+
+- The reserve can only pay out what was **pre-locked**. If it runs dry
+  mid-cover, the draw degrades to whatever is left and the pro-rata rotation is
+  the floor — on-chain code cannot force a pseudonymous defaulter to pay.
+- Overlapping defaults **extend** the cover period rather than deepening it
+  (one fee-unit per round, flat counter) — total cover is conserved.
+- With the round levy off, the stand-in draw is carried by incentive: the
+  borrower gains by including the reserve in the round, and the recommit gate
+  waits for the counter regardless.
+
+## SDK surface
+
+```ts
+// Configure at creation (both default 0n = off)
+createGroup({ ..., groupDatum: { ...datum, reserve_join_levy: 500_000n, reserve_round_levy: 100_000n } })
+
+// Donate — permissionless, increase-only
+topUpReserve({ groupTokenSuffix, amount: 1_000_000n })
+
+// Read the pot
+const { balance, standinRounds, joinLevy, roundLevy } =
+  await getReserveState(groupTokenSuffix)
+
+// Wind-down exit: claim the equal share (default) or leave it
+exitGroup({ groupTokenSuffix, claimReserveShare: true })
+```
+
+`joinGroup`, `distributePayout`, `terminateDefault`, and `deleteGroup` handle
+their reserve legs automatically. Everything is anchored by the reserve token,
+whose name is derivable off-chain from the group suffix alone
+(`reserveTokenName(groupRefName)`).

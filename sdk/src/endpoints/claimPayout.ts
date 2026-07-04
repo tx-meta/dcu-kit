@@ -5,13 +5,15 @@ import {
   RedeemerBuilder,
   Assets,
   toUnit,
-  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  LifecycleAction,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -20,7 +22,6 @@ import {
   TransactionBuildError,
 } from "../core/errors.js";
 import {
-  getScriptAddress,
   getWalletAddress,
   parseSafeDatum,
   parseGroupCip68Datum,
@@ -50,7 +51,7 @@ export type ClaimPayoutConfig = {
   // claim to a fresh address (the lost-wallet recovery path).
   destinationAddress?: string;
   // Reference script UTxOs (from deploy-scripts) to keep the tx under the size limit.
-  scriptRefs?: { treasury?: UTxO };
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedClaimPayoutTxProgram = (
@@ -111,10 +112,6 @@ export const unsignedClaimPayoutTxProgram = (
     const groupDatum = groupCip68.groupDatum;
 
     const address = yield* getWalletAddress(lucid);
-    const treasuryAddress = yield* getScriptAddress(
-      lucid,
-      treasuryValidator.spendTreasury,
-    );
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
 
     // The contribution asset may be ADA (empty policy id → "lovelace") or a native token.
@@ -151,23 +148,31 @@ export const unsignedClaimPayoutTxProgram = (
     // Group's canonical position among ALL reference inputs: group + settings, plus the
     // optional treasury ref-script when scriptRefs are used. Hardcoding 0n breaks once the
     // P5 settings UTxO (or a ref-script) sorts ahead of the group input.
+    const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    // The group index must be computed over the tx's COMPLETE reference-input set:
+    // group + settings + any deployed ref scripts read from (treasury dispatcher
+    // and the LIFECYCLE stake validator that runs the ClaimPayoutAction).
     const claimRefInputs = [groupUtxo, settingsUtxo];
-    if (config.scriptRefs?.treasury)
-      claimRefInputs.push(config.scriptRefs.treasury);
+    if (scriptRefs.treasury) claimRefInputs.push(scriptRefs.treasury);
+    if (scriptRefs.treasuryLifecycle)
+      claimRefInputs.push(scriptRefs.treasuryLifecycle);
     const groupRefInputIndex = referenceInputIndex(claimRefInputs, groupUtxo);
 
-    const redeemer: RedeemerBuilder = {
+    // Treasury split: field-less spend literal; the LIFECYCLE ClaimPayoutAction
+    // covers the treasury UTxO being spent.
+    const claimPayoutAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            ClaimPayout: {
+            ClaimPayoutAction: {
+              covered_inputs: [inputIndices[1]],
               group_ref_input_index: groupRefInputIndex,
               member_input_index: inputIndices[0],
               treasury_output_index: 0n,
             },
           },
-          TreasuryRedeemer,
+          LifecycleAction,
         ),
       inputs: [accountUtxo, treasuryUtxo],
     };
@@ -175,11 +180,11 @@ export const unsignedClaimPayoutTxProgram = (
     const baseTx = lucid
       .newTx()
       .collectFrom([accountUtxo])
-      .collectFrom([treasuryUtxo], redeemer)
+      .collectFrom([treasuryUtxo], Data.to("ClaimPayout", TreasuryRedeemer))
       .readFrom([groupUtxo])
       .addSigner(address)
       .pay.ToContract(
-        treasuryAddress,
+        treasuryUtxo.address,
         { kind: "inline", value: Data.to(updatedDatum, TreasuryDatum) },
         outputAssets,
       )
@@ -188,9 +193,17 @@ export const unsignedClaimPayoutTxProgram = (
       // its min-ADA from the wallet rather than failing on a thin change output).
       .pay.ToAddress(address, { [accountUnit]: 1n });
 
-    const withValidator = config.scriptRefs?.treasury
-      ? baseTx.readFrom([config.scriptRefs.treasury])
-      : baseTx.attach.SpendingValidator(treasuryValidator.spendTreasury);
+    const network = lucid.config().network!;
+    const withValidator = attachFamilyWithdrawal(
+      scriptRefs.treasury
+        ? baseTx.readFrom([scriptRefs.treasury])
+        : baseTx.attach.SpendingValidator(treasuryValidator.spendTreasury),
+      protocol,
+      network,
+      "lifecycle",
+      claimPayoutAction,
+      scriptRefs,
+    );
 
     const tx = yield* withValidator
       .readFrom([settingsUtxo])

@@ -109,6 +109,26 @@ export class SetupError extends Data.TaggedError("SetupError")<{
   readonly cause?: unknown;
 }> {}
 
+/**
+ * A supplied reference-script UTxO does not match the deployment's compiled
+ * validator hash (stale/wrong ref), or carries no script at all. Surfaces the
+ * otherwise-cryptic on-chain "script hash mismatch" as a typed, early failure.
+ */
+export class ReferenceScriptMismatchError extends Data.TaggedError(
+  "ReferenceScriptMismatchError",
+)<{
+  readonly validator:
+    | "treasury"
+    | "group"
+    | "treasuryRounds"
+    | "treasuryLifecycle"
+    | "treasuryRecovery"
+    | "treasuryReserve";
+  readonly expectedHash: string;
+  readonly actualHash: string;
+  readonly reason: string;
+}> {}
+
 // --- Union Type ---
 
 export type DcuError =
@@ -123,4 +143,5 @@ export type DcuError =
   | BlueprintLoadError
   | ConfigurationError
   | SetupError
+  | ReferenceScriptMismatchError
   | LucidError;

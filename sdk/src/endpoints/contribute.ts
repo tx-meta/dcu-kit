@@ -4,12 +4,18 @@ import {
   TxSignBuilder,
   RedeemerBuilder,
   toUnit,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
+import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import { attachFamilyWithdrawal } from "../core/familyWithdraw.js";
 import {
+  GroupDatum,
+  GroupSpendRedeemer,
   TreasuryDatum,
   TreasuryDatumSchema,
   TreasuryRedeemer,
+  LifecycleAction,
 } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -18,7 +24,6 @@ import {
   TransactionBuildError,
 } from "../core/errors.js";
 import {
-  getScriptAddress,
   getWalletAddress,
   parseSafeDatum,
   parseGroupCip68Datum,
@@ -27,6 +32,7 @@ import {
   resolveUtxoByUnit,
   referenceInputIndex,
   contributableBalance,
+  buildGroupCip68Datum,
 } from "../core/utils/index.js";
 
 /**
@@ -47,6 +53,12 @@ export type ContributeConfig = {
   groupTokenSuffix: string;
   accountTokenSuffix: string;
   topUpAmount: bigint; // extra units of the contribution asset to add to the treasury UTxO
+  // Reference script UTxOs (from deploy-scripts). When provided, the validator
+  // script bytes are resolved from the on-chain UTxO rather than included inline,
+  // keeping the transaction well under the 16KB Cardano size limit. Only the
+  // DefaultState recovery path spends the group validator; the plain top-up path
+  // only ever needs `treasury`.
+  scriptRefs?: ScriptRefs;
 };
 
 export const unsignedContributeTxProgram = (
@@ -57,6 +69,7 @@ export const unsignedContributeTxProgram = (
   Effect.gen(function* () {
     const {
       treasuryValidator,
+      groupValidator,
       treasuryPolicyId,
       accountPolicyId,
       groupPolicyId,
@@ -99,10 +112,6 @@ export const unsignedContributeTxProgram = (
     const groupDatum = groupCip68.groupDatum;
 
     const address = yield* getWalletAddress(lucid);
-    const treasuryAddress = yield* getScriptAddress(
-      lucid,
-      treasuryValidator.spendTreasury,
-    );
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
 
     // The contribution asset may be ADA (empty policy id → "lovelace") or a native token.
@@ -148,7 +157,6 @@ export const unsignedContributeTxProgram = (
         TreasuryState: {
           group_reference_tokenname: ds.group_reference_tokenname,
           member_reference_tokenname: ds.member_reference_tokenname,
-          assigned_slot: ds.assigned_slot,
           rounds_paid: ds.rounds_paid,
           member_payment_credential: ds.member_payment_credential,
           claimable_balance: ds.claimable_balance,
@@ -156,43 +164,182 @@ export const unsignedContributeTxProgram = (
       };
     }
 
-    // Reference inputs are canonically ordered (by txHash, then output index) in the
-    // final transaction. Since P5 added the settings UTxO as a second reference input,
-    // the group is no longer guaranteed to be at index 0 — compute its real position.
-    const groupRefInputIndex = referenceInputIndex(
-      [groupUtxo, settingsUtxo],
-      groupUtxo,
-    );
+    const groupRefName = assetNameLabels.prefix100 + groupTokenSuffix;
 
-    const redeemer: RedeemerBuilder = {
+    if ("DefaultState" in treasuryDatum) {
+      // RECOVERY (DefaultState → TreasuryState): the group is SPENT with the Recover redeemer so
+      // it can bump active_member_count (which lives in the group datum). Output layout:
+      // [0] group (active_member_count + 1), [1] treasury (recovered TreasuryState).
+      const updatedGroupDatum: GroupDatum = {
+        ...groupDatum,
+        active_member_count: groupDatum.active_member_count + 1n,
+      };
+
+      // Treasury split: field-less spend literal; the LIFECYCLE stake validator
+      // runs the ContributeAction once, covering the treasury UTxO. On the
+      // recovery path the group is a SPENDING input, so group_ref_input_index
+      // points into tx.inputs.
+      const contributeAction: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (idx: bigint[]) =>
+          Data.to(
+            {
+              ContributeAction: {
+                covered_inputs: [idx[1]], // treasury
+                group_ref_input_index: idx[2], // group (spending input)
+                member_input_index: idx[0], // account
+                treasury_output_index: 1n,
+              },
+            },
+            LifecycleAction,
+          ),
+        inputs: [accountUtxo, treasuryUtxo, groupUtxo],
+      };
+      // Group Recover redeemer — verifies the DefaultState → TreasuryState transition and bumps
+      // active_member_count + 1.
+      const recoverRedeemer: RedeemerBuilder = {
+        kind: "selected",
+        makeRedeemer: (idx: bigint[]) =>
+          Data.to(
+            {
+              Recover: {
+                group_ref_token_name: groupRefName,
+                group_input_index: idx[0], // group
+                group_output_index: 0n,
+                treasury_input_index: idx[1], // treasury
+                treasury_output_index: 1n,
+              },
+            },
+            GroupSpendRedeemer,
+          ),
+        inputs: [groupUtxo, treasuryUtxo],
+      };
+
+      const baseTx = lucid
+        .newTx()
+        .collectFrom([accountUtxo])
+        .collectFrom([treasuryUtxo], Data.to("Contribute", TreasuryRedeemer))
+        .collectFrom([groupUtxo], recoverRedeemer)
+        .addSigner(address)
+        .pay.ToContract(
+          groupUtxo.address,
+          {
+            kind: "inline",
+            value: buildGroupCip68Datum(
+              groupCip68.metadata,
+              groupCip68.version,
+              updatedGroupDatum,
+            ),
+          },
+          groupUtxo.assets,
+        )
+        .pay.ToContract(
+          treasuryUtxo.address,
+          { kind: "inline", value: Data.to(outputDatum, TreasuryDatum) },
+          outputAssets,
+        );
+
+      // Use reference scripts when provided — avoids including ~12KB of script bytes
+      // inline, keeping the tx under Cardano's 16,384-byte size limit.
+      const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+      const network = lucid.config().network!;
+      const refUtxos = [scriptRefs.treasury, scriptRefs.group].filter(
+        Boolean,
+      ) as UTxO[];
+      let withValidators =
+        refUtxos.length > 0 ? baseTx.readFrom(refUtxos) : baseTx;
+      if (!scriptRefs.treasury)
+        withValidators = withValidators.attach.SpendingValidator(
+          treasuryValidator.spendTreasury,
+        );
+      if (!scriptRefs.group)
+        withValidators = withValidators.attach.SpendingValidator(
+          groupValidator.spendGroup,
+        );
+      withValidators = attachFamilyWithdrawal(
+        withValidators,
+        protocol,
+        network,
+        "lifecycle",
+        contributeAction,
+        scriptRefs,
+      );
+
+      const tx = yield* withValidators
+        .readFrom([settingsUtxo])
+        .completeProgram(
+          lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
+        )
+        .pipe(
+          Effect.mapError(
+            (e) =>
+              new TransactionBuildError({
+                operation: "contribute:recovery",
+                error: String(e),
+              }),
+          ),
+        );
+
+      return tx;
+    }
+
+    // TOP-UP (TreasuryState): the group is a read-only reference input. Reference inputs are
+    // canonically ordered (by txHash, then output index); compute the group's real position
+    // over the COMPLETE reference set (settings + any deployed ref scripts read from).
+    const topUpRefs = effectiveScriptRefs(config.scriptRefs);
+    const topUpRefInputs = [groupUtxo, settingsUtxo];
+    if (topUpRefs.treasury) topUpRefInputs.push(topUpRefs.treasury);
+    if (topUpRefs.treasuryLifecycle)
+      topUpRefInputs.push(topUpRefs.treasuryLifecycle);
+    const groupRefInputIndex = referenceInputIndex(topUpRefInputs, groupUtxo);
+
+    // Treasury split: field-less spend literal; the LIFECYCLE ContributeAction
+    // covers the treasury UTxO. The group is a reference input here, so
+    // group_ref_input_index indexes into reference_inputs.
+    const contributeAction: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            Contribute: {
+            ContributeAction: {
+              covered_inputs: [inputIndices[1]],
               group_ref_input_index: groupRefInputIndex,
               member_input_index: inputIndices[0],
-              treasury_input_index: inputIndices[1],
               treasury_output_index: 0n,
             },
           },
-          TreasuryRedeemer,
+          LifecycleAction,
         ),
       inputs: [accountUtxo, treasuryUtxo],
     };
 
-    const tx = yield* lucid
+    const baseTopUpTx = lucid
       .newTx()
       .collectFrom([accountUtxo])
-      .collectFrom([treasuryUtxo], redeemer)
+      .collectFrom([treasuryUtxo], Data.to("Contribute", TreasuryRedeemer))
       .readFrom([groupUtxo])
       .addSigner(address)
       .pay.ToContract(
-        treasuryAddress,
+        treasuryUtxo.address,
         { kind: "inline", value: Data.to(outputDatum, TreasuryDatum) },
         outputAssets,
-      )
-      .attach.SpendingValidator(treasuryValidator.spendTreasury)
+      );
+
+    // Use a reference script when provided — avoids including ~8KB of script bytes
+    // inline, keeping the tx under Cardano's 16,384-byte size limit.
+    const network = lucid.config().network!;
+    const withTopUpValidator = attachFamilyWithdrawal(
+      topUpRefs.treasury
+        ? baseTopUpTx.readFrom([topUpRefs.treasury])
+        : baseTopUpTx.attach.SpendingValidator(treasuryValidator.spendTreasury),
+      protocol,
+      network,
+      "lifecycle",
+      contributeAction,
+      topUpRefs,
+    );
+
+    const tx = yield* withTopUpValidator
       .readFrom([settingsUtxo])
       .completeProgram(
         lucid.config().network === "Custom" ? { localUPLCEval: false } : {},

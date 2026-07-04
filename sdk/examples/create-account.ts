@@ -3,7 +3,7 @@ import {
   CreateAccountConfig,
   accountPolicyId,
   assetNameLabels,
-} from "@tx-meta/dcu-sdk";
+} from "@tx-meta/dcu-kit";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -71,7 +71,7 @@ async function main() {
   };
 
   console.log("Building transaction...");
-  const tx = await createAccount(lucid, config).unsafeRun();
+  const { tx } = await createAccount(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
   const signed = await tx.sign.withWallet().complete();
