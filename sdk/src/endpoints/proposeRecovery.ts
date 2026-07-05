@@ -235,9 +235,7 @@ export const unsignedProposeRecoveryTxProgram = (
     const tx = yield* withValidators
       .readFrom([settingsUtxo])
       .validFrom(Number(now))
-      .completeProgram(
-        lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
-      )
+      .completeProgram()
       .pipe(
         Effect.mapError(
           (e) =>

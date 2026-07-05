@@ -297,9 +297,7 @@ export const unsignedExecuteRecoveryTxProgram = (
     );
 
     const tx = yield* withValidators
-      .completeProgram(
-        lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
-      )
+      .completeProgram()
       .pipe(
         Effect.mapError(
           (e) =>
