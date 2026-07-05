@@ -267,9 +267,7 @@ export const unsignedContributeTxProgram = (
 
       const tx = yield* withValidators
         .readFrom([settingsUtxo])
-        .completeProgram(
-          lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
-        )
+        .completeProgram()
         .pipe(
           Effect.mapError(
             (e) =>
@@ -341,9 +339,7 @@ export const unsignedContributeTxProgram = (
 
     const tx = yield* withTopUpValidator
       .readFrom([settingsUtxo])
-      .completeProgram(
-        lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
-      )
+      .completeProgram()
       .pipe(
         Effect.mapError(
           (e) =>
