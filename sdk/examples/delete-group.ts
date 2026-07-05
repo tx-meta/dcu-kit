@@ -25,6 +25,7 @@ import {
   clearState,
   checkValidatorStaleness,
 } from "./state.js";
+import { resolveAdminAuth, signWithAdminAuth } from "./multisig-admin.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -78,16 +79,23 @@ async function main() {
     saveState({ groupTokenSuffix });
   }
 
+  // Script-held admin: attach the recorded multisig witness and co-sign below.
+  // On the plain VK path adminAuth is empty and nothing changes.
+  const adminUnit =
+    groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+  const adminAuth = await resolveAdminAuth(lucid, adminUnit);
+
   const config: DeleteGroupConfig = {
     groupTokenSuffix,
     scriptRefs: await loadScriptRefs(lucid),
+    ...adminAuth.adminAuth,
   };
 
   console.log("Building transaction...");
   const tx = await sdk.deleteGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
-  const signed = await tx.sign.withWallet().complete();
+  const signed = await signWithAdminAuth(lucid, tx, adminAuth);
   const txHash = await signed.submit();
   console.log("Transaction submitted. Hash:", txHash);
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
