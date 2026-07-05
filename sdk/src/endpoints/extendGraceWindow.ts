@@ -174,19 +174,15 @@ export const unsignedExtendGraceWindowTxProgram = (
       config,
     );
 
-    const tx = yield* withSigners
-      .completeProgram(
-        lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
-      )
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "extendGrace",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withSigners.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "extendGrace",
+            error: String(e),
+          }),
+      ),
+    );
 
     return tx;
   });

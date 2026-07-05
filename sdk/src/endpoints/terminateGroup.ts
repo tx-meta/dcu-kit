@@ -188,18 +188,14 @@ export const unsignedTerminateGroupTxProgram = (
       config,
     );
 
-    const tx = yield* withSigners
-      .completeProgram(
-        lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
-      )
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "claimPenalty",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withSigners.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "claimPenalty",
+            error: String(e),
+          }),
+      ),
+    );
     return tx;
   });

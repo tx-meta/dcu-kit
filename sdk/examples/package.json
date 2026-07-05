@@ -11,6 +11,7 @@
     "update-account": "pnpm run build && node dist/update-account.js",
     "delete-account": "pnpm run build && node dist/delete-account.js",
     "create-group": "pnpm run build && node dist/create-group.js",
+    "create-multisig": "pnpm run build && node dist/create-multisig.js",
     "update-group": "pnpm run build && node dist/update-group.js",
     "delete-group": "pnpm run build && node dist/delete-group.js",
     "join-group": "pnpm run build && node dist/join-group.js",
@@ -26,6 +27,7 @@
     "begin-recommit": "pnpm run build && node dist/begin-recommit.js",
     "top-up-reserve": "pnpm run build && node dist/top-up-reserve.js",
     "inspect-reserve": "pnpm run build && node dist/inspect-reserve.js",
+    "inspect-state": "pnpm run build && node dist/inspect-state.js",
     "assign-admin": "pnpm run build && node dist/assign-admin.js",
     "propose-recovery": "pnpm run build && node dist/propose-recovery.js",
     "approve-recovery": "pnpm run build && node dist/approve-recovery.js",
@@ -50,7 +52,7 @@
     "@lucid-evolution/lucid": "0.4.31",
     "@tx-meta/dcu-kit": "file:../dcu-kit-0.4.0.tgz",
     "dotenv": "^16.6.1",
-    "effect": "3.21.2"
+    "effect": "3.21.4"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",

@@ -12,7 +12,9 @@
  *       the original member N, proving the identity was never lost).
  *
  * Wallet selection:
- *   Default (USER2): any member wallet may propose
+ *   Default (USER2): must be the RECOVEREE's wallet — the one holding the fresh
+ *   N' account token. The endpoint spends the N' UTxO, pays it back to the
+ *   signing wallet, and binds new_payment_credential to the N' holder's key.
  *
  * Required env:
  *   TARGET_SUFFIX=...       the lost member's account token suffix (N)
@@ -20,12 +22,16 @@
  *                           create it first with create-account on the new wallet
  *   NEW_PAYMENT_KEY_HASH=...the recoveree's payment key hash (from the new wallet)
  *   APPROVER_SUFFIXES=a,b   comma-separated account suffixes of the vouching quorum
+ *   APPROVER_WALLETS=ADMIN  comma-separated wallet names (matching *_SEED vars) of
+ *                           the same approvers — each account UTxO is spent, so
+ *                           each approver co-signs this one tx
  *
  * Usage:
  *   TARGET_SUFFIX=... NEW_ACCOUNT_SUFFIX=... NEW_PAYMENT_KEY_HASH=... \
- *   APPROVER_SUFFIXES=...,... pnpm run propose-recovery
+ *   APPROVER_SUFFIXES=... APPROVER_WALLETS=ADMIN pnpm run propose-recovery
  */
 
+import { walletFromSeed } from "@lucid-evolution/lucid";
 import { ProposeRecoveryConfig } from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
@@ -82,7 +88,23 @@ async function main() {
   const tx = await sdk.proposeRecovery(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
-  const signed = await tx.sign.withWallet().complete();
+  // Approver account UTxOs are spent, so each approver must witness this tx.
+  // The sign builder captures the wallet at build time — co-sign with each
+  // approver's raw payment key (same pattern as escrow-abort).
+  const approverWallets = (process.env.APPROVER_WALLETS ?? "")
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  let signing = tx.sign.withWallet();
+  for (const wallet of approverWallets) {
+    const seed = process.env[`${wallet}_SEED`];
+    if (!seed) throw new Error(`${wallet}_SEED not found in .env`);
+    const { paymentKey } = walletFromSeed(seed, {
+      network: process.env.NETWORK === "Mainnet" ? "Mainnet" : "Preprod",
+    });
+    signing = signing.sign.withPrivateKey(paymentKey);
+  }
+  const signed = await signing.complete();
   const txHash = await signed.submit();
   console.log("Transaction submitted. Hash:", txHash);
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));

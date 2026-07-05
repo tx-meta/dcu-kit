@@ -63,6 +63,16 @@ export type ExampleState = {
   // Escrow (standalone family — @tx-meta/dcu-kit/escrow). The permanent
   // identity of the last escrow created by escrow-create.ts.
   escrowStateTokenName?: string;
+
+  // Native multisig built by create-multisig.ts. The script CBOR is the
+  // spendability proof for assign-admin (destinationScript) and the witness
+  // update-group / delete-group attach (adminScript) when the group admin 222
+  // token is held at multisigAddress.
+  multisigScript?: string; // Native script CBOR (Script.script)
+  multisigAddress?: string;
+  multisigHash?: string;
+  multisigSignerWallets?: string[];
+  multisigRequired?: number;
 };
 
 export type AccountSuffixKey =

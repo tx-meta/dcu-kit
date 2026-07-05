@@ -43,7 +43,7 @@ Rule of thumb:
 
 ---
 
-## Current validator hashes (pending Preprod redeploy)
+## Current validator hashes (deployed to Preprod 2026-07-04)
 
 Base (settings-unapplied) hashes. The treasury split (2026-07-04) replaced the
 treasury monolith with a thin dispatcher + four withdraw-zero family stake
@@ -62,10 +62,11 @@ validators; group, account, settings, and escrow are byte-unchanged.
 | Escrow              | `3f04186ff52db2ab1844f9e7eeeab4f793089129b56cd5fae9a41b71`    |
 | AlwaysFails         | `22c9a103ed3f2fa97c982d76d6e2af50c5d54ac306983b196c8fcdab`    |
 
-These hashes are NOT yet deployed to Preprod. Earlier deployments (and their
-reference-script UTxOs) belong to superseded validators — start from
-`pnpm run reset-state`, then `initialize-settings` + `deploy-scripts` on the
-current SDK before anything else.
+These hashes ARE live on Preprod: settings policy `f90df179…`, six reference
+scripts at the alwaysFails address, and all four family stake credentials
+registered. `state.json` carries the deployment (settingsPolicy, settingsSeed,
+six scriptRef outrefs) — do not reset it and do not redeploy unless the
+validator hashes change.
 
 > **Stale state?** If `state.json` has a different `accountPolicyId` or `groupPolicyId`, the
 > validators changed since your last session. Run `pnpm run reset-state` before starting.
@@ -181,15 +182,15 @@ pnpm run delete-group
 
 ## Helper scripts
 
-| Script             | Purpose                                                                           |
-| ------------------ | --------------------------------------------------------------------------------- |
-| `show-wallets`     | Print ADMIN/USER1/USER2 addresses, balances, and DCU tokens                       |
-| `generate-wallets` | Generate fresh seed phrases (first-time setup only)                               |
-| `send-ada`         | Send ADA between wallets: `FROM_WALLET=ADMIN TO_WALLET=USER1 AMOUNT=5000000`      |
-| `deploy-scripts`   | Deploy treasury + group reference scripts (~56 ADA, permanent). Run once.         |
-| `reset-state`      | Wipe `state.json` to start a fresh test session                                   |
-| `purge-nfts`       | Burn all account/group NFTs held by a wallet (emergency cleanup)                  |
-| `cron-daemon`      | Long-running process that auto-submits `distribute-payout` when each round opens. |
+| Script             | Purpose                                                                            |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| `show-wallets`     | Print ADMIN/USER1/USER2 addresses, balances, and DCU tokens                        |
+| `generate-wallets` | Generate fresh seed phrases (first-time setup only)                                |
+| `send-ada`         | Send ADA between wallets: `FROM_WALLET=ADMIN TO_WALLET=USER1 AMOUNT=5000000`       |
+| `deploy-scripts`   | Deploy the six reference scripts (~233 ADA min-ADA, permanently locked). Run once. |
+| `reset-state`      | Wipe `state.json` to start a fresh test session                                    |
+| `purge-nfts`       | Burn all account/group NFTs held by a wallet (emergency cleanup)                   |
+| `cron-daemon`      | Long-running process that auto-submits `distribute-payout` when each round opens.  |
 
 ---
 
@@ -238,11 +239,43 @@ pnpm run delete-group
 
 | Script             | Default wallet | What it does                                                                                                                     |
 | ------------------ | -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `create-multisig`  | —              | Builds a native `M-of-N` multisig over `SIGNER_WALLETS` payment keys (no tx) and records it in state.json.                       |
 | `assign-admin`     | ADMIN          | Transfers the group admin (222) token to `NEW_ADMIN_ADDRESS`. One-way door.                                                      |
 | `propose-recovery` | USER2          | Opens a lost-member recovery (N → N'). Needs `TARGET_SUFFIX`, `NEW_ACCOUNT_SUFFIX`, `NEW_PAYMENT_KEY_HASH`, `APPROVER_SUFFIXES`. |
 | `approve-recovery` | USER1          | A quorum member vouches for the pending request (one run per approver).                                                          |
 | `execute-recovery` | USER1          | Finalizes after the timelock — run from the recoveree's wallet (holds N').                                                       |
 | `cancel-recovery`  | USER1          | Veto by the original member N — proves the identity was never lost.                                                              |
+
+### Multisig admin (script-held authority)
+
+Admin authority follows the group 222 token, so it can be delegated to a native
+`M-of-N` multisig instead of a single wallet key. Proven live on Preprod
+(2026-07-05: assign `967b1ab1…`, deactivate `657a1712…`, delete `5febb131…`):
+
+```bash
+pnpm run create-multisig                       # 2-of-3 over ADMIN,USER1,USER2 (env-configurable)
+NEW_ADMIN_ADDRESS=<multisig addr> pnpm run assign-admin
+pnpm run update-group                          # detects the script-held token, co-signs 2-of-3
+pnpm run delete-group                          # same — burns both tokens; bond returns to ADMIN change
+```
+
+How it works:
+
+- `assign-admin` passes the recorded script as `destinationScript` — the endpoint's
+  spendability check refuses a script destination without it (`FORCE=1` overrides;
+  never force a group you cannot afford to strand).
+- Every admin-op example (`update-group`, `delete-group`, `start-group`,
+  `extend-grace-window`, `terminate-default`, `terminate-group`, `begin-recommit`)
+  detects where the 222 token sits. At the multisig address they attach the
+  recorded script as `adminScript` and co-sign with `SIGNER_WALLETS` (default: the
+  first M recorded signers). The sign builder captures the wallet at build time, so
+  co-signers are added as raw payment keys (`sign.withPrivateKey`), not by
+  re-selecting wallets. Proven live for update/delete; the rest share the same
+  helper (`multisig-admin.ts`) and are emulator-proven with real UPLC.
+- Admin ops pay the 222 token back to the multisig address (`payAdminReturn`), so
+  authority stays delegated across operations. `delete-group` burns it; the group
+  UTxO's ADA (including the creator bond) goes to the fee wallet's change, and the
+  multisig address is left empty.
 
 ### Escrow (standalone — `@tx-meta/dcu-kit/escrow`)
 
@@ -357,20 +390,21 @@ Wait ~1 minute for confirmation.
 pnpm run deploy-scripts
 ```
 
-Deploys each validator in its own transaction (both scripts together exceed Cardano's
-16,384-byte limit, so they are split: treasury first, group second after confirmation).
-
-- **Tx 1/2** — treasury validator → alwaysFails address, 30 ADA locked, waits ~1 min
-- **Tx 2/2** — group validator → alwaysFails address, 26 ADA locked
+Deploys each of the SIX validators in its own transaction (treasury dispatcher,
+group, and the four family stake validators — any two together would exceed
+Cardano's 16,384-byte limit), then registers the four family stake credentials.
 
 **alwaysFails address** (Preprod):
 `addr_test1wq3vnggra5ljl2tunqkhd4hz4agvt422cvrfswcedj8um2cwsu3l3`
 
-Cost: **~56 ADA total** — permanently locked. ADA cannot be reclaimed, but scripts are
-accessible forever. Re-deploy only when the SDK upgrades to new validator hashes.
+Cost: **~233 ADA total** min-ADA — permanently locked (min-ADA scales with script
+size). The 4 × 2 ADA stake-key deposits are reclaimable. ADA cannot be reclaimed,
+but scripts are accessible forever. Re-deploy only when the SDK upgrades to new
+validator hashes.
 
 Re-running is safe — `verifyDeployment` checks the stored OutRefs on-chain and skips
-re-deployment if both UTxOs are still valid.
+re-deployment for every UTxO that is still valid, and the stake registration treats
+"already registered" as success.
 
 ---
 

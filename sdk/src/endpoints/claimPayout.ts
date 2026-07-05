@@ -207,9 +207,7 @@ export const unsignedClaimPayoutTxProgram = (
 
     const tx = yield* withValidator
       .readFrom([settingsUtxo])
-      .completeProgram(
-        lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
-      )
+      .completeProgram()
       .pipe(
         Effect.mapError(
           (e) =>

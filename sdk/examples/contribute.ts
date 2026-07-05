@@ -1,9 +1,11 @@
 /**
  * Contribute Example
  *
- * Tops up a member's treasury UTxO balance by adding ADA without changing
- * any other datum fields. Used when a member's balance is running low
- * (but they are still in TreasuryState — not yet in DefaultState).
+ * Tops up a member's treasury UTxO balance. Two on-chain paths:
+ *   TreasuryState — plain top-up; no other datum fields change.
+ *   DefaultState  — recovery: the output transitions back to TreasuryState
+ *                   (the balance must reach contribution_fee) and the group
+ *                   is spent alongside to re-admit the member (Recover).
  *
  * Wallet selection:
  *   Default (USER1): uses USER1_SEED
@@ -23,6 +25,7 @@ import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
   cexplorerTxUrl,
+  loadScriptRefs,
   logError,
   logWalletInfo,
 } from "./context.js";
@@ -82,10 +85,15 @@ async function main() {
     "Note: only valid when the treasury UTxO is in TreasuryState (not DefaultState).",
   );
 
+  // Contribute carries the treasury lifecycle family withdrawal; on live
+  // networks the family reference script is required.
+  const scriptRefs = await loadScriptRefs(lucid);
+
   const config: ContributeConfig = {
     groupTokenSuffix,
     accountTokenSuffix,
     topUpAmount,
+    scriptRefs,
   };
 
   console.log("Building contribute transaction...");

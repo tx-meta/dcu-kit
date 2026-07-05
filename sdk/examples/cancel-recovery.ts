@@ -51,11 +51,10 @@ async function main() {
   if (!newAccountTokenSuffix)
     throw new Error("NEW_ACCOUNT_SUFFIX is required — see the header comment.");
 
-  const { treasury } = await loadScriptRefs(lucid);
   const config: CancelRecoveryConfig = {
     targetTokenSuffix,
     newAccountTokenSuffix,
-    scriptRefs: { treasury },
+    scriptRefs: await loadScriptRefs(lucid),
   };
   console.log(
     `Vetoing recovery request ${newAccountTokenSuffix.slice(0, 8)}... as ${targetTokenSuffix.slice(0, 8)}...`,

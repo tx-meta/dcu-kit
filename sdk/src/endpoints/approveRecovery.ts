@@ -167,9 +167,7 @@ export const unsignedApproveRecoveryTxProgram = (
 
     const tx = yield* withValidators
       .readFrom([settingsUtxo])
-      .completeProgram(
-        lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
-      )
+      .completeProgram()
       .pipe(
         Effect.mapError(
           (e) =>

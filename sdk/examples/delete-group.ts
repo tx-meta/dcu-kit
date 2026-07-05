@@ -1,9 +1,13 @@
 /**
  * Delete Group Example
  *
- * Deactivates a group by setting is_active to false (soft delete).
- * The group UTxO remains on-chain but is non-functional.
- * Requires member_count === 0.
+ * Dissolves a deactivated, empty group: burns the group reference (100) and
+ * admin (222) tokens, closes the mutual reserve, and returns all locked ADA
+ * (including the creator bond) to the admin wallet as change.
+ * Requires is_active === false (run update-group first) and member_count === 0.
+ *
+ * When the admin token is held at the multisig recorded by create-multisig,
+ * the script attaches the multisig witness and co-signs with SIGNER_WALLETS.
  *
  * Token suffix resolution order:
  *   1. state.json (groupTokenSuffix) — set by create-group.ts
@@ -25,6 +29,7 @@ import {
   clearState,
   checkValidatorStaleness,
 } from "./state.js";
+import { resolveAdminAuth, signWithAdminAuth } from "./multisig-admin.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -78,16 +83,23 @@ async function main() {
     saveState({ groupTokenSuffix });
   }
 
+  // Script-held admin: attach the recorded multisig witness and co-sign below.
+  // On the plain VK path adminAuth is empty and nothing changes.
+  const adminUnit =
+    groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+  const adminAuth = await resolveAdminAuth(lucid, adminUnit);
+
   const config: DeleteGroupConfig = {
     groupTokenSuffix,
     scriptRefs: await loadScriptRefs(lucid),
+    ...adminAuth.adminAuth,
   };
 
   console.log("Building transaction...");
   const tx = await sdk.deleteGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
-  const signed = await tx.sign.withWallet().complete();
+  const signed = await signWithAdminAuth(lucid, tx, adminAuth);
   const txHash = await signed.submit();
   console.log("Transaction submitted. Hash:", txHash);
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
@@ -95,7 +107,7 @@ async function main() {
   console.log("Waiting for confirmation...");
   await lucid.awaitTx(txHash);
   clearState(["groupTokenSuffix"]);
-  console.log("Group deactivated successfully!");
+  console.log("Group deleted — both group tokens burned.");
 }
 
 main().catch((e) => {

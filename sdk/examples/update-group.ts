@@ -4,6 +4,9 @@
  * Updates a group's configuration (e.g. fees or active state).
  * Critical fields (fees, intervals) can only be changed while member_count === 0.
  *
+ * When the admin token is held at the multisig recorded by create-multisig,
+ * the script attaches the multisig witness and co-signs with SIGNER_WALLETS.
+ *
  * Token suffix resolution order:
  *   1. state.json (groupTokenSuffix) — set by create-group.ts
  *   2. Auto-discovery — scans admin wallet for a group admin token (222 prefix)
@@ -24,6 +27,7 @@ import {
   logWalletInfo,
 } from "./context.js";
 import { loadState, saveState, checkValidatorStaleness } from "./state.js";
+import { resolveAdminAuth, signWithAdminAuth } from "./multisig-admin.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -109,16 +113,23 @@ async function main() {
     updatedDatum = { ...currentDatum, is_active: false };
   }
 
+  // Script-held admin: attach the recorded multisig witness and co-sign below.
+  // On the plain VK path adminAuth is empty and nothing changes.
+  const adminUnit =
+    groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+  const adminAuth = await resolveAdminAuth(lucid, adminUnit);
+
   const config: UpdateGroupConfig = {
     groupTokenSuffix,
     updatedDatum,
+    ...adminAuth.adminAuth,
   };
 
   console.log("Building transaction...");
   const tx = await sdk.updateGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
-  const signed = await tx.sign.withWallet().complete();
+  const signed = await signWithAdminAuth(lucid, tx, adminAuth);
   const txHash = await signed.submit();
   console.log("Transaction submitted. Hash:", txHash);
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));

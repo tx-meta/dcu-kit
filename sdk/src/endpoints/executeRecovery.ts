@@ -76,6 +76,7 @@ export const unsignedExecuteRecoveryTxProgram = (
       groupPolicyId,
       treasuryValidator,
       treasuryPolicyId,
+      settingsUnit,
     } = protocol;
     const { groupTokenSuffix, targetTokenSuffix, newAccountTokenSuffix } =
       config;
@@ -93,6 +94,7 @@ export const unsignedExecuteRecoveryTxProgram = (
       lucid,
       memberTreasuryUnit,
     );
+    const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
     const requestUtxo = patchInlineDatum(requestUtxoRaw);
     const memberTreasuryUtxo = patchInlineDatum(memberTreasuryUtxoRaw);
@@ -257,6 +259,9 @@ export const unsignedExecuteRecoveryTxProgram = (
         rotatedAssets,
       )
       .addSigner(address)
+      // The dispatcher's spend and mint handlers read ProtocolSettings from the
+      // reference inputs to resolve the recovery family's stake hash.
+      .readFrom([settingsUtxo])
       .validFrom(Number(now));
 
     // None of the 3 collected inputs (request/member-treasury/group) belong to the
@@ -291,18 +296,14 @@ export const unsignedExecuteRecoveryTxProgram = (
       scriptRefs,
     );
 
-    const tx = yield* withValidators
-      .completeProgram(
-        lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
-      )
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "executeRecovery",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withValidators.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "executeRecovery",
+            error: String(e),
+          }),
+      ),
+    );
     return tx;
   });

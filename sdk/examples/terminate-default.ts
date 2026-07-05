@@ -11,7 +11,11 @@
  * contribute). Reads groupTokenSuffix + the member's account suffix from state.json.
  */
 
-import { TerminateDefaultConfig, accountPolicyId } from "@tx-meta/dcu-kit";
+import {
+  TerminateDefaultConfig,
+  accountPolicyId,
+  assetNameLabels,
+} from "@tx-meta/dcu-kit";
 import { UTxO } from "@lucid-evolution/lucid";
 import { loadSdk } from "./sdk.js";
 import {
@@ -26,6 +30,7 @@ import {
   checkValidatorStaleness,
   accountSuffixKey,
 } from "./state.js";
+import { resolveAdminAuth, signWithAdminAuth } from "./multisig-admin.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -72,17 +77,25 @@ async function main() {
   console.log(
     `Terminating ${memberWallet}'s DefaultState membership (grace expired)...`,
   );
+
+  // Script-held admin: attach the recorded multisig witness and co-sign below.
+  // On the plain VK path adminAuth is empty and nothing changes.
+  const adminUnit =
+    groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+  const adminAuth = await resolveAdminAuth(lucid, adminUnit);
+
   const config: TerminateDefaultConfig = {
     groupTokenSuffix,
     memberAccountTokenSuffix,
     scriptRefs,
+    ...adminAuth.adminAuth,
   };
 
   console.log("Building terminate-default transaction...");
   const tx = await sdk.terminateDefault(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
-  const signed = await tx.sign.withWallet().complete();
+  const signed = await signWithAdminAuth(lucid, tx, adminAuth);
   const txHash = await signed.submit();
   console.log("Transaction submitted. Hash:", txHash);
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
