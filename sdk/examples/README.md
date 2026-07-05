@@ -264,11 +264,14 @@ How it works:
 - `assign-admin` passes the recorded script as `destinationScript` — the endpoint's
   spendability check refuses a script destination without it (`FORCE=1` overrides;
   never force a group you cannot afford to strand).
-- `update-group` / `delete-group` detect where the 222 token sits. At the multisig
-  address they attach the recorded script as `adminScript` and co-sign with
-  `SIGNER_WALLETS` (default: the first M recorded signers). The sign builder
-  captures the wallet at build time, so co-signers are added as raw payment keys
-  (`sign.withPrivateKey`), not by re-selecting wallets.
+- Every admin-op example (`update-group`, `delete-group`, `start-group`,
+  `extend-grace-window`, `terminate-default`, `terminate-group`, `begin-recommit`)
+  detects where the 222 token sits. At the multisig address they attach the
+  recorded script as `adminScript` and co-sign with `SIGNER_WALLETS` (default: the
+  first M recorded signers). The sign builder captures the wallet at build time, so
+  co-signers are added as raw payment keys (`sign.withPrivateKey`), not by
+  re-selecting wallets. Proven live for update/delete; the rest share the same
+  helper (`multisig-admin.ts`) and are emulator-proven with real UPLC.
 - Admin ops pay the 222 token back to the multisig address (`payAdminReturn`), so
   authority stays delegated across operations. `delete-group` burns it; the group
   UTxO's ADA (including the creator bond) goes to the fee wallet's change, and the

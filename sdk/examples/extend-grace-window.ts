@@ -20,7 +20,11 @@
  * Reads groupTokenSuffix and the member's accountTokenSuffix from state.json.
  */
 
-import { ExtendGraceWindowConfig, accountPolicyId } from "@tx-meta/dcu-kit";
+import {
+  ExtendGraceWindowConfig,
+  accountPolicyId,
+  assetNameLabels,
+} from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
@@ -34,6 +38,7 @@ import {
   checkValidatorStaleness,
   accountSuffixKey,
 } from "./state.js";
+import { resolveAdminAuth, signWithAdminAuth } from "./multisig-admin.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -78,17 +83,24 @@ async function main() {
     "The member should call 'pnpm run contribute' before grace_expires_at to exit ICS.",
   );
 
+  // Script-held admin: attach the recorded multisig witness and co-sign below.
+  // On the plain VK path adminAuth is empty and nothing changes.
+  const adminUnit =
+    groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+  const adminAuth = await resolveAdminAuth(lucid, adminUnit);
+
   const config: ExtendGraceWindowConfig = {
     groupTokenSuffix,
     memberAccountTokenSuffix,
     scriptRefs: await loadScriptRefs(lucid),
+    ...adminAuth.adminAuth,
   };
 
   console.log("Building extend-grace-window transaction...");
   const tx = await sdk.extendGraceWindow(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
-  const signed = await tx.sign.withWallet().complete();
+  const signed = await signWithAdminAuth(lucid, tx, adminAuth);
   const txHash = await signed.submit();
   console.log("Transaction submitted. Hash:", txHash);
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));

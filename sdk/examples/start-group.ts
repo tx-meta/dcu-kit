@@ -39,6 +39,7 @@ import {
   printSlotSchedule,
   checkValidatorStaleness,
 } from "./state.js";
+import { resolveAdminAuth, signWithAdminAuth } from "./multisig-admin.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -106,15 +107,22 @@ async function main() {
     `  After start: num_rounds = ${groupDatum.member_count}, rotation begins immediately.`,
   );
 
+  // Script-held admin: attach the recorded multisig witness and co-sign below.
+  // On the plain VK path adminAuth is empty and nothing changes.
+  const adminUnit =
+    groupPolicyId! + assetNameLabels.prefix222 + groupTokenSuffix;
+  const adminAuth = await resolveAdminAuth(lucid, adminUnit);
+
   const config: StartGroupConfig = {
     groupTokenSuffix,
+    ...adminAuth.adminAuth,
   };
 
   console.log("Building start-group transaction...");
   const tx = await sdk.startGroup(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
-  const signed = await tx.sign.withWallet().complete();
+  const signed = await signWithAdminAuth(lucid, tx, adminAuth);
   const txHash = await signed.submit();
   console.log("Transaction submitted. Hash:", txHash);
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));

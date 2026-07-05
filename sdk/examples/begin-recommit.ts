@@ -16,7 +16,7 @@
  *   pnpm run begin-recommit
  */
 
-import { BeginRecommitConfig } from "@tx-meta/dcu-kit";
+import { BeginRecommitConfig, assetNameLabels } from "@tx-meta/dcu-kit";
 import { loadSdk } from "./sdk.js";
 import {
   makeLucid,
@@ -26,6 +26,7 @@ import {
   loadScriptRefs,
 } from "./context.js";
 import { loadState } from "./state.js";
+import { resolveAdminAuth, signWithAdminAuth } from "./multisig-admin.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -48,13 +49,25 @@ async function main() {
 
   const scriptRefs = await loadScriptRefs(lucid);
 
-  const config: BeginRecommitConfig = { groupTokenSuffix, scriptRefs };
+  // Script-held admin: attach the recorded multisig witness and co-sign below.
+  // On the plain VK path adminAuth is empty and nothing changes.
+  const adminUnit =
+    sdk.protocol.groupPolicyId +
+    assetNameLabels.prefix222 +
+    groupTokenSuffix;
+  const adminAuth = await resolveAdminAuth(lucid, adminUnit);
+
+  const config: BeginRecommitConfig = {
+    groupTokenSuffix,
+    scriptRefs,
+    ...adminAuth.adminAuth,
+  };
 
   console.log("Building begin-recommit transaction...");
   const tx = await sdk.beginRecommit(lucid, config).unsafeRun();
 
   console.log("Signing and submitting...");
-  const signed = await tx.sign.withWallet().complete();
+  const signed = await signWithAdminAuth(lucid, tx, adminAuth);
   const txHash = await signed.submit();
   console.log("Transaction submitted. Hash:", txHash);
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
