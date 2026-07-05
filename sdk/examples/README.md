@@ -239,11 +239,40 @@ pnpm run delete-group
 
 | Script             | Default wallet | What it does                                                                                                                     |
 | ------------------ | -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `create-multisig`  | —              | Builds a native `M-of-N` multisig over `SIGNER_WALLETS` payment keys (no tx) and records it in state.json.                       |
 | `assign-admin`     | ADMIN          | Transfers the group admin (222) token to `NEW_ADMIN_ADDRESS`. One-way door.                                                      |
 | `propose-recovery` | USER2          | Opens a lost-member recovery (N → N'). Needs `TARGET_SUFFIX`, `NEW_ACCOUNT_SUFFIX`, `NEW_PAYMENT_KEY_HASH`, `APPROVER_SUFFIXES`. |
 | `approve-recovery` | USER1          | A quorum member vouches for the pending request (one run per approver).                                                          |
 | `execute-recovery` | USER1          | Finalizes after the timelock — run from the recoveree's wallet (holds N').                                                       |
 | `cancel-recovery`  | USER1          | Veto by the original member N — proves the identity was never lost.                                                              |
+
+### Multisig admin (script-held authority)
+
+Admin authority follows the group 222 token, so it can be delegated to a native
+`M-of-N` multisig instead of a single wallet key. Proven live on Preprod
+(2026-07-05: assign `967b1ab1…`, deactivate `657a1712…`, delete `5febb131…`):
+
+```bash
+pnpm run create-multisig                       # 2-of-3 over ADMIN,USER1,USER2 (env-configurable)
+NEW_ADMIN_ADDRESS=<multisig addr> pnpm run assign-admin
+pnpm run update-group                          # detects the script-held token, co-signs 2-of-3
+pnpm run delete-group                          # same — burns both tokens; bond returns to ADMIN change
+```
+
+How it works:
+
+- `assign-admin` passes the recorded script as `destinationScript` — the endpoint's
+  spendability check refuses a script destination without it (`FORCE=1` overrides;
+  never force a group you cannot afford to strand).
+- `update-group` / `delete-group` detect where the 222 token sits. At the multisig
+  address they attach the recorded script as `adminScript` and co-sign with
+  `SIGNER_WALLETS` (default: the first M recorded signers). The sign builder
+  captures the wallet at build time, so co-signers are added as raw payment keys
+  (`sign.withPrivateKey`), not by re-selecting wallets.
+- Admin ops pay the 222 token back to the multisig address (`payAdminReturn`), so
+  authority stays delegated across operations. `delete-group` burns it; the group
+  UTxO's ADA (including the creator bond) goes to the fee wallet's change, and the
+  multisig address is left empty.
 
 ### Escrow (standalone — `@tx-meta/dcu-kit/escrow`)
 

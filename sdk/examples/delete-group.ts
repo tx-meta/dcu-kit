@@ -1,9 +1,13 @@
 /**
  * Delete Group Example
  *
- * Deactivates a group by setting is_active to false (soft delete).
- * The group UTxO remains on-chain but is non-functional.
- * Requires member_count === 0.
+ * Dissolves a deactivated, empty group: burns the group reference (100) and
+ * admin (222) tokens, closes the mutual reserve, and returns all locked ADA
+ * (including the creator bond) to the admin wallet as change.
+ * Requires is_active === false (run update-group first) and member_count === 0.
+ *
+ * When the admin token is held at the multisig recorded by create-multisig,
+ * the script attaches the multisig witness and co-signs with SIGNER_WALLETS.
  *
  * Token suffix resolution order:
  *   1. state.json (groupTokenSuffix) — set by create-group.ts
@@ -103,7 +107,7 @@ async function main() {
   console.log("Waiting for confirmation...");
   await lucid.awaitTx(txHash);
   clearState(["groupTokenSuffix"]);
-  console.log("Group deactivated successfully!");
+  console.log("Group deleted — both group tokens burned.");
 }
 
 main().catch((e) => {

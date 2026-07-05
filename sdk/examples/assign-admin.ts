@@ -7,14 +7,18 @@
  *
  * The endpoint verifies the destination: sending the token to a script
  * address requires the script itself (proof someone can spend from it), so
- * authority is never stranded at an unspendable address. FORCE=1 skips that
- * check — only use it when you know exactly what you are doing.
+ * authority is never stranded at an unspendable address. When the destination
+ * is the multisig recorded by create-multisig, this script supplies it
+ * automatically. FORCE=1 skips the check — only use it when you know exactly
+ * what you are doing.
  *
  * Wallet selection:
  *   Default (ADMIN): uses ADMIN_SEED from .env — must hold the group 222 token
  *
  * Usage:
  *   NEW_ADMIN_ADDRESS=addr_test1... pnpm run assign-admin
+ *   # multisig destination (run create-multisig first):
+ *   NEW_ADMIN_ADDRESS=<state.json multisigAddress> pnpm run assign-admin
  */
 
 import { getAddressDetails, Script } from "@lucid-evolution/lucid";

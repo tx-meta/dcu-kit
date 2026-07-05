@@ -4,6 +4,9 @@
  * Updates a group's configuration (e.g. fees or active state).
  * Critical fields (fees, intervals) can only be changed while member_count === 0.
  *
+ * When the admin token is held at the multisig recorded by create-multisig,
+ * the script attaches the multisig witness and co-signs with SIGNER_WALLETS.
+ *
  * Token suffix resolution order:
  *   1. state.json (groupTokenSuffix) — set by create-group.ts
  *   2. Auto-discovery — scans admin wallet for a group admin token (222 prefix)
