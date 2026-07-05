@@ -17,8 +17,8 @@ importers:
         specifier: 0.4.31
         version: 0.4.31(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)
       '@tx-meta/dcu-kit':
-        specifier: file:../dcu-kit-0.4.0.tgz
-        version: file:../dcu-kit-0.4.0.tgz(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)
+        specifier: file:../dcu-kit-0.4.1.tgz
+        version: file:../dcu-kit-0.4.1.tgz(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)
       dotenv:
         specifier: ^16.6.1
         version: 16.6.1
@@ -547,9 +547,9 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@tx-meta/dcu-kit@file:../dcu-kit-0.4.0.tgz':
-    resolution: {integrity: sha512-s1d7b3nx3eGIfvZtiBTuUyphYHrKblpLSKkAUvoQPM0hmyO66ZdILzb7jnm0JyoKaTBdAM2j9u1t+c5BdGW3MQ==, tarball: file:../dcu-kit-0.4.0.tgz}
-    version: 0.4.0
+  '@tx-meta/dcu-kit@file:../dcu-kit-0.4.1.tgz':
+    resolution: {integrity: sha512-4El79AMhnkYppymb10jWAEZcl/GmgfTo+IXs0lrhK2Zi7xSpxAfnhpM9l4L8iDRmoMB1BneTMudJQQAIFBtQ/g==, tarball: file:../dcu-kit-0.4.1.tgz}
+    version: 0.4.1
 
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
@@ -1636,7 +1636,7 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@tx-meta/dcu-kit@file:../dcu-kit-0.4.0.tgz(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)':
+  '@tx-meta/dcu-kit@file:../dcu-kit-0.4.1.tgz(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)':
     dependencies:
       '@lucid-evolution/lucid': 0.4.31(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)
       '@noble/hashes': 1.8.0
