@@ -79,9 +79,7 @@ async function main() {
   });
 
   console.log("\nNext steps:");
-  console.log(
-    `  NEW_ADMIN_ADDRESS=${multisig.address} pnpm run assign-admin`,
-  );
+  console.log(`  NEW_ADMIN_ADDRESS=${multisig.address} pnpm run assign-admin`);
   console.log(
     "  then update-group / delete-group detect the script-held admin token and",
   );

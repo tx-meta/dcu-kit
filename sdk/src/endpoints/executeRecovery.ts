@@ -296,16 +296,14 @@ export const unsignedExecuteRecoveryTxProgram = (
       scriptRefs,
     );
 
-    const tx = yield* withValidators
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "executeRecovery",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withValidators.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "executeRecovery",
+            error: String(e),
+          }),
+      ),
+    );
     return tx;
   });

@@ -38,7 +38,9 @@ export type AdminAuthResolution = {
 };
 
 const exampleNetwork = () =>
-  process.env.NETWORK === "Mainnet" ? ("Mainnet" as const) : ("Preprod" as const);
+  process.env.NETWORK === "Mainnet"
+    ? ("Mainnet" as const)
+    : ("Preprod" as const);
 
 /**
  * Resolves the admin (222) unit's current UTxO and returns the AdminAuthConfig

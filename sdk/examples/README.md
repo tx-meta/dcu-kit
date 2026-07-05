@@ -182,15 +182,15 @@ pnpm run delete-group
 
 ## Helper scripts
 
-| Script             | Purpose                                                                           |
-| ------------------ | --------------------------------------------------------------------------------- |
-| `show-wallets`     | Print ADMIN/USER1/USER2 addresses, balances, and DCU tokens                       |
-| `generate-wallets` | Generate fresh seed phrases (first-time setup only)                               |
-| `send-ada`         | Send ADA between wallets: `FROM_WALLET=ADMIN TO_WALLET=USER1 AMOUNT=5000000`      |
+| Script             | Purpose                                                                            |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| `show-wallets`     | Print ADMIN/USER1/USER2 addresses, balances, and DCU tokens                        |
+| `generate-wallets` | Generate fresh seed phrases (first-time setup only)                                |
+| `send-ada`         | Send ADA between wallets: `FROM_WALLET=ADMIN TO_WALLET=USER1 AMOUNT=5000000`       |
 | `deploy-scripts`   | Deploy the six reference scripts (~233 ADA min-ADA, permanently locked). Run once. |
-| `reset-state`      | Wipe `state.json` to start a fresh test session                                   |
-| `purge-nfts`       | Burn all account/group NFTs held by a wallet (emergency cleanup)                  |
-| `cron-daemon`      | Long-running process that auto-submits `distribute-payout` when each round opens. |
+| `reset-state`      | Wipe `state.json` to start a fresh test session                                    |
+| `purge-nfts`       | Burn all account/group NFTs held by a wallet (emergency cleanup)                   |
+| `cron-daemon`      | Long-running process that auto-submits `distribute-payout` when each round opens.  |
 
 ---
 

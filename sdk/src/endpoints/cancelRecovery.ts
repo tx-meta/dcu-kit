@@ -60,8 +60,12 @@ export const unsignedCancelRecoveryTxProgram = (
   config: CancelRecoveryConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { accountPolicyId, treasuryValidator, treasuryPolicyId, settingsUnit } =
-      protocol;
+    const {
+      accountPolicyId,
+      treasuryValidator,
+      treasuryPolicyId,
+      settingsUnit,
+    } = protocol;
     const { targetTokenSuffix, newAccountTokenSuffix } = config;
 
     const requestUnit =
@@ -135,16 +139,14 @@ export const unsignedCancelRecoveryTxProgram = (
       scriptRefs,
     );
 
-    const tx = yield* withValidators
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "cancelRecovery",
-              error: String(e),
-            }),
-        ),
-      );
+    const tx = yield* withValidators.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "cancelRecovery",
+            error: String(e),
+          }),
+      ),
+    );
     return tx;
   });

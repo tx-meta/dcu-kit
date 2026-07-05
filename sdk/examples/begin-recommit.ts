@@ -52,9 +52,7 @@ async function main() {
   // Script-held admin: attach the recorded multisig witness and co-sign below.
   // On the plain VK path adminAuth is empty and nothing changes.
   const adminUnit =
-    sdk.protocol.groupPolicyId +
-    assetNameLabels.prefix222 +
-    groupTokenSuffix;
+    sdk.protocol.groupPolicyId + assetNameLabels.prefix222 + groupTokenSuffix;
   const adminAuth = await resolveAdminAuth(lucid, adminUnit);
 
   const config: BeginRecommitConfig = {
