@@ -189,9 +189,7 @@ export const unsignedTerminateGroupTxProgram = (
     );
 
     const tx = yield* withSigners
-      .completeProgram(
-        lucid.config().network === "Custom" ? { localUPLCEval: false } : {},
-      )
+      .completeProgram()
       .pipe(
         Effect.mapError(
           (e) =>
