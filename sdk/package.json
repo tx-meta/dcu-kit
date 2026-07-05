@@ -1,6 +1,6 @@
 {
   "name": "@tx-meta/dcu-kit",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Offchain SDK for DCU Toolkit — ROSCA protocol on Cardano",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
