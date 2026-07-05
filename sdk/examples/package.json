@@ -11,6 +11,7 @@
     "update-account": "pnpm run build && node dist/update-account.js",
     "delete-account": "pnpm run build && node dist/delete-account.js",
     "create-group": "pnpm run build && node dist/create-group.js",
+    "create-multisig": "pnpm run build && node dist/create-multisig.js",
     "update-group": "pnpm run build && node dist/update-group.js",
     "delete-group": "pnpm run build && node dist/delete-group.js",
     "join-group": "pnpm run build && node dist/join-group.js",
