@@ -33,7 +33,7 @@ import { advanceBlock } from "./effects.js";
 // recovered, user2 = the approver) with a SHORT recovery_timelock (30s = 1.5 advanceBlock
 // calls) so the round-trip is reachable without excessive emulator advancement.
 // recovery_threshold stays at its default (1) — a single approver is sufficient quorum.
-const setupRecoveryFixture = () =>
+const setupRecoveryFixture = (options?: { withSecondApprover?: boolean }) =>
   Effect.gen(function* () {
     const base = yield* setupBase();
     const { context, groupUtxo } = yield* setupGroup(base, {
@@ -62,6 +62,30 @@ const setupRecoveryFixture = () =>
       accountUtxo: user2AccountUtxo,
       userSeed: users.user2.seedPhrase,
     });
+
+    // Optional third registry member: a second, distinct account held by user2's
+    // wallet, joined BEFORE the group seals. ApproveRecovery requires the approver
+    // token to be in the group's member registry (spec ApproveRecovery 3a), so a
+    // second approver must be a real member — a freshly minted account is not enough.
+    let secondApproverTokenSuffix: string | undefined;
+    if (options?.withSecondApprover) {
+      const {
+        outputs: { userUtxo: secondApproverUtxo },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: secondApproverUtxo,
+        userSeed: users.user2.seedPhrase,
+      });
+      secondApproverTokenSuffix = extractTokenSuffix(
+        secondApproverUtxo,
+        accountPolicyId,
+        assetNameLabels.prefix222,
+      );
+    }
+
     yield* startGroupTestCase(context, { groupUtxo });
 
     // The recoveree's brand-new account (N') — admin's wallet creates it (admin's
@@ -104,6 +128,7 @@ const setupRecoveryFixture = () =>
       groupTokenSuffix,
       targetTokenSuffix,
       approverTokenSuffix,
+      secondApproverTokenSuffix,
       newAccountTokenSuffix,
       newPaymentCredential,
     };
@@ -388,22 +413,12 @@ describe("Cluster A — lost-member recovery", () => {
           groupTokenSuffix,
           targetTokenSuffix,
           approverTokenSuffix,
+          secondApproverTokenSuffix,
           newAccountTokenSuffix,
           newPaymentCredential,
-        } = yield* setupRecoveryFixture();
+        } = yield* setupRecoveryFixture({ withSecondApprover: true });
         const { lucid, users } = context;
-
-        // A 3rd member to act as a second, distinct approver.
-        const {
-          outputs: { userUtxo: extraAccountUtxo },
-        } = yield* createAccountTestCase(context, {
-          userSeed: users.user2.seedPhrase,
-        });
-        const extraApproverSuffix = extractTokenSuffix(
-          extraAccountUtxo,
-          accountPolicyId,
-          assetNameLabels.prefix222,
-        );
+        const extraApproverSuffix = secondApproverTokenSuffix!;
 
         // --- ProposeRecovery (1 approval: user2) ---
         selectWalletFromSeed(lucid, users.admin.seedPhrase);
@@ -433,9 +448,9 @@ describe("Cluster A — lost-member recovery", () => {
         yield* Effect.tryPromise(() => proposeFullySigned.submit());
         yield* advanceBlock(context.emulator);
 
-        // --- ApproveRecovery: a fresh account (not yet in approvals, not the target)
-        // adds a second signed approval. Since extraAccountUtxo was minted from user2's
-        // wallet but is a DISTINCT account token, it is a valid additional approver.
+        // --- ApproveRecovery: a distinct registry member (not yet in approvals, not
+        // the target) adds a second signed approval. The second approver joined the
+        // group before it sealed — spec ApproveRecovery 3a requires registry membership.
         selectWalletFromSeed(lucid, users.user2.seedPhrase);
         const approveTx = yield* unsignedApproveRecoveryTxProgram(
           context.protocol!,
