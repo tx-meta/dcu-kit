@@ -25,6 +25,10 @@
     "./escrow/v2": {
       "import": "./dist/escrow/v2/index.js",
       "types": "./dist/escrow/v2/index.d.ts"
+    },
+    "./savings": {
+      "import": "./dist/savings/index.js",
+      "types": "./dist/savings/index.d.ts"
     }
   },
   "files": [
@@ -54,7 +58,7 @@
   ],
   "scripts": {
     "clean": "rimraf dist",
-    "build": "tsup src/index.ts src/multisig/index.ts src/core/index.ts src/escrow/index.ts src/escrow/v2/index.ts --minify --format esm,cjs --dts --clean",
+    "build": "tsup src/index.ts src/multisig/index.ts src/core/index.ts src/escrow/index.ts src/escrow/v2/index.ts src/savings/index.ts --minify --format esm,cjs --dts --clean",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,md}\"",

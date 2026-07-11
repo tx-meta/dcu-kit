@@ -362,7 +362,7 @@ Common checks on every spend (stated once, applied everywhere):
   Freezes the share-out snapshot.
 
   - `credential_authorized(quorum, tx)`; `status == Active`; if `cycle_end` is `Some(t)`, the transaction validity range starts at or after `t`.
-  - Let `vault` = the anchor's fund-asset value. New status: `SharingOut { pot: vault - social_total, shares: shares_total, shares_remaining: shares_total }` — everything except the social fund is distributable, including untagged top-ups.
+  - Let `vault` = the anchor's fund-asset value, and `buffer` = `2_000_000` when the fund asset is ADA, else `0` (the anchor's protocol min-ADA buffer is not a deposit — excluding it keeps the last claims from breaking on min-ADA). New status, EXACT: `SharingOut { pot: vault - social_total - buffer, shares: shares_total, shares_remaining: shares_total }` — everything else is distributable, including untagged top-ups. Exactness keeps the quorum honest: it cannot understate the pot to enlarge the closure residual.
   - Anchor continuation: `shares_total = 0`, `savings_total = 0` (superseded by the frozen snapshot); `social_total` and charter unchanged; value unchanged (freezing moves no money).
 
 + *ClaimShareOut* (paired; member-authorized)

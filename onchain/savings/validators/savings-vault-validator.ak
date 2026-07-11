@@ -117,9 +117,10 @@ validator savings_vault {
         // TODO [spec 3.3 common]: self-reference + single-own-input discipline.
         // TODO [spec 3.3 CloseCycle]: credential_authorized(quorum, tx);
         // status == Active; validity range at/after cycle_end when set.
-        // TODO [spec 3.3 CloseCycle]: new status = SharingOut { pot = vault
-        // fund-asset value - social_total, shares = shares_total,
-        // shares_remaining = shares_total }.
+        // TODO [spec 3.3 CloseCycle]: new status, EXACT = SharingOut { pot =
+        // vault fund-asset value - social_total - buffer, shares =
+        // shares_total, shares_remaining = shares_total }, where buffer =
+        // 2_000_000 for ADA funds (the anchor's protocol min-ADA), 0 else.
         // TODO [spec 3.3 CloseCycle]: continuation — shares_total = 0,
         // savings_total = 0; social_total + charter unchanged; value
         // unchanged (freezing moves no money).
