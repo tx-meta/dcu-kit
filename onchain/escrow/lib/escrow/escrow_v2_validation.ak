@@ -4,9 +4,12 @@ use aiken/interval.{Finite, Interval}
 use aiken/primitive/bytearray
 use cardano/address.{Credential, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value}
-use cardano/transaction.{InlineDatum, Input, Output}
-use escrow/credential.{state_token_name}
-use escrow/types_v2.{EscrowDatumV2, Milestone, PerMilestone, Upfront}
+use cardano/transaction.{InlineDatum, Input, Output, Transaction}
+use escrow/credential.{credential_authorized, state_token_name}
+use escrow/types_v2.{
+  EscrowDatumV2, Milestone, PerMilestone, RefundToFunder, ReleaseToBeneficiary,
+  Upfront,
+}
 
 // Same schedule ceiling as v1 — keeps the longest release under budget and
 // closes the unreleasable-schedule griefing vector.
@@ -177,6 +180,204 @@ fn sorted_policy_triple(
     [assets.ada_policy_id, asset_policy, policy_id]
   } else {
     [assets.ada_policy_id, policy_id, asset_policy]
+  }
+}
+
+// ── fund paths ───────────────────────────────────────────────────────────────
+
+// [spec 3.2 Release]: verifier-authorized sequential tranche, upper bound at or
+// before the (dispute-extended) cure boundary, not frozen.
+pub fn validate_release_v2(
+  policy_id: PolicyId,
+  datum: EscrowDatumV2,
+  own_input: Input,
+  continuation_index: Int,
+  payout_index: Int,
+  funder_index: Int,
+  outputs: List<Output>,
+  mint: Value,
+  tx: Transaction,
+) -> Bool {
+  // [spec 3.2]: deterministic boundary — a pinned upper bound is required.
+  expect Finite(upper) = tx.validity_range.upper_bound.bound_type
+  and {
+    (upper <= cure_boundary(datum))?,
+    dispute_clear(datum, tx.validity_range)?,
+    credential_authorized(datum.verifier, tx)?,
+    tranche_payout_ok(
+      policy_id,
+      datum,
+      own_input,
+      continuation_index,
+      payout_index,
+      funder_index,
+      outputs,
+      mint,
+    ),
+  }
+}
+
+// [spec 3.2 TimeoutRelease]: past the cure window, silence approves — the
+// tranche becomes releasable to the beneficiary with NO signer requirement
+// (payout destination is fixed by the datum, so anyone may crank).
+pub fn validate_timeout_release(
+  policy_id: PolicyId,
+  datum: EscrowDatumV2,
+  own_input: Input,
+  continuation_index: Int,
+  payout_index: Int,
+  funder_index: Int,
+  outputs: List<Output>,
+  mint: Value,
+  tx: Transaction,
+) -> Bool {
+  expect Finite(lower) = tx.validity_range.lower_bound.bound_type
+  and {
+    (datum.timeout_policy == ReleaseToBeneficiary)?,
+    (lower > cure_boundary(datum))?,
+    dispute_clear(datum, tx.validity_range)?,
+    tranche_payout_ok(
+      policy_id,
+      datum,
+      own_input,
+      continuation_index,
+      payout_index,
+      funder_index,
+      outputs,
+      mint,
+    ),
+  }
+}
+
+// [spec 3.2 Reclaim]: RefundToFunder mode only — strictly after the cure
+// boundary the funder recovers the WHOLE remainder (asset + lovelace incl.
+// buffer) to their own full address; the state token burns.
+pub fn validate_reclaim_v2(
+  policy_id: PolicyId,
+  datum: EscrowDatumV2,
+  own_input: Input,
+  refund_index: Int,
+  outputs: List<Output>,
+  mint: Value,
+  tx: Transaction,
+) -> Bool {
+  expect Finite(lower) = tx.validity_range.lower_bound.bound_type
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
+  expect Some(refund) = list.at(outputs, refund_index)
+  let in_value = own_input.output.value
+  and {
+    (datum.timeout_policy == RefundToFunder)?,
+    (lower > cure_boundary(datum))?,
+    dispute_clear(datum, tx.validity_range)?,
+    credential_authorized(datum.funder.payment_credential, tx)?,
+    (refund.address == datum.funder)?,
+    (assets.lovelace_of(refund.value) >= assets.lovelace_of(in_value))?,
+    (assets.quantity_of(refund.value, datum.asset_policy, datum.asset_name) >= assets.quantity_of(
+      in_value,
+      datum.asset_policy,
+      datum.asset_name,
+    ))?,
+    (assets.quantity_of(mint, policy_id, state_name) == -1)?,
+  }
+}
+
+// Shared tranche mechanics for Release and TimeoutRelease: sequential payout to
+// the beneficiary, PerMilestone funded check, continuation or final burn with
+// the remainder returned to the funder on-chain.
+fn tranche_payout_ok(
+  policy_id: PolicyId,
+  datum: EscrowDatumV2,
+  own_input: Input,
+  continuation_index: Int,
+  payout_index: Int,
+  funder_index: Int,
+  outputs: List<Output>,
+  mint: Value,
+) -> Bool {
+  expect Some(m) = list.at(datum.milestones, datum.released_count)
+  let tranche = m.amount
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
+  expect Some(payout) = list.at(outputs, payout_index)
+  let in_value = own_input.output.value
+  let is_ada = datum.asset_policy == assets.ada_policy_id
+  let is_final = datum.released_count + 1 == list.length(datum.milestones)
+  let base = and {
+    // [spec 3.2]: PerMilestone — the current tranche must actually be funded
+    // (trivially true for a fully-funded Upfront escrow).
+    (assets.quantity_of(in_value, datum.asset_policy, datum.asset_name) >= tranche)?,
+    (payout.address == datum.beneficiary)?,
+    (assets.quantity_of(payout.value, datum.asset_policy, datum.asset_name) >= tranche)?,
+  }
+  if is_final {
+    // [spec 3.2 final]: burn + the remainder goes back to the FUNDER on-chain —
+    // the 2026-07-11 offchain fix promoted into the validator. For native-token
+    // escrows the buffer keeps funding the beneficiary payout's min-ADA.
+    let ada_remainder =
+      if is_ada {
+        assets.lovelace_of(in_value) - tranche
+      } else {
+        assets.lovelace_of(in_value) - min_ada_buffer
+      }
+    let asset_remainder =
+      if is_ada {
+        0
+      } else {
+        assets.quantity_of(in_value, datum.asset_policy, datum.asset_name) - tranche
+      }
+    let remainder_ok =
+      if ada_remainder > 0 || asset_remainder > 0 {
+        expect Some(funder_out) = list.at(outputs, funder_index)
+        and {
+          (funder_out.address == datum.funder)?,
+          (assets.lovelace_of(funder_out.value) >= ada_remainder)?,
+          (assets.quantity_of(
+            funder_out.value,
+            datum.asset_policy,
+            datum.asset_name,
+          ) >= asset_remainder)?,
+        }
+      } else {
+        True
+      }
+    and {
+      base,
+      remainder_ok,
+      (assets.quantity_of(mint, policy_id, state_name) == -1)?,
+    }
+  } else {
+    expect Some(cont) = list.at(outputs, continuation_index)
+    expect InlineDatum(raw) = cont.datum
+    expect cont_datum: EscrowDatumV2 = raw
+    let expected =
+      EscrowDatumV2 { ..datum, released_count: datum.released_count + 1 }
+    let value_ok =
+      if is_ada {
+        assets.lovelace_of(cont.value) >= assets.lovelace_of(in_value) - tranche
+      } else {
+        and {
+          assets.quantity_of(cont.value, datum.asset_policy, datum.asset_name) >= assets.quantity_of(
+            in_value,
+            datum.asset_policy,
+            datum.asset_name,
+          ) - tranche,
+          // Buffer preserved through every non-final release — it funds the
+          // FINAL payout's min-ADA; the crank pays interim payout min-ADA.
+          assets.lovelace_of(cont.value) >= assets.lovelace_of(in_value),
+        }
+      }
+    and {
+      base,
+      // [AIK-4]: continuation pinned to the spent input's FULL address.
+      (cont.address == own_input.output.address)?,
+      exact_state_token(cont.value, policy_id, state_name)?,
+      continuation_policies_ok(cont.value, policy_id, datum.asset_policy)?,
+      (cont_datum == expected)?,
+      value_ok?,
+    }
   }
 }
 

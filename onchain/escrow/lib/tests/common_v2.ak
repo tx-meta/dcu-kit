@@ -1,3 +1,4 @@
+use aiken/interval.{Finite, Interval, IntervalBound}
 use cardano/address.{Address, VerificationKey}
 use cardano/address as addr
 use cardano/assets.{PolicyId, Value}
@@ -87,6 +88,15 @@ pub fn escrow_v2_output(
 pub fn v2_utxo_value(policy_id: PolicyId, lovelace: Int) -> Value {
   assets.from_lovelace(lovelace)
     |> assets.add(policy_id, seed_token_name(), 1)
+}
+
+// Validity range with BOTH bounds finite — dispute-aware paths often need a
+// proven lower bound and a pinned upper bound in the same tx.
+pub fn range_between(lo: Int, hi: Int) -> Interval {
+  Interval {
+    lower_bound: IntervalBound { bound_type: Finite(lo), is_inclusive: True },
+    upper_bound: IntervalBound { bound_type: Finite(hi), is_inclusive: True },
+  }
 }
 
 pub fn test_project_datum() -> ProjectDatum {
