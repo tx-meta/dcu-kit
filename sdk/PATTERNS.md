@@ -620,11 +620,11 @@ instead of CI-derived.
 
 Rules the gate cannot check — apply them during review:
 
-| Learned 2026-07-11 (live sweep) | Rule |
-| --- | --- |
+| Learned 2026-07-11 (live sweep)                                                                | Rule                                                                                                                                              |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Ledger presents reference inputs to scripts as a SORTED set; the tx body keeps insertion order | Never hardcode a reference-input index in a redeemer — compute the sorted position (see `allocateToEscrow`). A passing test may be ordering luck. |
-| Emulator wallets never hold reference scripts | Wallet-UTxO pickers (seeds, coin hints) must filter `u.scriptRef` — a consumed ref script is destroyed for everyone. |
-| Endpoint modes are separate code paths | Every config branch (e.g. allocate seed-new vs top-up) needs its own emulator round-trip; an untested mode shipped broken. |
-| Blockfrost indexer lags spends ~20-30s | Consecutive spends of the same UTxO need retry; provider `evaluate` cannot parse Conway set tags — debug with local eval + hand-decoded CBOR. |
-| `Edit`/`sed` bulk replacements can miss occurrences | After fixing a repacked dependency, grep the MINIFIED dist for the old pattern before rerunning. |
-| Emulator green ≠ done for protocol work | On-chain changes require the Preprod live sweep (`sdk/examples/`) before release; it caught 2 bugs 2,504 unit checks + the emulator missed. |
+| Emulator wallets never hold reference scripts                                                  | Wallet-UTxO pickers (seeds, coin hints) must filter `u.scriptRef` — a consumed ref script is destroyed for everyone.                              |
+| Endpoint modes are separate code paths                                                         | Every config branch (e.g. allocate seed-new vs top-up) needs its own emulator round-trip; an untested mode shipped broken.                        |
+| Blockfrost indexer lags spends ~20-30s                                                         | Consecutive spends of the same UTxO need retry; provider `evaluate` cannot parse Conway set tags — debug with local eval + hand-decoded CBOR.     |
+| `Edit`/`sed` bulk replacements can miss occurrences                                            | After fixing a repacked dependency, grep the MINIFIED dist for the old pattern before rerunning.                                                  |
+| Emulator green ≠ done for protocol work                                                        | On-chain changes require the Preprod live sweep (`sdk/examples/`) before release; it caught 2 bugs 2,504 unit checks + the emulator missed.       |
