@@ -1,0 +1,40 @@
+{
+  "settingsPolicy": "f90df179e6eea6058a81ed6a663d8e8ea70559492645d15c8e866cea",
+  "settingsSeed": {
+    "txHash": "3da41c1da5b4bb45141768e2c8ec33a23d8ce2181ecedd5ed1347d15cf2c0f81",
+    "outputIndex": 1
+  },
+  "scriptRefTreasury": {
+    "txHash": "c19c803591b7ec29da576ad1948a9726d1893dd15145a2e771f538ae68efef17",
+    "outputIndex": 0
+  },
+  "scriptRefGroup": {
+    "txHash": "e8c570af8579034f493b39a7e38c6dd6c9c4d35ff55cb797206db723885ebdef",
+    "outputIndex": 0
+  },
+  "scriptRefTreasuryRounds": {
+    "txHash": "c73ce5e71e6e4f3ac4f98790f8d8f910fa38e9846aa754e28e8aaf2c7035f711",
+    "outputIndex": 0
+  },
+  "scriptRefTreasuryLifecycle": {
+    "txHash": "f1ed1c5b771da7518c5a5d0d29bdc2837e95fafc89d7301cc2d03e0a085b006a",
+    "outputIndex": 0
+  },
+  "scriptRefTreasuryRecovery": {
+    "txHash": "3a79f65e00e50384ba56bc4132ba43d85df29dca957813e521adab6f909d95c8",
+    "outputIndex": 0
+  },
+  "scriptRefTreasuryReserve": {
+    "txHash": "f773675d826f480e214774f8d76f214551d2ae47034d1805f33d7edd95680061",
+    "outputIndex": 0
+  },
+  "accountPolicyId": "d80e2e5a82cb60b3b2ee2faa1347337a9ff809207f7d8da2ca92bca3",
+  "groupPolicyId": "54c465b243c702b6d912a201f083039add056d9291e2bd7bef3900f2",
+  "adminAccountTokenSuffix": "f81b8f98390b8bfa191c184bc81e61831f0a26f78c01c437b38facbd",
+  "accountTokenSuffix": "8ca1f516a31d453929a9494e2f288d8c3df4828634550845c42621c4",
+  "escrowStateTokenName": "1f33b92437f7779e9da24531cf177e21b1765b43fbdb091cab848995972ac027",
+  "groupIntervalLength": 300000,
+  "groupStartTime": 1783203610000,
+  "groupNumRounds": 3,
+  "user2AccountTokenSuffix": "56021a780ff363c625a29529312701147dd9cdd7a96b973a2968ebbf"
+}

@@ -20,7 +20,6 @@ import {
   PartyWitness,
   resolveEscrowV2,
 } from "../utils.js";
-import { stateUnitOf } from "./tranche.js";
 
 /**
  * Creates an unsigned transaction topping up a PerMilestone escrow with more
