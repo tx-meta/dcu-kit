@@ -15,10 +15,20 @@ import {
   patchInlineDatum,
   resolveUtxoByUnit,
 } from "../../core/utils/index.js";
-import { EscrowDatumV2, EscrowDatumV2Schema, ProjectDatum, ProjectDatumSchema } from "./types.js";
+import {
+  EscrowDatumV2,
+  EscrowDatumV2Schema,
+  PoolDatum,
+  ProjectDatum,
+  ProjectDatumSchema,
+  VaultDatum,
+  VaultDatumSchema,
+} from "./types.js";
 import {
   escrowV2PolicyId,
   escrowV2Validator,
+  poolPolicyId,
+  poolVaultValidator,
   projectPolicyId,
   projectValidator,
 } from "./validators.js";
@@ -93,6 +103,43 @@ export const resolveProject = (
       ),
     )) as unknown as ProjectDatum;
     return { utxo, datum };
+  });
+
+/** The pooled-commitment-vault script address for a network. */
+export const poolVaultAddress = (network: Network): string =>
+  validatorToAddress(network, poolVaultValidator.spendPool);
+
+/** Resolves a live pool anchor by its token name and parses its datum. */
+export const resolvePool = (
+  lucid: LucidEvolution,
+  poolTokenName: string,
+): Effect.Effect<
+  { utxo: UTxO; pool: PoolDatum },
+  UtxoNotFoundError | LucidError | ConfigurationError,
+  never
+> =>
+  Effect.gen(function* () {
+    const unit = poolPolicyId + poolTokenName;
+    const utxoRaw = yield* resolveUtxoByUnit(lucid, unit);
+    const utxo = patchInlineDatum(utxoRaw);
+    const datum = (yield* parseSafeDatum(utxo.datum, VaultDatumSchema).pipe(
+      Effect.mapError(
+        (e) =>
+          new ConfigurationError({
+            configKey: "poolTokenName",
+            message: `UTxO holding ${unit} has no valid vault datum: ${String(e)}`,
+          }),
+      ),
+    )) as unknown as VaultDatum;
+    if (typeof datum === "string" || !("PoolAnchor" in datum)) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "poolTokenName",
+          message: "the resolved UTxO is a deposit, not a pool anchor",
+        }),
+      );
+    }
+    return { utxo, pool: datum.PoolAnchor.pool };
   });
 
 /** The escrowed asset's Lucid unit ("lovelace" for ADA). */

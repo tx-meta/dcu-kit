@@ -5,6 +5,7 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -58,8 +59,10 @@ import {
  * @returns Effect yielding `{ tx, stateTokenName }` — persist `stateTokenName`.
  */
 export type CreateEscrowV2Config = {
-  /** Tranche destination (full address — its stake credential is pinned). */
+  /** PRIMARY tranche destination + consent authority (full address). */
   beneficiaryAddress: string;
+  /** Payout-only split recipients (≤10; basis-point shares summing < 10000). */
+  coBeneficiaries?: { address: string; shareBps: bigint }[];
   /** Release authority: an address, or `{ type, hash }` for script callers. */
   verifier: PartyRef;
   /** Optional neutral tie-breaker; omitting disables the dispute path. */
@@ -88,11 +91,23 @@ export type CreateEscrowV2Config = {
   currentTime?: bigint;
 };
 
-export const unsignedCreateEscrowV2TxProgram = (
-  lucid: LucidEvolution,
+/**
+ * Internal reuse: validates a CreateEscrowV2Config and builds the initial
+ * datum + locked assets for a given seed UTxO and funder address. Used by
+ * both `createEscrow` and the pool vault's `allocateToEscrow` (seed mode).
+ */
+export const prepareEscrowCreate = (
   config: CreateEscrowV2Config,
+  seed: { txHash: string; outputIndex: number },
+  funderAddressResolved: string,
 ): Effect.Effect<
-  { tx: TxSignBuilder; stateTokenName: string },
+  {
+    datum: EscrowDatumV2;
+    stateTokenName: string;
+    lockedAssets: Assets;
+    firstCure: bigint;
+    now: bigint;
+  },
   DcuError,
   never
 > =>
@@ -157,22 +172,37 @@ export const unsignedCreateEscrowV2TxProgram = (
       );
     }
 
-    const walletAddress = yield* getWalletAddress(lucid);
-    const utxos = sortUtxos(yield* getWalletUtxos(lucid));
-    const seed = utxos[0];
-    if (!seed) {
-      return yield* Effect.fail(
-        new InsufficientUtxosError({ required: 1, available: 0 }),
-      );
-    }
-
-    const stateTokenName = yield* escrowStateTokenName(seed);
+    const stateTokenName = yield* escrowStateTokenName(seed as UTxO);
     const stateUnit = escrowV2PolicyId + stateTokenName;
 
-    const funder = yield* toOnchainAddress(
-      config.funderAddress ?? walletAddress,
-    );
+    const funder = yield* toOnchainAddress(funderAddressResolved);
     const beneficiary = yield* toOnchainAddress(config.beneficiaryAddress);
+    const cos = config.coBeneficiaries ?? [];
+    if (cos.length > 10) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "coBeneficiaries",
+          message: "at most 10 co-beneficiaries",
+        }),
+      );
+    }
+    if (
+      cos.some((c) => c.shareBps <= 0n) ||
+      cos.reduce((a, c) => a + c.shareBps, 0n) >= 10_000n
+    ) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "coBeneficiaries",
+          message:
+            "every share must be > 0 and the shares must sum to strictly below 10000 bps",
+        }),
+      );
+    }
+    const co_beneficiaries = [];
+    for (const c of cos) {
+      const address = yield* toOnchainAddress(c.address);
+      co_beneficiaries.push({ address, share_bps: c.shareBps });
+    }
     const verifier = yield* partyToCredential(config.verifier, "verifier");
     const arbiter = config.arbiter
       ? yield* partyToCredential(config.arbiter, "arbiter")
@@ -209,6 +239,7 @@ export const unsignedCreateEscrowV2TxProgram = (
     const datum: EscrowDatumV2 = {
       funder,
       beneficiary,
+      co_beneficiaries,
       verifier,
       arbiter,
       asset_policy: assetPolicy,
@@ -242,6 +273,35 @@ export const unsignedCreateEscrowV2TxProgram = (
               [stateUnit]: 1n,
             };
 
+    const firstCure = milestones[0]!.deadline + grace;
+    return { datum, stateTokenName, lockedAssets, firstCure, now };
+  });
+
+export const unsignedCreateEscrowV2TxProgram = (
+  lucid: LucidEvolution,
+  config: CreateEscrowV2Config,
+): Effect.Effect<
+  { tx: TxSignBuilder; stateTokenName: string },
+  DcuError,
+  never
+> =>
+  Effect.gen(function* () {
+    const walletAddress = yield* getWalletAddress(lucid);
+    const utxos = sortUtxos(yield* getWalletUtxos(lucid));
+    const seed = utxos[0];
+    if (!seed) {
+      return yield* Effect.fail(
+        new InsufficientUtxosError({ required: 1, available: 0 }),
+      );
+    }
+    const { datum, stateTokenName, lockedAssets, firstCure, now } =
+      yield* prepareEscrowCreate(
+        config,
+        seed,
+        config.funderAddress ?? walletAddress,
+      );
+    const stateUnit = escrowV2PolicyId + stateTokenName;
+
     const redeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
@@ -259,7 +319,6 @@ export const unsignedCreateEscrowV2TxProgram = (
 
     const network = lucid.config().network ?? "Preprod";
     // Create requires a pinned upper bound strictly below deadline[0] + grace.
-    const firstCure = milestones[0]!.deadline + grace;
     const validTo = Number(
       now + 1_200_000n < firstCure ? now + 1_200_000n : firstCure - 1_000n,
     );

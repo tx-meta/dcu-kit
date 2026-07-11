@@ -32,6 +32,13 @@ import { unsignedResolveDisputeTxProgram } from "../src/escrow/v2/endpoints/reso
 import { unsignedCreateProjectTxProgram } from "../src/escrow/v2/endpoints/createProject.js";
 import { unsignedUpdateProjectTxProgram } from "../src/escrow/v2/endpoints/updateProject.js";
 import { unsignedCloseProjectTxProgram } from "../src/escrow/v2/endpoints/closeProject.js";
+import { unsignedCreatePoolTxProgram } from "../src/escrow/v2/endpoints/createPool.js";
+import { unsignedDepositToPoolTxProgram } from "../src/escrow/v2/endpoints/depositToPool.js";
+import { unsignedExitDepositTxProgram } from "../src/escrow/v2/endpoints/exitDeposit.js";
+import { unsignedAllocateToEscrowTxProgram } from "../src/escrow/v2/endpoints/allocateToEscrow.js";
+import { getPoolStateProgram } from "../src/escrow/v2/queries/getPoolState.js";
+import { escrowV2Validator } from "../src/escrow/v2/validators.js";
+import { getPoolDepositsProgram } from "../src/escrow/v2/queries/getPoolDeposits.js";
 import { getEscrowStateProgram } from "../src/escrow/v2/queries/getEscrowState.js";
 import { getProjectStateProgram } from "../src/escrow/v2/queries/getProjectState.js";
 import { getProjectEscrowsProgram } from "../src/escrow/v2/queries/getProjectEscrows.js";
@@ -440,6 +447,159 @@ describe("escrow v2 lifecycle (emulator)", () => {
           getEscrowStateProgram(ctx.lucid, { stateTokenName }),
         );
         expect(gone._tag).toBe("Left");
+      }),
+  );
+
+  it.effect("split beneficiaries: every tranche pays the fixed shares", () =>
+    Effect.gen(function* () {
+      const ctx = yield* makeContext;
+      const coA = rawKeyWallet();
+      const coB = rawKeyWallet();
+      // Primary 70% / co A 20% / co B 10% of the 40 ADA first tranche.
+      const stateTokenName = yield* createDefault(ctx, {
+        coBeneficiaries: [
+          { address: coA.address, shareBps: 2_000n },
+          { address: coB.address, shareBps: 1_000n },
+        ],
+      });
+
+      yield* releaseAsVerifier(ctx, stateTokenName);
+
+      const balA = yield* lovelaceAt(ctx, coA.address);
+      const balB = yield* lovelaceAt(ctx, coB.address);
+      expect(balA).toBe(8_000_000n);
+      expect(balB).toBe(4_000_000n);
+      const primaryUtxos = yield* Effect.promise(() =>
+        ctx.lucid.utxosAt(ctx.beneficiary.address),
+      );
+      expect(
+        primaryUtxos.some((u) => u.assets.lovelace === 28_000_000n),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect(
+    "pool vault: deposits, contributor exit, quorum allocation into a new escrow",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        // The arbiter wallet plays the quorum here (a 1-of-1 "committee").
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const { tx: poolTx, poolTokenName } =
+          yield* unsignedCreatePoolTxProgram(ctx.lucid, {
+            title: "angel pool",
+            quorum: ctx.arbiter.address,
+          });
+        yield* signAndSubmit(poolTx);
+        yield* advanceBlock(ctx.emulator);
+
+        const pool = yield* getPoolStateProgram(ctx.lucid, { poolTokenName });
+        expect(pool.status).toBe("Active");
+        expect(pool.quorum.type).toBe("Key");
+
+        // Two contributors commit; one changes their mind and exits.
+        const dep1 = yield* unsignedDepositToPoolTxProgram(ctx.lucid, {
+          poolTokenName,
+          amount: 120_000_000n,
+        });
+        yield* signAndSubmit(dep1);
+        yield* advanceBlock(ctx.emulator);
+
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.verifier.privateKey);
+        const dep2 = yield* unsignedDepositToPoolTxProgram(ctx.lucid, {
+          poolTokenName,
+          amount: 50_000_000n,
+        });
+        yield* signAndSubmit(dep2);
+        yield* advanceBlock(ctx.emulator);
+
+        const before = yield* getPoolDepositsProgram(ctx.lucid, {
+          poolTokenName,
+        });
+        expect(before.length).toBe(2);
+
+        // Deploy the escrow script as a reference script — the allocation tx
+        // cannot carry the 11 KB validator inline under the 16 KB ceiling.
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const refDeploy = yield* Effect.promise(() =>
+          ctx.lucid
+            .newTx()
+            .pay.ToAddressWithData(
+              ctx.funder.address,
+              undefined,
+              { lovelace: 20_000_000n },
+              escrowV2Validator.spendEscrow,
+            )
+            .complete(),
+        );
+        yield* signAndSubmit(refDeploy);
+        yield* advanceBlock(ctx.emulator);
+        const escrowScriptRef = (yield* Effect.promise(() =>
+          ctx.lucid.utxosAt(ctx.funder.address),
+        )).find((u) => u.scriptRef);
+        expect(escrowScriptRef).toBeDefined();
+
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.verifier.privateKey);
+        const exit = yield* unsignedExitDepositTxProgram(ctx.lucid, {
+          poolTokenName,
+          currentTime: BigInt(ctx.emulator.now()),
+        });
+        yield* signAndSubmit(exit);
+        yield* advanceBlock(ctx.emulator);
+
+        const afterExit = yield* getPoolDepositsProgram(ctx.lucid, {
+          poolTokenName,
+        });
+        expect(afterExit.length).toBe(1);
+        expect(afterExit[0]!.amount).toBe(120_000_000n);
+
+        // The quorum ratifies an allocation: the deposit seeds a milestone
+        // escrow; the 18 ADA remainder continues as the same deposit.
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.arbiter.privateKey);
+        const now = BigInt(ctx.emulator.now());
+        const { tx: allocTx, stateTokenName } =
+          yield* unsignedAllocateToEscrowTxProgram(ctx.lucid, {
+            poolTokenName,
+            currentTime: now,
+            escrowScriptRef,
+            newEscrow: {
+              beneficiaryAddress: ctx.beneficiary.address,
+              verifier: ctx.verifier.address,
+              milestones: [
+                { amount: 40_000_000n, deadline: now + 1n * HOUR },
+                { amount: 40_000_000n, deadline: now + 2n * HOUR },
+                { amount: 20_000_000n, deadline: now + 3n * HOUR },
+              ],
+              grace: HOUR,
+              fundingMode: "Upfront",
+              timeoutPolicy: "RefundToFunder",
+              title: "portfolio company A",
+              currentTime: now,
+            },
+          });
+        yield* signAndSubmit(allocTx);
+        yield* advanceBlock(ctx.emulator);
+
+        const escrow = yield* getEscrowStateProgram(ctx.lucid, {
+          stateTokenName,
+          currentTime: BigInt(ctx.emulator.now()),
+        });
+        expect(escrow.lockedBalance).toBe(102_000_000n);
+        expect(escrow.title).toBe("portfolio company A");
+
+        const remaining = yield* getPoolDepositsProgram(ctx.lucid, {
+          poolTokenName,
+        });
+        expect(remaining.length).toBe(1);
+        expect(remaining[0]!.amount).toBe(18_000_000n);
+
+        // The funded escrow is live: the verifier releases the first tranche.
+        yield* releaseAsVerifier(ctx, stateTokenName);
+        const after = yield* getEscrowStateProgram(ctx.lucid, {
+          stateTokenName,
+          currentTime: BigInt(ctx.emulator.now()),
+        });
+        expect(after.releasedCount).toBe(1);
       }),
   );
 

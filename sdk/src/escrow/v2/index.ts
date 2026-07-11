@@ -21,6 +21,15 @@ export * from "./endpoints/createProject.js";
 export * from "./endpoints/updateProject.js";
 export * from "./endpoints/closeProject.js";
 
+export * from "./endpoints/createPool.js";
+export * from "./endpoints/depositToPool.js";
+export * from "./endpoints/exitDeposit.js";
+export * from "./endpoints/allocateToEscrow.js";
+export * from "./endpoints/updatePool.js";
+export * from "./endpoints/closePool.js";
+
 export * from "./queries/getEscrowState.js";
 export * from "./queries/getProjectState.js";
 export * from "./queries/getProjectEscrows.js";
+export * from "./queries/getPoolState.js";
+export * from "./queries/getPoolDeposits.js";

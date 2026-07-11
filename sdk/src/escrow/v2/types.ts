@@ -43,11 +43,22 @@ export const DisputeInfoSchema = Data.Object({
 export type DisputeInfoD = Data.Static<typeof DisputeInfoSchema>;
 export const DisputeInfoD = DisputeInfoSchema as unknown as DisputeInfoD;
 
+export const CoBeneficiarySchema = Data.Object({
+  /** Payout-only split recipient (full address). */
+  address: AddressSchema,
+  /** Fixed basis-point share of every tranche (sum across cos < 10_000). */
+  share_bps: Data.Integer(),
+});
+export type CoBeneficiaryD = Data.Static<typeof CoBeneficiarySchema>;
+export const CoBeneficiaryD = CoBeneficiarySchema as unknown as CoBeneficiaryD;
+
 export const EscrowDatumV2Schema = Data.Object({
   /** Refund destination + abort/amend co-authority (full address). */
   funder: AddressSchema,
-  /** Payout destination + abort/amend co-authority (full address). */
+  /** PRIMARY payout destination + consent authority (full address). */
   beneficiary: AddressSchema,
+  /** Payout-only split recipients; empty = single-beneficiary escrow. */
+  co_beneficiaries: Data.Array(CoBeneficiarySchema),
   /** Release authority — never receives funds. VK or script (e.g. multisig). */
   verifier: CredentialSchema,
   /** Neutral tie-breaker; null = this escrow has no dispute path. */
@@ -85,6 +96,9 @@ export const PartySchema = Data.Enum([
   Data.Literal("BeneficiaryParty"),
   Data.Literal("VerifierParty"),
   Data.Literal("ArbiterParty"),
+  Data.Object({
+    CoBeneficiaryParty: Data.Object({ index: Data.Integer() }),
+  }),
 ]);
 export type PartyD = Data.Static<typeof PartySchema>;
 export const PartyD = PartySchema as unknown as PartyD;
@@ -220,6 +234,81 @@ export type ProjectMintRedeemer = Data.Static<
 >;
 export const ProjectMintRedeemer =
   ProjectMintRedeemerSchema as unknown as ProjectMintRedeemer;
+
+// --- Pooled commitment vault ---
+
+export const PoolDatumSchema = Data.Object({
+  /** Short inline title (max 64 bytes). */
+  title: Data.Bytes(),
+  /** Hash of the pool's charter/mandate document. */
+  content_hash: Data.Nullable(Data.Bytes()),
+  /** The ratification authority — a multisig today, a vote script later. */
+  quorum: CredentialSchema,
+  /** Script hash allocations MUST land at (the escrow generation). */
+  escrow_target: Data.Bytes(),
+  /** The pool's asset. Empty string (`""`) means ADA. */
+  asset_policy: Data.Bytes(),
+  asset_name: Data.Bytes(),
+  /** Allocations close after this (POSIX ms); exits never close. */
+  funding_deadline: Data.Nullable(Data.Integer()),
+  /** 0 = Active, 1 = Closed. */
+  status: Data.Integer(),
+});
+export type PoolDatum = Data.Static<typeof PoolDatumSchema>;
+export const PoolDatum = PoolDatumSchema as unknown as PoolDatum;
+
+export const VaultDatumSchema = Data.Enum([
+  Data.Object({ PoolAnchor: Data.Object({ pool: PoolDatumSchema }) }),
+  Data.Object({
+    PoolDeposit: Data.Object({
+      pool_id: Data.Bytes(),
+      contributor: AddressSchema,
+      locked_until: Data.Nullable(Data.Integer()),
+    }),
+  }),
+]);
+export type VaultDatum = Data.Static<typeof VaultDatumSchema>;
+export const VaultDatum = VaultDatumSchema as unknown as VaultDatum;
+
+export const PoolSpendRedeemerSchema = Data.Enum([
+  Data.Object({
+    UpdatePool: Data.Object({
+      pool_input_index: Data.Integer(),
+      continuation_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ClosePool: Data.Object({ pool_input_index: Data.Integer() }),
+  }),
+  Data.Object({
+    ExitDeposit: Data.Object({ deposit_input_index: Data.Integer() }),
+  }),
+  Data.Object({
+    AllocateToEscrow: Data.Object({
+      deposit_input_index: Data.Integer(),
+      pool_ref_index: Data.Integer(),
+      escrow_output_index: Data.Integer(),
+      escrow_input_index: Data.Integer(),
+      continuation_index: Data.Integer(),
+    }),
+  }),
+]);
+export type PoolSpendRedeemer = Data.Static<typeof PoolSpendRedeemerSchema>;
+export const PoolSpendRedeemer =
+  PoolSpendRedeemerSchema as unknown as PoolSpendRedeemer;
+
+export const PoolMintRedeemerSchema = Data.Enum([
+  Data.Object({
+    CreatePool: Data.Object({
+      seed_input_index: Data.Integer(),
+      pool_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Literal("BurnPool"),
+]);
+export type PoolMintRedeemer = Data.Static<typeof PoolMintRedeemerSchema>;
+export const PoolMintRedeemer =
+  PoolMintRedeemerSchema as unknown as PoolMintRedeemer;
 
 // --- address-first party input ---
 

@@ -30,3 +30,10 @@ export const projectValidator = {
 };
 
 export const projectPolicyId = mintingPolicyToId(projectValidator.mintProject);
+
+export const poolVaultValidator = {
+  spendPool: raw("pool_vault_validator.pool_vault.spend"),
+  mintPool: raw("pool_vault_validator.pool_vault.mint"),
+};
+
+export const poolPolicyId = mintingPolicyToId(poolVaultValidator.mintPool);

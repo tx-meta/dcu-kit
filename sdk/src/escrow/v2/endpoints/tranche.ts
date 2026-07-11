@@ -1,4 +1,5 @@
 import { Assets, Data, TxBuilder, UTxO } from "@lucid-evolution/lucid";
+// TxBuilder is used by the paySplit closure over co-beneficiary payouts.
 import { Effect } from "effect";
 import { ConfigurationError } from "../../../core/errors.js";
 import { EscrowDatumV2, fromOnchainAddress } from "../types.js";
@@ -50,9 +51,32 @@ export const applyTrancheOutputs = (
 
     const assetUnit = escrowV2AssetUnit(datum);
     const isAda = assetUnit === "lovelace";
+
+    // [spec 3.6]: co-beneficiaries earn floor(tranche * share / 10000) each;
+    // the primary earns the remainder.
+    const coCuts = datum.co_beneficiaries.map(
+      (c) => (tranche * c.share_bps) / 10_000n,
+    );
+    const primaryDue = tranche - coCuts.reduce((a, x) => a + x, 0n);
     const payoutAssets: Assets = isAda
-      ? { lovelace: tranche }
-      : { lovelace: MIN_ADA_BUFFER, [assetUnit]: tranche };
+      ? { lovelace: primaryDue }
+      : { lovelace: MIN_ADA_BUFFER, [assetUnit]: primaryDue };
+    const coPayouts: { address: string; assets: Assets }[] = [];
+    for (let i = 0; i < datum.co_beneficiaries.length; i++) {
+      if (coCuts[i]! <= 0n) continue;
+      const address = yield* fromOnchainAddress(
+        network,
+        datum.co_beneficiaries[i]!.address,
+      );
+      coPayouts.push({
+        address,
+        assets: isAda
+          ? { lovelace: coCuts[i]! }
+          : { lovelace: MIN_ADA_BUFFER, [assetUnit]: coCuts[i]! },
+      });
+    }
+    const paySplit = (t: TxBuilder): TxBuilder =>
+      coPayouts.reduce((acc, p) => acc.pay.ToAddress(p.address, p.assets), t);
 
     if (isFinal) {
       // The remainder (buffer, minus what the token payout's min-ADA consumes)
@@ -67,13 +91,15 @@ export const applyTrancheOutputs = (
       for (const [unit, amount] of Object.entries(funderRemainder)) {
         if (amount <= 0n) delete funderRemainder[unit];
       }
-      const burnTx = baseTx
-        .mintAssets(
-          { [stateUnit]: -1n },
-          Data.to("BurnEscrowV2", EscrowV2MintRedeemer),
-        )
-        .attach.MintingPolicy(escrowV2Validator.mintEscrow)
-        .pay.ToAddress(beneficiaryAddress, payoutAssets);
+      const burnTx = paySplit(
+        baseTx
+          .mintAssets(
+            { [stateUnit]: -1n },
+            Data.to("BurnEscrowV2", EscrowV2MintRedeemer),
+          )
+          .attach.MintingPolicy(escrowV2Validator.mintEscrow)
+          .pay.ToAddress(beneficiaryAddress, payoutAssets),
+      );
       const withRemainder =
         Object.keys(funderRemainder).length > 0
           ? burnTx.pay.ToAddress(funderAddress, funderRemainder)
@@ -84,7 +110,8 @@ export const applyTrancheOutputs = (
         indices: {
           continuation_index: 99n,
           payout_index: 0n,
-          funder_index: 1n,
+          // Co payouts sit between the primary payout and the remainder.
+          funder_index: 1n + BigInt(coPayouts.length),
         },
       };
     }
@@ -96,13 +123,15 @@ export const applyTrancheOutputs = (
       ...datum,
       released_count: datum.released_count + 1n,
     };
-    const tx = baseTx.pay
-      .ToContract(
-        escrowUtxo.address,
-        { kind: "inline", value: Data.to(updatedDatum, EscrowDatumV2) },
-        continuationAssets,
-      )
-      .pay.ToAddress(beneficiaryAddress, payoutAssets);
+    const tx = paySplit(
+      baseTx.pay
+        .ToContract(
+          escrowUtxo.address,
+          { kind: "inline", value: Data.to(updatedDatum, EscrowDatumV2) },
+          continuationAssets,
+        )
+        .pay.ToAddress(beneficiaryAddress, payoutAssets),
+    );
     return {
       tx,
       isFinal,
