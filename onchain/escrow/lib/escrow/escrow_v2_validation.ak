@@ -7,8 +7,8 @@ use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use escrow/credential.{credential_authorized, state_token_name}
 use escrow/types_v2.{
-  EscrowDatumV2, Milestone, PerMilestone, RefundToFunder, ReleaseToBeneficiary,
-  Upfront,
+  ArbiterParty, BeneficiaryParty, EscrowDatumV2, FunderParty, Milestone, Party,
+  PerMilestone, RefundToFunder, ReleaseToBeneficiary, Upfront, VerifierParty,
 }
 
 // Same schedule ceiling as v1 — keeps the longest release under budget and
@@ -378,6 +378,235 @@ fn tranche_payout_ok(
       (cont_datum == expected)?,
       value_ok?,
     }
+  }
+}
+
+// ── consent + state paths ────────────────────────────────────────────────────
+
+// [spec 3.2 Abort]: funder AND beneficiary co-sign; distribution is free (the
+// only two economic parties agreed); the state token burns. Works even while a
+// dispute freeze is active — consent always works.
+pub fn validate_abort_v2(
+  policy_id: PolicyId,
+  datum: EscrowDatumV2,
+  own_input: Input,
+  mint: Value,
+  tx: Transaction,
+) -> Bool {
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
+  and {
+    credential_authorized(datum.funder.payment_credential, tx)?,
+    credential_authorized(datum.beneficiary.payment_credential, tx)?,
+    (assets.quantity_of(mint, policy_id, state_name) == -1)?,
+  }
+}
+
+// [spec 3.2 Contribute]: funder-authorized top-up, PerMilestone escrows only;
+// the datum is byte-identical and value only grows.
+pub fn validate_contribute(
+  policy_id: PolicyId,
+  datum: EscrowDatumV2,
+  own_input: Input,
+  continuation_index: Int,
+  outputs: List<Output>,
+  tx: Transaction,
+) -> Bool {
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
+  expect Some(cont) = list.at(outputs, continuation_index)
+  expect InlineDatum(raw) = cont.datum
+  expect cont_datum: EscrowDatumV2 = raw
+  let in_value = own_input.output.value
+  and {
+    (datum.funding_mode == PerMilestone)?,
+    credential_authorized(datum.funder.payment_credential, tx)?,
+    (cont.address == own_input.output.address)?,
+    exact_state_token(cont.value, policy_id, state_name)?,
+    continuation_policies_ok(cont.value, policy_id, datum.asset_policy)?,
+    (cont_datum == datum)?,
+    // [spec 3.2]: escrow-asset balance strictly increases…
+    (assets.quantity_of(cont.value, datum.asset_policy, datum.asset_name) > assets.quantity_of(
+      in_value,
+      datum.asset_policy,
+      datum.asset_name,
+    ))?,
+    // …and lovelace never decreases (relevant for native-token escrows).
+    (assets.lovelace_of(cont.value) >= assets.lovelace_of(in_value))?,
+  }
+}
+
+// [spec 3.2 SubmitEvidence]: beneficiary-authorized; writes exactly ONE
+// evidence slot at an unreleased index; value untouched. Overwritable until
+// that milestone is released; no effect on fund movement.
+pub fn validate_submit_evidence(
+  policy_id: PolicyId,
+  datum: EscrowDatumV2,
+  own_input: Input,
+  continuation_index: Int,
+  milestone_index: Int,
+  evidence_hash: ByteArray,
+  outputs: List<Output>,
+  tx: Transaction,
+) -> Bool {
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
+  expect Some(cont) = list.at(outputs, continuation_index)
+  expect InlineDatum(raw) = cont.datum
+  expect cont_datum: EscrowDatumV2 = raw
+  let expected =
+    EscrowDatumV2 {
+      ..datum,
+      evidence: list.indexed_map(
+        datum.evidence,
+        fn(ix, e) {
+          if ix == milestone_index {
+            Some(evidence_hash)
+          } else {
+            e
+          }
+        },
+      ),
+    }
+  and {
+    credential_authorized(datum.beneficiary.payment_credential, tx)?,
+    (milestone_index >= datum.released_count)?,
+    (milestone_index < list.length(datum.milestones))?,
+    (cont.address == own_input.output.address)?,
+    exact_state_token(cont.value, policy_id, state_name)?,
+    (cont_datum == expected)?,
+    (cont.value == own_input.output.value)?,
+  }
+}
+
+// [spec 3.2 RotateParty]: each party may replace only ITSELF, signing with the
+// CURRENT credential. No cross-party replacement — funder+verifier must never
+// be able to redirect the beneficiary's payouts.
+pub fn validate_rotate_party(
+  policy_id: PolicyId,
+  datum: EscrowDatumV2,
+  own_input: Input,
+  continuation_index: Int,
+  party: Party,
+  outputs: List<Output>,
+  tx: Transaction,
+) -> Bool {
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
+  expect Some(cont) = list.at(outputs, continuation_index)
+  expect InlineDatum(raw) = cont.datum
+  expect cont_datum: EscrowDatumV2 = raw
+  // Reverting the rotated field must reproduce the old datum exactly — this is
+  // the "exactly one field changed" proof.
+  let reverted =
+    when party is {
+      FunderParty -> EscrowDatumV2 { ..cont_datum, funder: datum.funder }
+      BeneficiaryParty ->
+        EscrowDatumV2 { ..cont_datum, beneficiary: datum.beneficiary }
+      VerifierParty -> EscrowDatumV2 { ..cont_datum, verifier: datum.verifier }
+      ArbiterParty -> EscrowDatumV2 { ..cont_datum, arbiter: datum.arbiter }
+    }
+  let authorized =
+    when party is {
+      FunderParty -> credential_authorized(datum.funder.payment_credential, tx)
+      BeneficiaryParty ->
+        credential_authorized(datum.beneficiary.payment_credential, tx)
+      VerifierParty -> credential_authorized(datum.verifier, tx)
+      ArbiterParty -> {
+        // [spec 3.2]: arbiter rotation requires an arbiter to exist…
+        expect Some(a) = datum.arbiter
+        credential_authorized(a, tx)
+      }
+    }
+  // …and can never remove it (Some↔None is forbidden; the revert trick alone
+  // would let Some→None slip through).
+  let arbiter_shape_ok =
+    when party is {
+      ArbiterParty -> cont_datum.arbiter != None
+      _ -> True
+    }
+  and {
+    authorized?,
+    (reverted == datum)?,
+    arbiter_shape_ok?,
+    party_guardrails_ok(cont_datum, policy_id)?,
+    (cont.address == own_input.output.address)?,
+    exact_state_token(cont.value, policy_id, state_name)?,
+    (cont.value == own_input.output.value)?,
+  }
+}
+
+// [spec 3.2 AmendMilestones]: funder + beneficiary co-sign; released prefix
+// immutable; the new schedule re-validated whole; value may only exit toward
+// the FUNDER and never below the funded requirement for the escrow's mode.
+pub fn validate_amend_milestones(
+  policy_id: PolicyId,
+  datum: EscrowDatumV2,
+  own_input: Input,
+  continuation_index: Int,
+  funder_index: Int,
+  outputs: List<Output>,
+  tx: Transaction,
+) -> Bool {
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
+  expect Some(cont) = list.at(outputs, continuation_index)
+  expect InlineDatum(raw) = cont.datum
+  expect cont_datum: EscrowDatumV2 = raw
+  // Only milestones / evidence / title / content_hash may change.
+  let reverted =
+    EscrowDatumV2 {
+      ..cont_datum,
+      milestones: datum.milestones,
+      evidence: datum.evidence,
+      title: datum.title,
+      content_hash: datum.content_hash,
+    }
+  let rc = datum.released_count
+  let in_value = own_input.output.value
+  // [spec 3.2]: any value leaving the escrow in the amendment goes to the funder.
+  let l_deficit = assets.lovelace_of(in_value) - assets.lovelace_of(cont.value)
+  let a_deficit =
+    assets.quantity_of(in_value, datum.asset_policy, datum.asset_name) - assets.quantity_of(
+      cont.value,
+      datum.asset_policy,
+      datum.asset_name,
+    )
+  let exit_ok =
+    if l_deficit > 0 || a_deficit > 0 {
+      expect Some(funder_out) = list.at(outputs, funder_index)
+      and {
+        (funder_out.address == datum.funder)?,
+        (assets.lovelace_of(funder_out.value) >= l_deficit)?,
+        (assets.quantity_of(
+          funder_out.value,
+          datum.asset_policy,
+          datum.asset_name,
+        ) >= a_deficit)?,
+      }
+    } else {
+      True
+    }
+  and {
+    credential_authorized(datum.funder.payment_credential, tx)?,
+    credential_authorized(datum.beneficiary.payment_credential, tx)?,
+    (reverted == datum)?,
+    // [spec 3.2]: history immutable — released milestones and their evidence.
+    (list.take(cont_datum.milestones, rc) == list.take(datum.milestones, rc))?,
+    (list.take(cont_datum.evidence, rc) == list.take(datum.evidence, rc))?,
+    milestones_valid(cont_datum.milestones)?,
+    (list.length(cont_datum.evidence) == list.length(cont_datum.milestones))?,
+    (cont.address == own_input.output.address)?,
+    exact_state_token(cont.value, policy_id, state_name)?,
+    continuation_policies_ok(cont.value, policy_id, datum.asset_policy)?,
+    // [spec 3.2]: the Upfront guarantee never has a gap through an amendment.
+    funding_ok(cont_datum, cont.value)?,
+    exit_ok,
   }
 }
 
