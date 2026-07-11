@@ -64,6 +64,15 @@ export type ExampleState = {
   // identity of the last escrow created by escrow-create.ts.
   escrowStateTokenName?: string;
 
+  // Escrow v2 generation (@tx-meta/dcu-kit/escrow/v2 — versioned beside v1).
+  // The 11 KB v2 script is deployed once as a reference script; pool
+  // allocations require it and every other v2 tx gets smaller by it.
+  scriptRefEscrowV2?: ScriptRefOutRef;
+  escrowV2StateTokenName?: string; // last escrow created by escrow-v2-create
+  projectTokenName?: string; // project anchor minted by project-create
+  poolTokenName?: string; // pool anchor minted by pool-create
+  poolEscrowStateTokenName?: string; // escrow seeded by pool-allocate
+
   // Native multisig built by create-multisig.ts. The script CBOR is the
   // spendability proof for assign-admin (destinationScript) and the witness
   // update-group / delete-group attach (adminScript) when the group admin 222
