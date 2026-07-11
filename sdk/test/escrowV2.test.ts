@@ -43,6 +43,8 @@ import { getEscrowStateProgram } from "../src/escrow/v2/queries/getEscrowState.j
 import { getProjectStateProgram } from "../src/escrow/v2/queries/getProjectState.js";
 import { getProjectEscrowsProgram } from "../src/escrow/v2/queries/getProjectEscrows.js";
 import { advanceBlock } from "./effects.js";
+import { fromText, paymentCredentialOf } from "@lucid-evolution/lucid";
+import { buildMultisig } from "../src/multisig/index.js";
 
 // ---------------------------------------------------------------------------
 // Standalone context, as in the v1 escrow suite, plus an arbiter wallet.
@@ -686,6 +688,142 @@ describe("escrow v2 lifecycle (emulator)", () => {
 
         // The topped-up escrow is live end to end.
         yield* releaseAsVerifier(ctx, stateTokenName);
+      }),
+  );
+
+  it.effect(
+    "native token: escrow lifecycle and a token pool allocating into it",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+
+        // Dummy stablecoin under a 1-of-1 native policy on the funder key.
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const mintPolicy = yield* buildMultisig(ctx.lucid, {
+          signers: [paymentCredentialOf(ctx.funder.address).hash],
+          required: 1,
+        });
+        const assetPolicy = mintPolicy.policyHash;
+        const assetName = fromText("USDX");
+        const unit = assetPolicy + assetName;
+        const mintTx = yield* Effect.promise(() =>
+          ctx.lucid
+            .newTx()
+            .mintAssets({ [unit]: 1_000n })
+            .attach.MintingPolicy(mintPolicy.script)
+            .complete(),
+        );
+        yield* signAndSubmit(mintTx);
+        yield* advanceBlock(ctx.emulator);
+
+        // Token escrow: two tranches, released to the beneficiary in USDX.
+        const now = BigInt(ctx.emulator.now());
+        const { tx, stateTokenName } = yield* unsignedCreateEscrowV2TxProgram(
+          ctx.lucid,
+          {
+            beneficiaryAddress: ctx.beneficiary.address,
+            verifier: ctx.verifier.address,
+            milestones: [
+              { amount: 300n, deadline: now + 1n * HOUR },
+              { amount: 200n, deadline: now + 2n * HOUR },
+            ],
+            grace: HOUR,
+            fundingMode: "Upfront",
+            timeoutPolicy: "RefundToFunder",
+            title: "token escrow",
+            assetPolicy,
+            assetName,
+            currentTime: now,
+          },
+        );
+        yield* signAndSubmit(tx);
+        yield* advanceBlock(ctx.emulator);
+
+        yield* releaseAsVerifier(ctx, stateTokenName);
+        yield* releaseAsVerifier(ctx, stateTokenName);
+        const beneficiaryTokens = (yield* Effect.promise(() =>
+          ctx.lucid.utxosAt(ctx.beneficiary.address),
+        )).reduce((s, u) => s + (u.assets[unit] ?? 0n), 0n);
+        expect(beneficiaryTokens).toBe(500n);
+
+        // Token pool: deposits in USDX, quorum allocation seeds a USDX escrow.
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const { tx: poolTx, poolTokenName } =
+          yield* unsignedCreatePoolTxProgram(ctx.lucid, {
+            title: "stablecoin pool",
+            quorum: ctx.arbiter.address,
+            assetPolicy,
+            assetName,
+          });
+        yield* signAndSubmit(poolTx);
+        yield* advanceBlock(ctx.emulator);
+
+        const dep = yield* unsignedDepositToPoolTxProgram(ctx.lucid, {
+          poolTokenName,
+          amount: 400n,
+        });
+        yield* signAndSubmit(dep);
+        yield* advanceBlock(ctx.emulator);
+        const ledger = yield* getPoolDepositsProgram(ctx.lucid, {
+          poolTokenName,
+        });
+        expect(ledger.length).toBe(1);
+        expect(ledger[0]!.amount).toBe(400n);
+
+        const refDeploy = yield* Effect.promise(() =>
+          ctx.lucid
+            .newTx()
+            .pay.ToAddressWithData(
+              ctx.funder.address,
+              undefined,
+              { lovelace: 20_000_000n },
+              escrowV2Validator.spendEscrow,
+            )
+            .complete(),
+        );
+        yield* signAndSubmit(refDeploy);
+        yield* advanceBlock(ctx.emulator);
+        const escrowScriptRef = (yield* Effect.promise(() =>
+          ctx.lucid.utxosAt(ctx.funder.address),
+        )).find((u) => u.scriptRef);
+
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.arbiter.privateKey);
+        const allocNow = BigInt(ctx.emulator.now());
+        const { tx: allocTx, stateTokenName: pooled } =
+          yield* unsignedAllocateToEscrowTxProgram(ctx.lucid, {
+            poolTokenName,
+            currentTime: allocNow,
+            escrowScriptRef,
+            newEscrow: {
+              beneficiaryAddress: ctx.beneficiary.address,
+              verifier: ctx.verifier.address,
+              milestones: [{ amount: 400n, deadline: allocNow + 1n * HOUR }],
+              grace: HOUR,
+              fundingMode: "Upfront",
+              timeoutPolicy: "RefundToFunder",
+              title: "token portfolio escrow",
+              assetPolicy,
+              assetName,
+              currentTime: allocNow,
+            },
+          });
+        yield* signAndSubmit(allocTx);
+        yield* advanceBlock(ctx.emulator);
+
+        const pooledEscrow = yield* getEscrowStateProgram(ctx.lucid, {
+          stateTokenName: pooled,
+          currentTime: BigInt(ctx.emulator.now()),
+        });
+        expect(pooledEscrow.lockedBalance).toBe(400n);
+        expect(pooledEscrow.nextTrancheFunded).toBe(true);
+
+        // Final release: 400 USDX to the beneficiary, buffer back to the
+        // funder (the quorum), state token burned.
+        yield* releaseAsVerifier(ctx, pooled);
+        const total = (yield* Effect.promise(() =>
+          ctx.lucid.utxosAt(ctx.beneficiary.address),
+        )).reduce((s, u) => s + (u.assets[unit] ?? 0n), 0n);
+        expect(total).toBe(900n);
       }),
   );
 
