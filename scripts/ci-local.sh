@@ -49,7 +49,7 @@ aiken --version 2>/dev/null | grep -q '1\.1\.22' ||
   echo "WARN: aiken v1.1.22 expected, found: $(aiken --version 2>/dev/null || echo none)"
 
 # --- Verify Aiken (rosca, escrow) — fmt --check, build, check -------------
-for project in rosca escrow; do
+for project in rosca escrow savings; do
   run_tty "aiken fmt --check ($project)" "onchain/$project" "aiken fmt --check"
   run_tty "aiken build ($project)" "onchain/$project" "aiken build"
   run_tty "aiken check ($project)" "onchain/$project" "aiken check"
@@ -80,8 +80,9 @@ fi
 # --- Verify Design Specs -----------------------------------------------------
 if command -v typst >/dev/null; then
   run "typst compile dcu-kit.typ" docs/design-specs typst compile dcu-kit.typ
+  run "typst compile savings-module.typ" docs/design-specs typst compile savings-module.typ
 else
-  echo "(skip) typst not installed — CI will still compile docs/design-specs/dcu-kit.typ"
+  echo "(skip) typst not installed — CI will still compile docs/design-specs/*.typ"
 fi
 
 # --- Guard: what you verified is what you'd commit ---------------------------

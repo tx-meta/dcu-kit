@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        project: [rosca, escrow]
+        project: [rosca, escrow, savings]
     defaults:
       run:
         working-directory: ./onchain/${{ matrix.project }}
@@ -117,7 +117,9 @@ jobs:
         uses: typst-community/setup-typst@v5
 
       - name: 🔨 Compile Design Specs
-        run: typst compile dcu-kit.typ
+        run: |
+          typst compile dcu-kit.typ
+          typst compile savings-module.typ
 
   # ------------------------------------------------------------
   # Job: Gatekeeper (Required Status Check)

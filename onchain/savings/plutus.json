@@ -1,0 +1,462 @@
+{
+  "preamble": {
+    "title": "txmeta/savings",
+    "description": "Standalone savings-vault validators (primitive #7: per-member capital accounts) for the cooperative finance SDK",
+    "version": "0.0.0",
+    "plutusVersion": "v3",
+    "compiler": {
+      "name": "Aiken",
+      "version": "v1.1.22+39d6b04"
+    },
+    "license": "Apache-2.0"
+  },
+  "validators": [
+    {
+      "title": "savings_vault_validator.savings_vault.mint",
+      "redeemer": {
+        "title": "redeemer",
+        "schema": {
+          "$ref": "#/definitions/savings~1types~1SavingsMintRedeemer"
+        }
+      },
+      "compiledCode": "59036201010029800aba2aba1aab9faab9eaab9dab9a48888896600330013003375400f370e90004dc3a4005370e90024dc3a400c9111119194c004c024dd5000cc03001e60180049112cc004c02400e33001375c601e601a6ea8012264b3001300a0018a518acc004c02400629462b300130080018a518a514030806100c18061baa00198061baa001488966002601800313232332259800980b801c01a2c80a8dd6980a0009bad30140023014001301037540091598009805800c4c8c8c8ca60026eb4c0580066eb4c0580126eb4c05800e6eb4c058009222259800980d802c02a2c80c8602c002602a002602800260206ea80122b3001300a0018acc004c040dd5002400a2c808a2b300130090018acc004c040dd5002400a2c808a2c807100e201c40388acc004c02000e264653001159800980598071baa0018992cc004c03000629462b3001300b0018a518acc004c02800629462b300130090018a518acc004cdc3a401000314a315980099b874802800629462b30013370e9006000c528c528a01c4038807100e201c40388070c038dd5001c5900d4c038dd5001cc04400922259800980700144c8c8c8c8ca60026eb4c0640066eb4c0640166eb4c0640126eb4c06400e6eb4c0640092222259800980f80340362c80e860320026030002602e002602c00260246ea801a2b3001300d0028991919194c004dd6980c000cdd6980c0024dd6980c001cdd6980c00124444b3001301d005805c5901b0c060004c05c004c058004c048dd50034566002601800513232332259800980c801c01e2c80b8dd6980b0009bad301600230160013012375400d159800980580144c8c8cc896600260320070078b202e375a602c0026eb4c058008c058004c048dd5003456600266e1d20080028991919912cc004c06400e00f16405c6eb4c058004dd6980b001180b00098091baa0068acc004cdc3a401400513232323298009bad30180019bad30180049bad30180039bad30180024888966002603a00b00b8b2036180c000980b800980b00098091baa0068acc004cdc3a40180051323259800980b80140162c80a8dd6980a80098091baa0068acc004cdc3a401c0051323259800980b80140162c80a8dd6980a80098091baa0068b2020404080810102020404080810100c040c044004c034dd500245900b2016180598060009805802a29344d95900101",
+      "hash": "865053380f93f4c9732c65fa8d5f1239871a2c2e30d9416fd443a3ef"
+    },
+    {
+      "title": "savings_vault_validator.savings_vault.spend",
+      "datum": {
+        "title": "datum",
+        "schema": {
+          "$ref": "#/definitions/savings~1types~1SavingsDatum"
+        }
+      },
+      "redeemer": {
+        "title": "redeemer",
+        "schema": {
+          "$ref": "#/definitions/savings~1types~1SavingsSpendRedeemer"
+        }
+      },
+      "compiledCode": "59036201010029800aba2aba1aab9faab9eaab9dab9a48888896600330013003375400f370e90004dc3a4005370e90024dc3a400c9111119194c004c024dd5000cc03001e60180049112cc004c02400e33001375c601e601a6ea8012264b3001300a0018a518acc004c02400629462b300130080018a518a514030806100c18061baa00198061baa001488966002601800313232332259800980b801c01a2c80a8dd6980a0009bad30140023014001301037540091598009805800c4c8c8c8ca60026eb4c0580066eb4c0580126eb4c05800e6eb4c058009222259800980d802c02a2c80c8602c002602a002602800260206ea80122b3001300a0018acc004c040dd5002400a2c808a2b300130090018acc004c040dd5002400a2c808a2c807100e201c40388acc004c02000e264653001159800980598071baa0018992cc004c03000629462b3001300b0018a518acc004c02800629462b300130090018a518acc004cdc3a401000314a315980099b874802800629462b30013370e9006000c528c528a01c4038807100e201c40388070c038dd5001c5900d4c038dd5001cc04400922259800980700144c8c8c8c8ca60026eb4c0640066eb4c0640166eb4c0640126eb4c06400e6eb4c0640092222259800980f80340362c80e860320026030002602e002602c00260246ea801a2b3001300d0028991919194c004dd6980c000cdd6980c0024dd6980c001cdd6980c00124444b3001301d005805c5901b0c060004c05c004c058004c048dd50034566002601800513232332259800980c801c01e2c80b8dd6980b0009bad301600230160013012375400d159800980580144c8c8cc896600260320070078b202e375a602c0026eb4c058008c058004c048dd5003456600266e1d20080028991919912cc004c06400e00f16405c6eb4c058004dd6980b001180b00098091baa0068acc004cdc3a401400513232323298009bad30180019bad30180049bad30180039bad30180024888966002603a00b00b8b2036180c000980b800980b00098091baa0068acc004cdc3a40180051323259800980b80140162c80a8dd6980a80098091baa0068acc004cdc3a401c0051323259800980b80140162c80a8dd6980a80098091baa0068b2020404080810102020404080810100c040c044004c034dd500245900b2016180598060009805802a29344d95900101",
+      "hash": "865053380f93f4c9732c65fa8d5f1239871a2c2e30d9416fd443a3ef"
+    },
+    {
+      "title": "savings_vault_validator.savings_vault.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "compiledCode": "59036201010029800aba2aba1aab9faab9eaab9dab9a48888896600330013003375400f370e90004dc3a4005370e90024dc3a400c9111119194c004c024dd5000cc03001e60180049112cc004c02400e33001375c601e601a6ea8012264b3001300a0018a518acc004c02400629462b300130080018a518a514030806100c18061baa00198061baa001488966002601800313232332259800980b801c01a2c80a8dd6980a0009bad30140023014001301037540091598009805800c4c8c8c8ca60026eb4c0580066eb4c0580126eb4c05800e6eb4c058009222259800980d802c02a2c80c8602c002602a002602800260206ea80122b3001300a0018acc004c040dd5002400a2c808a2b300130090018acc004c040dd5002400a2c808a2c807100e201c40388acc004c02000e264653001159800980598071baa0018992cc004c03000629462b3001300b0018a518acc004c02800629462b300130090018a518acc004cdc3a401000314a315980099b874802800629462b30013370e9006000c528c528a01c4038807100e201c40388070c038dd5001c5900d4c038dd5001cc04400922259800980700144c8c8c8c8ca60026eb4c0640066eb4c0640166eb4c0640126eb4c06400e6eb4c0640092222259800980f80340362c80e860320026030002602e002602c00260246ea801a2b3001300d0028991919194c004dd6980c000cdd6980c0024dd6980c001cdd6980c00124444b3001301d005805c5901b0c060004c05c004c058004c048dd50034566002601800513232332259800980c801c01e2c80b8dd6980b0009bad301600230160013012375400d159800980580144c8c8cc896600260320070078b202e375a602c0026eb4c058008c058004c048dd5003456600266e1d20080028991919912cc004c06400e00f16405c6eb4c058004dd6980b001180b00098091baa0068acc004cdc3a401400513232323298009bad30180019bad30180049bad30180039bad30180024888966002603a00b00b8b2036180c000980b800980b00098091baa0068acc004cdc3a40180051323259800980b80140162c80a8dd6980a80098091baa0068acc004cdc3a401c0051323259800980b80140162c80a8dd6980a80098091baa0068b2020404080810102020404080810100c040c044004c034dd500245900b2016180598060009805802a29344d95900101",
+      "hash": "865053380f93f4c9732c65fa8d5f1239871a2c2e30d9416fd443a3ef"
+    }
+  ],
+  "definitions": {
+    "Bool": {
+      "title": "Bool",
+      "anyOf": [
+        {
+          "title": "False",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": []
+        },
+        {
+          "title": "True",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": []
+        }
+      ]
+    },
+    "ByteArray": {
+      "dataType": "bytes"
+    },
+    "Int": {
+      "dataType": "integer"
+    },
+    "Option<Int>": {
+      "title": "Option",
+      "anyOf": [
+        {
+          "title": "Some",
+          "description": "An optional value.",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "None",
+          "description": "Nothing.",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": []
+        }
+      ]
+    },
+    "aiken/crypto/ScriptHash": {
+      "title": "ScriptHash",
+      "dataType": "bytes"
+    },
+    "aiken/crypto/VerificationKeyHash": {
+      "title": "VerificationKeyHash",
+      "dataType": "bytes"
+    },
+    "cardano/address/Credential": {
+      "title": "Credential",
+      "description": "A general structure for representing an on-chain `Credential`.\n\n Credentials are always one of two kinds: a direct public/private key\n pair, or a script (native or Plutus).",
+      "anyOf": [
+        {
+          "title": "VerificationKey",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "$ref": "#/definitions/aiken~1crypto~1VerificationKeyHash"
+            }
+          ]
+        },
+        {
+          "title": "Script",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "$ref": "#/definitions/aiken~1crypto~1ScriptHash"
+            }
+          ]
+        }
+      ]
+    },
+    "cardano/assets/AssetName": {
+      "title": "AssetName",
+      "dataType": "bytes"
+    },
+    "cardano/assets/PolicyId": {
+      "title": "PolicyId",
+      "dataType": "bytes"
+    },
+    "savings/types/FundStatus": {
+      "title": "FundStatus",
+      "anyOf": [
+        {
+          "title": "Active",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": []
+        },
+        {
+          "title": "SharingOut",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "pot",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "shares",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "shares_remaining",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    },
+    "savings/types/SavingsDatum": {
+      "title": "SavingsDatum",
+      "anyOf": [
+        {
+          "title": "SavingsFund",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "title",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "quorum",
+              "$ref": "#/definitions/cardano~1address~1Credential"
+            },
+            {
+              "title": "asset_policy",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            },
+            {
+              "title": "asset_name",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "share_value",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "min_shares_per_deposit",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "max_shares_per_deposit",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "withdrawal_policy",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "cycle_end",
+              "$ref": "#/definitions/Option<Int>"
+            },
+            {
+              "title": "shares_total",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "savings_total",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "social_total",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "status",
+              "$ref": "#/definitions/savings~1types~1FundStatus"
+            }
+          ]
+        },
+        {
+          "title": "MemberAccount",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "fund_id",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "share_units",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "social_paid",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "consent",
+              "$ref": "#/definitions/Bool"
+            },
+            {
+              "title": "joined_at",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    },
+    "savings/types/SavingsMintRedeemer": {
+      "title": "SavingsMintRedeemer",
+      "anyOf": [
+        {
+          "title": "CreateFund",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "seed_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "fund_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "MintAccount",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "seed_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "fund_ref_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "ref_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "user_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "BurnAccount",
+          "dataType": "constructor",
+          "index": 2,
+          "fields": []
+        },
+        {
+          "title": "BurnFund",
+          "dataType": "constructor",
+          "index": 3,
+          "fields": []
+        }
+      ]
+    },
+    "savings/types/SavingsSpendRedeemer": {
+      "title": "SavingsSpendRedeemer",
+      "anyOf": [
+        {
+          "title": "Deposit",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "fund_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "member_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "fund_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "member_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "fund_tag",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "Withdraw",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "fund_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "member_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "fund_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "member_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "SocialPayout",
+          "dataType": "constructor",
+          "index": 2,
+          "fields": [
+            {
+              "title": "fund_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "fund_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "UpdateFund",
+          "dataType": "constructor",
+          "index": 3,
+          "fields": [
+            {
+              "title": "fund_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "fund_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "CloseCycle",
+          "dataType": "constructor",
+          "index": 4,
+          "fields": [
+            {
+              "title": "fund_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "fund_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "ClaimShareOut",
+          "dataType": "constructor",
+          "index": 5,
+          "fields": [
+            {
+              "title": "fund_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "member_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "fund_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "member_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "RemoveAccount",
+          "dataType": "constructor",
+          "index": 6,
+          "fields": [
+            {
+              "title": "member_input_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "CloseFund",
+          "dataType": "constructor",
+          "index": 7,
+          "fields": [
+            {
+              "title": "fund_input_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
