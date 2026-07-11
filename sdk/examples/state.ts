@@ -73,6 +73,13 @@ export type ExampleState = {
   poolTokenName?: string; // pool anchor minted by pool-create
   poolEscrowStateTokenName?: string; // escrow seeded by pool-allocate
 
+  // Savings module (@tx-meta/dcu-kit/savings — primitive #7, standalone
+  // family). One fund at a time in the sweep; member suffixes per wallet.
+  savingsFundTokenName?: string;
+  savingsMemberSuffix?: string; // USER1
+  savingsMemberSuffixUser2?: string; // USER2
+  savingsMemberSuffixAdmin?: string; // ADMIN
+
   // Native multisig built by create-multisig.ts. The script CBOR is the
   // spendability proof for assign-admin (destinationScript) and the witness
   // update-group / delete-group attach (adminScript) when the group admin 222
@@ -92,6 +99,18 @@ export function accountSuffixKey(activeWallet: string): AccountSuffixKey {
   if (activeWallet === "ADMIN") return "adminAccountTokenSuffix";
   if (activeWallet === "USER2") return "user2AccountTokenSuffix";
   return "accountTokenSuffix";
+}
+
+export type SavingsSuffixKey =
+  | "savingsMemberSuffix"
+  | "savingsMemberSuffixUser2"
+  | "savingsMemberSuffixAdmin";
+
+/** Maps ACTIVE_WALLET to its state.json key for the savings member suffix. */
+export function savingsSuffixKey(activeWallet: string): SavingsSuffixKey {
+  if (activeWallet === "ADMIN") return "savingsMemberSuffixAdmin";
+  if (activeWallet === "USER2") return "savingsMemberSuffixUser2";
+  return "savingsMemberSuffix";
 }
 
 /** Returns current slot index and ms until the next slot boundary. */

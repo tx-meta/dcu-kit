@@ -69,7 +69,18 @@
     "cron-daemon": "pnpm run build && node dist/cron-daemon.js",
     "reset-state": "tsx reset-state.ts",
     "show-script-sizes": "pnpm run build && node dist/show-script-sizes.js",
-    "inspect-tx": "pnpm run build && node dist/inspect-tx.js"
+    "inspect-tx": "pnpm run build && node dist/inspect-tx.js",
+    "savings-create": "pnpm run build && node dist/savings-create.js",
+    "savings-join": "pnpm run build && node dist/savings-join.js",
+    "savings-deposit": "pnpm run build && node dist/savings-deposit.js",
+    "savings-withdraw": "pnpm run build && node dist/savings-withdraw.js",
+    "savings-social": "pnpm run build && node dist/savings-social.js",
+    "savings-update": "pnpm run build && node dist/savings-update.js",
+    "savings-close-cycle": "pnpm run build && node dist/savings-close-cycle.js",
+    "savings-claim": "pnpm run build && node dist/savings-claim.js",
+    "savings-exit": "pnpm run build && node dist/savings-exit.js",
+    "savings-close-fund": "pnpm run build && node dist/savings-close-fund.js",
+    "savings-inspect": "pnpm run build && node dist/savings-inspect.js"
   },
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.31",
