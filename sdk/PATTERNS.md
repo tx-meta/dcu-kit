@@ -599,3 +599,32 @@ export const resolveUtxoByUnit = (
 | Saving `{ txHash, outputIndex }` as entity identity | Save `tokenSuffix` — survives every spend                   |
 | Passing `UTxO` objects in endpoint configs          | Configs take `tokenSuffix: string`; SDK resolves UTxOs      |
 | Calling `lucid.utxoByUnit()` directly in endpoint   | Use `resolveUtxoByUnit()` — handles `undefined` on emulator |
+
+---
+
+## Pre-PR gate — run before proposing any commit, PR, or staging merge
+
+```bash
+./scripts/ci-local.sh        # full CI mirror (~4 min)
+./scripts/ci-local.sh fast   # skip the emulator suite while iterating
+```
+
+The script runs the EXACT steps from `.github/workflows/ci.yml` — aiken
+`fmt --check`/`build`/`check` for both projects, `pnpm format:check`, `lint`,
+`tsc --noEmit`, `build`, and the emulator suite — plus two guards CI cannot
+apply: committed-blueprint drift after `aiken build`, and a list of modified
+tracked files so nothing verified stays uncommitted. Never substitute a
+from-memory subset of checks for this script: the 2026-07-11 PR went red on
+`aiken fmt` and Prettier precisely because the local gate was habit-derived
+instead of CI-derived.
+
+Rules the gate cannot check — apply them during review:
+
+| Learned 2026-07-11 (live sweep) | Rule |
+| --- | --- |
+| Ledger presents reference inputs to scripts as a SORTED set; the tx body keeps insertion order | Never hardcode a reference-input index in a redeemer — compute the sorted position (see `allocateToEscrow`). A passing test may be ordering luck. |
+| Emulator wallets never hold reference scripts | Wallet-UTxO pickers (seeds, coin hints) must filter `u.scriptRef` — a consumed ref script is destroyed for everyone. |
+| Endpoint modes are separate code paths | Every config branch (e.g. allocate seed-new vs top-up) needs its own emulator round-trip; an untested mode shipped broken. |
+| Blockfrost indexer lags spends ~20-30s | Consecutive spends of the same UTxO need retry; provider `evaluate` cannot parse Conway set tags — debug with local eval + hand-decoded CBOR. |
+| `Edit`/`sed` bulk replacements can miss occurrences | After fixing a repacked dependency, grep the MINIFIED dist for the old pattern before rerunning. |
+| Emulator green ≠ done for protocol work | On-chain changes require the Preprod live sweep (`sdk/examples/`) before release; it caught 2 bugs 2,504 unit checks + the emulator missed. |
