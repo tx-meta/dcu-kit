@@ -48,6 +48,7 @@ pub fn test_v2_datum() -> EscrowDatumV2 {
   EscrowDatumV2 {
     funder: funder_address(),
     beneficiary: beneficiary_address(),
+    co_beneficiaries: [],
     verifier: VerificationKey(verifier_pkh()),
     arbiter: None,
     asset_policy: assets.ada_policy_id,

@@ -29,9 +29,18 @@ pub type DisputeInfo {
   until: Int,
 }
 
+// [spec 3.6]: payout-only split recipient. Fixed basis-point share of every
+// tranche; no consent authority (that stays with the primary beneficiary).
+pub type CoBeneficiary {
+  address: Address,
+  share_bps: Int,
+}
+
 pub type EscrowDatumV2 {
   funder: Address,
   beneficiary: Address,
+  // Payout-only split recipients; empty = single-beneficiary escrow.
+  co_beneficiaries: List<CoBeneficiary>,
   // Authority only — never receives funds, so a bare credential suffices.
   verifier: Credential,
   // Neutral tie-breaker; None = no dispute path exists for this escrow.
@@ -57,6 +66,7 @@ pub type Party {
   BeneficiaryParty
   VerifierParty
   ArbiterParty
+  CoBeneficiaryParty { index: Int }
 }
 
 pub type EscrowV2SpendRedeemer {

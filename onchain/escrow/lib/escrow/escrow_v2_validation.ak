@@ -2,14 +2,14 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/interval.{Finite, Interval}
 use aiken/primitive/bytearray
-use cardano/address.{Credential, Script, VerificationKey}
+use cardano/address.{Address, Credential, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use escrow/credential.{credential_authorized, state_token_name}
 use escrow/types_v2.{
-  ArbiterParty, BeneficiaryParty, DisputeInfo, EscrowDatumV2, FunderParty,
-  Milestone, Party, PerMilestone, RefundToFunder, ReleaseToBeneficiary, Upfront,
-  VerifierParty,
+  ArbiterParty, BeneficiaryParty, CoBeneficiary, CoBeneficiaryParty,
+  DisputeInfo, EscrowDatumV2, FunderParty, Milestone, Party, PerMilestone,
+  RefundToFunder, ReleaseToBeneficiary, Upfront, VerifierParty,
 }
 
 // Same schedule ceiling as v1 — keeps the longest release under budget and
@@ -109,17 +109,81 @@ pub fn party_guardrails_ok(datum: EscrowDatumV2, policy_id: PolicyId) -> Bool {
     (datum.beneficiary.payment_credential != Script(policy_id))?,
     (datum.verifier != Script(policy_id))?,
   }
-  when datum.arbiter is {
-    None -> base
-    Some(a) -> and {
-        base,
-        credential_hash_valid(a)?,
-        (a != datum.funder.payment_credential)?,
-        (a != datum.beneficiary.payment_credential)?,
-        (a != datum.verifier)?,
-        (a != Script(policy_id))?,
-      }
+  let arbiter_ok =
+    when datum.arbiter is {
+      None -> True
+      Some(a) -> and {
+          credential_hash_valid(a)?,
+          (a != datum.funder.payment_credential)?,
+          (a != datum.beneficiary.payment_credential)?,
+          (a != datum.verifier)?,
+          (a != Script(policy_id))?,
+          // [spec 3.6]: the arbiter can never be a payout recipient.
+          !list.any(
+            datum.co_beneficiaries,
+            fn(c) { c.address.payment_credential == a },
+          )?,
+        }
+    }
+  and {
+    base,
+    arbiter_ok,
+    co_beneficiaries_ok(datum, policy_id)?,
   }
+}
+
+// [spec 3.6]: payout-only split recipients — bounded list, positive shares
+// summing strictly below 100%, distinct signers, never the primary, the
+// verifier, or the script itself.
+fn co_beneficiaries_ok(datum: EscrowDatumV2, policy_id: PolicyId) -> Bool {
+  let cos = datum.co_beneficiaries
+  and {
+    (list.length(cos) <= 10)?,
+    (list.foldl(cos, 0, fn(c, a) { a + c.share_bps }) < 10_000)?,
+    list.all(
+      cos,
+      fn(c) {
+        and {
+          c.share_bps > 0,
+          credential_hash_valid(c.address.payment_credential),
+          c.address.payment_credential != Script(policy_id),
+          c.address.payment_credential != datum.beneficiary.payment_credential,
+          c.address.payment_credential != datum.verifier,
+        }
+      },
+    )?,
+    !has_duplicate_co(cos)?,
+  }
+}
+
+fn has_duplicate_co(cos: List<CoBeneficiary>) -> Bool {
+  when cos is {
+    [] -> False
+    [x, ..rest] ->
+      list.any(
+        rest,
+        fn(c) { c.address.payment_credential == x.address.payment_credential },
+      ) || has_duplicate_co(rest)
+  }
+}
+
+// Sum of the escrow asset paid to one address across all outputs.
+fn paid_to_address(
+  outputs: List<Output>,
+  address: Address,
+  datum: EscrowDatumV2,
+) -> Int {
+  list.foldl(
+    outputs,
+    0,
+    fn(out, acc) {
+      if out.address == address {
+        acc + assets.quantity_of(out.value, datum.asset_policy, datum.asset_name)
+      } else {
+        acc
+      }
+    },
+  )
 }
 
 // [spec 3.3 funding]: Upfront locks the full remaining total (+ buffer for ADA);
@@ -311,12 +375,29 @@ fn tranche_payout_ok(
   let in_value = own_input.output.value
   let is_ada = datum.asset_policy == assets.ada_policy_id
   let is_final = datum.released_count + 1 == list.length(datum.milestones)
+  // [spec 3.6]: each co-beneficiary earns floor(tranche * share / 10000) of
+  // every tranche; the primary earns the remainder.
+  let co_cuts_total =
+    list.foldl(
+      datum.co_beneficiaries,
+      0,
+      fn(c, acc) { acc + tranche * c.share_bps / 10_000 },
+    )
+  let primary_due = tranche - co_cuts_total
+  let cos_paid =
+    list.all(
+      datum.co_beneficiaries,
+      fn(c) {
+        paid_to_address(outputs, c.address, datum) >= tranche * c.share_bps / 10_000
+      },
+    )
   let base = and {
     // [spec 3.2]: PerMilestone — the current tranche must actually be funded
     // (trivially true for a fully-funded Upfront escrow).
     (assets.quantity_of(in_value, datum.asset_policy, datum.asset_name) >= tranche)?,
     (payout.address == datum.beneficiary)?,
-    (assets.quantity_of(payout.value, datum.asset_policy, datum.asset_name) >= tranche)?,
+    (assets.quantity_of(payout.value, datum.asset_policy, datum.asset_name) >= primary_due)?,
+    cos_paid?,
   }
   if is_final {
     // [spec 3.2 final]: burn + the remainder goes back to the FUNDER on-chain —
@@ -515,6 +596,11 @@ pub fn validate_rotate_party(
         EscrowDatumV2 { ..cont_datum, beneficiary: datum.beneficiary }
       VerifierParty -> EscrowDatumV2 { ..cont_datum, verifier: datum.verifier }
       ArbiterParty -> EscrowDatumV2 { ..cont_datum, arbiter: datum.arbiter }
+      CoBeneficiaryParty { .. } ->
+        EscrowDatumV2 {
+          ..cont_datum,
+          co_beneficiaries: datum.co_beneficiaries,
+        }
     }
   let authorized =
     when party is {
@@ -527,12 +613,36 @@ pub fn validate_rotate_party(
         expect Some(a) = datum.arbiter
         credential_authorized(a, tx)
       }
+      CoBeneficiaryParty { index } -> {
+        // [spec 3.6]: only the co-beneficiary itself may move its address.
+        expect Some(c) = list.at(datum.co_beneficiaries, index)
+        credential_authorized(c.address.payment_credential, tx)
+      }
     }
   // …and can never remove it (Some↔None is forbidden; the revert trick alone
   // would let Some→None slip through).
   let arbiter_shape_ok =
     when party is {
       ArbiterParty -> cont_datum.arbiter != None
+      CoBeneficiaryParty { index } -> {
+        // [spec 3.6]: exactly this entry's ADDRESS changes; the share and
+        // every other entry stay byte-identical.
+        expect Some(old_c) = list.at(datum.co_beneficiaries, index)
+        expect Some(new_c) = list.at(cont_datum.co_beneficiaries, index)
+        and {
+          new_c.share_bps == old_c.share_bps,
+          list.indexed_map(
+            cont_datum.co_beneficiaries,
+            fn(ix, e) {
+              if ix == index {
+                old_c
+              } else {
+                e
+              }
+            },
+          ) == datum.co_beneficiaries,
+        }
+      }
       _ -> True
     }
   and {
@@ -692,7 +802,11 @@ pub fn validate_resolve_dispute(
       (0, 0),
       fn(out, acc) {
         let (l, a) = acc
-        if out.address == datum.funder || out.address == datum.beneficiary {
+        // [spec 3.6]: co-beneficiaries count as the beneficiary side.
+        if out.address == datum.funder || out.address == datum.beneficiary || list.any(
+          datum.co_beneficiaries,
+          fn(c) { c.address == out.address },
+        ) {
           (
             l + assets.lovelace_of(out.value),
             a + assets.quantity_of(
