@@ -22,7 +22,11 @@ import {
   PoolSpendRedeemer,
   VaultDatum,
 } from "../types.js";
-import { escrowV2PolicyId, escrowV2Validator, poolVaultValidator } from "../validators.js";
+import {
+  escrowV2PolicyId,
+  escrowV2Validator,
+  poolVaultValidator,
+} from "../validators.js";
 import {
   applyPartyWitness,
   escrowV2Address,
@@ -259,8 +263,8 @@ export const unsignedAllocateToEscrowTxProgram = (
       if (!config.escrowScriptRef) {
         tx = tx.attach.MintingPolicy(escrowV2Validator.mintEscrow);
       }
-      tx = tx
-        .pay.ToContract(
+      tx = tx.pay
+        .ToContract(
           escrowV2Address(network),
           { kind: "inline", value: Data.to(prepared.datum, EscrowDatumV2) },
           { ...prepared.lockedAssets, [stateUnit]: 1n },
@@ -361,8 +365,8 @@ export const unsignedAllocateToEscrowTxProgram = (
     if (!config.escrowScriptRef) {
       baseTx = baseTx.attach.SpendingValidator(escrowV2Validator.spendEscrow);
     }
-    baseTx = baseTx
-      .pay.ToContract(
+    baseTx = baseTx.pay
+      .ToContract(
         escrowUtxo.address,
         { kind: "inline", value: Data.to(datum, EscrowDatumV2) },
         continuationAssets,

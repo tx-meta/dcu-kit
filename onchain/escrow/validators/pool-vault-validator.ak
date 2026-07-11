@@ -13,11 +13,7 @@ use escrow/types_pool.{
 }
 
 // [security]: self-reference — the indexed input must be the UTxO being spent.
-fn own(
-  inputs: List<Input>,
-  ix: Int,
-  utxo: OutputReference,
-) -> (Input, PolicyId) {
+fn own(inputs: List<Input>, ix: Int, utxo: OutputReference) -> (Input, PolicyId) {
   expect Some(own_input) = list.at(inputs, ix)
   expect own_input.output_reference == utxo
   expect Script(policy_id) = own_input.output.address.payment_credential

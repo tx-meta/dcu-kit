@@ -1,6 +1,8 @@
 use cardano/address.{Script, VerificationKey}
 use cardano/assets
-use escrow/escrow_v2_validation.{validate_burn_escrow_v2, validate_create_escrow_v2}
+use escrow/escrow_v2_validation.{
+  validate_burn_escrow_v2, validate_create_escrow_v2,
+}
 use escrow/types_v2.{DisputeInfo, EscrowDatumV2, Milestone, PerMilestone}
 use tests/common.{
   beneficiary_pkh, funder_pkh, range_before, seed_input, seed_token_name,
@@ -49,11 +51,10 @@ test create_v2__accepts_per_milestone_buffer_only() {
 }
 
 test create_v2__accepts_arbiter() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      arbiter: Some(VerificationKey(arbiter_pkh())),
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    arbiter: Some(VerificationKey(arbiter_pkh())),
+  }
   create_ok(datum, 102_000_000)
 }
 
@@ -68,83 +69,75 @@ test create_v2__rejects_per_milestone_below_buffer() {
 }
 
 test create_v2__rejects_non_monotonic_deadlines() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      milestones: [
-        Milestone { amount: 40_000_000, deadline: t0 + 2 * day },
-        Milestone { amount: 40_000_000, deadline: t0 + 1 * day },
-        Milestone { amount: 20_000_000, deadline: t0 + 3 * day },
-      ],
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    milestones: [
+      Milestone { amount: 40_000_000, deadline: t0 + 2 * day },
+      Milestone { amount: 40_000_000, deadline: t0 + 1 * day },
+      Milestone { amount: 20_000_000, deadline: t0 + 3 * day },
+    ],
+  }
   !create_ok(datum, 102_000_000)
 }
 
 test create_v2__rejects_equal_deadlines() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      milestones: [
-        Milestone { amount: 40_000_000, deadline: t0 + day },
-        Milestone { amount: 60_000_000, deadline: t0 + day },
-      ],
-      evidence: [None, None],
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    milestones: [
+      Milestone { amount: 40_000_000, deadline: t0 + day },
+      Milestone { amount: 60_000_000, deadline: t0 + day },
+    ],
+    evidence: [None, None],
+  }
   !create_ok(datum, 102_000_000)
 }
 
 test create_v2__rejects_zero_amount_milestone() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      milestones: [
-        Milestone { amount: 0, deadline: t0 + day },
-        Milestone { amount: 100_000_000, deadline: t0 + 2 * day },
-      ],
-      evidence: [None, None],
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    milestones: [
+      Milestone { amount: 0, deadline: t0 + day },
+      Milestone { amount: 100_000_000, deadline: t0 + 2 * day },
+    ],
+    evidence: [None, None],
+  }
   !create_ok(datum, 102_000_000)
 }
 
 test create_v2__rejects_empty_milestones() fail {
-  let datum =
-    EscrowDatumV2 { ..test_v2_datum(), milestones: [], evidence: [] }
+  let datum = EscrowDatumV2 { ..test_v2_datum(), milestones: [], evidence: [] }
   create_ok(datum, 102_000_000)
 }
 
 test create_v2__rejects_verifier_equals_beneficiary() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      verifier: VerificationKey(beneficiary_pkh()),
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    verifier: VerificationKey(beneficiary_pkh()),
+  }
   !create_ok(datum, 102_000_000)
 }
 
 test create_v2__rejects_arbiter_equals_funder() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      arbiter: Some(VerificationKey(funder_pkh())),
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    arbiter: Some(VerificationKey(funder_pkh())),
+  }
   !create_ok(datum, 102_000_000)
 }
 
 test create_v2__rejects_arbiter_equals_verifier() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      arbiter: Some(VerificationKey(verifier_pkh())),
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    arbiter: Some(VerificationKey(verifier_pkh())),
+  }
   !create_ok(datum, 102_000_000)
 }
 
 test create_v2__rejects_preexisting_dispute() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      dispute: Some(DisputeInfo { milestone: 0, until: t0 + day }),
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    dispute: Some(DisputeInfo { milestone: 0, until: t0 + day }),
+  }
   !create_ok(datum, 102_000_000)
 }
 
@@ -159,17 +152,18 @@ test create_v2__rejects_evidence_length_mismatch() {
 }
 
 test create_v2__rejects_prefilled_evidence() {
-  let datum =
-    EscrowDatumV2 { ..test_v2_datum(), evidence: [Some("deed"), None, None] }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    evidence: [Some("deed"), None, None],
+  }
   !create_ok(datum, 102_000_000)
 }
 
 test create_v2__rejects_oversized_title() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      title: "this escrow title is deliberately far longer than the sixty-four byte cap",
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    title: "this escrow title is deliberately far longer than the sixty-four byte cap",
+  }
   !create_ok(datum, 102_000_000)
 }
 
@@ -204,17 +198,18 @@ test create_v2__rejects_born_past_first_cure() {
 }
 
 test create_v2__rejects_own_script_funder() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      funder: common_v2.escrow_v2_address(escrow_v2_policy()),
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    funder: common_v2.escrow_v2_address(escrow_v2_policy()),
+  }
   !create_ok(datum, 102_000_000)
 }
 
 test create_v2__rejects_own_script_verifier() {
-  let datum =
-    EscrowDatumV2 { ..test_v2_datum(), verifier: Script(escrow_v2_policy()) }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    verifier: Script(escrow_v2_policy()),
+  }
   !create_ok(datum, 102_000_000)
 }
 

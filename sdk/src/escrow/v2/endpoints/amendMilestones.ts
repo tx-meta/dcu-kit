@@ -121,7 +121,9 @@ export const unsignedAmendMilestonesTxProgram = (
 
     const evidence =
       config.evidence ??
-      next.map((_, i) => (i < datum.evidence.length ? datum.evidence[i]! : null));
+      next.map((_, i) =>
+        i < datum.evidence.length ? datum.evidence[i]! : null,
+      );
     if (evidence.length !== next.length) {
       return yield* Effect.fail(
         new ConfigurationError({
@@ -148,7 +150,9 @@ export const unsignedAmendMilestonesTxProgram = (
       evidence,
       title: titleHex,
       content_hash:
-        config.contentHash === undefined ? datum.content_hash : config.contentHash,
+        config.contentHash === undefined
+          ? datum.content_hash
+          : config.contentHash,
     };
 
     // Continuation value: Upfront tracks the new remaining total; PerMilestone
@@ -158,9 +162,7 @@ export const unsignedAmendMilestonesTxProgram = (
     const continuationAssets: Assets = { ...escrowUtxo.assets };
     let funderExcess: Assets | null = null;
     if (datum.funding_mode === "Upfront") {
-      const remaining = next
-        .slice(rc)
-        .reduce((a, m) => a + m.amount, 0n);
+      const remaining = next.slice(rc).reduce((a, m) => a + m.amount, 0n);
       const required = isAda ? remaining + MIN_ADA_BUFFER : remaining;
       const current = continuationAssets[assetUnit] ?? 0n;
       if (current > required) {

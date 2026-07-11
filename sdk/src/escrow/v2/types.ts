@@ -229,9 +229,7 @@ export const ProjectMintRedeemerSchema = Data.Enum([
   }),
   Data.Literal("BurnProject"),
 ]);
-export type ProjectMintRedeemer = Data.Static<
-  typeof ProjectMintRedeemerSchema
->;
+export type ProjectMintRedeemer = Data.Static<typeof ProjectMintRedeemerSchema>;
 export const ProjectMintRedeemer =
   ProjectMintRedeemerSchema as unknown as ProjectMintRedeemer;
 

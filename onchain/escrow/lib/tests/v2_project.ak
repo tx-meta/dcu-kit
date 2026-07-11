@@ -7,7 +7,9 @@ use escrow/project_validation.{
 }
 use escrow/types_v2.{ProjectDatum}
 use tests/common.{escrow_input, funder_pkh, seed_input, seed_token_name}
-use tests/common_v2.{owner_pkh, project_output, project_policy, test_project_datum}
+use tests/common_v2.{
+  owner_pkh, project_output, project_policy, test_project_datum,
+}
 
 fn mint_one() {
   assets.from_asset(project_policy(), seed_token_name(), 1)
@@ -63,8 +65,10 @@ test project_create__rejects_wrong_token_name() fail {
 }
 
 test project_create__rejects_own_script_owner() {
-  let datum =
-    ProjectDatum { ..test_project_datum(), owner: Script(project_policy()) }
+  let datum = ProjectDatum {
+    ..test_project_datum(),
+    owner: Script(project_policy()),
+  }
   !validate_create_project(
     project_policy(),
     0,
@@ -79,14 +83,16 @@ test project_create__rejects_own_script_owner() {
 
 test project_update__accepts_owner_change_and_close() {
   let datum = test_project_datum()
-  let own = escrow_input(0, project_output(project_policy(), datum, project_value()))
-  let updated =
-    ProjectDatum {
-      title: "borehole program phase 2",
-      content_hash: Some("terms-v2"),
-      status: 1,
-      owner: VerificationKey(funder_pkh()),
-    }
+  let own = escrow_input(
+    0,
+    project_output(project_policy(), datum, project_value()),
+  )
+  let updated = ProjectDatum {
+    title: "borehole program phase 2",
+    content_hash: Some("terms-v2"),
+    status: 1,
+    owner: VerificationKey(funder_pkh()),
+  }
   let cont = project_output(project_policy(), updated, project_value())
   validate_update_project(
     project_policy(),
@@ -100,13 +106,15 @@ test project_update__accepts_owner_change_and_close() {
 
 test project_update__rejects_non_owner() {
   let datum = test_project_datum()
-  let own = escrow_input(0, project_output(project_policy(), datum, project_value()))
-  let cont =
-    project_output(
-      project_policy(),
-      ProjectDatum { ..datum, title: "hijacked" },
-      project_value(),
-    )
+  let own = escrow_input(
+    0,
+    project_output(project_policy(), datum, project_value()),
+  )
+  let cont = project_output(
+    project_policy(),
+    ProjectDatum { ..datum, title: "hijacked" },
+    project_value(),
+  )
   !validate_update_project(
     project_policy(),
     datum,
@@ -119,13 +127,15 @@ test project_update__rejects_non_owner() {
 
 test project_update__rejects_invalid_status() {
   let datum = test_project_datum()
-  let own = escrow_input(0, project_output(project_policy(), datum, project_value()))
-  let cont =
-    project_output(
-      project_policy(),
-      ProjectDatum { ..datum, status: 7 },
-      project_value(),
-    )
+  let own = escrow_input(
+    0,
+    project_output(project_policy(), datum, project_value()),
+  )
+  let cont = project_output(
+    project_policy(),
+    ProjectDatum { ..datum, status: 7 },
+    project_value(),
+  )
   !validate_update_project(
     project_policy(),
     datum,
@@ -138,16 +148,18 @@ test project_update__rejects_invalid_status() {
 
 test project_update__rejects_oversized_title() {
   let datum = test_project_datum()
-  let own = escrow_input(0, project_output(project_policy(), datum, project_value()))
-  let cont =
-    project_output(
-      project_policy(),
-      ProjectDatum {
-        ..datum,
-        title: "this project title is deliberately far longer than the sixty-four byte cap",
-      },
-      project_value(),
-    )
+  let own = escrow_input(
+    0,
+    project_output(project_policy(), datum, project_value()),
+  )
+  let cont = project_output(
+    project_policy(),
+    ProjectDatum {
+      ..datum,
+      title: "this project title is deliberately far longer than the sixty-four byte cap",
+    },
+    project_value(),
+  )
   !validate_update_project(
     project_policy(),
     datum,
@@ -160,14 +172,16 @@ test project_update__rejects_oversized_title() {
 
 test project_update__rejects_lovelace_decrease() {
   let datum = test_project_datum()
-  let own = escrow_input(0, project_output(project_policy(), datum, project_value()))
-  let cont =
-    project_output(
-      project_policy(),
-      datum,
-      assets.from_lovelace(1_000_000)
-        |> assets.add(project_policy(), seed_token_name(), 1),
-    )
+  let own = escrow_input(
+    0,
+    project_output(project_policy(), datum, project_value()),
+  )
+  let cont = project_output(
+    project_policy(),
+    datum,
+    assets.from_lovelace(1_000_000)
+      |> assets.add(project_policy(), seed_token_name(), 1),
+  )
   !validate_update_project(
     project_policy(),
     datum,
@@ -182,7 +196,10 @@ test project_update__rejects_lovelace_decrease() {
 
 test project_close__accepts_owner_burn() {
   let datum = test_project_datum()
-  let own = escrow_input(0, project_output(project_policy(), datum, project_value()))
+  let own = escrow_input(
+    0,
+    project_output(project_policy(), datum, project_value()),
+  )
   validate_close_project(
     project_policy(),
     datum,
@@ -194,7 +211,10 @@ test project_close__accepts_owner_burn() {
 
 test project_close__rejects_non_owner() {
   let datum = test_project_datum()
-  let own = escrow_input(0, project_output(project_policy(), datum, project_value()))
+  let own = escrow_input(
+    0,
+    project_output(project_policy(), datum, project_value()),
+  )
   !validate_close_project(
     project_policy(),
     datum,

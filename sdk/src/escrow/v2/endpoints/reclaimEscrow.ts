@@ -12,7 +12,11 @@ import {
   TransactionBuildError,
 } from "../../../core/errors.js";
 import { makeReturn } from "../../../core/utils/index.js";
-import { EscrowV2MintRedeemer, EscrowV2SpendRedeemer, fromOnchainAddress } from "../types.js";
+import {
+  EscrowV2MintRedeemer,
+  EscrowV2SpendRedeemer,
+  fromOnchainAddress,
+} from "../types.js";
 import { escrowV2Validator } from "../validators.js";
 import {
   applyPartyWitness,

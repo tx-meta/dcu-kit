@@ -28,7 +28,10 @@
  *   ACTIVE_WALLET=ADMIN BENEFICIARY=USER2 pnpm run pool-allocate
  */
 
-import { allocateToEscrow, AllocateToEscrowConfig } from "@tx-meta/dcu-kit/escrow/v2";
+import {
+  allocateToEscrow,
+  AllocateToEscrowConfig,
+} from "@tx-meta/dcu-kit/escrow/v2";
 import {
   makeLucid,
   cexplorerTxUrl,

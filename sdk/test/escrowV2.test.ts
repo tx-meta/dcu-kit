@@ -288,63 +288,67 @@ describe("escrow v2 lifecycle (emulator)", () => {
       }),
   );
 
-  it.effect("refund policy: funder reclaims strictly after the cure window", () =>
-    Effect.gen(function* () {
-      const ctx = yield* makeContext;
-      const now = BigInt(ctx.emulator.now());
-      const stateTokenName = yield* createDefault(ctx, {
-        milestones: [
-          { amount: 40_000_000n, deadline: now + 300_000n },
-          { amount: 62_000_000n, deadline: now + 100n * HOUR },
-        ],
-        grace: 60_000n,
-      });
+  it.effect(
+    "refund policy: funder reclaims strictly after the cure window",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const now = BigInt(ctx.emulator.now());
+        const stateTokenName = yield* createDefault(ctx, {
+          milestones: [
+            { amount: 40_000_000n, deadline: now + 300_000n },
+            { amount: 62_000_000n, deadline: now + 100n * HOUR },
+          ],
+          grace: 60_000n,
+        });
 
-      yield* advanceBlock(ctx.emulator, 20);
+        yield* advanceBlock(ctx.emulator, 20);
 
-      selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
-      const tx = yield* unsignedReclaimEscrowV2TxProgram(ctx.lucid, {
-        stateTokenName,
-        currentTime: BigInt(ctx.emulator.now()),
-      });
-      yield* signAndSubmit(tx);
-      yield* advanceBlock(ctx.emulator);
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const tx = yield* unsignedReclaimEscrowV2TxProgram(ctx.lucid, {
+          stateTokenName,
+          currentTime: BigInt(ctx.emulator.now()),
+        });
+        yield* signAndSubmit(tx);
+        yield* advanceBlock(ctx.emulator);
 
-      const gone = yield* Effect.either(
-        getEscrowStateProgram(ctx.lucid, { stateTokenName }),
-      );
-      expect(gone._tag).toBe("Left");
-    }),
+        const gone = yield* Effect.either(
+          getEscrowStateProgram(ctx.lucid, { stateTokenName }),
+        );
+        expect(gone._tag).toBe("Left");
+      }),
   );
 
-  it.effect("evidence: beneficiary anchors and overwrites a deliverable hash", () =>
-    Effect.gen(function* () {
-      const ctx = yield* makeContext;
-      const stateTokenName = yield* createDefault(ctx);
+  it.effect(
+    "evidence: beneficiary anchors and overwrites a deliverable hash",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const stateTokenName = yield* createDefault(ctx);
 
-      ctx.lucid.selectWallet.fromPrivateKey(ctx.beneficiary.privateKey);
-      const first = yield* unsignedSubmitEvidenceTxProgram(ctx.lucid, {
-        stateTokenName,
-        milestoneIndex: 0,
-        evidenceHash: "11".repeat(32),
-      });
-      yield* signAndSubmit(first);
-      yield* advanceBlock(ctx.emulator);
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.beneficiary.privateKey);
+        const first = yield* unsignedSubmitEvidenceTxProgram(ctx.lucid, {
+          stateTokenName,
+          milestoneIndex: 0,
+          evidenceHash: "11".repeat(32),
+        });
+        yield* signAndSubmit(first);
+        yield* advanceBlock(ctx.emulator);
 
-      const overwrite = yield* unsignedSubmitEvidenceTxProgram(ctx.lucid, {
-        stateTokenName,
-        milestoneIndex: 0,
-        evidenceHash: "22".repeat(32),
-      });
-      yield* signAndSubmit(overwrite);
-      yield* advanceBlock(ctx.emulator);
+        const overwrite = yield* unsignedSubmitEvidenceTxProgram(ctx.lucid, {
+          stateTokenName,
+          milestoneIndex: 0,
+          evidenceHash: "22".repeat(32),
+        });
+        yield* signAndSubmit(overwrite);
+        yield* advanceBlock(ctx.emulator);
 
-      const state = yield* getEscrowStateProgram(ctx.lucid, {
-        stateTokenName,
-        currentTime: BigInt(ctx.emulator.now()),
-      });
-      expect(state.milestones[0]!.evidence).toBe("22".repeat(32));
-    }),
+        const state = yield* getEscrowStateProgram(ctx.lucid, {
+          stateTokenName,
+          currentTime: BigInt(ctx.emulator.now()),
+        });
+        expect(state.milestones[0]!.evidence).toBe("22".repeat(32));
+      }),
   );
 
   it.effect(
@@ -474,9 +478,9 @@ describe("escrow v2 lifecycle (emulator)", () => {
       const primaryUtxos = yield* Effect.promise(() =>
         ctx.lucid.utxosAt(ctx.beneficiary.address),
       );
-      expect(
-        primaryUtxos.some((u) => u.assets.lovelace === 28_000_000n),
-      ).toBe(true);
+      expect(primaryUtxos.some((u) => u.assets.lovelace === 28_000_000n)).toBe(
+        true,
+      );
     }),
   );
 

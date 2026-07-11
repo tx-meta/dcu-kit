@@ -38,8 +38,7 @@ async function main() {
   await selectEnvWallet(lucid, "USER1");
 
   const raisedBy = (process.env.RAISED_BY ?? "funder") as
-    | "funder"
-    | "beneficiary";
+    "funder" | "beneficiary";
 
   const stateTokenName = requireToken(
     "ESCROW_V2_STATE_TOKEN",
@@ -48,7 +47,10 @@ async function main() {
   );
 
   console.log(`Raising a dispute as the ${raisedBy}...`);
-  const tx = await raiseDispute(lucid, { stateTokenName, raisedBy }).unsafeRun();
+  const tx = await raiseDispute(lucid, {
+    stateTokenName,
+    raisedBy,
+  }).unsafeRun();
 
   const signed = await tx.sign.withWallet().complete();
   const txHash = await signed.submit();

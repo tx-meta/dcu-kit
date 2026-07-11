@@ -21,38 +21,32 @@ const m0_cure = 1_800_000_000_000 + 86_400_000 + 3_600_000
 // Random valid schedule: 1-8 milestones, positive amounts, strictly increasing
 // deadlines built from positive gaps off t0.
 fn gen_schedule() -> Fuzzer<List<Milestone>> {
-  let pairs <-
-    fuzz.and_then(
-      fuzz.list_between(
-        fuzz.both(
-          fuzz.int_between(1, 100_000_000),
-          fuzz.int_between(1, day),
-        ),
-        1,
-        8,
-      ),
-    )
-  let (reversed, _) =
-    list.foldl(
-      pairs,
-      ([], t0),
-      fn(pair, acc) {
-        let (ms, last) = acc
-        let (amount, gap) = pair
-        ([Milestone { amount, deadline: last + gap }, ..ms], last + gap)
-      },
-    )
+  let pairs <- fuzz.and_then(
+    fuzz.list_between(
+      fuzz.both(fuzz.int_between(1, 100_000_000), fuzz.int_between(1, day)),
+      1,
+      8,
+    ),
+  )
+  let (reversed, _) = list.foldl(
+    pairs,
+    ([], t0),
+    fn(pair, acc) {
+      let (ms, last) = acc
+      let (amount, gap) = pair
+      ([Milestone { amount, deadline: last + gap }, ..ms], last + gap)
+    },
+  )
   fuzz.constant(list.reverse(reversed))
 }
 
 // Any structurally valid schedule must be creatable when fully funded.
 test prop_create_accepts_valid_schedules(milestones via gen_schedule()) {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      milestones: milestones,
-      evidence: list.map(milestones, fn(_) { None }),
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    milestones,
+    evidence: list.map(milestones, fn(_) { None }),
+  }
   let locked = milestones_total(milestones) + 2_000_000
   validate_create_escrow_v2(
     escrow_v2_policy(),
@@ -78,59 +72,57 @@ test prop_release_reclaim_never_both(
 ) {
   let t = m0_cure + dt
   let datum = test_v2_datum()
-  let own =
-    escrow_input(
-      0,
-      escrow_v2_output(
-        escrow_v2_policy(),
-        datum,
-        v2_utxo_value(escrow_v2_policy(), 102_000_000),
-      ),
-    )
-  let cont =
+  let own = escrow_input(
+    0,
     escrow_v2_output(
       escrow_v2_policy(),
-      EscrowDatumV2 { ..datum, released_count: 1 },
-      v2_utxo_value(escrow_v2_policy(), 62_000_000),
-    )
-  let payout: Output =
-    user_output(beneficiary_address(), assets.from_lovelace(40_000_000))
-  let release_outputs = [cont, payout]
-  let release_ok =
-    validate_release_v2(
-      escrow_v2_policy(),
       datum,
-      own,
-      0,
-      1,
-      99,
-      release_outputs,
-      assets.zero,
-      Transaction {
-        ..placeholder,
-        outputs: release_outputs,
-        extra_signatories: [verifier_pkh()],
-        validity_range: range_before(t),
-      },
-    )
+      v2_utxo_value(escrow_v2_policy(), 102_000_000),
+    ),
+  )
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    EscrowDatumV2 { ..datum, released_count: 1 },
+    v2_utxo_value(escrow_v2_policy(), 62_000_000),
+  )
+  let payout: Output = user_output(
+    beneficiary_address(),
+    assets.from_lovelace(40_000_000),
+  )
+  let release_outputs = [cont, payout]
+  let release_ok = validate_release_v2(
+    escrow_v2_policy(),
+    datum,
+    own,
+    0,
+    1,
+    99,
+    release_outputs,
+    assets.zero,
+    Transaction {
+      ..placeholder,
+      outputs: release_outputs,
+      extra_signatories: [verifier_pkh()],
+      validity_range: range_before(t),
+    },
+  )
   let refund = user_output(funder_address(), assets.from_lovelace(102_000_000))
   let burn = assets.from_asset(escrow_v2_policy(), seed_token_name(), -1)
-  let reclaim_ok =
-    validate_reclaim_v2(
-      escrow_v2_policy(),
-      datum,
-      own,
-      0,
-      [refund],
-      burn,
-      Transaction {
-        ..placeholder,
-        outputs: [refund],
-        mint: burn,
-        extra_signatories: [funder_pkh()],
-        validity_range: range_after(t),
-      },
-    )
+  let reclaim_ok = validate_reclaim_v2(
+    escrow_v2_policy(),
+    datum,
+    own,
+    0,
+    [refund],
+    burn,
+    Transaction {
+      ..placeholder,
+      outputs: [refund],
+      mint: burn,
+      extra_signatories: [funder_pkh()],
+      validity_range: range_after(t),
+    },
+  )
   !(release_ok && reclaim_ok)
 }
 

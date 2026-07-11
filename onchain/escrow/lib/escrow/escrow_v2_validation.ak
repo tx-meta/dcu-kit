@@ -7,9 +7,9 @@ use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use escrow/credential.{credential_authorized, state_token_name}
 use escrow/types_v2.{
-  ArbiterParty, BeneficiaryParty, CoBeneficiary, CoBeneficiaryParty,
-  DisputeInfo, EscrowDatumV2, FunderParty, Milestone, Party, PerMilestone,
-  RefundToFunder, ReleaseToBeneficiary, Upfront, VerifierParty,
+  ArbiterParty, BeneficiaryParty, CoBeneficiary, CoBeneficiaryParty, DisputeInfo,
+  EscrowDatumV2, FunderParty, Milestone, Party, PerMilestone, RefundToFunder,
+  ReleaseToBeneficiary, Upfront, VerifierParty,
 }
 
 // Same schedule ceiling as v1 — keeps the longest release under budget and
@@ -58,7 +58,8 @@ fn deadlines_increasing(milestones: List<Milestone>) -> Bool {
   when milestones is {
     [] -> True
     [_] -> True
-    [a, b, ..rest] -> a.deadline < b.deadline && deadlines_increasing([b, ..rest])
+    [a, b, ..rest] ->
+      a.deadline < b.deadline && deadlines_increasing([b, ..rest])
   }
 }
 
@@ -67,16 +68,15 @@ fn deadlines_increasing(milestones: List<Milestone>) -> Bool {
 // so a last-moment dispute cannot steal the counterparty's window.
 pub fn cure_boundary(datum: EscrowDatumV2) -> Int {
   expect Some(m) = list.at(datum.milestones, datum.released_count)
-  let extension =
-    when datum.dispute is {
-      Some(d) ->
-        if d.milestone == datum.released_count {
-          datum.dispute_window
-        } else {
-          0
-        }
-      None -> 0
-    }
+  let extension = when datum.dispute is {
+    Some(d) ->
+      if d.milestone == datum.released_count {
+        datum.dispute_window
+      } else {
+        0
+      }
+    None -> 0
+  }
   m.deadline + datum.grace + extension
 }
 
@@ -109,22 +109,21 @@ pub fn party_guardrails_ok(datum: EscrowDatumV2, policy_id: PolicyId) -> Bool {
     (datum.beneficiary.payment_credential != Script(policy_id))?,
     (datum.verifier != Script(policy_id))?,
   }
-  let arbiter_ok =
-    when datum.arbiter is {
-      None -> True
-      Some(a) -> and {
-          credential_hash_valid(a)?,
-          (a != datum.funder.payment_credential)?,
-          (a != datum.beneficiary.payment_credential)?,
-          (a != datum.verifier)?,
-          (a != Script(policy_id))?,
-          // [spec 3.6]: the arbiter can never be a payout recipient.
-          !list.any(
-            datum.co_beneficiaries,
-            fn(c) { c.address.payment_credential == a },
-          )?,
-        }
-    }
+  let arbiter_ok = when datum.arbiter is {
+    None -> True
+    Some(a) -> and {
+        credential_hash_valid(a)?,
+        (a != datum.funder.payment_credential)?,
+        (a != datum.beneficiary.payment_credential)?,
+        (a != datum.verifier)?,
+        (a != Script(policy_id))?,
+        // [spec 3.6]: the arbiter can never be a payout recipient.
+        !list.any(
+          datum.co_beneficiaries,
+          fn(c) { c.address.payment_credential == a },
+        )?,
+      }
+  }
   and {
     base,
     arbiter_ok,
@@ -178,7 +177,11 @@ fn paid_to_address(
     0,
     fn(out, acc) {
       if out.address == address {
-        acc + assets.quantity_of(out.value, datum.asset_policy, datum.asset_name)
+        acc + assets.quantity_of(
+          out.value,
+          datum.asset_policy,
+          datum.asset_name,
+        )
       } else {
         acc
       }
@@ -377,20 +380,18 @@ fn tranche_payout_ok(
   let is_final = datum.released_count + 1 == list.length(datum.milestones)
   // [spec 3.6]: each co-beneficiary earns floor(tranche * share / 10000) of
   // every tranche; the primary earns the remainder.
-  let co_cuts_total =
-    list.foldl(
-      datum.co_beneficiaries,
-      0,
-      fn(c, acc) { acc + tranche * c.share_bps / 10_000 },
-    )
+  let co_cuts_total = list.foldl(
+    datum.co_beneficiaries,
+    0,
+    fn(c, acc) { acc + tranche * c.share_bps / 10_000 },
+  )
   let primary_due = tranche - co_cuts_total
-  let cos_paid =
-    list.all(
-      datum.co_beneficiaries,
-      fn(c) {
-        paid_to_address(outputs, c.address, datum) >= tranche * c.share_bps / 10_000
-      },
-    )
+  let cos_paid = list.all(
+    datum.co_beneficiaries,
+    fn(c) {
+      paid_to_address(outputs, c.address, datum) >= tranche * c.share_bps / 10_000
+    },
+  )
   let base = and {
     // [spec 3.2]: PerMilestone — the current tranche must actually be funded
     // (trivially true for a fully-funded Upfront escrow).
@@ -403,33 +404,30 @@ fn tranche_payout_ok(
     // [spec 3.2 final]: burn + the remainder goes back to the FUNDER on-chain —
     // the 2026-07-11 offchain fix promoted into the validator. For native-token
     // escrows the buffer keeps funding the beneficiary payout's min-ADA.
-    let ada_remainder =
-      if is_ada {
-        assets.lovelace_of(in_value) - tranche
-      } else {
-        assets.lovelace_of(in_value) - min_ada_buffer
+    let ada_remainder = if is_ada {
+      assets.lovelace_of(in_value) - tranche
+    } else {
+      assets.lovelace_of(in_value) - min_ada_buffer
+    }
+    let asset_remainder = if is_ada {
+      0
+    } else {
+      assets.quantity_of(in_value, datum.asset_policy, datum.asset_name) - tranche
+    }
+    let remainder_ok = if ada_remainder > 0 || asset_remainder > 0 {
+      expect Some(funder_out) = list.at(outputs, funder_index)
+      and {
+        (funder_out.address == datum.funder)?,
+        (assets.lovelace_of(funder_out.value) >= ada_remainder)?,
+        (assets.quantity_of(
+          funder_out.value,
+          datum.asset_policy,
+          datum.asset_name,
+        ) >= asset_remainder)?,
       }
-    let asset_remainder =
-      if is_ada {
-        0
-      } else {
-        assets.quantity_of(in_value, datum.asset_policy, datum.asset_name) - tranche
-      }
-    let remainder_ok =
-      if ada_remainder > 0 || asset_remainder > 0 {
-        expect Some(funder_out) = list.at(outputs, funder_index)
-        and {
-          (funder_out.address == datum.funder)?,
-          (assets.lovelace_of(funder_out.value) >= ada_remainder)?,
-          (assets.quantity_of(
-            funder_out.value,
-            datum.asset_policy,
-            datum.asset_name,
-          ) >= asset_remainder)?,
-        }
-      } else {
-        True
-      }
+    } else {
+      True
+    }
     and {
       base,
       remainder_ok,
@@ -439,23 +437,24 @@ fn tranche_payout_ok(
     expect Some(cont) = list.at(outputs, continuation_index)
     expect InlineDatum(raw) = cont.datum
     expect cont_datum: EscrowDatumV2 = raw
-    let expected =
-      EscrowDatumV2 { ..datum, released_count: datum.released_count + 1 }
-    let value_ok =
-      if is_ada {
-        assets.lovelace_of(cont.value) >= assets.lovelace_of(in_value) - tranche
-      } else {
-        and {
-          assets.quantity_of(cont.value, datum.asset_policy, datum.asset_name) >= assets.quantity_of(
-            in_value,
-            datum.asset_policy,
-            datum.asset_name,
-          ) - tranche,
-          // Buffer preserved through every non-final release — it funds the
-          // FINAL payout's min-ADA; the crank pays interim payout min-ADA.
-          assets.lovelace_of(cont.value) >= assets.lovelace_of(in_value),
-        }
+    let expected = EscrowDatumV2 {
+      ..datum,
+      released_count: datum.released_count + 1,
+    }
+    let value_ok = if is_ada {
+      assets.lovelace_of(cont.value) >= assets.lovelace_of(in_value) - tranche
+    } else {
+      and {
+        assets.quantity_of(cont.value, datum.asset_policy, datum.asset_name) >= assets.quantity_of(
+          in_value,
+          datum.asset_policy,
+          datum.asset_name,
+        ) - tranche,
+        // Buffer preserved through every non-final release — it funds the
+        // FINAL payout's min-ADA; the crank pays interim payout min-ADA.
+        assets.lovelace_of(cont.value) >= assets.lovelace_of(in_value),
       }
+    }
     and {
       base,
       // [AIK-4]: continuation pinned to the spent input's FULL address.
@@ -544,20 +543,19 @@ pub fn validate_submit_evidence(
   expect Some(cont) = list.at(outputs, continuation_index)
   expect InlineDatum(raw) = cont.datum
   expect cont_datum: EscrowDatumV2 = raw
-  let expected =
-    EscrowDatumV2 {
-      ..datum,
-      evidence: list.indexed_map(
-        datum.evidence,
-        fn(ix, e) {
-          if ix == milestone_index {
-            Some(evidence_hash)
-          } else {
-            e
-          }
-        },
-      ),
-    }
+  let expected = EscrowDatumV2 {
+    ..datum,
+    evidence: list.indexed_map(
+      datum.evidence,
+      fn(ix, e) {
+        if ix == milestone_index {
+          Some(evidence_hash)
+        } else {
+          e
+        }
+      },
+    ),
+  }
   and {
     credential_authorized(datum.beneficiary.payment_credential, tx)?,
     (milestone_index >= datum.released_count)?,
@@ -589,62 +587,56 @@ pub fn validate_rotate_party(
   expect cont_datum: EscrowDatumV2 = raw
   // Reverting the rotated field must reproduce the old datum exactly — this is
   // the "exactly one field changed" proof.
-  let reverted =
-    when party is {
-      FunderParty -> EscrowDatumV2 { ..cont_datum, funder: datum.funder }
-      BeneficiaryParty ->
-        EscrowDatumV2 { ..cont_datum, beneficiary: datum.beneficiary }
-      VerifierParty -> EscrowDatumV2 { ..cont_datum, verifier: datum.verifier }
-      ArbiterParty -> EscrowDatumV2 { ..cont_datum, arbiter: datum.arbiter }
-      CoBeneficiaryParty { .. } ->
-        EscrowDatumV2 {
-          ..cont_datum,
-          co_beneficiaries: datum.co_beneficiaries,
-        }
+  let reverted = when party is {
+    FunderParty -> EscrowDatumV2 { ..cont_datum, funder: datum.funder }
+    BeneficiaryParty ->
+      EscrowDatumV2 { ..cont_datum, beneficiary: datum.beneficiary }
+    VerifierParty -> EscrowDatumV2 { ..cont_datum, verifier: datum.verifier }
+    ArbiterParty -> EscrowDatumV2 { ..cont_datum, arbiter: datum.arbiter }
+    CoBeneficiaryParty { .. } ->
+      EscrowDatumV2 { ..cont_datum, co_beneficiaries: datum.co_beneficiaries }
+  }
+  let authorized = when party is {
+    FunderParty -> credential_authorized(datum.funder.payment_credential, tx)
+    BeneficiaryParty ->
+      credential_authorized(datum.beneficiary.payment_credential, tx)
+    VerifierParty -> credential_authorized(datum.verifier, tx)
+    ArbiterParty -> {
+      // [spec 3.2]: arbiter rotation requires an arbiter to exist…
+      expect Some(a) = datum.arbiter
+      credential_authorized(a, tx)
     }
-  let authorized =
-    when party is {
-      FunderParty -> credential_authorized(datum.funder.payment_credential, tx)
-      BeneficiaryParty ->
-        credential_authorized(datum.beneficiary.payment_credential, tx)
-      VerifierParty -> credential_authorized(datum.verifier, tx)
-      ArbiterParty -> {
-        // [spec 3.2]: arbiter rotation requires an arbiter to exist…
-        expect Some(a) = datum.arbiter
-        credential_authorized(a, tx)
-      }
-      CoBeneficiaryParty { index } -> {
-        // [spec 3.6]: only the co-beneficiary itself may move its address.
-        expect Some(c) = list.at(datum.co_beneficiaries, index)
-        credential_authorized(c.address.payment_credential, tx)
-      }
+    CoBeneficiaryParty { index } -> {
+      // [spec 3.6]: only the co-beneficiary itself may move its address.
+      expect Some(c) = list.at(datum.co_beneficiaries, index)
+      credential_authorized(c.address.payment_credential, tx)
     }
+  }
   // …and can never remove it (Some↔None is forbidden; the revert trick alone
   // would let Some→None slip through).
-  let arbiter_shape_ok =
-    when party is {
-      ArbiterParty -> cont_datum.arbiter != None
-      CoBeneficiaryParty { index } -> {
-        // [spec 3.6]: exactly this entry's ADDRESS changes; the share and
-        // every other entry stay byte-identical.
-        expect Some(old_c) = list.at(datum.co_beneficiaries, index)
-        expect Some(new_c) = list.at(cont_datum.co_beneficiaries, index)
-        and {
-          new_c.share_bps == old_c.share_bps,
-          list.indexed_map(
-            cont_datum.co_beneficiaries,
-            fn(ix, e) {
-              if ix == index {
-                old_c
-              } else {
-                e
-              }
-            },
-          ) == datum.co_beneficiaries,
-        }
+  let arbiter_shape_ok = when party is {
+    ArbiterParty -> cont_datum.arbiter != None
+    CoBeneficiaryParty { index } -> {
+      // [spec 3.6]: exactly this entry's ADDRESS changes; the share and
+      // every other entry stay byte-identical.
+      expect Some(old_c) = list.at(datum.co_beneficiaries, index)
+      expect Some(new_c) = list.at(cont_datum.co_beneficiaries, index)
+      and {
+        new_c.share_bps == old_c.share_bps,
+        list.indexed_map(
+          cont_datum.co_beneficiaries,
+          fn(ix, e) {
+            if ix == index {
+              old_c
+            } else {
+              e
+            }
+          },
+        ) == datum.co_beneficiaries,
       }
-      _ -> True
     }
+    _ -> True
+  }
   and {
     authorized?,
     (reverted == datum)?,
@@ -675,39 +667,36 @@ pub fn validate_amend_milestones(
   expect InlineDatum(raw) = cont.datum
   expect cont_datum: EscrowDatumV2 = raw
   // Only milestones / evidence / title / content_hash may change.
-  let reverted =
-    EscrowDatumV2 {
-      ..cont_datum,
-      milestones: datum.milestones,
-      evidence: datum.evidence,
-      title: datum.title,
-      content_hash: datum.content_hash,
-    }
+  let reverted = EscrowDatumV2 {
+    ..cont_datum,
+    milestones: datum.milestones,
+    evidence: datum.evidence,
+    title: datum.title,
+    content_hash: datum.content_hash,
+  }
   let rc = datum.released_count
   let in_value = own_input.output.value
   // [spec 3.2]: any value leaving the escrow in the amendment goes to the funder.
   let l_deficit = assets.lovelace_of(in_value) - assets.lovelace_of(cont.value)
-  let a_deficit =
-    assets.quantity_of(in_value, datum.asset_policy, datum.asset_name) - assets.quantity_of(
-      cont.value,
-      datum.asset_policy,
-      datum.asset_name,
-    )
-  let exit_ok =
-    if l_deficit > 0 || a_deficit > 0 {
-      expect Some(funder_out) = list.at(outputs, funder_index)
-      and {
-        (funder_out.address == datum.funder)?,
-        (assets.lovelace_of(funder_out.value) >= l_deficit)?,
-        (assets.quantity_of(
-          funder_out.value,
-          datum.asset_policy,
-          datum.asset_name,
-        ) >= a_deficit)?,
-      }
-    } else {
-      True
+  let a_deficit = assets.quantity_of(
+    in_value,
+    datum.asset_policy,
+    datum.asset_name,
+  ) - assets.quantity_of(cont.value, datum.asset_policy, datum.asset_name)
+  let exit_ok = if l_deficit > 0 || a_deficit > 0 {
+    expect Some(funder_out) = list.at(outputs, funder_index)
+    and {
+      (funder_out.address == datum.funder)?,
+      (assets.lovelace_of(funder_out.value) >= l_deficit)?,
+      (assets.quantity_of(
+        funder_out.value,
+        datum.asset_policy,
+        datum.asset_name,
+      ) >= a_deficit)?,
     }
+  } else {
+    True
+  }
   and {
     credential_authorized(datum.funder.payment_credential, tx)?,
     credential_authorized(datum.beneficiary.payment_credential, tx)?,
@@ -749,21 +738,19 @@ pub fn validate_raise_dispute(
   expect cont_datum: EscrowDatumV2 = raw
   // [spec 3.2]: until is anchored at the tx's pinned upper bound.
   expect Finite(upper) = tx.validity_range.upper_bound.bound_type
-  let fresh =
-    when datum.dispute is {
-      None -> True
-      Some(d) -> d.milestone < datum.released_count
-    }
-  let expected =
-    EscrowDatumV2 {
-      ..datum,
-      dispute: Some(
-        DisputeInfo {
-          milestone: datum.released_count,
-          until: upper + datum.dispute_window,
-        },
-      ),
-    }
+  let fresh = when datum.dispute is {
+    None -> True
+    Some(d) -> d.milestone < datum.released_count
+  }
+  let expected = EscrowDatumV2 {
+    ..datum,
+    dispute: Some(
+      DisputeInfo {
+        milestone: datum.released_count,
+        until: upper + datum.dispute_window,
+      },
+    ),
+  }
   and {
     fresh?,
     or {
@@ -796,30 +783,29 @@ pub fn validate_resolve_dispute(
   )
   let in_value = own_input.output.value
   // Sum everything the tx pays to the two economic parties.
-  let (party_lovelace, party_asset) =
-    list.foldl(
-      outputs,
-      (0, 0),
-      fn(out, acc) {
-        let (l, a) = acc
-        // [spec 3.6]: co-beneficiaries count as the beneficiary side.
-        if out.address == datum.funder || out.address == datum.beneficiary || list.any(
-          datum.co_beneficiaries,
-          fn(c) { c.address == out.address },
-        ) {
-          (
-            l + assets.lovelace_of(out.value),
-            a + assets.quantity_of(
-              out.value,
-              datum.asset_policy,
-              datum.asset_name,
-            ),
-          )
-        } else {
-          acc
-        }
-      },
-    )
+  let (party_lovelace, party_asset) = list.foldl(
+    outputs,
+    (0, 0),
+    fn(out, acc) {
+      let (l, a) = acc
+      // [spec 3.6]: co-beneficiaries count as the beneficiary side.
+      if out.address == datum.funder || out.address == datum.beneficiary || list.any(
+        datum.co_beneficiaries,
+        fn(c) { c.address == out.address },
+      ) {
+        (
+          l + assets.lovelace_of(out.value),
+          a + assets.quantity_of(
+            out.value,
+            datum.asset_policy,
+            datum.asset_name,
+          ),
+        )
+      } else {
+        acc
+      }
+    },
+  )
   and {
     credential_authorized(arbiter, tx)?,
     (d.milestone == datum.released_count)?,

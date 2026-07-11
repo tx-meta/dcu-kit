@@ -45,9 +45,7 @@ async function main() {
   console.log(`  quorum      : ${pool.quorum.type} ${pool.quorum.hash}`);
   console.log(`  escrow target: ${pool.escrowTarget}`);
   if (pool.fundingDeadline)
-    console.log(
-      `  allocations : close ${untilLabel(pool.fundingDeadline)}`,
-    );
+    console.log(`  allocations : close ${untilLabel(pool.fundingDeadline)}`);
   const total = deposits.reduce((s, d) => s + d.amount, 0n);
   console.log(
     `  deposits    : ${deposits.length} live, ${Number(total) / 1e6} ADA committed`,

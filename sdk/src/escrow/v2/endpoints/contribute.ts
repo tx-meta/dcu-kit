@@ -53,7 +53,8 @@ export const unsignedContributeTxProgram = (
       return yield* Effect.fail(
         new ConfigurationError({
           configKey: "stateTokenName",
-          message: "Upfront escrows are fully funded at create — nothing to contribute",
+          message:
+            "Upfront escrows are fully funded at create — nothing to contribute",
         }),
       );
     }

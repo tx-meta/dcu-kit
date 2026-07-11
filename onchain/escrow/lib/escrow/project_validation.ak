@@ -12,11 +12,10 @@ use escrow/types_v2.{ProjectDatum}
 // project mutation can ever break an escrow.
 
 fn owner_valid(owner: Credential, policy_id: PolicyId) -> Bool {
-  let hash_ok =
-    when owner is {
-      VerificationKey(h) -> bytearray.length(h) == 28
-      Script(h) -> bytearray.length(h) == 28
-    }
+  let hash_ok = when owner is {
+    VerificationKey(h) -> bytearray.length(h) == 28
+    Script(h) -> bytearray.length(h) == 28
+  }
   // [security]: an own-script owner would make owner-authorization vacuous.
   hash_ok && owner != Script(policy_id)
 }

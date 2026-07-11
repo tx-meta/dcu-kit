@@ -58,9 +58,7 @@ async function main() {
   const s = await Effect.runPromise(
     getEscrowStateProgram(lucid, { stateTokenName }),
   );
-  const milestoneIndex = Number(
-    process.env.MILESTONE_INDEX ?? s.releasedCount,
-  );
+  const milestoneIndex = Number(process.env.MILESTONE_INDEX ?? s.releasedCount);
 
   console.log(`Anchoring evidence for m${milestoneIndex}: ${evidenceHash}`);
   const tx = await submitEvidence(lucid, {

@@ -109,10 +109,7 @@ export const unsignedReleaseMilestoneV2TxProgram = (
       datum,
       stateUnit,
     );
-    const collected = plan.tx.collectFrom(
-      [escrowUtxo],
-      redeemer(plan.indices),
-    );
+    const collected = plan.tx.collectFrom([escrowUtxo], redeemer(plan.indices));
     const timed = lapsedDispute
       ? collected.validFrom(Number(datum.dispute!.until + 1_000n))
       : collected;

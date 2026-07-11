@@ -14,7 +14,10 @@
  *   pnpm run escrow-v2-deploy
  */
 
-import { escrowV2Validator, escrowV2PolicyId } from "@tx-meta/dcu-kit/escrow/v2";
+import {
+  escrowV2Validator,
+  escrowV2PolicyId,
+} from "@tx-meta/dcu-kit/escrow/v2";
 import {
   makeLucid,
   cexplorerTxUrl,

@@ -18,11 +18,7 @@ use escrow/types_v2.{
 
 // [security]: self-reference — the indexed input must be the UTxO being spent,
 // preventing cross-UTxO attacks that bypass per-UTxO guards.
-fn own(
-  inputs: List<Input>,
-  ix: Int,
-  utxo: OutputReference,
-) -> (Input, PolicyId) {
+fn own(inputs: List<Input>, ix: Int, utxo: OutputReference) -> (Input, PolicyId) {
   expect Some(own_input) = list.at(inputs, ix)
   expect own_input.output_reference == utxo
   expect Script(policy_id) = own_input.output.address.payment_credential
@@ -168,11 +164,7 @@ validator escrow_v2_validator {
         )
       }
 
-      AmendMilestones {
-        escrow_input_index,
-        continuation_index,
-        funder_index,
-      } -> {
+      AmendMilestones { escrow_input_index, continuation_index, funder_index } -> {
         let (own_input, policy_id) = own(inputs, escrow_input_index, utxo)
         only_own_input(policy_id, inputs) && validate_amend_milestones(
           policy_id,

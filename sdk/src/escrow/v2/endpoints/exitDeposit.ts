@@ -58,8 +58,7 @@ export const unsignedExitDepositTxProgram = (
     });
     let deposit: UTxO | undefined;
     let depositDatum:
-      | Extract<VaultDatum, { PoolDeposit: unknown }>["PoolDeposit"]
-      | undefined;
+      Extract<VaultDatum, { PoolDeposit: unknown }>["PoolDeposit"] | undefined;
     for (const raw of utxos) {
       const utxo = patchInlineDatum(raw);
       if (!utxo.datum) continue;
@@ -73,7 +72,8 @@ export const unsignedExitDepositTxProgram = (
       const d = parsed.PoolDeposit;
       if (d.pool_id !== config.poolTokenName) continue;
       const pc = d.contributor.payment_credential;
-      const hash = "VerificationKey" in pc ? pc.VerificationKey[0] : pc.Script[0];
+      const hash =
+        "VerificationKey" in pc ? pc.VerificationKey[0] : pc.Script[0];
       if (hash !== myCredential) continue;
       deposit = utxo;
       depositDatum = d;
@@ -87,7 +87,10 @@ export const unsignedExitDepositTxProgram = (
         }),
       );
     }
-    if (depositDatum.locked_until !== null && now <= depositDatum.locked_until) {
+    if (
+      depositDatum.locked_until !== null &&
+      now <= depositDatum.locked_until
+    ) {
       return yield* Effect.fail(
         new ConfigurationError({
           configKey: "poolTokenName",

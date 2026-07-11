@@ -45,14 +45,14 @@ async function main() {
     ? createHash("sha256").update(process.env.CONTENT).digest("hex")
     : undefined;
   const fundingDeadline = process.env.FUNDING_DEADLINE_MINUTES
-    ? BigInt(
-        Date.now() + Number(process.env.FUNDING_DEADLINE_MINUTES) * 60_000,
-      )
+    ? BigInt(Date.now() + Number(process.env.FUNDING_DEADLINE_MINUTES) * 60_000)
     : undefined;
 
   console.log(
     `Creating pool "${title}"` +
-      (process.env.QUORUM ? ` with quorum ${process.env.QUORUM}` : " (own-wallet quorum)"),
+      (process.env.QUORUM
+        ? ` with quorum ${process.env.QUORUM}`
+        : " (own-wallet quorum)"),
   );
   const { tx, poolTokenName } = await createPool(lucid, {
     title,

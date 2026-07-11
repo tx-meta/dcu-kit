@@ -161,13 +161,12 @@ test pool_update__rejects_non_quorum() {
 test pool_update__rejects_target_change() {
   let pool = test_pool()
   let own = escrow_input(0, anchor_output(pool))
-  let cont =
-    anchor_output(
-      PoolDatum {
-        ..pool,
-        escrow_target: #"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-      },
-    )
+  let cont = anchor_output(
+    PoolDatum {
+      ..pool,
+      escrow_target: #"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    },
+  )
   !validate_update_pool(
     vault_policy(),
     pool,
@@ -187,11 +186,7 @@ test pool_close__accepts_quorum_burn() {
     pool,
     own,
     burn,
-    Transaction {
-      ..placeholder,
-      mint: burn,
-      extra_signatories: [quorum_pkh()],
-    },
+    Transaction { ..placeholder, mint: burn, extra_signatories: [quorum_pkh()] },
   )
 }
 
@@ -260,7 +255,7 @@ fn allocate(
     outputs,
     Transaction {
       ..placeholder,
-      outputs: outputs,
+      outputs,
       extra_signatories: [signer],
       validity_range: range_before(t0),
     },
@@ -283,24 +278,16 @@ test pool_allocate__rejects_value_leak() {
 
 test pool_allocate__accepts_partial_with_continuation() {
   let cont = deposit_output(deposit_datum(), 40_000_000)
-  allocate(
-    100_000_000,
-    [escrow_out(60_000_000), cont],
-    99,
-    1,
-    [],
-    quorum_pkh(),
-  )
+  allocate(100_000_000, [escrow_out(60_000_000), cont], 99, 1, [], quorum_pkh())
 }
 
 test pool_allocate__rejects_continuation_datum_swap() {
   // Remainder re-tagged to a different contributor.
-  let swapped =
-    PoolDeposit {
-      pool_id: seed_token_name(),
-      contributor: addr.from_verification_key(quorum_pkh()),
-      locked_until: None,
-    }
+  let swapped = PoolDeposit {
+    pool_id: seed_token_name(),
+    contributor: addr.from_verification_key(quorum_pkh()),
+    locked_until: None,
+  }
   let cont = deposit_output(swapped, 40_000_000)
   !allocate(
     100_000_000,
@@ -367,11 +354,10 @@ test pool_allocate__rejects_closed_pool() {
   let datum = deposit_datum()
   let raw: Data = datum
   let own = escrow_input(0, deposit_output(datum, 100_000_000))
-  let closed_ref =
-    Input {
-      output_reference: common.seed_ref(),
-      output: anchor_output(PoolDatum { ..test_pool(), status: 1 }),
-    }
+  let closed_ref = Input {
+    output_reference: common.seed_ref(),
+    output: anchor_output(PoolDatum { ..test_pool(), status: 1 }),
+  }
   !validate_allocate(
     vault_policy(),
     raw,
@@ -398,13 +384,12 @@ test pool_allocate__rejects_wrong_destination_script() fail {
   let datum = deposit_datum()
   let raw: Data = datum
   let own = escrow_input(0, deposit_output(datum, 100_000_000))
-  let wrong =
-    Output {
-      address: addr.from_script(vault_policy()),
-      value: assets.from_lovelace(100_000_000),
-      datum: NoDatum,
-      reference_script: None,
-    }
+  let wrong = Output {
+    address: addr.from_script(vault_policy()),
+    value: assets.from_lovelace(100_000_000),
+    datum: NoDatum,
+    reference_script: None,
+  }
   validate_allocate(
     vault_policy(),
     raw,

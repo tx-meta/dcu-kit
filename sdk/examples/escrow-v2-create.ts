@@ -63,11 +63,9 @@ async function main() {
     process.env.MILESTONES ?? "3000000:+8m,2000000:+30m",
   );
   const fundingMode = (process.env.FUNDING_MODE ?? "Upfront") as
-    | "Upfront"
-    | "PerMilestone";
+    "Upfront" | "PerMilestone";
   const timeoutPolicy = (process.env.TIMEOUT_POLICY ?? "RefundToFunder") as
-    | "RefundToFunder"
-    | "ReleaseToBeneficiary";
+    "RefundToFunder" | "ReleaseToBeneficiary";
 
   let verifier = process.env.VERIFIER;
   if (!verifier) {
@@ -94,7 +92,9 @@ async function main() {
   console.log(
     `Escrow v2: ${milestones.length} milestone(s), ${Number(total) / 1e6} ADA total, ` +
       `${fundingMode} / ${timeoutPolicy}` +
-      (coBeneficiaries.length ? `, ${coBeneficiaries.length} co-beneficiary` : "") +
+      (coBeneficiaries.length
+        ? `, ${coBeneficiaries.length} co-beneficiary`
+        : "") +
       (projectId ? `, project ${projectId.slice(0, 12)}…` : ""),
   );
   for (const [i, m] of milestones.entries())

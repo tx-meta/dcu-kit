@@ -7,8 +7,8 @@ use escrow/escrow_v2_validation.{
 }
 use escrow/types_v2.{DisputeInfo, EscrowDatumV2}
 use tests/common.{
-  beneficiary_address, beneficiary_pkh, escrow_input, funder_address,
-  funder_pkh, range_before, seed_token_name, user_output, verifier_pkh,
+  beneficiary_address, beneficiary_pkh, escrow_input, funder_address, funder_pkh,
+  range_before, seed_token_name, user_output, verifier_pkh,
 }
 use tests/common_v2.{
   arbiter_pkh, escrow_v2_output, escrow_v2_policy, hour, t0, test_v2_datum,
@@ -41,14 +41,16 @@ fn burn_one() {
 fn raised(datum: EscrowDatumV2) -> EscrowDatumV2 {
   EscrowDatumV2 {
     ..datum,
-    dispute: Some(DisputeInfo { milestone: datum.released_count, until: t0 + hour }),
+    dispute: Some(
+      DisputeInfo { milestone: datum.released_count, until: t0 + hour },
+    ),
   }
 }
 
 fn raise_tx(signer: ByteArray, outputs: List<Output>) -> Transaction {
   Transaction {
     ..placeholder,
-    outputs: outputs,
+    outputs,
     extra_signatories: [signer],
     validity_range: range_before(t0),
   }
@@ -59,12 +61,11 @@ fn raise_tx(signer: ByteArray, outputs: List<Output>) -> Transaction {
 test raise__accepts_funder() {
   let datum = with_arbiter()
   let own = escrow_in(datum, 102_000_000)
-  let cont =
-    escrow_v2_output(
-      escrow_v2_policy(),
-      raised(datum),
-      v2_utxo_value(escrow_v2_policy(), 102_000_000),
-    )
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    raised(datum),
+    v2_utxo_value(escrow_v2_policy(), 102_000_000),
+  )
   validate_raise_dispute(
     escrow_v2_policy(),
     datum,
@@ -78,12 +79,11 @@ test raise__accepts_funder() {
 test raise__accepts_beneficiary() {
   let datum = with_arbiter()
   let own = escrow_in(datum, 102_000_000)
-  let cont =
-    escrow_v2_output(
-      escrow_v2_policy(),
-      raised(datum),
-      v2_utxo_value(escrow_v2_policy(), 102_000_000),
-    )
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    raised(datum),
+    v2_utxo_value(escrow_v2_policy(), 102_000_000),
+  )
   validate_raise_dispute(
     escrow_v2_policy(),
     datum,
@@ -97,12 +97,11 @@ test raise__accepts_beneficiary() {
 test raise__rejects_without_arbiter() fail {
   let datum = test_v2_datum()
   let own = escrow_in(datum, 102_000_000)
-  let cont =
-    escrow_v2_output(
-      escrow_v2_policy(),
-      raised(datum),
-      v2_utxo_value(escrow_v2_policy(), 102_000_000),
-    )
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    raised(datum),
+    v2_utxo_value(escrow_v2_policy(), 102_000_000),
+  )
   validate_raise_dispute(
     escrow_v2_policy(),
     datum,
@@ -116,17 +115,15 @@ test raise__rejects_without_arbiter() fail {
 test raise__rejects_second_dispute_same_milestone() {
   let datum = raised(with_arbiter())
   let own = escrow_in(datum, 102_000_000)
-  let re_raised =
-    EscrowDatumV2 {
-      ..datum,
-      dispute: Some(DisputeInfo { milestone: 0, until: t0 + 3 * hour }),
-    }
-  let cont =
-    escrow_v2_output(
-      escrow_v2_policy(),
-      re_raised,
-      v2_utxo_value(escrow_v2_policy(), 102_000_000),
-    )
+  let re_raised = EscrowDatumV2 {
+    ..datum,
+    dispute: Some(DisputeInfo { milestone: 0, until: t0 + 3 * hour }),
+  }
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    re_raised,
+    v2_utxo_value(escrow_v2_policy(), 102_000_000),
+  )
   !validate_raise_dispute(
     escrow_v2_policy(),
     datum,
@@ -139,22 +136,20 @@ test raise__rejects_second_dispute_same_milestone() {
 
 test raise__accepts_dispute_on_next_milestone() {
   // Milestone 0 was disputed and released; a dispute on milestone 1 is fresh.
-  let base =
-    EscrowDatumV2 {
-      ..with_arbiter(),
-      released_count: 1,
-      dispute: Some(DisputeInfo { milestone: 0, until: t0 - hour }),
-    }
+  let base = EscrowDatumV2 {
+    ..with_arbiter(),
+    released_count: 1,
+    dispute: Some(DisputeInfo { milestone: 0, until: t0 - hour }),
+  }
   let own = escrow_in(base, 62_000_000)
-  let cont =
-    escrow_v2_output(
-      escrow_v2_policy(),
-      EscrowDatumV2 {
-        ..base,
-        dispute: Some(DisputeInfo { milestone: 1, until: t0 + hour }),
-      },
-      v2_utxo_value(escrow_v2_policy(), 62_000_000),
-    )
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    EscrowDatumV2 {
+      ..base,
+      dispute: Some(DisputeInfo { milestone: 1, until: t0 + hour }),
+    },
+    v2_utxo_value(escrow_v2_policy(), 62_000_000),
+  )
   validate_raise_dispute(
     escrow_v2_policy(),
     base,
@@ -169,12 +164,11 @@ test raise__rejects_outsider() {
   // The verifier is neither funder nor beneficiary.
   let datum = with_arbiter()
   let own = escrow_in(datum, 102_000_000)
-  let cont =
-    escrow_v2_output(
-      escrow_v2_policy(),
-      raised(datum),
-      v2_utxo_value(escrow_v2_policy(), 102_000_000),
-    )
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    raised(datum),
+    v2_utxo_value(escrow_v2_policy(), 102_000_000),
+  )
   !validate_raise_dispute(
     escrow_v2_policy(),
     datum,
@@ -189,15 +183,14 @@ test raise__rejects_wrong_until() {
   // Continuation claims a longer freeze than upper + dispute_window.
   let datum = with_arbiter()
   let own = escrow_in(datum, 102_000_000)
-  let cont =
-    escrow_v2_output(
-      escrow_v2_policy(),
-      EscrowDatumV2 {
-        ..datum,
-        dispute: Some(DisputeInfo { milestone: 0, until: t0 + 10 * hour }),
-      },
-      v2_utxo_value(escrow_v2_policy(), 102_000_000),
-    )
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    EscrowDatumV2 {
+      ..datum,
+      dispute: Some(DisputeInfo { milestone: 0, until: t0 + 10 * hour }),
+    },
+    v2_utxo_value(escrow_v2_policy(), 102_000_000),
+  )
   !validate_raise_dispute(
     escrow_v2_policy(),
     datum,
@@ -213,7 +206,7 @@ test raise__rejects_wrong_until() {
 fn resolve_tx(signer: ByteArray, outputs: List<Output>) -> Transaction {
   Transaction {
     ..placeholder,
-    outputs: outputs,
+    outputs,
     mint: burn_one(),
     extra_signatories: [signer],
   }
@@ -222,11 +215,10 @@ fn resolve_tx(signer: ByteArray, outputs: List<Output>) -> Transaction {
 test resolve__accepts_arbiter_split() {
   let datum = raised(with_arbiter())
   let own = escrow_in(datum, 102_000_000)
-  let outputs =
-    [
-      user_output(funder_address(), assets.from_lovelace(62_000_000)),
-      user_output(beneficiary_address(), assets.from_lovelace(40_000_000)),
-    ]
+  let outputs = [
+    user_output(funder_address(), assets.from_lovelace(62_000_000)),
+    user_output(beneficiary_address(), assets.from_lovelace(40_000_000)),
+  ]
   validate_resolve_dispute(
     escrow_v2_policy(),
     datum,
@@ -240,11 +232,10 @@ test resolve__accepts_arbiter_split() {
 test resolve__rejects_non_arbiter() {
   let datum = raised(with_arbiter())
   let own = escrow_in(datum, 102_000_000)
-  let outputs =
-    [
-      user_output(funder_address(), assets.from_lovelace(62_000_000)),
-      user_output(beneficiary_address(), assets.from_lovelace(40_000_000)),
-    ]
+  let outputs = [
+    user_output(funder_address(), assets.from_lovelace(62_000_000)),
+    user_output(beneficiary_address(), assets.from_lovelace(40_000_000)),
+  ]
   !validate_resolve_dispute(
     escrow_v2_policy(),
     datum,
@@ -260,11 +251,10 @@ test resolve__rejects_paying_third_party() {
   let datum = raised(with_arbiter())
   let own = escrow_in(datum, 102_000_000)
   let verifier_addr = addr.from_verification_key(verifier_pkh())
-  let outputs =
-    [
-      user_output(funder_address(), assets.from_lovelace(52_000_000)),
-      user_output(verifier_addr, assets.from_lovelace(50_000_000)),
-    ]
+  let outputs = [
+    user_output(funder_address(), assets.from_lovelace(52_000_000)),
+    user_output(verifier_addr, assets.from_lovelace(50_000_000)),
+  ]
   !validate_resolve_dispute(
     escrow_v2_policy(),
     datum,
@@ -278,7 +268,9 @@ test resolve__rejects_paying_third_party() {
 test resolve__rejects_without_dispute() fail {
   let datum = with_arbiter()
   let own = escrow_in(datum, 102_000_000)
-  let outputs = [user_output(funder_address(), assets.from_lovelace(102_000_000))]
+  let outputs = [
+    user_output(funder_address(), assets.from_lovelace(102_000_000)),
+  ]
   validate_resolve_dispute(
     escrow_v2_policy(),
     datum,
@@ -290,13 +282,11 @@ test resolve__rejects_without_dispute() fail {
 }
 
 test resolve__rejects_stale_dispute_from_prior_milestone() {
-  let datum =
-    EscrowDatumV2 {
-      ..raised(with_arbiter()),
-      released_count: 1,
-    }
+  let datum = EscrowDatumV2 { ..raised(with_arbiter()), released_count: 1 }
   let own = escrow_in(datum, 62_000_000)
-  let outputs = [user_output(funder_address(), assets.from_lovelace(62_000_000))]
+  let outputs = [
+    user_output(funder_address(), assets.from_lovelace(62_000_000)),
+  ]
   !validate_resolve_dispute(
     escrow_v2_policy(),
     datum,

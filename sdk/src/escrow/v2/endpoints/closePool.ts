@@ -53,10 +53,7 @@ export const unsignedClosePoolTxProgram = (
       .newTx()
       .collectFrom([poolUtxo], redeemer)
       .attach.SpendingValidator(poolVaultValidator.spendPool)
-      .mintAssets(
-        { [poolUnit]: -1n },
-        Data.to("BurnPool", PoolMintRedeemer),
-      )
+      .mintAssets({ [poolUnit]: -1n }, Data.to("BurnPool", PoolMintRedeemer))
       .attach.MintingPolicy(poolVaultValidator.mintPool);
 
     const withWitness = yield* applyPartyWitness(

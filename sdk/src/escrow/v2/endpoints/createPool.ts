@@ -24,7 +24,11 @@ import {
   PoolMintRedeemer,
   VaultDatum,
 } from "../types.js";
-import { escrowV2PolicyId, poolPolicyId, poolVaultValidator } from "../validators.js";
+import {
+  escrowV2PolicyId,
+  poolPolicyId,
+  poolVaultValidator,
+} from "../validators.js";
 import { escrowStateTokenName, poolVaultAddress } from "../utils.js";
 
 /**

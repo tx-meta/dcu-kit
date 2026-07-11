@@ -301,31 +301,31 @@ recoverable). `pool-allocate` requires it — the allocation transaction
 witnesses both the vault and the escrow scripts, which exceeds the 16 KB
 ceiling inline.
 
-| Script                 | Default wallet    | What it does                                                                                                             |
-| ---------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `escrow-v2-deploy`     | USER1             | One-time: deploys the v2 reference script; saves `scriptRefEscrowV2`.                                                   |
-| `escrow-v2-create`     | USER1 (funder)    | Opens an escrow: `BENEFICIARY`, `VERIFIER`, `MILESTONES="amt:+8m,…"`, `FUNDING_MODE`, `TIMEOUT_POLICY`, `GRACE_MINUTES`, optional `ARBITER`, `CO_BENEFICIARIES="name:bps"`, `USE_PROJECT=1`. |
-| `escrow-v2-contribute` | USER1 (funder)    | Tops up a PerMilestone escrow with `AMOUNT` lovelace.                                                                    |
-| `escrow-v2-release`    | verifier wallet   | Releases the current tranche (splits with co-beneficiaries). Final release burns the token and refunds the buffer.      |
-| `escrow-v2-timeout`    | anyone            | Cranks an overdue `ReleaseToBeneficiary` tranche — no party signature.                                                   |
-| `escrow-v2-reclaim`    | USER1 (funder)    | Takes back an overdue `RefundToFunder` escrow's remainder.                                                               |
-| `escrow-v2-abort`      | USER1 + `COSIGNER`| Mutual-consent early end with an explicit split (`BENEFICIARY_LOVELACE`).                                                |
-| `escrow-v2-evidence`   | USER2 (beneficiary)| Anchors a deliverable hash for a milestone (`EVIDENCE` text or `EVIDENCE_HASH`).                                        |
-| `escrow-v2-rotate`     | the rotating party| Self-rotation of one slot: `PARTY=funder\|beneficiary\|verifier\|arbiter\|co:N`, `NEW_PARTY=name\|addr`.                 |
-| `escrow-v2-amend`      | USER1 + `COSIGNER`| Consensual reschedule of the unreleased tail (`NEW_MILESTONES`); Upfront tops up / refunds in the same tx.               |
-| `escrow-v2-dispute`    | USER1             | Freezes the fund paths for the dispute window (`RAISED_BY=funder\|beneficiary`). Needs an arbiter.                       |
-| `escrow-v2-resolve`    | ADMIN (arbiter)   | Terminal split of the remainder between funder and beneficiary (`FUNDER_LOVELACE`).                                     |
-| `escrow-v2-inspect`    | —                 | Read-only: schedule, funding, evidence, dispute state, open action window.                                              |
-| `project-create`       | USER1 (owner)     | Mints the Project anchor NFT; escrows cite it via `USE_PROJECT=1`.                                                       |
-| `project-update`       | USER1 (owner)     | Dashboard read (live escrows citing the project) + title/status update.                                                  |
-| `project-close`        | USER1 (owner)     | Burns the anchor; citing escrows are unaffected.                                                                         |
-| `pool-create`          | USER1             | Opens the pooled commitment vault; `QUORUM` is the allocation authority.                                                 |
-| `pool-deposit`         | any contributor   | Commits `AMOUNT` as an individually-owned deposit (optional `LOCK_MINUTES`).                                             |
-| `pool-exit`            | the contributor   | Unilateral exit of one unallocated deposit — no quorum involvement.                                                      |
-| `pool-allocate`        | ADMIN (quorum)    | Ratified allocation: seeds a new escrow (`BENEFICIARY`, `MILESTONES`) or tops up `EXISTING_STATE_TOKEN`; remainder continues as the deposit. |
-| `pool-update`          | ADMIN (quorum)    | Charter edits + `NEW_QUORUM` rotation — the governance handoff.                                                          |
-| `pool-close`           | quorum            | Burns the pool anchor; remaining deposits stay exitable forever.                                                         |
-| `pool-inspect`         | —                 | Read-only: charter, quorum, and the live deposits ledger.                                                                |
+| Script                 | Default wallet      | What it does                                                                                                                                                                                 |
+| ---------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `escrow-v2-deploy`     | USER1               | One-time: deploys the v2 reference script; saves `scriptRefEscrowV2`.                                                                                                                        |
+| `escrow-v2-create`     | USER1 (funder)      | Opens an escrow: `BENEFICIARY`, `VERIFIER`, `MILESTONES="amt:+8m,…"`, `FUNDING_MODE`, `TIMEOUT_POLICY`, `GRACE_MINUTES`, optional `ARBITER`, `CO_BENEFICIARIES="name:bps"`, `USE_PROJECT=1`. |
+| `escrow-v2-contribute` | USER1 (funder)      | Tops up a PerMilestone escrow with `AMOUNT` lovelace.                                                                                                                                        |
+| `escrow-v2-release`    | verifier wallet     | Releases the current tranche (splits with co-beneficiaries). Final release burns the token and refunds the buffer.                                                                           |
+| `escrow-v2-timeout`    | anyone              | Cranks an overdue `ReleaseToBeneficiary` tranche — no party signature.                                                                                                                       |
+| `escrow-v2-reclaim`    | USER1 (funder)      | Takes back an overdue `RefundToFunder` escrow's remainder.                                                                                                                                   |
+| `escrow-v2-abort`      | USER1 + `COSIGNER`  | Mutual-consent early end with an explicit split (`BENEFICIARY_LOVELACE`).                                                                                                                    |
+| `escrow-v2-evidence`   | USER2 (beneficiary) | Anchors a deliverable hash for a milestone (`EVIDENCE` text or `EVIDENCE_HASH`).                                                                                                             |
+| `escrow-v2-rotate`     | the rotating party  | Self-rotation of one slot: `PARTY=funder\|beneficiary\|verifier\|arbiter\|co:N`, `NEW_PARTY=name\|addr`.                                                                                     |
+| `escrow-v2-amend`      | USER1 + `COSIGNER`  | Consensual reschedule of the unreleased tail (`NEW_MILESTONES`); Upfront tops up / refunds in the same tx.                                                                                   |
+| `escrow-v2-dispute`    | USER1               | Freezes the fund paths for the dispute window (`RAISED_BY=funder\|beneficiary`). Needs an arbiter.                                                                                           |
+| `escrow-v2-resolve`    | ADMIN (arbiter)     | Terminal split of the remainder between funder and beneficiary (`FUNDER_LOVELACE`).                                                                                                          |
+| `escrow-v2-inspect`    | —                   | Read-only: schedule, funding, evidence, dispute state, open action window.                                                                                                                   |
+| `project-create`       | USER1 (owner)       | Mints the Project anchor NFT; escrows cite it via `USE_PROJECT=1`.                                                                                                                           |
+| `project-update`       | USER1 (owner)       | Dashboard read (live escrows citing the project) + title/status update.                                                                                                                      |
+| `project-close`        | USER1 (owner)       | Burns the anchor; citing escrows are unaffected.                                                                                                                                             |
+| `pool-create`          | USER1               | Opens the pooled commitment vault; `QUORUM` is the allocation authority.                                                                                                                     |
+| `pool-deposit`         | any contributor     | Commits `AMOUNT` as an individually-owned deposit (optional `LOCK_MINUTES`).                                                                                                                 |
+| `pool-exit`            | the contributor     | Unilateral exit of one unallocated deposit — no quorum involvement.                                                                                                                          |
+| `pool-allocate`        | ADMIN (quorum)      | Ratified allocation: seeds a new escrow (`BENEFICIARY`, `MILESTONES`) or tops up `EXISTING_STATE_TOKEN`; remainder continues as the deposit.                                                 |
+| `pool-update`          | ADMIN (quorum)      | Charter edits + `NEW_QUORUM` rotation — the governance handoff.                                                                                                                              |
+| `pool-close`           | quorum              | Burns the pool anchor; remaining deposits stay exitable forever.                                                                                                                             |
+| `pool-inspect`         | —                   | Read-only: charter, quorum, and the live deposits ledger.                                                                                                                                    |
 
 ---
 

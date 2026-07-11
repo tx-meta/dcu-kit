@@ -153,8 +153,7 @@ export const cureBoundary = (datum: EscrowDatumV2): bigint => {
   const current = datum.milestones[Number(datum.released_count)];
   if (current === undefined) return 0n;
   const disputed =
-    datum.dispute !== null &&
-    datum.dispute.milestone === datum.released_count;
+    datum.dispute !== null && datum.dispute.milestone === datum.released_count;
   return (
     current.deadline + datum.grace + (disputed ? datum.dispute_window : 0n)
   );

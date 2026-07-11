@@ -74,62 +74,55 @@ test split_create__accepts_valid_shares() {
 }
 
 test split_create__rejects_shares_at_or_over_10000() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      co_beneficiaries: [
-        CoBeneficiary { address: co_a_address(), share_bps: 6_000 },
-        CoBeneficiary { address: co_b_address(), share_bps: 4_000 },
-      ],
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    co_beneficiaries: [
+      CoBeneficiary { address: co_a_address(), share_bps: 6_000 },
+      CoBeneficiary { address: co_b_address(), share_bps: 4_000 },
+    ],
+  }
   !create_ok(datum)
 }
 
 test split_create__rejects_zero_share() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      co_beneficiaries: [
-        CoBeneficiary { address: co_a_address(), share_bps: 0 },
-      ],
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    co_beneficiaries: [CoBeneficiary { address: co_a_address(), share_bps: 0 }],
+  }
   !create_ok(datum)
 }
 
 test split_create__rejects_duplicate_co_address() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      co_beneficiaries: [
-        CoBeneficiary { address: co_a_address(), share_bps: 1_000 },
-        CoBeneficiary { address: co_a_address(), share_bps: 1_000 },
-      ],
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    co_beneficiaries: [
+      CoBeneficiary { address: co_a_address(), share_bps: 1_000 },
+      CoBeneficiary { address: co_a_address(), share_bps: 1_000 },
+    ],
+  }
   !create_ok(datum)
 }
 
 test split_create__rejects_co_equal_to_primary() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      co_beneficiaries: [
-        CoBeneficiary { address: beneficiary_address(), share_bps: 1_000 },
-      ],
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    co_beneficiaries: [
+      CoBeneficiary { address: beneficiary_address(), share_bps: 1_000 },
+    ],
+  }
   !create_ok(datum)
 }
 
 test split_create__rejects_verifier_as_co_beneficiary() {
-  let datum =
-    EscrowDatumV2 {
-      ..test_v2_datum(),
-      co_beneficiaries: [
-        CoBeneficiary {
-          address: addr.from_verification_key(verifier_pkh()),
-          share_bps: 1_000,
-        },
-      ],
-    }
+  let datum = EscrowDatumV2 {
+    ..test_v2_datum(),
+    co_beneficiaries: [
+      CoBeneficiary {
+        address: addr.from_verification_key(verifier_pkh()),
+        share_bps: 1_000,
+      },
+    ],
+  }
   !create_ok(datum)
 }
 
@@ -137,13 +130,12 @@ test split_create__rejects_verifier_as_co_beneficiary() {
 fn split_release(outputs: List<Output>) -> Bool {
   let datum = split_datum()
   let own = escrow_in(datum, 102_000_000)
-  let tx =
-    Transaction {
-      ..placeholder,
-      outputs: outputs,
-      extra_signatories: [verifier_pkh()],
-      validity_range: range_before(t0 + day),
-    }
+  let tx = Transaction {
+    ..placeholder,
+    outputs,
+    extra_signatories: [verifier_pkh()],
+    validity_range: range_before(t0 + day),
+  }
   validate_release_v2(
     escrow_v2_policy(),
     datum,
@@ -213,24 +205,21 @@ test split_release__rejects_shorted_primary() {
 test split_rotate__accepts_co_self_rotation() {
   let datum = split_datum()
   let own = escrow_in(datum, 102_000_000)
-  let new_addr =
-    addr.from_verification_key(
-      #"cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33",
-    )
-  let rotated =
-    EscrowDatumV2 {
-      ..datum,
-      co_beneficiaries: [
-        CoBeneficiary { address: new_addr, share_bps: 2_000 },
-        CoBeneficiary { address: co_b_address(), share_bps: 1_000 },
-      ],
-    }
-  let cont =
-    escrow_v2_output(
-      escrow_v2_policy(),
-      rotated,
-      v2_utxo_value(escrow_v2_policy(), 102_000_000),
-    )
+  let new_addr = addr.from_verification_key(
+    #"cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33",
+  )
+  let rotated = EscrowDatumV2 {
+    ..datum,
+    co_beneficiaries: [
+      CoBeneficiary { address: new_addr, share_bps: 2_000 },
+      CoBeneficiary { address: co_b_address(), share_bps: 1_000 },
+    ],
+  }
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    rotated,
+    v2_utxo_value(escrow_v2_policy(), 102_000_000),
+  )
   validate_rotate_party(
     escrow_v2_policy(),
     datum,
@@ -250,24 +239,21 @@ test split_rotate__accepts_co_self_rotation() {
 test split_rotate__rejects_co_rotation_by_primary() {
   let datum = split_datum()
   let own = escrow_in(datum, 102_000_000)
-  let new_addr =
-    addr.from_verification_key(
-      #"cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33",
-    )
-  let rotated =
-    EscrowDatumV2 {
-      ..datum,
-      co_beneficiaries: [
-        CoBeneficiary { address: new_addr, share_bps: 2_000 },
-        CoBeneficiary { address: co_b_address(), share_bps: 1_000 },
-      ],
-    }
-  let cont =
-    escrow_v2_output(
-      escrow_v2_policy(),
-      rotated,
-      v2_utxo_value(escrow_v2_policy(), 102_000_000),
-    )
+  let new_addr = addr.from_verification_key(
+    #"cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33",
+  )
+  let rotated = EscrowDatumV2 {
+    ..datum,
+    co_beneficiaries: [
+      CoBeneficiary { address: new_addr, share_bps: 2_000 },
+      CoBeneficiary { address: co_b_address(), share_bps: 1_000 },
+    ],
+  }
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    rotated,
+    v2_utxo_value(escrow_v2_policy(), 102_000_000),
+  )
   !validate_rotate_party(
     escrow_v2_policy(),
     datum,
@@ -287,20 +273,18 @@ test split_rotate__rejects_co_rotation_by_primary() {
 test split_rotate__rejects_share_change_in_rotation() {
   let datum = split_datum()
   let own = escrow_in(datum, 102_000_000)
-  let rotated =
-    EscrowDatumV2 {
-      ..datum,
-      co_beneficiaries: [
-        CoBeneficiary { address: co_a_address(), share_bps: 5_000 },
-        CoBeneficiary { address: co_b_address(), share_bps: 1_000 },
-      ],
-    }
-  let cont =
-    escrow_v2_output(
-      escrow_v2_policy(),
-      rotated,
-      v2_utxo_value(escrow_v2_policy(), 102_000_000),
-    )
+  let rotated = EscrowDatumV2 {
+    ..datum,
+    co_beneficiaries: [
+      CoBeneficiary { address: co_a_address(), share_bps: 5_000 },
+      CoBeneficiary { address: co_b_address(), share_bps: 1_000 },
+    ],
+  }
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    rotated,
+    v2_utxo_value(escrow_v2_policy(), 102_000_000),
+  )
   !validate_rotate_party(
     escrow_v2_policy(),
     datum,
@@ -321,14 +305,15 @@ test split_release__single_beneficiary_unchanged() {
   // Empty co list reproduces exactly the old behavior.
   let datum = test_v2_datum()
   let own = escrow_in(datum, 102_000_000)
-  let cont =
-    escrow_v2_output(
-      escrow_v2_policy(),
-      EscrowDatumV2 { ..datum, released_count: 1 },
-      v2_utxo_value(escrow_v2_policy(), 62_000_000),
-    )
-  let outputs =
-    [cont, user_output(beneficiary_address(), assets.from_lovelace(40_000_000))]
+  let cont = escrow_v2_output(
+    escrow_v2_policy(),
+    EscrowDatumV2 { ..datum, released_count: 1 },
+    v2_utxo_value(escrow_v2_policy(), 62_000_000),
+  )
+  let outputs = [
+    cont,
+    user_output(beneficiary_address(), assets.from_lovelace(40_000_000)),
+  ]
   validate_release_v2(
     escrow_v2_policy(),
     datum,
@@ -340,7 +325,7 @@ test split_release__single_beneficiary_unchanged() {
     assets.zero,
     Transaction {
       ..placeholder,
-      outputs: outputs,
+      outputs,
       extra_signatories: [verifier_pkh()],
       validity_range: range_before(t0 + day),
     },

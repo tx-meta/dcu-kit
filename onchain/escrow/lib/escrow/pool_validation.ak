@@ -9,11 +9,10 @@ use escrow/credential.{credential_authorized, state_token_name}
 use escrow/types_pool.{PoolAnchor, PoolDatum, PoolDeposit, VaultDatum}
 
 fn credential_ok(cred: Credential, policy_id: PolicyId) -> Bool {
-  let hash_ok =
-    when cred is {
-      VerificationKey(h) -> bytearray.length(h) == 28
-      Script(h) -> bytearray.length(h) == 28
-    }
+  let hash_ok = when cred is {
+    VerificationKey(h) -> bytearray.length(h) == 28
+    Script(h) -> bytearray.length(h) == 28
+  }
   // [security]: an own-script quorum would make quorum-authorization vacuous.
   hash_ok && cred != Script(policy_id)
 }
@@ -119,14 +118,13 @@ pub fn validate_exit_deposit(
   locked_until: Option<Int>,
   tx: Transaction,
 ) -> Bool {
-  let lock_ok =
-    when locked_until is {
-      None -> True
-      Some(t) -> {
-        expect Finite(lower) = tx.validity_range.lower_bound.bound_type
-        lower > t
-      }
+  let lock_ok = when locked_until is {
+    None -> True
+    Some(t) -> {
+      expect Finite(lower) = tx.validity_range.lower_bound.bound_type
+      lower > t
     }
+  }
   and {
     credential_authorized(contributor.payment_credential, tx)?,
     lock_ok?,
@@ -163,52 +161,48 @@ pub fn validate_allocate(
     assets.tokens(esc_out.value, pool.escrow_target),
   )
   let in_value = own_input.output.value
-  let deadline_ok =
-    when pool.funding_deadline is {
-      None -> True
-      Some(d) -> {
-        expect Finite(upper) = tx.validity_range.upper_bound.bound_type
-        upper <= d
-      }
+  let deadline_ok = when pool.funding_deadline is {
+    None -> True
+    Some(d) -> {
+      expect Finite(upper) = tx.validity_range.upper_bound.bound_type
+      upper <= d
     }
+  }
   // Allocated = deposit minus (optional) continuation, in the pool's asset
   // AND in lovelace.
-  let (cont_l, cont_a, cont_ok) =
-    if continuation_index == 99 {
-      (0, 0, True)
-    } else {
-      expect Some(cont) = list.at(outputs, continuation_index)
-      expect InlineDatum(cont_raw) = cont.datum
-      (
-        assets.lovelace_of(cont.value),
-        assets.quantity_of(cont.value, pool.asset_policy, pool.asset_name),
-        and {
-          cont.address == own_input.output.address,
-          // The remainder stays the SAME contributor's deposit.
-          cont_raw == own_datum_raw,
-        },
-      )
-    }
+  let (cont_l, cont_a, cont_ok) = if continuation_index == 99 {
+    (0, 0, True)
+  } else {
+    expect Some(cont) = list.at(outputs, continuation_index)
+    expect InlineDatum(cont_raw) = cont.datum
+    (
+      assets.lovelace_of(cont.value),
+      assets.quantity_of(cont.value, pool.asset_policy, pool.asset_name),
+      and {
+        cont.address == own_input.output.address,
+        // The remainder stays the SAME contributor's deposit.
+        cont_raw == own_datum_raw,
+      },
+    )
+  }
   let alloc_l = assets.lovelace_of(in_value) - cont_l
-  let alloc_a =
-    assets.quantity_of(in_value, pool.asset_policy, pool.asset_name) - cont_a
+  let alloc_a = assets.quantity_of(in_value, pool.asset_policy, pool.asset_name) - cont_a
   // Escrow-side gain must cover the allocation — value cannot leak to anyone.
-  let (esc_in_l, esc_in_a) =
-    if escrow_input_index == 99 {
-      (0, 0)
-    } else {
-      expect Some(esc_in) = list.at(inputs, escrow_input_index)
-      expect
-        esc_in.output.address.payment_credential == Script(pool.escrow_target)
-      (
-        assets.lovelace_of(esc_in.output.value),
-        assets.quantity_of(
-          esc_in.output.value,
-          pool.asset_policy,
-          pool.asset_name,
-        ),
-      )
-    }
+  let (esc_in_l, esc_in_a) = if escrow_input_index == 99 {
+    (0, 0)
+  } else {
+    expect Some(esc_in) = list.at(inputs, escrow_input_index)
+    expect
+      esc_in.output.address.payment_credential == Script(pool.escrow_target)
+    (
+      assets.lovelace_of(esc_in.output.value),
+      assets.quantity_of(
+        esc_in.output.value,
+        pool.asset_policy,
+        pool.asset_name,
+      ),
+    )
+  }
   and {
     (pool_ref.output.address.payment_credential == Script(policy_id))?,
     (assets.quantity_of(pool_ref.output.value, policy_id, pool_id) == 1)?,
