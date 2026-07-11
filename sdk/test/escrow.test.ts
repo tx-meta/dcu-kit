@@ -5,6 +5,7 @@ import {
   CML,
   credentialToAddress,
   Emulator,
+  fromText,
   generateEmulatorAccount,
   generatePrivateKey,
   Lucid,
@@ -185,6 +186,90 @@ describe("escrow lifecycle (emulator)", () => {
         getEscrowStateProgram(ctx.lucid, { stateTokenName }),
       );
       expect(gone._tag).toBe("Left");
+    }),
+  );
+
+  it.effect("final release returns the min-ADA buffer to the funder", () =>
+    Effect.gen(function* () {
+      const ctx = yield* makeEscrowContext;
+      const stateTokenName = yield* createDefaultEscrow(ctx);
+
+      yield* releaseAsVerifier(ctx, stateTokenName);
+      yield* releaseAsVerifier(ctx, stateTokenName);
+
+      const lovelaceAt = (address: string) =>
+        Effect.promise(() => ctx.lucid.utxosAt(address)).pipe(
+          Effect.map((utxos) =>
+            utxos.reduce((sum, u) => sum + u.assets.lovelace, 0n),
+          ),
+        );
+      const funderBefore = yield* lovelaceAt(ctx.funder.address);
+      const verifierBefore = yield* lovelaceAt(ctx.verifier.address);
+
+      yield* releaseAsVerifier(ctx, stateTokenName);
+
+      // The escrow held final tranche + 2 ADA buffer; the buffer goes back to
+      // the funder, never into the verifier's change.
+      const funderAfter = yield* lovelaceAt(ctx.funder.address);
+      const verifierAfter = yield* lovelaceAt(ctx.verifier.address);
+      expect(funderAfter - funderBefore).toBe(2_000_000n);
+      expect(verifierAfter < verifierBefore).toBe(true);
+    }),
+  );
+
+  it.effect("native-token escrow: full lifecycle with a distinct verifier", () =>
+    Effect.gen(function* () {
+      const ctx = yield* makeEscrowContext;
+
+      // Dummy token under a 1-of-1 native policy on the funder key.
+      selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+      const mintPolicy = yield* buildMultisig(ctx.lucid, {
+        signers: [keyHash(ctx.funder.address)],
+        required: 1,
+      });
+      const unit = mintPolicy.policyHash + fromText("DUMMY");
+      const mintTx = yield* Effect.promise(() =>
+        ctx.lucid
+          .newTx()
+          .mintAssets({ [unit]: 100n })
+          .attach.MintingPolicy(mintPolicy.script)
+          .complete(),
+      );
+      yield* signAndSubmit(mintTx);
+      yield* advanceBlock(ctx.emulator);
+
+      const now = BigInt(ctx.emulator.now());
+      const { tx, stateTokenName } = yield* unsignedCreateEscrowTxProgram(
+        ctx.lucid,
+        {
+          beneficiaryAddress: ctx.beneficiary.address,
+          verifier: { type: "Key", hash: keyHash(ctx.verifier.address) },
+          milestones: [60n, 40n],
+          assetPolicy: mintPolicy.policyHash,
+          assetName: fromText("DUMMY"),
+          expiry: now + 3_600_000n,
+          currentTime: now,
+        },
+      );
+      yield* signAndSubmit(tx);
+      yield* advanceBlock(ctx.emulator);
+
+      yield* releaseAsVerifier(ctx, stateTokenName);
+      yield* releaseAsVerifier(ctx, stateTokenName);
+
+      // Final release burned the state token and delivered all 100 tokens.
+      const gone = yield* Effect.either(
+        getEscrowStateProgram(ctx.lucid, { stateTokenName }),
+      );
+      expect(gone._tag).toBe("Left");
+      const beneficiaryUtxos = yield* Effect.promise(() =>
+        ctx.lucid.utxosAt(ctx.beneficiary.address),
+      );
+      const tokensReceived = beneficiaryUtxos.reduce(
+        (sum, u) => sum + (u.assets[unit] ?? 0n),
+        0n,
+      );
+      expect(tokensReceived).toBe(100n);
     }),
   );
 
