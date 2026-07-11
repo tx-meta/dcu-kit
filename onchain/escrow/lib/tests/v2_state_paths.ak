@@ -15,8 +15,8 @@ use tests/common.{
   funder_pkh, range_before, seed_token_name, user_output, verifier_pkh,
 }
 use tests/common_v2.{
-  arbiter_pkh, day, escrow_v2_output, escrow_v2_policy, t0, test_milestones,
-  test_v2_datum, v2_utxo_value,
+  arbiter_pkh, day, escrow_v2_output, escrow_v2_policy, t0, test_v2_datum,
+  v2_utxo_value,
 }
 
 fn escrow_in(datum: EscrowDatumV2, lovelace: Int) {
@@ -291,6 +291,24 @@ test rotate__accepts_funder_self_rotation() {
     FunderParty,
     [cont],
     tx_signed([funder_pkh()], [cont]),
+  )
+}
+
+test rotate__accepts_beneficiary_assignment() {
+  // Assigning the receivable: the beneficiary rotates itself to the assignee.
+  let datum = test_v2_datum()
+  let own = escrow_in(datum, 102_000_000)
+  let assignee = addr.from_verification_key(new_key())
+  let cont =
+    cont_out(EscrowDatumV2 { ..datum, beneficiary: assignee }, 102_000_000)
+  validate_rotate_party(
+    escrow_v2_policy(),
+    datum,
+    own,
+    0,
+    BeneficiaryParty,
+    [cont],
+    tx_signed([beneficiary_pkh()], [cont]),
   )
 }
 
@@ -651,6 +669,28 @@ test amend__rejects_evidence_length_mismatch() {
     1,
     [cont, excess],
     co_signed([cont, excess]),
+  )
+}
+
+test amend__rejects_oversized_title() {
+  let datum = test_v2_datum()
+  let own = escrow_in(datum, 102_000_000)
+  let cont =
+    cont_out(
+      EscrowDatumV2 {
+        ..datum,
+        title: "this escrow title is deliberately far longer than the sixty-four byte cap",
+      },
+      102_000_000,
+    )
+  !validate_amend_milestones(
+    escrow_v2_policy(),
+    datum,
+    own,
+    0,
+    99,
+    [cont],
+    co_signed([cont]),
   )
 }
 

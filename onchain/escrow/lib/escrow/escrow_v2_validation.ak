@@ -7,8 +7,9 @@ use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use escrow/credential.{credential_authorized, state_token_name}
 use escrow/types_v2.{
-  ArbiterParty, BeneficiaryParty, EscrowDatumV2, FunderParty, Milestone, Party,
-  PerMilestone, RefundToFunder, ReleaseToBeneficiary, Upfront, VerifierParty,
+  ArbiterParty, BeneficiaryParty, DisputeInfo, EscrowDatumV2, FunderParty,
+  Milestone, Party, PerMilestone, RefundToFunder, ReleaseToBeneficiary, Upfront,
+  VerifierParty,
 }
 
 // Same schedule ceiling as v1 — keeps the longest release under budget and
@@ -19,6 +20,11 @@ pub const max_milestones: Int = 100
 // (ADA escrows: on top of the milestone total; native-token escrows: the whole
 // lovelace, funding the final payout's min-ADA).
 pub const min_ada_buffer: Int = 2_000_000
+
+// [security]: title is the only unbounded-by-type datum field a party writes —
+// cap it so no datum can grow past spendability (long descriptions belong
+// off-chain behind content_hash).
+pub const max_title_bytes: Int = 64
 
 // ── shared helpers ───────────────────────────────────────────────────────────
 
@@ -601,12 +607,115 @@ pub fn validate_amend_milestones(
     (list.take(cont_datum.evidence, rc) == list.take(datum.evidence, rc))?,
     milestones_valid(cont_datum.milestones)?,
     (list.length(cont_datum.evidence) == list.length(cont_datum.milestones))?,
+    (bytearray.length(cont_datum.title) <= max_title_bytes)?,
     (cont.address == own_input.output.address)?,
     exact_state_token(cont.value, policy_id, state_name)?,
     continuation_policies_ok(cont.value, policy_id, datum.asset_policy)?,
     // [spec 3.2]: the Upfront guarantee never has a gap through an amendment.
     funding_ok(cont_datum, cont.value)?,
     exit_ok,
+  }
+}
+
+// ── dispute paths ────────────────────────────────────────────────────────────
+
+// [spec 3.2 RaiseDispute]: funder or beneficiary freezes the fund paths for
+// dispute_window. One dispute per milestone, maximum — bounds freeze-griefing.
+pub fn validate_raise_dispute(
+  policy_id: PolicyId,
+  datum: EscrowDatumV2,
+  own_input: Input,
+  continuation_index: Int,
+  outputs: List<Output>,
+  tx: Transaction,
+) -> Bool {
+  // [spec 3.2]: no arbiter, no dispute path.
+  expect Some(_) = datum.arbiter
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
+  expect Some(cont) = list.at(outputs, continuation_index)
+  expect InlineDatum(raw) = cont.datum
+  expect cont_datum: EscrowDatumV2 = raw
+  // [spec 3.2]: until is anchored at the tx's pinned upper bound.
+  expect Finite(upper) = tx.validity_range.upper_bound.bound_type
+  let fresh =
+    when datum.dispute is {
+      None -> True
+      Some(d) -> d.milestone < datum.released_count
+    }
+  let expected =
+    EscrowDatumV2 {
+      ..datum,
+      dispute: Some(
+        DisputeInfo {
+          milestone: datum.released_count,
+          until: upper + datum.dispute_window,
+        },
+      ),
+    }
+  and {
+    fresh?,
+    or {
+      credential_authorized(datum.funder.payment_credential, tx),
+      credential_authorized(datum.beneficiary.payment_credential, tx),
+    }?,
+    (cont.address == own_input.output.address)?,
+    exact_state_token(cont.value, policy_id, state_name)?,
+    (cont_datum == expected)?,
+    (cont.value == own_input.output.value)?,
+  }
+}
+
+// [spec 3.2 ResolveDispute]: arbiter-signed terminal split. The whole remainder
+// may go ONLY to the funder's and beneficiary's addresses — the arbiter can
+// never pay itself or a third party. Resolvable while the dispute marker is on
+// the current milestone, even after the freeze lapses.
+pub fn validate_resolve_dispute(
+  policy_id: PolicyId,
+  datum: EscrowDatumV2,
+  own_input: Input,
+  outputs: List<Output>,
+  mint: Value,
+  tx: Transaction,
+) -> Bool {
+  expect Some(arbiter) = datum.arbiter
+  expect Some(d) = datum.dispute
+  expect [Pair(state_name, 1)] = dict.to_pairs(
+    assets.tokens(own_input.output.value, policy_id),
+  )
+  let in_value = own_input.output.value
+  // Sum everything the tx pays to the two economic parties.
+  let (party_lovelace, party_asset) =
+    list.foldl(
+      outputs,
+      (0, 0),
+      fn(out, acc) {
+        let (l, a) = acc
+        if out.address == datum.funder || out.address == datum.beneficiary {
+          (
+            l + assets.lovelace_of(out.value),
+            a + assets.quantity_of(
+              out.value,
+              datum.asset_policy,
+              datum.asset_name,
+            ),
+          )
+        } else {
+          acc
+        }
+      },
+    )
+  and {
+    credential_authorized(arbiter, tx)?,
+    (d.milestone == datum.released_count)?,
+    (party_lovelace >= assets.lovelace_of(in_value))?,
+    (party_asset >= assets.quantity_of(
+      in_value,
+      datum.asset_policy,
+      datum.asset_name,
+    ))?,
+    (assets.quantity_of(mint, policy_id, state_name) == -1)?,
   }
 }
 
@@ -647,6 +756,7 @@ pub fn validate_create_escrow_v2(
     (datum.dispute == None)?,
     (list.length(datum.evidence) == list.length(datum.milestones))?,
     list.all(datum.evidence, fn(e) { e == None })?,
+    (bytearray.length(datum.title) <= max_title_bytes)?,
     party_guardrails_ok(datum, policy_id)?,
     funding_ok(datum, out.value)?,
   }

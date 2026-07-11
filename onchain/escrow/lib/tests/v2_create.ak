@@ -164,6 +164,15 @@ test create_v2__rejects_prefilled_evidence() {
   !create_ok(datum, 102_000_000)
 }
 
+test create_v2__rejects_oversized_title() {
+  let datum =
+    EscrowDatumV2 {
+      ..test_v2_datum(),
+      title: "this escrow title is deliberately far longer than the sixty-four byte cap",
+    }
+  !create_ok(datum, 102_000_000)
+}
+
 test create_v2__rejects_negative_grace() {
   let datum = EscrowDatumV2 { ..test_v2_datum(), grace: -1 }
   !create_ok(datum, 102_000_000)
