@@ -98,21 +98,21 @@ freeze + terminal split, and a Project anchor that groups escrows
 All parties are passed as plain bech32 addresses (script callers may pass
 `{ type, hash }`); no UI should ever ask a person for a credential or key.
 
-| Function (v2)      | Description                                            |
-| ------------------ | ------------------------------------------------------ |
-| `createEscrow`     | Lock funds against a deadline-bearing milestone schedule |
-| `releaseMilestone` | Verifier approves the next tranche                     |
-| `timeoutRelease`   | Crank an overdue tranche (auto-release escrows)        |
-| `reclaimEscrow`    | Funder recovers an overdue escrow (refund escrows)     |
-| `contribute`       | Fund-as-you-go top-up (`PerMilestone`)                 |
-| `submitEvidence`   | Beneficiary anchors a deliverable hash                 |
-| `rotateParty`      | A party replaces its own credential                    |
-| `amendMilestones`  | Funder + beneficiary reshape unreleased milestones     |
-| `raiseDispute`     | Freeze fund paths for the arbiter                      |
-| `resolveDispute`   | Arbiter's terminal split between the parties           |
-| `abortEscrow`      | Mutual-consent early exit                              |
-| `createProject` / `updateProject` / `closeProject` | Project anchor lifecycle |
-| `getEscrowState` / `getProjectState` / `getProjectEscrows` | Read-only queries |
+| Function (v2)                                              | Description                                              |
+| ---------------------------------------------------------- | -------------------------------------------------------- |
+| `createEscrow`                                             | Lock funds against a deadline-bearing milestone schedule |
+| `releaseMilestone`                                         | Verifier approves the next tranche                       |
+| `timeoutRelease`                                           | Crank an overdue tranche (auto-release escrows)          |
+| `reclaimEscrow`                                            | Funder recovers an overdue escrow (refund escrows)       |
+| `contribute`                                               | Fund-as-you-go top-up (`PerMilestone`)                   |
+| `submitEvidence`                                           | Beneficiary anchors a deliverable hash                   |
+| `rotateParty`                                              | A party replaces its own credential                      |
+| `amendMilestones`                                          | Funder + beneficiary reshape unreleased milestones       |
+| `raiseDispute`                                             | Freeze fund paths for the arbiter                        |
+| `resolveDispute`                                           | Arbiter's terminal split between the parties             |
+| `abortEscrow`                                              | Mutual-consent early exit                                |
+| `createProject` / `updateProject` / `closeProject`         | Project anchor lifecycle                                 |
+| `getEscrowState` / `getProjectState` / `getProjectEscrows` | Read-only queries                                        |
 
 Grace guidance: strict supplier delivery 3–7 days; professional services 14 days
 (the default); construction and grant reporting 30 days. Grace covers coordination
