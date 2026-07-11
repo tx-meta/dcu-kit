@@ -603,6 +603,92 @@ describe("escrow v2 lifecycle (emulator)", () => {
       }),
   );
 
+  it.effect(
+    "pool vault: a whole deposit tops up an existing quorum-funded escrow",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const { tx: poolTx, poolTokenName } =
+          yield* unsignedCreatePoolTxProgram(ctx.lucid, {
+            title: "top-up pool",
+            quorum: ctx.arbiter.address,
+          });
+        yield* signAndSubmit(poolTx);
+        yield* advanceBlock(ctx.emulator);
+
+        const dep = yield* unsignedDepositToPoolTxProgram(ctx.lucid, {
+          poolTokenName,
+          amount: 30_000_000n,
+        });
+        yield* signAndSubmit(dep);
+        yield* advanceBlock(ctx.emulator);
+
+        // The quorum opens the receiving escrow itself: PerMilestone, funded
+        // by allocations rather than a wallet.
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.arbiter.privateKey);
+        const now = BigInt(ctx.emulator.now());
+        const { tx: escTx, stateTokenName } =
+          yield* unsignedCreateEscrowV2TxProgram(ctx.lucid, {
+            beneficiaryAddress: ctx.beneficiary.address,
+            verifier: ctx.verifier.address,
+            milestones: [{ amount: 30_000_000n, deadline: now + 2n * HOUR }],
+            fundingMode: "PerMilestone",
+            timeoutPolicy: "RefundToFunder",
+            title: "portfolio company B",
+            currentTime: now,
+          });
+        yield* signAndSubmit(escTx);
+        yield* advanceBlock(ctx.emulator);
+
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const refDeploy = yield* Effect.promise(() =>
+          ctx.lucid
+            .newTx()
+            .pay.ToAddressWithData(
+              ctx.funder.address,
+              undefined,
+              { lovelace: 20_000_000n },
+              escrowV2Validator.spendEscrow,
+            )
+            .complete(),
+        );
+        yield* signAndSubmit(refDeploy);
+        yield* advanceBlock(ctx.emulator);
+        const escrowScriptRef = (yield* Effect.promise(() =>
+          ctx.lucid.utxosAt(ctx.funder.address),
+        )).find((u) => u.scriptRef);
+        expect(escrowScriptRef).toBeDefined();
+
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.arbiter.privateKey);
+        const { tx: allocTx } = yield* unsignedAllocateToEscrowTxProgram(
+          ctx.lucid,
+          {
+            poolTokenName,
+            existingStateTokenName: stateTokenName,
+            escrowScriptRef,
+            currentTime: BigInt(ctx.emulator.now()),
+          },
+        );
+        yield* signAndSubmit(allocTx);
+        yield* advanceBlock(ctx.emulator);
+
+        const escrow = yield* getEscrowStateProgram(ctx.lucid, {
+          stateTokenName,
+          currentTime: BigInt(ctx.emulator.now()),
+        });
+        expect(escrow.lockedBalance >= 32_000_000n).toBe(true);
+        expect(escrow.nextTrancheFunded).toBe(true);
+        const deposits = yield* getPoolDepositsProgram(ctx.lucid, {
+          poolTokenName,
+        });
+        expect(deposits.length).toBe(0);
+
+        // The topped-up escrow is live end to end.
+        yield* releaseAsVerifier(ctx, stateTokenName);
+      }),
+  );
+
   it.effect("project: anchor lifecycle and the cap-table query", () =>
     Effect.gen(function* () {
       const ctx = yield* makeContext;

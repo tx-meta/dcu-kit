@@ -115,6 +115,16 @@ const findDeposit = (
     return { utxo: best.utxo, raw: best.raw };
   });
 
+// Reference inputs are serialized as a SORTED set (by tx hash bytes, then
+// output index), so the pool anchor's position among them depends on how its
+// outref sorts against the escrow script-ref UTxO — never hardcode it.
+const sortedRefIndexOf = (target: UTxO, refs: UTxO[]): bigint => {
+  const key = (u: UTxO) =>
+    `${u.txHash.toLowerCase()}#${u.outputIndex.toString().padStart(10, "0")}`;
+  const sorted = [...refs].sort((a, b) => (key(a) < key(b) ? -1 : 1));
+  return BigInt(sorted.findIndex((u) => key(u) === key(target)));
+};
+
 export const unsignedAllocateToEscrowTxProgram = (
   lucid: LucidEvolution,
   config: AllocateToEscrowConfig,
@@ -161,6 +171,10 @@ export const unsignedAllocateToEscrowTxProgram = (
       config.poolTokenName,
       poolVaultAddress(network),
     );
+    const poolRefIndex = sortedRefIndexOf(
+      poolUtxo,
+      config.escrowScriptRef ? [poolUtxo, config.escrowScriptRef] : [poolUtxo],
+    );
     const quorumAddress =
       "VerificationKey" in pool.quorum
         ? credentialToAddress(network, {
@@ -198,7 +212,7 @@ export const unsignedAllocateToEscrowTxProgram = (
             {
               AllocateToEscrow: {
                 deposit_input_index: ix[0],
-                pool_ref_index: 0n,
+                pool_ref_index: poolRefIndex,
                 escrow_output_index: 0n,
                 escrow_input_index: 99n,
                 continuation_index: hasContinuation ? 1n : 99n,
@@ -310,7 +324,7 @@ export const unsignedAllocateToEscrowTxProgram = (
           {
             AllocateToEscrow: {
               deposit_input_index: ix[0],
-              pool_ref_index: 0n,
+              pool_ref_index: poolRefIndex,
               escrow_output_index: 0n,
               escrow_input_index: ix[1],
               continuation_index: 99n,
