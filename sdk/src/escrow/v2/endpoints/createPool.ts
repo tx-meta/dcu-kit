@@ -73,7 +73,11 @@ export const unsignedCreatePoolTxProgram = (
       );
     }
     const walletAddress = yield* getWalletAddress(lucid);
-    const utxos = sortUtxos(yield* getWalletUtxos(lucid));
+    // Reference-script UTxOs are never seeds — spending one as the one-shot
+    // seed input destroys the deployed script for every future transaction.
+    const utxos = sortUtxos(yield* getWalletUtxos(lucid)).filter(
+      (u) => !u.scriptRef,
+    );
     const seed = utxos[0];
     if (!seed) {
       return yield* Effect.fail(
