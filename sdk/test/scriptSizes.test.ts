@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import roscaBlueprint from "../src/core/plutus.json" with { type: "json" };
 import escrowBlueprint from "../src/escrow/plutus.json" with { type: "json" };
+import savingsBlueprint from "../src/savings/plutus.json" with { type: "json" };
 import { MAX_REF_SCRIPT_BYTES } from "../src/admin/deployScripts.js";
 
 // Permanent tripwire for the class of bug that blocked R4: a compiled validator
@@ -35,6 +36,16 @@ describe("compiled validator sizes", () => {
 
   it("every escrow validator is within the deployable-ref-script ceiling", () => {
     expect(oversized(escrowBlueprint as { validators: Validator[] })).toEqual(
+      [],
+    );
+  });
+
+  // The savings-credit validator sits at ~15.6KB — 97% of the ceiling. This
+  // guard is what turns the next size regression into a loud test failure
+  // instead of a blocked deploy; the known remedy is a withdraw-zero family
+  // split (the treasury precedent).
+  it("every savings validator is within the deployable-ref-script ceiling", () => {
+    expect(oversized(savingsBlueprint as { validators: Validator[] })).toEqual(
       [],
     );
   });

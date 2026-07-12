@@ -28,7 +28,7 @@ import {
   logError,
   selectEnvWallet,
 } from "./context.js";
-import { saveState } from "./state.js";
+import { loadState, saveState } from "./state.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -40,6 +40,10 @@ async function main() {
   }
   await selectEnvWallet(lucid, "USER1");
 
+  const state = loadState();
+  const savingsRef = state.scriptRefSavings
+    ? (await lucid.utxosByOutRef([state.scriptRefSavings]))[0]
+    : undefined;
   const title = process.env.TITLE ?? "Preprod sweep savings fund";
   const cycleEnd = process.env.CYCLE_END_MINUTES
     ? BigInt(Date.now() + Number(process.env.CYCLE_END_MINUTES) * 60_000)
@@ -47,6 +51,7 @@ async function main() {
 
   console.log(`Creating savings fund "${title}"`);
   const { tx, fundTokenName } = await createFund(lucid, {
+    scriptRef: savingsRef,
     title,
     shareValue: BigInt(process.env.SHARE_VALUE ?? 1_000_000),
     minSharesPerDeposit: BigInt(process.env.MIN_SHARES ?? 1),

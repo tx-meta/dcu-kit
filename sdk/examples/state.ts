@@ -73,9 +73,12 @@ export type ExampleState = {
   poolTokenName?: string; // pool anchor minted by pool-create
   poolEscrowStateTokenName?: string; // escrow seeded by pool-allocate
 
-  // Savings module (@tx-meta/dcu-kit/savings — primitive #7, standalone
-  // family). One fund at a time in the sweep; member suffixes per wallet.
+  // Savings module (@tx-meta/dcu-kit/savings — primitives #7 + #8,
+  // standalone family). One fund at a time in the sweep; member suffixes per
+  // wallet. The ~15.6KB validator must ride as a reference script.
+  scriptRefSavings?: ScriptRefOutRef;
   savingsFundTokenName?: string;
+  savingsLoanTokenName?: string;
   savingsMemberSuffix?: string; // USER1
   savingsMemberSuffixUser2?: string; // USER2
   savingsMemberSuffixAdmin?: string; // ADMIN

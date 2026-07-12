@@ -34,11 +34,15 @@ async function main() {
   await selectEnvWallet(lucid, "USER1");
 
   const state = loadState();
+  const savingsRef = state.scriptRefSavings
+    ? (await lucid.utxosByOutRef([state.scriptRefSavings]))[0]
+    : undefined;
   if (!state.savingsFundTokenName) {
     throw new Error("No savingsFundTokenName in state.json.");
   }
 
   const tx = await closeFund(lucid, {
+    scriptRef: savingsRef,
     fundTokenName: state.savingsFundTokenName,
     ...(process.env.DESTINATION
       ? { destination: process.env.DESTINATION }

@@ -33,12 +33,18 @@ async function main() {
   const wallet = await selectEnvWallet(lucid, "USER1");
 
   const state = loadState();
+  const savingsRef = state.scriptRefSavings
+    ? (await lucid.utxosByOutRef([state.scriptRefSavings]))[0]
+    : undefined;
   const memberTokenSuffix = state[savingsSuffixKey(wallet)];
   if (!memberTokenSuffix) {
     throw new Error(`No savings member suffix for ${wallet} in state.json.`);
   }
 
-  const tx = await exitFund(lucid, { memberTokenSuffix }).unsafeRun();
+  const tx = await exitFund(lucid, {
+    scriptRef: savingsRef,
+    memberTokenSuffix,
+  }).unsafeRun();
 
   const signed = await tx.sign.withWallet().complete();
   const txHash = await signed.submit();

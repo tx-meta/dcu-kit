@@ -35,11 +35,15 @@ async function main() {
   await selectEnvWallet(lucid, "USER1");
 
   const state = loadState();
+  const savingsRef = state.scriptRefSavings
+    ? (await lucid.utxosByOutRef([state.scriptRefSavings]))[0]
+    : undefined;
   if (!state.savingsFundTokenName) {
     throw new Error("Run savings-create first.");
   }
 
   const tx = await updateFund(lucid, {
+    scriptRef: savingsRef,
     fundTokenName: state.savingsFundTokenName,
     ...(process.env.TITLE ? { title: process.env.TITLE } : {}),
     ...(process.env.MIN_SHARES

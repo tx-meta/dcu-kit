@@ -1,25 +1,26 @@
 /**
- * Savings Close Cycle Example
+ * Savings Loan Write-Off Example
  *
- * The quorum freezes the share-out snapshot: everything in the vault except
- * the social fund (and, for ADA funds, the anchor's 2 ADA protocol buffer)
- * becomes the distributable pot — EXACTLY, on-chain. Freezing moves no
- * value; members then claim independently with savings-claim.
+ * The quorum closes a Defaulted loan: the borrower's shares are seized up
+ * to the outstanding amount, the remainder is socialized (it shrinks the
+ * next share-out pot), and the record burns — leaving the permanent
+ * Defaulted history as the standing signal. No value moves out of the
+ * vault.
  *
  * Wallet selection: ACTIVE_WALLET must satisfy the quorum credential.
  *
  * Usage:
- *   pnpm run savings-close-cycle
+ *   pnpm run savings-loan-writeoff
  */
 
-import { closeCycle } from "@tx-meta/dcu-kit/savings";
+import { writeOffLoan } from "@tx-meta/dcu-kit/savings";
 import {
   makeLucid,
   cexplorerTxUrl,
   logError,
   selectEnvWallet,
 } from "./context.js";
-import { loadState } from "./state.js";
+import { clearState, loadState } from "./state.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -35,13 +36,16 @@ async function main() {
   const savingsRef = state.scriptRefSavings
     ? (await lucid.utxosByOutRef([state.scriptRefSavings]))[0]
     : undefined;
-  if (!state.savingsFundTokenName) {
-    throw new Error("Run savings-create first.");
+  const fundTokenName = state.savingsFundTokenName;
+  const loanTokenName = state.savingsLoanTokenName;
+  if (!fundTokenName || !loanTokenName) {
+    throw new Error("No fund/loan token names in state.json.");
   }
 
-  const tx = await closeCycle(lucid, {
+  const tx = await writeOffLoan(lucid, {
     scriptRef: savingsRef,
-    fundTokenName: state.savingsFundTokenName,
+    fundTokenName,
+    loanTokenName,
   }).unsafeRun();
 
   const signed = await tx.sign.withWallet().complete();
@@ -49,7 +53,9 @@ async function main() {
   console.log("Transaction submitted. Hash:", txHash);
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
   await lucid.awaitTx(txHash);
-  console.log("Cycle closed — members claim with savings-claim.");
+
+  clearState(["savingsLoanTokenName"]);
+  console.log("Loan written off — shares seized, remainder socialized.");
 }
 
 main().catch((e) => {

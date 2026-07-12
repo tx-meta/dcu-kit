@@ -36,11 +36,15 @@ async function main() {
   await selectEnvWallet(lucid, "USER1");
 
   const state = loadState();
+  const savingsRef = state.scriptRefSavings
+    ? (await lucid.utxosByOutRef([state.scriptRefSavings]))[0]
+    : undefined;
   if (!state.savingsFundTokenName) {
     throw new Error("Run savings-create first.");
   }
 
   const tx = await socialPayout(lucid, {
+    scriptRef: savingsRef,
     fundTokenName: state.savingsFundTokenName,
     amount: BigInt(process.env.AMOUNT ?? 1_000_000),
     destination: process.env.DESTINATION ?? (await lucid.wallet().address()),

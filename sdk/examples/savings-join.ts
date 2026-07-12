@@ -37,6 +37,9 @@ async function main() {
   const wallet = await selectEnvWallet(lucid, "USER1");
 
   const state = loadState();
+  const savingsRef = state.scriptRefSavings
+    ? (await lucid.utxosByOutRef([state.scriptRefSavings]))[0]
+    : undefined;
   if (!state.savingsFundTokenName) {
     throw new Error(
       "No savingsFundTokenName in state.json — run savings-create first.",
@@ -45,6 +48,7 @@ async function main() {
 
   console.log(`${wallet} joining fund ${state.savingsFundTokenName}`);
   const { tx, memberTokenSuffix } = await joinFund(lucid, {
+    scriptRef: savingsRef,
     fundTokenName: state.savingsFundTokenName,
     consent: process.env.CONSENT === "true",
   }).unsafeRun();

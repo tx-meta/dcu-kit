@@ -1,18 +1,18 @@
 /**
- * Savings Close Cycle Example
+ * Savings Loan Arrears Example
  *
- * The quorum freezes the share-out snapshot: everything in the vault except
- * the social fund (and, for ADA funds, the anchor's 2 ADA protocol buffer)
- * becomes the distributable pot — EXACTLY, on-chain. Freezing moves no
- * value; members then claim independently with savings-claim.
+ * Advances an overdue loan one status step: Current -> Late past the due
+ * date, Late -> Defaulted past due + grace. Permissionless — ANY wallet
+ * can crank, so the default record never depends on the quorum. Only the
+ * status changes; the borrower can still repay afterwards.
  *
- * Wallet selection: ACTIVE_WALLET must satisfy the quorum credential.
+ * Wallet selection: ACTIVE_WALLET (any funded wallet).
  *
  * Usage:
- *   pnpm run savings-close-cycle
+ *   pnpm run savings-loan-arrears
  */
 
-import { closeCycle } from "@tx-meta/dcu-kit/savings";
+import { markArrears } from "@tx-meta/dcu-kit/savings";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -35,13 +35,13 @@ async function main() {
   const savingsRef = state.scriptRefSavings
     ? (await lucid.utxosByOutRef([state.scriptRefSavings]))[0]
     : undefined;
-  if (!state.savingsFundTokenName) {
-    throw new Error("Run savings-create first.");
+  if (!state.savingsLoanTokenName) {
+    throw new Error("No savingsLoanTokenName in state.json.");
   }
 
-  const tx = await closeCycle(lucid, {
+  const tx = await markArrears(lucid, {
     scriptRef: savingsRef,
-    fundTokenName: state.savingsFundTokenName,
+    loanTokenName: state.savingsLoanTokenName,
   }).unsafeRun();
 
   const signed = await tx.sign.withWallet().complete();
@@ -49,7 +49,7 @@ async function main() {
   console.log("Transaction submitted. Hash:", txHash);
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
   await lucid.awaitTx(txHash);
-  console.log("Cycle closed — members claim with savings-claim.");
+  console.log("Loan status advanced one arrears step.");
 }
 
 main().catch((e) => {

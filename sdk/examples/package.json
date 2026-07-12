@@ -80,7 +80,12 @@
     "savings-claim": "pnpm run build && node dist/savings-claim.js",
     "savings-exit": "pnpm run build && node dist/savings-exit.js",
     "savings-close-fund": "pnpm run build && node dist/savings-close-fund.js",
-    "savings-inspect": "pnpm run build && node dist/savings-inspect.js"
+    "savings-inspect": "pnpm run build && node dist/savings-inspect.js",
+    "savings-deploy": "pnpm run build && node dist/savings-deploy.js",
+    "savings-loan-disburse": "pnpm run build && node dist/savings-loan-disburse.js",
+    "savings-loan-repay": "pnpm run build && node dist/savings-loan-repay.js",
+    "savings-loan-arrears": "pnpm run build && node dist/savings-loan-arrears.js",
+    "savings-loan-writeoff": "pnpm run build && node dist/savings-loan-writeoff.js"
   },
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.31",

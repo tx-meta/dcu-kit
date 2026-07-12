@@ -34,6 +34,9 @@ async function main() {
   const wallet = await selectEnvWallet(lucid, "USER1");
 
   const state = loadState();
+  const savingsRef = state.scriptRefSavings
+    ? (await lucid.utxosByOutRef([state.scriptRefSavings]))[0]
+    : undefined;
   const fundTokenName = state.savingsFundTokenName;
   const memberTokenSuffix = state[savingsSuffixKey(wallet)];
   if (!fundTokenName || !memberTokenSuffix) {
@@ -41,6 +44,7 @@ async function main() {
   }
 
   const tx = await withdrawSavings(lucid, {
+    scriptRef: savingsRef,
     fundTokenName,
     memberTokenSuffix,
     units: BigInt(process.env.UNITS ?? 1),
