@@ -11,5 +11,9 @@ export * from "./endpoints/openProposal.js";
 export * from "./endpoints/castVote.js";
 export * from "./endpoints/finalizeProposal.js";
 export * from "./endpoints/executeDecision.js";
-// endpoints below are wired incrementally (authorize, expire, updateCharter)
-// + queries.
+export * from "./endpoints/authorizeAction.js";
+export * from "./endpoints/expireProposal.js";
+export * from "./endpoints/updateCharter.js";
+
+export * from "./queries/getGovernanceState.js";
+export * from "./queries/getProposals.js";

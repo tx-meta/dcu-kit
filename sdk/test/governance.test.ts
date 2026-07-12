@@ -18,6 +18,10 @@ import { unsignedOpenProposalTxProgram } from "../src/governance/endpoints/openP
 import { unsignedCastVoteTxProgram } from "../src/governance/endpoints/castVote.js";
 import { unsignedFinalizeProposalTxProgram } from "../src/governance/endpoints/finalizeProposal.js";
 import { unsignedExecuteDecisionTxProgram } from "../src/governance/endpoints/executeDecision.js";
+import { unsignedAuthorizeActionTxProgram } from "../src/governance/endpoints/authorizeAction.js";
+import { unsignedUpdateCharterTxProgram } from "../src/governance/endpoints/updateCharter.js";
+import { unsignedExpireProposalTxProgram } from "../src/governance/endpoints/expireProposal.js";
+import { getProposalsProgram } from "../src/governance/queries/getProposals.js";
 import {
   decisionTokenName,
   gateAddress,
@@ -238,6 +242,85 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
           (u) => (u.assets[decisionUnit] ?? 0n) > 0n,
         );
         expect(decision).toBeDefined();
+
+        // Authorize: spend the decision at the gate and burn it (one-shot).
+        const authTx = yield* unsignedAuthorizeActionTxProgram(lucid, {
+          instance,
+          proposalId,
+        });
+        yield* signAndSubmit(authTx);
+        yield* advanceBlock(ctx.emulator, 2);
+
+        const gateAfter = yield* Effect.promise(() =>
+          lucid.utxosAt(gateAddress(network, instance)),
+        );
+        const stillThere = gateAfter.find(
+          (u) => (u.assets[decisionUnit] ?? 0n) > 0n,
+        );
+        expect(stillThere).toBeUndefined();
+      }),
+  );
+
+  it.effect(
+    "updateCharter amends mutable fields; expireProposal retires a proposal",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const { lucid } = ctx;
+        selectWalletFromSeed(lucid, ctx.creator.seedPhrase);
+
+        const { tx: initTx, instance } = yield* unsignedInitGovernanceTxProgram(
+          lucid,
+          {
+            title: "Chama",
+            memberPolicy: "aa".repeat(28),
+            governedTargets: [TARGET],
+            quorum: 2n,
+            threshold: 5000n,
+          },
+        );
+        yield* signAndSubmit(initTx);
+        yield* advanceBlock(ctx.emulator, 2);
+
+        // Amend the charter: raise the default quorum, keep hashes immutable.
+        const upTx = yield* unsignedUpdateCharterTxProgram(lucid, {
+          instance,
+          quorum: 5n,
+        });
+        yield* signAndSubmit(upTx);
+        yield* advanceBlock(ctx.emulator, 2);
+        const { anchor } = yield* resolveAnchor(lucid, instance);
+        expect(anchor.default_quorum).toBe(5n);
+        expect(anchor.gate_hash).toBe(instance.gateHash);
+
+        // Open then expire a proposal — the Proposal State NFT is burned.
+        const regTx = yield* unsignedRegisterVotingStakeTxProgram(
+          lucid,
+          instance,
+        );
+        yield* signAndSubmit(regTx);
+        yield* advanceBlock(ctx.emulator, 2);
+        const { tx: openTx, proposalId } = yield* unsignedOpenProposalTxProgram(
+          lucid,
+          {
+            instance,
+            targetId: TARGET,
+            action: { ParamChange: { field_tag: 0n, new_value: 1n } },
+            deadline: BigInt(Date.now() + 1000),
+          },
+        );
+        yield* signAndSubmit(openTx);
+        yield* advanceBlock(ctx.emulator, 2);
+
+        const expTx = yield* unsignedExpireProposalTxProgram(lucid, {
+          instance,
+          proposalId,
+        });
+        yield* signAndSubmit(expTx);
+        yield* advanceBlock(ctx.emulator, 2);
+
+        const remaining = yield* getProposalsProgram(lucid, instance);
+        expect(remaining.length).toBe(0);
       }),
   );
 });
