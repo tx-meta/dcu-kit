@@ -81,6 +81,7 @@ fi
 if command -v typst >/dev/null; then
   run "typst compile dcu-kit.typ" docs/design-specs typst compile dcu-kit.typ
   run "typst compile savings-module.typ" docs/design-specs typst compile savings-module.typ
+  run "typst compile governance-module.typ" docs/design-specs typst compile governance-module.typ
 else
   echo "(skip) typst not installed — CI will still compile docs/design-specs/*.typ"
 fi

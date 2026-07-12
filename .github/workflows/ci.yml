@@ -120,6 +120,7 @@ jobs:
         run: |
           typst compile dcu-kit.typ
           typst compile savings-module.typ
+          typst compile governance-module.typ
 
   # ------------------------------------------------------------
   # Job: Gatekeeper (Required Status Check)
