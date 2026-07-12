@@ -3,19 +3,35 @@ use cardano/address.{Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{Input, OutputReference, Transaction}
 use savings/types.{
-  BurnAccount, BurnFund, ClaimShareOut, CloseCycle, CloseFund, CreateFund,
-  Deposit, MemberAccount, MintAccount, RemoveAccount, SavingsDatum, SavingsFund,
+  BurnAccount, BurnFund, BurnLoan, ClaimShareOut, CloseCycle, CloseFund,
+  CreateFund, Deposit, DisburseLoan, LoanAccount, MarkArrears, MemberAccount,
+  MintAccount, MintLoan, RemoveAccount, RepayLoan, SavingsDatum, SavingsFund,
   SavingsMintRedeemer, SavingsSpendRedeemer, SocialPayout, UpdateFund, Withdraw,
+  WriteOffLoan,
 }
 use savings/validation.{
   own_input_count_is, validate_burn_account, validate_burn_fund,
-  validate_claim_share_out, validate_close_cycle, validate_close_fund,
-  validate_create_fund, validate_deposit, validate_mint_account,
-  validate_paired_member, validate_remove_account, validate_social_payout,
-  validate_update_fund, validate_withdraw,
+  validate_burn_loan, validate_claim_share_out, validate_close_cycle,
+  validate_close_fund, validate_create_fund, validate_deposit,
+  validate_disburse_loan, validate_mark_arrears, validate_mint_account,
+  validate_mint_loan, validate_paired_member, validate_remove_account,
+  validate_repay_loan, validate_social_payout, validate_update_fund,
+  validate_withdraw, validate_write_off_loan,
 }
 
-// MLabs security checklist (2026-07-12, all 11 items):
+// MLabs security checklist (2026-07-12, re-run for the loan paths — all 11):
+// LOANS — 1 Other Redeemer: loan branches self-validating; the satellite
+//   branch handles member AND loan variants; Deposit/Withdraw/Claim reject
+//   LoanAccount datums; every non-Disburse spend forbids own-policy mints so
+//   MintLoan couples transitively to DisburseLoan. 7 Multiple Satisfaction:
+//   triple transitions use count==3 + constructor-distinct expected datums.
+//   8 Authentication: loan records carry the shape-checked Loan State NFT.
+//   10 Cheap Spam: MarkArrears is permissionless but only advances truthful,
+//   time-proven state one step; repayment stays open in every status.
+//   Value flow: disburse/repay move EXACTLY principal/repayment; write-off
+//   moves nothing (accounting + burn). Input discipline is now 1, 2, or 3
+//   own inputs per redeemer.
+// Original checklist (2026-07-12, savings paths):
 // 1 Other Redeemer — each branch fully self-validating; paired-member light
 //   branch is safe because every anchor redeemer that admits two own inputs
 //   enforces the full member continuation. 2 Other Token Name — all mints are
@@ -76,6 +92,9 @@ validator savings_vault {
           mint,
           tx.validity_range,
         )
+      MintLoan { seed_input_index } ->
+        validate_mint_loan(policy_id, seed_input_index, inputs, mint)
+      BurnLoan -> validate_burn_loan(policy_id, mint)
       BurnAccount -> validate_burn_account(policy_id, mint)
       BurnFund -> validate_burn_fund(policy_id, mint)
     }
@@ -131,6 +150,7 @@ validator savings_vault {
               ),
             }
           }
+          LoanAccount { .. } -> False
         }
 
       Withdraw {
@@ -169,6 +189,7 @@ validator savings_vault {
               ),
             }
           }
+          LoanAccount { .. } -> False
         }
 
       ClaimShareOut {
@@ -207,6 +228,7 @@ validator savings_vault {
               ),
             }
           }
+          LoanAccount { .. } -> False
         }
 
       SocialPayout { fund_input_index, fund_output_index } -> {
@@ -256,6 +278,173 @@ validator savings_vault {
           ),
         }
       }
+
+      DisburseLoan {
+        fund_input_index,
+        member_input_index,
+        seed_input_index,
+        fund_output_index,
+        member_output_index,
+        loan_output_index,
+      } ->
+        when savings_datum is {
+          SavingsFund { .. } -> {
+            let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
+            and {
+              own_input_count_is(inputs, policy_id, 2),
+              validate_disburse_loan(
+                policy_id,
+                savings_datum,
+                own_input,
+                member_input_index,
+                seed_input_index,
+                fund_output_index,
+                member_output_index,
+                loan_output_index,
+                inputs,
+                outputs,
+                mint,
+                self,
+              ),
+            }
+          }
+          MemberAccount { .. } -> {
+            let (_own_input, policy_id) = own(inputs, member_input_index, utxo)
+            and {
+              own_input_count_is(inputs, policy_id, 2),
+              validate_paired_member(
+                policy_id,
+                savings_datum,
+                fund_input_index,
+                inputs,
+              ),
+            }
+          }
+          LoanAccount { .. } -> False
+        }
+
+      RepayLoan {
+        fund_input_index,
+        member_input_index,
+        loan_input_index,
+        fund_output_index,
+        member_output_index,
+        loan_output_index,
+      } ->
+        when savings_datum is {
+          SavingsFund { .. } -> {
+            let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
+            and {
+              own_input_count_is(inputs, policy_id, 3),
+              validate_repay_loan(
+                policy_id,
+                savings_datum,
+                own_input,
+                member_input_index,
+                loan_input_index,
+                fund_output_index,
+                member_output_index,
+                loan_output_index,
+                inputs,
+                outputs,
+                mint,
+              ),
+            }
+          }
+          MemberAccount { .. } -> {
+            let (_own_input, policy_id) = own(inputs, member_input_index, utxo)
+            and {
+              own_input_count_is(inputs, policy_id, 3),
+              validate_paired_member(
+                policy_id,
+                savings_datum,
+                fund_input_index,
+                inputs,
+              ),
+            }
+          }
+          LoanAccount { .. } -> {
+            let (_own_input, policy_id) = own(inputs, loan_input_index, utxo)
+            and {
+              own_input_count_is(inputs, policy_id, 3),
+              validate_paired_member(
+                policy_id,
+                savings_datum,
+                fund_input_index,
+                inputs,
+              ),
+            }
+          }
+        }
+
+      MarkArrears { loan_input_index, loan_output_index } -> {
+        let (own_input, policy_id) = own(inputs, loan_input_index, utxo)
+        and {
+          own_input_count_is(inputs, policy_id, 1),
+          validate_mark_arrears(
+            policy_id,
+            savings_datum,
+            own_input,
+            loan_output_index,
+            outputs,
+            mint,
+            self,
+          ),
+        }
+      }
+
+      WriteOffLoan {
+        fund_input_index,
+        member_input_index,
+        loan_input_index,
+        fund_output_index,
+        member_output_index,
+      } ->
+        when savings_datum is {
+          SavingsFund { .. } -> {
+            let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
+            and {
+              own_input_count_is(inputs, policy_id, 3),
+              validate_write_off_loan(
+                policy_id,
+                savings_datum,
+                own_input,
+                member_input_index,
+                loan_input_index,
+                fund_output_index,
+                member_output_index,
+                inputs,
+                outputs,
+                mint,
+                self,
+              ),
+            }
+          }
+          MemberAccount { .. } -> {
+            let (_own_input, policy_id) = own(inputs, member_input_index, utxo)
+            and {
+              own_input_count_is(inputs, policy_id, 3),
+              validate_paired_member(
+                policy_id,
+                savings_datum,
+                fund_input_index,
+                inputs,
+              ),
+            }
+          }
+          LoanAccount { .. } -> {
+            let (_own_input, policy_id) = own(inputs, loan_input_index, utxo)
+            and {
+              own_input_count_is(inputs, policy_id, 3),
+              validate_paired_member(
+                policy_id,
+                savings_datum,
+                fund_input_index,
+                inputs,
+              ),
+            }
+          }
+        }
 
       RemoveAccount { member_input_index } -> {
         let (own_input, policy_id) = own(inputs, member_input_index, utxo)

@@ -8,7 +8,10 @@ use cardano/transaction.{
 use cardano/transaction as tx
 use savings/cip68
 use savings/credential.{state_token_name}
-use savings/types.{Active, FundStatus, MemberAccount, SavingsDatum, SavingsFund}
+use savings/types.{
+  Active, FundStatus, LoanAccount, LoanStatus, MemberAccount, SavingsDatum,
+  SavingsFund,
+}
 
 pub fn policy() -> PolicyId {
   #"5a715a715a715a715a715a715a715a715a715a715a715a715a715a71"
@@ -109,10 +112,13 @@ pub fn make_fund(
     min_shares_per_deposit: 1,
     max_shares_per_deposit: 100,
     withdrawal_policy,
+    max_loan_multiple: 1,
+    loan_grace: 604_800_000,
     cycle_end: None,
     shares_total,
     savings_total,
     social_total,
+    loans_outstanding: 0,
     status,
   }
 }
@@ -133,10 +139,13 @@ pub fn make_token_fund(
     min_shares_per_deposit: 1,
     max_shares_per_deposit: 1_000,
     withdrawal_policy: 0,
+    max_loan_multiple: 1,
+    loan_grace: 604_800_000,
     cycle_end: None,
     shares_total,
     savings_total,
     social_total,
+    loans_outstanding: 0,
     status,
   }
 }
@@ -146,6 +155,7 @@ pub fn make_member(share_units: Int, social_paid: Int) -> SavingsDatum {
     fund_id: fund_name(),
     share_units,
     social_paid,
+    borrowed: 0,
     consent: True,
     joined_at: 1_700_000_000_000,
   }
@@ -230,6 +240,79 @@ pub fn range_between(lo: Int, hi: Int) -> Interval {
     lower_bound: IntervalBound { bound_type: Finite(lo), is_inclusive: True },
     upper_bound: IntervalBound { bound_type: Finite(hi), is_inclusive: True },
   }
+}
+
+pub fn make_member_borrowed(
+  share_units: Int,
+  social_paid: Int,
+  borrowed: Int,
+) -> SavingsDatum {
+  MemberAccount {
+    fund_id: fund_name(),
+    share_units,
+    social_paid,
+    borrowed,
+    consent: True,
+    joined_at: 1_700_000_000_000,
+  }
+}
+
+pub fn loan_seed_ref() -> OutputReference {
+  OutputReference {
+    transaction_id: #"10a710a710a710a710a710a710a710a710a710a710a710a710a710a710a710a7",
+    output_index: 2,
+  }
+}
+
+pub fn loan_name() {
+  state_token_name(loan_seed_ref())
+}
+
+pub fn loan_value() -> Value {
+  assets.from_lovelace(2_000_000)
+    |> assets.add(policy(), loan_name(), 1)
+}
+
+/// Default loan record: 8 ADA principal, 0.4 ADA charge, due 1_750_…
+pub fn make_loan(
+  outstanding: Int,
+  charge_paid: Int,
+  status: LoanStatus,
+) -> SavingsDatum {
+  LoanAccount {
+    fund_id: fund_name(),
+    borrower_ref: ref_name(),
+    principal: 8_000_000,
+    outstanding,
+    service_charge: 400_000,
+    charge_paid,
+    due: 1_750_000_000_000,
+    grace: 604_800_000,
+    status,
+  }
+}
+
+/// A signed-by-quorum tx with a BOUNDED validity range (loan origination
+/// needs a finite upper bound for the due-in-future check).
+pub fn quorum_tx_bounded() -> Transaction {
+  Transaction {
+    ..tx.placeholder,
+    extra_signatories: [quorum_pkh()],
+    validity_range: range_between(1_700_000_000_000, 1_700_000_900_000),
+  }
+}
+
+/// Bounded validity, NO quorum signature.
+pub fn tx_bounded_unsigned() -> Transaction {
+  Transaction {
+    ..tx.placeholder,
+    validity_range: range_between(1_700_000_000_000, 1_700_000_900_000),
+  }
+}
+
+/// An unsigned tx whose validity starts at `t` (arrears cranking).
+pub fn tx_after(t: Int) -> Transaction {
+  Transaction { ..tx.placeholder, validity_range: range_after(t) }
 }
 
 /// A transaction signed by the quorum key, with a bounded validity range.

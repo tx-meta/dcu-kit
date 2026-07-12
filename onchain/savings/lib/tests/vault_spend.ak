@@ -176,10 +176,13 @@ test deposit__rejects_datum_drift() {
     min_shares_per_deposit: 1,
     max_shares_per_deposit: 999,
     withdrawal_policy: 0,
+    max_loan_multiple: 1,
+    loan_grace: 604_800_000,
     cycle_end: None,
     shares_total: 20,
     savings_total: 20_000_000,
     social_total: 3_000_000,
+    loans_outstanding: 0,
     status: Active,
   }
   let fund_out = vault_output(drifted, anchor_value(27_000_000))
@@ -231,6 +234,7 @@ test deposit__rejects_wrong_fund_member() fail {
         fund_id: #"beef",
         share_units: 10,
         social_paid: 0,
+        borrowed: 0,
         consent: True,
         joined_at: 0,
       },
@@ -556,10 +560,13 @@ test update_fund__accepts_band_widen_and_rotation() {
     min_shares_per_deposit: 1,
     max_shares_per_deposit: 200,
     withdrawal_policy: 1,
+    max_loan_multiple: 1,
+    loan_grace: 604_800_000,
     cycle_end: Some(1_800_000_000_000),
     shares_total: 15,
     savings_total: 15_000_000,
     social_total: 3_000_000,
+    loans_outstanding: 0,
     status: Active,
   }
   let fund_out = vault_output(updated, anchor_value(22_000_000))
@@ -577,10 +584,13 @@ test update_fund__rejects_share_value_change() {
     min_shares_per_deposit: 1,
     max_shares_per_deposit: 100,
     withdrawal_policy: 0,
+    max_loan_multiple: 1,
+    loan_grace: 604_800_000,
     cycle_end: None,
     shares_total: 15,
     savings_total: 15_000_000,
     social_total: 3_000_000,
+    loans_outstanding: 0,
     status: Active,
   }
   let fund_out = vault_output(bad, anchor_value(22_000_000))
@@ -717,10 +727,13 @@ test close_cycle__rejects_before_cycle_end() {
     min_shares_per_deposit: 1,
     max_shares_per_deposit: 100,
     withdrawal_policy: 0,
+    max_loan_multiple: 1,
+    loan_grace: 604_800_000,
     cycle_end: Some(1_900_000_000_000),
     shares_total: 15,
     savings_total: 15_000_000,
     social_total: 3_000_000,
+    loans_outstanding: 0,
     status: Active,
   }
   let a = anchor_in(bounded, 22_000_000)
@@ -733,10 +746,13 @@ test close_cycle__rejects_before_cycle_end() {
     min_shares_per_deposit: 1,
     max_shares_per_deposit: 100,
     withdrawal_policy: 0,
+    max_loan_multiple: 1,
+    loan_grace: 604_800_000,
     cycle_end: Some(1_900_000_000_000),
     shares_total: 0,
     savings_total: 0,
     social_total: 3_000_000,
+    loans_outstanding: 0,
     status: SharingOut { pot: 17_000_000, shares: 15, shares_remaining: 15 },
   }
   let fund_out = vault_output(out_datum, anchor_value(22_000_000))

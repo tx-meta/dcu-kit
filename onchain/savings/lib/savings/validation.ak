@@ -8,7 +8,10 @@ use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction, ValidityRange}
 use savings/cip68
 use savings/credential.{credential_authorized, state_token_name}
-use savings/types.{Active, MemberAccount, SavingsDatum, SavingsFund, SharingOut}
+use savings/types.{
+  Active, Current, Defaulted, Late, LoanAccount, MemberAccount, SavingsDatum,
+  SavingsFund, SharingOut,
+}
 
 /// The anchor's protocol lovelace buffer (shared SDK convention). For ADA
 /// funds it is excluded from the share-out pot; enforcing it at creation keeps
@@ -190,9 +193,12 @@ pub fn validate_create_fund(
         min_shares_per_deposit,
         max_shares_per_deposit,
         withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
         shares_total,
         savings_total,
         social_total,
+        loans_outstanding,
         status,
         ..
       }
@@ -203,6 +209,9 @@ pub fn validate_create_fund(
     min_shares_per_deposit > 0,
     min_shares_per_deposit <= max_shares_per_deposit,
     withdrawal_policy == 0 || withdrawal_policy == 1,
+    // [spec 3.3 CreateFund]: loan charter — 0 disables lending
+    max_loan_multiple >= 0,
+    loan_grace >= 0,
     // "" = ADA (with empty name); otherwise a real 28-byte policy that is
     // NOT this validator (own tokens are identity, never the savings asset)
     if asset_policy == "" {
@@ -215,6 +224,7 @@ pub fn validate_create_fund(
     shares_total == 0,
     savings_total == 0,
     social_total == 0,
+    loans_outstanding == 0,
     status == Active,
   }
   and {
@@ -280,9 +290,16 @@ pub fn validate_mint_account(
     ada_policy_id, policy_id,
   ]
   let ref_buffer = assets.lovelace_of(ref_out.value) >= min_ada_buffer
-  expect MemberAccount { fund_id, share_units, social_paid, joined_at, .. } = output_datum(
-    ref_out,
-  )
+  expect  
+      MemberAccount {
+        fund_id,
+        share_units,
+        social_paid,
+        borrowed,
+        joined_at,
+        ..
+      }
+    = output_datum(ref_out)
   // [spec 3.3 MintAccount]: joined_at sits inside the tx validity window
   expect Finite(lo) = validity_range.lower_bound.bound_type
   expect Finite(hi) = validity_range.upper_bound.bound_type
@@ -290,6 +307,7 @@ pub fn validate_mint_account(
     fund_id == fund_name,
     share_units == 0,
     social_paid == 0,
+    borrowed == 0,
     joined_at >= lo,
     joined_at <= hi,
   }
@@ -366,10 +384,13 @@ pub fn validate_deposit(
         min_shares_per_deposit,
         max_shares_per_deposit,
         withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
         cycle_end,
         shares_total,
         savings_total,
         social_total,
+        loans_outstanding,
         status,
       }
     = datum
@@ -382,7 +403,16 @@ pub fn validate_deposit(
     policy_id,
     fund_name,
   )
-  expect MemberAccount { share_units, social_paid, consent, joined_at, .. } = md
+  expect  
+      MemberAccount {
+        share_units,
+        social_paid,
+        borrowed,
+        consent,
+        joined_at,
+        ..
+      }
+    = md
   // [spec 3.3 Deposit]: caller authority — the paired user token is spent
   let authorized = user_token_present(inputs, policy_id, ref_name)
   expect Some(fund_out) = list.at(outputs, fund_output_index)
@@ -422,16 +452,20 @@ pub fn validate_deposit(
         min_shares_per_deposit,
         max_shares_per_deposit,
         withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
         cycle_end,
         shares_total: shares_total + units,
         savings_total: savings_total + delta,
         social_total,
+        loans_outstanding,
         status: Active,
       },
       MemberAccount {
         fund_id: fund_name,
         share_units: share_units + units,
         social_paid,
+        borrowed,
         consent,
         joined_at,
       },
@@ -453,16 +487,20 @@ pub fn validate_deposit(
         min_shares_per_deposit,
         max_shares_per_deposit,
         withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
         cycle_end,
         shares_total,
         savings_total,
         social_total: social_total + delta,
+        loans_outstanding,
         status: Active,
       },
       MemberAccount {
         fund_id: fund_name,
         share_units,
         social_paid: social_paid + delta,
+        borrowed,
         consent,
         joined_at,
       },
@@ -480,16 +518,20 @@ pub fn validate_deposit(
         min_shares_per_deposit,
         max_shares_per_deposit,
         withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
         cycle_end,
         shares_total,
         savings_total,
         social_total,
+        loans_outstanding,
         status: Active,
       },
       MemberAccount {
         fund_id: fund_name,
         share_units,
         social_paid,
+        borrowed,
         consent,
         joined_at,
       },
@@ -531,10 +573,13 @@ pub fn validate_withdraw(
         min_shares_per_deposit,
         max_shares_per_deposit,
         withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
         cycle_end,
         shares_total,
         savings_total,
         social_total,
+        loans_outstanding,
         status,
       }
     = datum
@@ -547,7 +592,16 @@ pub fn validate_withdraw(
     policy_id,
     fund_name,
   )
-  expect MemberAccount { share_units, social_paid, consent, joined_at, .. } = md
+  expect  
+      MemberAccount {
+        share_units,
+        social_paid,
+        borrowed,
+        consent,
+        joined_at,
+        ..
+      }
+    = md
   let authorized = user_token_present(inputs, policy_id, ref_name)
   expect Some(fund_out) = list.at(outputs, fund_output_index)
   expect Some(member_out) = list.at(outputs, member_output_index)
@@ -565,16 +619,20 @@ pub fn validate_withdraw(
     min_shares_per_deposit,
     max_shares_per_deposit,
     withdrawal_policy,
+    max_loan_multiple,
+    loan_grace,
     cycle_end,
     shares_total: shares_total - units,
     savings_total: savings_total - released,
     social_total,
+    loans_outstanding,
     status: Active,
   }
   let expected_member = MemberAccount {
     fund_id: fund_name,
     share_units: new_units,
     social_paid,
+    borrowed,
     consent,
     joined_at,
   }
@@ -586,6 +644,9 @@ pub fn validate_withdraw(
     (member_out.address == member_input.output.address)?,
     (units > 0)?,
     (units <= share_units)?,
+    // [spec 3.3 Withdraw]: loan lock — a borrower cannot withdraw the
+    // shares securing their own live loan
+    (borrowed <= max_loan_multiple * ( share_units - units ) * share_value)?,
     // [spec 3.3 Withdraw]: output value = input value - released, exactly
     only_fund_asset_moved(
       own_input.output.value,
@@ -623,10 +684,13 @@ pub fn validate_claim_share_out(
         min_shares_per_deposit,
         max_shares_per_deposit,
         withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
         cycle_end,
         shares_total,
         savings_total,
         social_total,
+        loans_outstanding,
         status,
       }
     = datum
@@ -639,7 +703,16 @@ pub fn validate_claim_share_out(
     policy_id,
     fund_name,
   )
-  expect MemberAccount { share_units, social_paid, consent, joined_at, .. } = md
+  expect  
+      MemberAccount {
+        share_units,
+        social_paid,
+        borrowed,
+        consent,
+        joined_at,
+        ..
+      }
+    = md
   let authorized = user_token_present(inputs, policy_id, ref_name)
   // [spec 3.3 ClaimShareOut]: floor division; dust stays for CloseFund
   let paid = pot * share_units / shares
@@ -654,10 +727,13 @@ pub fn validate_claim_share_out(
     min_shares_per_deposit,
     max_shares_per_deposit,
     withdrawal_policy,
+    max_loan_multiple,
+    loan_grace,
     cycle_end,
     shares_total,
     savings_total,
     social_total,
+    loans_outstanding,
     // [spec 3.3 ClaimShareOut]: pot and shares immutable; only the
     // remaining counter moves
     status: SharingOut {
@@ -670,6 +746,7 @@ pub fn validate_claim_share_out(
     fund_id: fund_name,
     share_units: 0,
     social_paid,
+    borrowed,
     consent,
     joined_at,
   }
@@ -693,16 +770,21 @@ pub fn validate_claim_share_out(
   }
 }
 
-/// [spec 3.3 common]: the light member-side branch of a paired transition.
-/// The anchor of THIS account's fund must be a spending input — its validator
-/// carries the full transition check, so the work runs once, not twice.
+/// [spec 3.3 common]: the light satellite-side branch of a paired or triple
+/// transition (member account OR loan record). The anchor of THIS fund must
+/// be a spending input — its validator carries the full transition check, so
+/// the work runs once, not N times.
 pub fn validate_paired_member(
   policy_id: PolicyId,
   datum: SavingsDatum,
   fund_input_index: Int,
   inputs: List<Input>,
 ) -> Bool {
-  expect MemberAccount { fund_id, .. } = datum
+  let fund_id = when datum is {
+    MemberAccount { fund_id, .. } -> fund_id
+    LoanAccount { fund_id, .. } -> fund_id
+    SavingsFund { .. } -> fail @"anchor cannot be its own satellite"
+  }
   expect Some(fund_input) = list.at(inputs, fund_input_index)
   (assets.quantity_of(fund_input.output.value, policy_id, fund_id) == 1)?
 }
@@ -730,10 +812,13 @@ pub fn validate_social_payout(
         min_shares_per_deposit,
         max_shares_per_deposit,
         withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
         cycle_end,
         shares_total,
         savings_total,
         social_total,
+        loans_outstanding,
         status,
       }
     = datum
@@ -753,10 +838,13 @@ pub fn validate_social_payout(
     min_shares_per_deposit,
     max_shares_per_deposit,
     withdrawal_policy,
+    max_loan_multiple,
+    loan_grace,
     cycle_end,
     shares_total,
     savings_total,
     social_total: social_total - paid,
+    loans_outstanding,
     status,
   }
   and {
@@ -799,6 +887,7 @@ pub fn validate_update_fund(
         shares_total,
         savings_total,
         social_total,
+        loans_outstanding,
         status,
         ..
       }
@@ -816,10 +905,13 @@ pub fn validate_update_fund(
         min_shares_per_deposit: new_min,
         max_shares_per_deposit: new_max,
         withdrawal_policy: new_wp,
+        max_loan_multiple: new_multiple,
+        loan_grace: new_grace,
         cycle_end: _new_cycle_end,
         shares_total: out_shares_total,
         savings_total: out_savings_total,
         social_total: out_social_total,
+        loans_outstanding: out_loans_outstanding,
         status: out_status,
       }
     = output_datum(fund_out)
@@ -834,12 +926,16 @@ pub fn validate_update_fund(
     (out_shares_total == shares_total)?,
     (out_savings_total == savings_total)?,
     (out_social_total == social_total)?,
+    (out_loans_outstanding == loans_outstanding)?,
     (out_status == Active)?,
-    // [spec 3.3 UpdateFund]: post-update charter sanity
+    // [spec 3.3 UpdateFund]: post-update charter sanity — loan-policy
+    // changes govern FUTURE loans only (per-loan terms freeze at disbursement)
     (bytearray.length(new_title) <= 64)?,
     (new_min > 0)?,
     (new_min <= new_max)?,
     (new_wp == 0 || new_wp == 1)?,
+    (new_multiple >= 0)?,
+    (new_grace >= 0)?,
     // [spec 3.3 UpdateFund]: amending moves no money
     (fund_out.value == own_input.output.value)?,
     mints_nothing_own(mint, policy_id)?,
@@ -867,10 +963,13 @@ pub fn validate_close_cycle(
         min_shares_per_deposit,
         max_shares_per_deposit,
         withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
         cycle_end,
         shares_total,
         savings_total: _savings_total,
         social_total,
+        loans_outstanding,
         status,
       }
     = datum
@@ -902,11 +1001,14 @@ pub fn validate_close_cycle(
     min_shares_per_deposit,
     max_shares_per_deposit,
     withdrawal_policy,
+    max_loan_multiple,
+    loan_grace,
     cycle_end,
     // superseded by the frozen snapshot
     shares_total: 0,
     savings_total: 0,
     social_total,
+    loans_outstanding,
     status: SharingOut {
       pot,
       shares: shares_total,
@@ -916,6 +1018,9 @@ pub fn validate_close_cycle(
   and {
     credential_authorized(quorum, tx)?,
     after_cycle_end?,
+    // [spec 3.3 CloseCycle]: loans clear first (VSLA rule) — every loan is
+    // repaid or written off before the pot freezes
+    (loans_outstanding == 0)?,
     (fund_out.address == own_input.output.address)?,
     (pot > 0)?,
     (shares_total > 0)?,
@@ -936,12 +1041,14 @@ pub fn validate_remove_account(
   inputs: List<Input>,
   mint: Value,
 ) -> Bool {
-  expect MemberAccount { share_units, .. } = datum
+  expect MemberAccount { share_units, borrowed, .. } = datum
   let ref_name = member_ref_name(own_input.output.value, policy_id)
   let user_name = cip68.convert_ref_to_user_token(ref_name)
   and {
-    // [spec 3.3 RemoveAccount]: exits can never strand savings
+    // [spec 3.3 RemoveAccount]: exits can never strand savings or walk out
+    // on a live loan
     (share_units == 0)?,
+    (borrowed == 0)?,
     user_token_present(inputs, policy_id, ref_name)?,
     // [spec 3.3 RemoveAccount]: both tokens of THIS suffix burn
     (own_tokens(mint, policy_id) == [Pair(ref_name, -1), Pair(user_name, -1)])?,
@@ -966,5 +1073,552 @@ pub fn validate_close_fund(
     (shares_remaining == 0)?,
     // [spec 3.3 CloseFund]: the Fund State NFT burns — no half-closed funds
     (own_tokens(mint, policy_id) == [Pair(fund_name, -1)])?,
+  }
+}
+
+// ── mint: loans ─────────────────────────────────────────────────────────────
+
+/// [spec 3.3 MintLoan]: one-shot Loan State NFT from the consumed seed. The
+/// DisburseLoan anchor spend carries the full origination validation; this
+/// policy enforces shape and uniqueness, and requires SOME own-script spend
+/// (every own spend path except DisburseLoan forbids own-policy mints, so
+/// the coupling is transitive).
+pub fn validate_mint_loan(
+  policy_id: PolicyId,
+  seed_input_index: Int,
+  inputs: List<Input>,
+  mint: Value,
+) -> Bool {
+  expect Some(seed) = list.at(inputs, seed_input_index)
+  let loan_name = state_token_name(seed.output_reference)
+  and {
+    is_fund_name(loan_name)?,
+    (own_tokens(mint, policy_id) == [Pair(loan_name, 1)])?,
+    list.any(
+      inputs,
+      fn(i) { i.output.address.payment_credential == Script(policy_id) },
+    )?,
+  }
+}
+
+/// [spec 3.3 BurnLoan]: exactly one state-shaped token burns; the closing
+/// RepayLoan or WriteOffLoan spend authorizes WHICH token.
+pub fn validate_burn_loan(policy_id: PolicyId, mint: Value) -> Bool {
+  expect [Pair(name, -1)] = own_tokens(mint, policy_id)
+  is_fund_name(name)?
+}
+
+// ── spend: loan transitions (anchor side carries the full validation) ───────
+
+/// The loan input at `ix`: at the own script, a LoanAccount of this fund,
+/// plus its Loan State NFT name.
+fn loan_input_for(
+  inputs: List<Input>,
+  ix: Int,
+  policy_id: PolicyId,
+  fund_name: AssetName,
+) -> (Input, SavingsDatum, AssetName) {
+  expect Some(loan_input) = list.at(inputs, ix)
+  expect Script(lp) = loan_input.output.address.payment_credential
+  expect lp == policy_id
+  let ld = {
+    expect InlineDatum(raw) = loan_input.output.datum
+    expect d: SavingsDatum = raw
+    d
+  }
+  expect LoanAccount { fund_id, .. } = ld
+  expect fund_id == fund_name
+  expect [Pair(loan_name, 1)] = own_tokens(loan_input.output.value, policy_id)
+  expect is_fund_name(loan_name)
+  (loan_input, ld, loan_name)
+}
+
+/// [spec 3.3 DisburseLoan]: quorum AND borrower originate a loan — principal
+/// to the borrower's wallet, the record UTxO to the vault.
+pub fn validate_disburse_loan(
+  policy_id: PolicyId,
+  datum: SavingsDatum,
+  own_input: Input,
+  member_input_index: Int,
+  seed_input_index: Int,
+  fund_output_index: Int,
+  member_output_index: Int,
+  loan_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
+  mint: Value,
+  tx: Transaction,
+) -> Bool {
+  expect  
+      SavingsFund {
+        title,
+        quorum,
+        asset_policy,
+        asset_name,
+        share_value,
+        min_shares_per_deposit,
+        max_shares_per_deposit,
+        withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
+        cycle_end,
+        shares_total,
+        savings_total,
+        social_total,
+        loans_outstanding,
+        status,
+      }
+    = datum
+  // [spec 3.3 DisburseLoan]: loans originate only while Active
+  expect Active = status
+  let fund_name = fund_name_of(own_input, policy_id)
+  let (member_input, md, ref_name) = member_input_for(
+    inputs,
+    member_input_index,
+    policy_id,
+    fund_name,
+  )
+  expect  
+      MemberAccount {
+        share_units,
+        social_paid,
+        borrowed,
+        consent,
+        joined_at,
+        ..
+      }
+    = md
+  // [spec 3.3 DisburseLoan]: mutual consent — the borrower's user token is
+  // spent alongside the quorum's ratification
+  let borrower_consents = user_token_present(inputs, policy_id, ref_name)
+  expect Some(seed) = list.at(inputs, seed_input_index)
+  let loan_name = state_token_name(seed.output_reference)
+  expect Some(fund_out) = list.at(outputs, fund_output_index)
+  expect Some(member_out) = list.at(outputs, member_output_index)
+  expect Some(loan_out) = list.at(outputs, loan_output_index)
+  // [spec 3.3 DisburseLoan]: the new loan's terms, read from the record
+  expect  
+      LoanAccount {
+        fund_id: l_fund,
+        borrower_ref,
+        principal,
+        outstanding,
+        service_charge,
+        charge_paid,
+        due,
+        grace,
+        status: l_status,
+      }
+    = output_datum(loan_out)
+  // [spec 3.3 DisburseLoan]: due must lie beyond the tx validity window
+  expect Finite(hi) = tx.validity_range.upper_bound.bound_type
+  let expected_fund = SavingsFund {
+    title,
+    quorum,
+    asset_policy,
+    asset_name,
+    share_value,
+    min_shares_per_deposit,
+    max_shares_per_deposit,
+    withdrawal_policy,
+    max_loan_multiple,
+    loan_grace,
+    cycle_end,
+    shares_total,
+    savings_total,
+    social_total,
+    loans_outstanding: loans_outstanding + principal,
+    status: Active,
+  }
+  let expected_member = MemberAccount {
+    fund_id: fund_name,
+    share_units,
+    social_paid,
+    borrowed: principal,
+    consent,
+    joined_at,
+  }
+  // [spec 3.3 DisburseLoan]: liquidity guard — loans never draw the welfare
+  // fund or the ADA protocol buffer
+  let buffer = if asset_policy == "" {
+    min_ada_buffer
+  } else {
+    0
+  }
+  and {
+    credential_authorized(quorum, tx)?,
+    borrower_consents?,
+    // [spec 3.3 DisburseLoan]: lending enabled; one loan at a time
+    (max_loan_multiple > 0)?,
+    (borrowed == 0)?,
+    // [spec 3.3 DisburseLoan]: the record binds fund, borrower, and terms
+    (l_fund == fund_name)?,
+    (borrower_ref == ref_name)?,
+    (principal > 0)?,
+    (outstanding == principal)?,
+    (service_charge >= 0)?,
+    (charge_paid == 0)?,
+    (due > hi)?,
+    (grace == loan_grace)?,
+    (l_status == Current)?,
+    // [spec 3.3 DisburseLoan]: eligibility cap — secured up to the multiple
+    (principal <= max_loan_multiple * share_units * share_value)?,
+    (fund_out.address == own_input.output.address)?,
+    (member_out.address == member_input.output.address)?,
+    // [spec 3.3 DisburseLoan]: the vault releases EXACTLY the principal
+    only_fund_asset_moved(
+      own_input.output.value,
+      fund_out.value,
+      asset_policy,
+      asset_name,
+      -principal,
+    )?,
+    (asset_amount(fund_out.value, asset_policy, asset_name) >= social_total + buffer)?,
+    (member_out.value == member_input.output.value)?,
+    (output_datum(fund_out) == expected_fund)?,
+    (output_datum(member_out) == expected_member)?,
+    // [spec 3.3 DisburseLoan]: the record — canonical address, min-ADA +
+    // Loan State NFT only (a record, not a vault); min-ADA is tx-funded
+    (loan_out.address == own_input.output.address)?,
+    (own_tokens(loan_out.value, policy_id) == [Pair(loan_name, 1)])?,
+    (assets.policies(loan_out.value) == [ada_policy_id, policy_id])?,
+    (assets.lovelace_of(loan_out.value) >= min_ada_buffer)?,
+    (own_tokens(mint, policy_id) == [Pair(loan_name, 1)])?,
+  }
+}
+
+/// [spec 3.3 RepayLoan]: the borrower repays — partially, or fully (closing
+/// burns the Loan State NFT). The charge portion is pot income.
+pub fn validate_repay_loan(
+  policy_id: PolicyId,
+  datum: SavingsDatum,
+  own_input: Input,
+  member_input_index: Int,
+  loan_input_index: Int,
+  fund_output_index: Int,
+  member_output_index: Int,
+  loan_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
+  mint: Value,
+) -> Bool {
+  expect  
+      SavingsFund {
+        title,
+        quorum,
+        asset_policy,
+        asset_name,
+        share_value,
+        min_shares_per_deposit,
+        max_shares_per_deposit,
+        withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
+        cycle_end,
+        shares_total,
+        savings_total,
+        social_total,
+        loans_outstanding,
+        status,
+      }
+    = datum
+  let fund_name = fund_name_of(own_input, policy_id)
+  let (member_input, md, ref_name) = member_input_for(
+    inputs,
+    member_input_index,
+    policy_id,
+    fund_name,
+  )
+  expect  
+      MemberAccount {
+        share_units,
+        social_paid,
+        borrowed,
+        consent,
+        joined_at,
+        ..
+      }
+    = md
+  let authorized = user_token_present(inputs, policy_id, ref_name)
+  let (loan_input, ld, loan_name) = loan_input_for(
+    inputs,
+    loan_input_index,
+    policy_id,
+    fund_name,
+  )
+  expect  
+      LoanAccount {
+        borrower_ref,
+        principal,
+        outstanding,
+        service_charge,
+        charge_paid,
+        due,
+        grace,
+        status: l_status,
+        ..
+      }
+    = ld
+  let closing = loan_output_index == 99
+  // [spec 3.3 RepayLoan]: closing settles everything; partial declares its
+  // amounts through the continuation datum
+  let (principal_paid, charge_inc, loan_ok) = if closing {
+    (
+      outstanding,
+      service_charge - charge_paid,
+      // the NFT burns; no loan continuation to check
+      own_tokens(mint, policy_id) == [Pair(loan_name, -1)],
+    )
+  } else {
+    expect Some(loan_out) = list.at(outputs, loan_output_index)
+    expect  
+        LoanAccount {
+          outstanding: new_outstanding,
+          charge_paid: new_charge_paid,
+          ..
+        }
+      = output_datum(loan_out)
+    let p = outstanding - new_outstanding
+    let c = new_charge_paid - charge_paid
+    let expected_loan = LoanAccount {
+      fund_id: fund_name,
+      borrower_ref,
+      principal,
+      outstanding: new_outstanding,
+      service_charge,
+      charge_paid: new_charge_paid,
+      due,
+      grace,
+      status: l_status,
+    }
+    (p, c, and {
+        // [spec 3.3 RepayLoan]: terms and status immutable through repayment
+        (output_datum(loan_out) == expected_loan)?,
+        (loan_out.address == loan_input.output.address)?,
+        (loan_out.value == loan_input.output.value)?,
+        (new_outstanding >= 0)?,
+        (new_charge_paid <= service_charge)?,
+      })
+  }
+  let amount = principal_paid + charge_inc
+  expect Some(fund_out) = list.at(outputs, fund_output_index)
+  expect Some(member_out) = list.at(outputs, member_output_index)
+  let expected_fund = SavingsFund {
+    title,
+    quorum,
+    asset_policy,
+    asset_name,
+    share_value,
+    min_shares_per_deposit,
+    max_shares_per_deposit,
+    withdrawal_policy,
+    max_loan_multiple,
+    loan_grace,
+    cycle_end,
+    shares_total,
+    savings_total,
+    social_total,
+    loans_outstanding: loans_outstanding - principal_paid,
+    status,
+  }
+  let expected_member = MemberAccount {
+    fund_id: fund_name,
+    share_units,
+    social_paid,
+    borrowed: borrowed - principal_paid,
+    consent,
+    joined_at,
+  }
+  and {
+    authorized?,
+    (borrower_ref == ref_name)?,
+    // consistency: the member's lock mirrors the loan book
+    (borrowed == outstanding)?,
+    (principal_paid >= 0)?,
+    (charge_inc >= 0)?,
+    (amount > 0)?,
+    loan_ok?,
+    (fund_out.address == own_input.output.address)?,
+    (member_out.address == member_input.output.address)?,
+    // [spec 3.3 RepayLoan]: the vault gains EXACTLY the repayment
+    only_fund_asset_moved(
+      own_input.output.value,
+      fund_out.value,
+      asset_policy,
+      asset_name,
+      amount,
+    )?,
+    (member_out.value == member_input.output.value)?,
+    (output_datum(fund_out) == expected_fund)?,
+    (output_datum(member_out) == expected_member)?,
+    // partial repayments burn nothing (closing already checked the burn)
+    (closing || mints_nothing_own(mint, policy_id))?,
+  }
+}
+
+/// [spec 3.3 MarkArrears]: anyone advances an overdue loan one status step.
+pub fn validate_mark_arrears(
+  policy_id: PolicyId,
+  datum: SavingsDatum,
+  own_input: Input,
+  loan_output_index: Int,
+  outputs: List<Output>,
+  mint: Value,
+  tx: Transaction,
+) -> Bool {
+  expect  
+      LoanAccount {
+        fund_id,
+        borrower_ref,
+        principal,
+        outstanding,
+        service_charge,
+        charge_paid,
+        due,
+        grace,
+        status,
+      }
+    = datum
+  // [spec 3.3 MarkArrears]: the validity lower bound proves the deadline
+  expect Finite(lo) = tx.validity_range.lower_bound.bound_type
+  expect Some(loan_out) = list.at(outputs, loan_output_index)
+  let (step_valid, next_status) = when status is {
+    Current -> (lo > due, Late)
+    Late -> (lo > due + grace, Defaulted)
+    Defaulted -> (False, Defaulted)
+  }
+  let expected_loan = LoanAccount {
+    fund_id,
+    borrower_ref,
+    principal,
+    outstanding,
+    service_charge,
+    charge_paid,
+    due,
+    grace,
+    status: next_status,
+  }
+  and {
+    step_valid?,
+    (loan_out.address == own_input.output.address)?,
+    (loan_out.value == own_input.output.value)?,
+    (output_datum(loan_out) == expected_loan)?,
+    mints_nothing_own(mint, policy_id)?,
+  }
+}
+
+/// [spec 3.3 WriteOffLoan]: the quorum closes a Defaulted loan — seize the
+/// borrower's shares first, socialize only the remainder. No value moves.
+pub fn validate_write_off_loan(
+  policy_id: PolicyId,
+  datum: SavingsDatum,
+  own_input: Input,
+  member_input_index: Int,
+  loan_input_index: Int,
+  fund_output_index: Int,
+  member_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
+  mint: Value,
+  tx: Transaction,
+) -> Bool {
+  expect  
+      SavingsFund {
+        title,
+        quorum,
+        asset_policy,
+        asset_name,
+        share_value,
+        min_shares_per_deposit,
+        max_shares_per_deposit,
+        withdrawal_policy,
+        max_loan_multiple,
+        loan_grace,
+        cycle_end,
+        shares_total,
+        savings_total,
+        social_total,
+        loans_outstanding,
+        status,
+      }
+    = datum
+  let fund_name = fund_name_of(own_input, policy_id)
+  let (member_input, md, ref_name) = member_input_for(
+    inputs,
+    member_input_index,
+    policy_id,
+    fund_name,
+  )
+  expect  
+      MemberAccount {
+        share_units,
+        social_paid,
+        borrowed,
+        consent,
+        joined_at,
+        ..
+      }
+    = md
+  let (_loan_input, ld, loan_name) = loan_input_for(
+    inputs,
+    loan_input_index,
+    policy_id,
+    fund_name,
+  )
+  expect LoanAccount { borrower_ref, outstanding, status: l_status, .. } = ld
+  // [spec 3.3 WriteOffLoan]: shares first — rounding is against the
+  // defaulter, bounded by one share
+  let seized_units = {
+    let needed = ( outstanding + share_value - 1 ) / share_value
+    if needed < share_units {
+      needed
+    } else {
+      share_units
+    }
+  }
+  let seized_value = seized_units * share_value
+  expect Some(fund_out) = list.at(outputs, fund_output_index)
+  expect Some(member_out) = list.at(outputs, member_output_index)
+  let expected_fund = SavingsFund {
+    title,
+    quorum,
+    asset_policy,
+    asset_name,
+    share_value,
+    min_shares_per_deposit,
+    max_shares_per_deposit,
+    withdrawal_policy,
+    max_loan_multiple,
+    loan_grace,
+    cycle_end,
+    shares_total: shares_total - seized_units,
+    savings_total: savings_total - seized_value,
+    social_total,
+    loans_outstanding: loans_outstanding - outstanding,
+    status,
+  }
+  let expected_member = MemberAccount {
+    fund_id: fund_name,
+    share_units: share_units - seized_units,
+    social_paid,
+    borrowed: 0,
+    consent,
+    joined_at,
+  }
+  and {
+    credential_authorized(quorum, tx)?,
+    // [spec 3.3 WriteOffLoan]: only Defaulted loans; the record must match
+    (l_status == Defaulted)?,
+    (borrower_ref == ref_name)?,
+    (borrowed == outstanding)?,
+    (fund_out.address == own_input.output.address)?,
+    (member_out.address == member_input.output.address)?,
+    // [spec 3.3 WriteOffLoan]: no value moves — the loss happened at
+    // disbursement; this is pure accounting plus the record's burn
+    (fund_out.value == own_input.output.value)?,
+    (member_out.value == member_input.output.value)?,
+    (output_datum(fund_out) == expected_fund)?,
+    (output_datum(member_out) == expected_member)?,
+    (own_tokens(mint, policy_id) == [Pair(loan_name, -1)])?,
   }
 }
