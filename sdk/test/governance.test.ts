@@ -41,6 +41,10 @@ const membershipScript = scriptFromNative({ type: "all", scripts: [] });
 const MEMBER_POLICY = mintingPolicyToId(membershipScript);
 const MEMBER_UNIT = MEMBER_POLICY + fromText("member");
 
+// The governed vault's state token: the gate binds a decision to the input that
+// carries a token NAMED target_id. Stands in for a savings fund anchor.
+const TARGET_UNIT = MEMBER_POLICY + TARGET;
+
 // Mint one membership token to the connected wallet (idempotent per test wallet).
 const mintMembership = (lucid: LucidEvolution) =>
   Effect.gen(function* () {
@@ -52,6 +56,27 @@ const mintMembership = (lucid: LucidEvolution) =>
         .complete(),
     );
     yield* signAndSubmit(tx);
+  });
+
+// Mint the target vault's state token and return the UTxO holding it.
+const mintTargetVault = (lucid: LucidEvolution) =>
+  Effect.gen(function* () {
+    const tx = yield* Effect.promise(() =>
+      lucid
+        .newTx()
+        .mintAssets({ [TARGET_UNIT]: 1n })
+        .attach.MintingPolicy(membershipScript)
+        .complete(),
+    );
+    yield* signAndSubmit(tx);
+  });
+
+const findTargetUtxo = (lucid: LucidEvolution) =>
+  Effect.gen(function* () {
+    const utxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
+    const found = utxos.find((u) => (u.assets[TARGET_UNIT] ?? 0n) > 0n);
+    if (!found) throw new Error("target vault UTxO not found");
+    return found;
   });
 
 // A creator plus two members, all seed wallets so each can pay fees and sign.
@@ -75,7 +100,7 @@ const makeContext = Effect.gen(function* () {
   return { lucid, emulator, creator, member1, member2 } as GovContext;
 });
 
-describe("governance module (emulator, always-succeeds scaffold)", () => {
+describe("governance module (emulator, real validators)", () => {
   it.effect("initGovernance mints the anchor and publishes the hashes", () =>
     Effect.gen(function* () {
       const ctx = yield* makeContext;
@@ -276,10 +301,15 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
         );
         expect(decision).toBeDefined();
 
-        // Authorize: spend the decision at the gate and burn it (one-shot).
+        // Authorize: the gate binds the decision to the target vault input,
+        // then burns it (one-shot). In production the vault action composes here.
+        yield* mintTargetVault(lucid);
+        yield* advanceBlock(ctx.emulator, 2);
+        const targetUtxo = yield* findTargetUtxo(lucid);
         const authTx = yield* unsignedAuthorizeActionTxProgram(lucid, {
           instance,
           proposalId,
+          targetUtxo,
         });
         yield* signAndSubmit(authTx);
         yield* advanceBlock(ctx.emulator, 2);

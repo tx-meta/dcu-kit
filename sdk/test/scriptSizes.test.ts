@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import roscaBlueprint from "../src/core/plutus.json" with { type: "json" };
 import escrowBlueprint from "../src/escrow/plutus.json" with { type: "json" };
 import savingsBlueprint from "../src/savings/plutus.json" with { type: "json" };
+import governanceBlueprint from "../src/governance/plutus.json" with { type: "json" };
 import { MAX_REF_SCRIPT_BYTES } from "../src/admin/deployScripts.js";
 
 // Permanent tripwire for the class of bug that blocked R4: a compiled validator
@@ -48,5 +49,14 @@ describe("compiled validator sizes", () => {
     expect(oversized(savingsBlueprint as { validators: Validator[] })).toEqual(
       [],
     );
+  });
+
+  // Governance was split withdraw-zero from line one (settings / thin dispatcher
+  // / voting stake validator / gate), which is why every script is a few KB
+  // rather than approaching the ceiling. This guard keeps it that way.
+  it("every governance validator is within the deployable-ref-script ceiling", () => {
+    expect(
+      oversized(governanceBlueprint as { validators: Validator[] }),
+    ).toEqual([]);
   });
 });

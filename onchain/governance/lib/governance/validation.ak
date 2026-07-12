@@ -1,8 +1,36 @@
 use aiken/collection/dict
 use aiken/collection/list
+use cardano/address.{Credential, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
-use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
+use cardano/transaction.{
+  InlineDatum, Input, Output, OutputReference, Transaction,
+}
 use governance/types.{GovernanceAnchor, GovernanceDatum}
+
+// A UTxO at a governance script address: its payment credential IS that script's
+// policy/hash (the dispatcher for proposals, the gate for decisions).
+pub fn own_policy_of(output: Output) -> PolicyId {
+  expect Script(h) = output.address.payment_credential
+  h
+}
+
+// The value holds at least one token of `policy`.
+pub fn holds_policy(value: Value, policy: PolicyId) -> Bool {
+  !list.is_empty(dict.to_pairs(assets.tokens(value, policy)))
+}
+
+// Same rule as the escrow/savings quorum socket: a VK credential is satisfied by
+// a signature, a Script credential by a spent input at that script.
+pub fn credential_authorized(cred: Credential, self: Transaction) -> Bool {
+  when cred is {
+    VerificationKey(pkh) -> list.has(self.extra_signatories, pkh)
+    Script(sh) ->
+      list.any(
+        self.inputs,
+        fn(i) { i.output.address.payment_credential == Script(sh) },
+      )
+  }
+}
 
 // The fixed anchor token name. A per-instance seeded settings policy makes the
 // instance unique, so a constant name suffices. Must match the SDK
@@ -85,5 +113,47 @@ pub fn validate_mint_anchor(
     exact_mint?,
     holds_anchor?,
     hashes_present?,
+  }
+}
+
+// validate_authorize — the Governance Gate's Authorize logic.
+// ─────────────────────────────────────────────────────────────────────────────
+// The gate is set as a target vault's `quorum: Credential`, so spending a
+// decision UTxO here satisfies that vault's unchanged credential check. This
+// asserts the decision is genuine, single-use, and bound to the vault. Action-
+// level binding (decision.action == the vault's redeemer action) is a documented
+// follow-up needing a cross-family action map; the target vault still enforces
+// its own action correctness independently.
+pub fn validate_authorize(
+  gov_policy: PolicyId,
+  target_id: ByteArray,
+  decision_input_index: Int,
+  target_input_index: Int,
+  own_ref: OutputReference,
+  self: Transaction,
+) -> Bool {
+  let Transaction { inputs, mint, .. } = self
+  // [security]: self-reference — the indexed input is the decision UTxO spent.
+  expect Some(dec_in) = list.at(inputs, decision_input_index)
+  let is_own = dec_in.output_reference == own_ref
+  // [spec 3.3.5]: the decision token is the single gov_policy token here.
+  expect [Pair(dec_name, 1)] = dict.to_pairs(
+    assets.tokens(dec_in.output.value, gov_policy),
+  )
+  // [spec 3.3.5]: one-shot — that decision token is burned this tx (no replay).
+  let burned = dict.to_pairs(assets.tokens(mint, gov_policy)) == [
+    Pair(dec_name, -1),
+  ]
+  // [spec 3.3.5]: binding — the target input holds a token named target_id (the
+  //   governed vault's state NFT), tying the decision to that specific vault.
+  expect Some(target_in) = list.at(inputs, target_input_index)
+  let target_ok = list.any(
+    assets.flatten(target_in.output.value),
+    fn(t) { t.2nd == target_id },
+  )
+  and {
+    is_own?,
+    burned?,
+    target_ok?,
   }
 }

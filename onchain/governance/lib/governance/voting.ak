@@ -1,14 +1,16 @@
 use aiken/collection/dict
 use aiken/collection/list
-use cardano/address.{Credential, Script, VerificationKey}
-use cardano/assets.{PolicyId, Value}
-use cardano/transaction.{InlineDatum, Input, Output, Transaction}
+use cardano/address.{Script}
+use cardano/assets
+use cardano/transaction.{InlineDatum, Transaction}
 use governance/types.{
   AnyMember, CreatorOnly, Executed, GovAction, GovernanceAnchor, GovernanceDatum,
   MembershipChange, OneMemberOneVote, Open, ParamChange, Passed, Proposal,
   Rejected, ShareWeighted, SocialPayout, TreasuryMove, WriteOff,
 }
-use governance/validation.{output_holds_single}
+use governance/validation.{
+  credential_authorized, holds_policy, output_holds_single, own_policy_of,
+}
 
 // A decode of the gate's Decision datum (single constructor, matching GateDatum).
 type DecisionView {
@@ -19,17 +21,6 @@ type DecisionView {
   }
 }
 
-// The proposal UTxO sits at the dispatcher script address, so its payment
-// credential IS the dispatcher policy (gov_policy) that minted its NFT.
-fn own_policy_of(output: Output) -> PolicyId {
-  expect Script(h) = output.address.payment_credential
-  h
-}
-
-fn holds_policy(value: Value, policy: PolicyId) -> Bool {
-  !list.is_empty(dict.to_pairs(assets.tokens(value, policy)))
-}
-
 // GovAction constructor tag — the opener_policy key.
 pub fn action_tag(a: GovAction) -> Int {
   when a is {
@@ -38,19 +29,6 @@ pub fn action_tag(a: GovAction) -> Int {
     WriteOff { .. } -> 2
     TreasuryMove { .. } -> 3
     MembershipChange { .. } -> 4
-  }
-}
-
-// Same rule as the escrow/savings quorum socket: a VK credential is satisfied by
-// a signature, a Script credential by a spent input at that script.
-pub fn credential_authorized(cred: Credential, self: Transaction) -> Bool {
-  when cred is {
-    VerificationKey(pkh) -> list.has(self.extra_signatories, pkh)
-    Script(sh) ->
-      list.any(
-        self.inputs,
-        fn(i) { i.output.address.payment_credential == Script(sh) },
-      )
   }
 }
 

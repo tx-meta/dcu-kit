@@ -25,4 +25,9 @@ name = "anastasia-labs/aiken-design-patterns"
 version = "v1.7.0"
 source = "github"
 
+[[dependencies]]
+name = "keyan-m/aiken-scott-utils"
+version = "v1.4.0"
+source = "github"
+
 [config]
