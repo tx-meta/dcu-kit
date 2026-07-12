@@ -15,6 +15,11 @@ export * from "./endpoints/closeCycle.js";
 export * from "./endpoints/claimShareOut.js";
 export * from "./endpoints/exitFund.js";
 export * from "./endpoints/closeFund.js";
+export * from "./endpoints/disburseLoan.js";
+export * from "./endpoints/repayLoan.js";
+export * from "./endpoints/markArrears.js";
+export * from "./endpoints/writeOffLoan.js";
 
 export * from "./queries/getFundState.js";
 export * from "./queries/getFundMembers.js";
+export * from "./queries/getFundLoans.js";

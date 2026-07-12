@@ -3,6 +3,7 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -26,6 +27,9 @@ import { applyQuorumWitness, PartyWitness, resolveFund } from "../utils.js";
  * @returns Effect yielding TxSignBuilder.
  */
 export type CloseFundConfig = {
+  /** Deployed savings script reference — pass on live networks;
+   *  the ~15.5KB validator cannot ride inline within the tx limit. */
+  scriptRef?: UTxO;
   fundTokenName: string;
   /** Residual destination. Defaults to the connected wallet. */
   destination?: string;
@@ -78,9 +82,19 @@ export const unsignedCloseFundTxProgram = (
     const txDraft = lucid
       .newTx()
       .collectFrom([fundUtxo], redeemer)
-      .attach.SpendingValidator(savingsVaultValidator.spendVault)
+      .compose(
+        config.scriptRef
+          ? lucid.newTx().readFrom([config.scriptRef])
+          : lucid
+              .newTx()
+              .attach.SpendingValidator(savingsVaultValidator.spendVault),
+      )
       .mintAssets({ [fundUnit]: -1n }, Data.to("BurnFund", SavingsMintRedeemer))
-      .attach.MintingPolicy(savingsVaultValidator.mintVault)
+      .compose(
+        config.scriptRef
+          ? null
+          : lucid.newTx().attach.MintingPolicy(savingsVaultValidator.mintVault),
+      )
       .pay.ToAddress(destination, residual);
 
     const txWitnessed = yield* applyQuorumWitness(

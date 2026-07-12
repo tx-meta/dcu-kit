@@ -3,6 +3,7 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -32,6 +33,9 @@ import {
  * @returns Effect yielding TxSignBuilder.
  */
 export type SocialPayoutConfig = {
+  /** Deployed savings script reference — pass on live networks;
+   *  the ~15.5KB validator cannot ride inline within the tx limit. */
+  scriptRef?: UTxO;
   fundTokenName: string;
   /** Payment in base units of the fund asset. */
   amount: bigint;
@@ -85,7 +89,13 @@ export const unsignedSocialPayoutTxProgram = (
     const txDraft = lucid
       .newTx()
       .collectFrom([fundUtxo], redeemer)
-      .attach.SpendingValidator(savingsVaultValidator.spendVault)
+      .compose(
+        config.scriptRef
+          ? lucid.newTx().readFrom([config.scriptRef])
+          : lucid
+              .newTx()
+              .attach.SpendingValidator(savingsVaultValidator.spendVault),
+      )
       .pay.ToContract(
         savingsVaultAddress(network),
         {

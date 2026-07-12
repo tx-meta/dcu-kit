@@ -4,6 +4,7 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -42,6 +43,9 @@ import {
  * @returns Effect yielding `{ tx, fundTokenName }` — persist the name.
  */
 export type CreateFundConfig = {
+  /** Deployed savings script reference — pass on live networks;
+   *  the ~15.5KB validator cannot ride inline within the tx limit. */
+  scriptRef?: UTxO;
   /** Short human-readable label, max 64 UTF-8 bytes. Never PII. */
   title: string;
   /** The ratification authority (address or multisig). Defaults to the wallet. */
@@ -56,6 +60,11 @@ export type CreateFundConfig = {
   maxSharesPerDeposit?: bigint;
   /** 0 = locked until share-out (VSLA, default); 1 = flexible (ASCA). */
   withdrawalPolicy?: bigint;
+  /** Borrow up to this multiple of own share value. Default 1 (fully
+   *  self-collateralized); 0 disables lending. */
+  maxLoanMultiple?: bigint;
+  /** Ms after a loan's due before Late can become Defaulted (default 14d). */
+  loanGrace?: bigint;
   /** CloseCycle is invalid before this bound (POSIX ms). */
   cycleEnd?: bigint;
 };
@@ -81,6 +90,8 @@ export const unsignedCreateFundTxProgram = (
     const minShares = config.minSharesPerDeposit ?? 1n;
     const maxShares = config.maxSharesPerDeposit ?? 100n;
     const withdrawalPolicy = config.withdrawalPolicy ?? 0n;
+    const maxLoanMultiple = config.maxLoanMultiple ?? 1n;
+    const loanGrace = config.loanGrace ?? 1_209_600_000n;
     if (config.shareValue <= 0n) {
       return yield* Effect.fail(
         new ConfigurationError({
@@ -102,6 +113,14 @@ export const unsignedCreateFundTxProgram = (
         new ConfigurationError({
           configKey: "withdrawalPolicy",
           message: "withdrawalPolicy must be 0 (locked) or 1 (flexible)",
+        }),
+      );
+    }
+    if (maxLoanMultiple < 0n || loanGrace < 0n) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "maxLoanMultiple",
+          message: "maxLoanMultiple and loanGrace must be non-negative",
         }),
       );
     }
@@ -135,10 +154,13 @@ export const unsignedCreateFundTxProgram = (
         min_shares_per_deposit: minShares,
         max_shares_per_deposit: maxShares,
         withdrawal_policy: withdrawalPolicy,
+        max_loan_multiple: maxLoanMultiple,
+        loan_grace: loanGrace,
         cycle_end: config.cycleEnd ?? null,
         shares_total: 0n,
         savings_total: 0n,
         social_total: 0n,
+        loans_outstanding: 0n,
         status: "Active",
       },
     };
@@ -163,7 +185,11 @@ export const unsignedCreateFundTxProgram = (
       .newTx()
       .collectFrom([seed])
       .mintAssets({ [fundUnit]: 1n }, redeemer)
-      .attach.MintingPolicy(savingsVaultValidator.mintVault)
+      .compose(
+        config.scriptRef
+          ? lucid.newTx().readFrom([config.scriptRef])
+          : lucid.newTx().attach.MintingPolicy(savingsVaultValidator.mintVault),
+      )
       .pay.ToContract(
         savingsVaultAddress(network),
         { kind: "inline", value: Data.to(datum, SavingsDatum) },

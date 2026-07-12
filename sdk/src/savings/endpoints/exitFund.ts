@@ -3,6 +3,7 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -31,6 +32,9 @@ import {
  * @returns Effect yielding TxSignBuilder.
  */
 export type ExitFundConfig = {
+  /** Deployed savings script reference — pass on live networks;
+   *  the ~15.5KB validator cannot ride inline within the tx limit. */
+  scriptRef?: UTxO;
   memberTokenSuffix: string;
 };
 
@@ -69,12 +73,22 @@ export const unsignedExitFundTxProgram = (
       .newTx()
       .collectFrom([refUtxo], spendRedeemer)
       .collectFrom([userTokenUtxo])
-      .attach.SpendingValidator(savingsVaultValidator.spendVault)
+      .compose(
+        config.scriptRef
+          ? lucid.newTx().readFrom([config.scriptRef])
+          : lucid
+              .newTx()
+              .attach.SpendingValidator(savingsVaultValidator.spendVault),
+      )
       .mintAssets(
         { [refUnit]: -1n, [userUnit]: -1n },
         Data.to("BurnAccount", SavingsMintRedeemer),
       )
-      .attach.MintingPolicy(savingsVaultValidator.mintVault)
+      .compose(
+        config.scriptRef
+          ? null
+          : lucid.newTx().attach.MintingPolicy(savingsVaultValidator.mintVault),
+      )
       .completeProgram()
       .pipe(
         Effect.mapError(

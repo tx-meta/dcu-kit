@@ -21,7 +21,15 @@ export const FundStatusSchema = Data.Enum([
 export type FundStatus = Data.Static<typeof FundStatusSchema>;
 export const FundStatus = FundStatusSchema as unknown as FundStatus;
 
-// --- Vault datum (two variants at one address) ---
+export const LoanStatusSchema = Data.Enum([
+  Data.Literal("Current"),
+  Data.Literal("Late"),
+  Data.Literal("Defaulted"),
+]);
+export type LoanStatus = Data.Static<typeof LoanStatusSchema>;
+export const LoanStatus = LoanStatusSchema as unknown as LoanStatus;
+
+// --- Vault datum (three variants at one address) ---
 
 export const SavingsFundFieldsSchema = Data.Object({
   /** Short inline fund name (max 64 bytes). Group-level only, never PII. */
@@ -38,6 +46,10 @@ export const SavingsFundFieldsSchema = Data.Object({
   max_shares_per_deposit: Data.Integer(),
   /** 0 = locked until share-out (VSLA), 1 = flexible withdrawal (ASCA). */
   withdrawal_policy: Data.Integer(),
+  /** Borrow up to this multiple of own share value; 0 disables lending. */
+  max_loan_multiple: Data.Integer(),
+  /** Ms after a loan's due before Late can become Defaulted. */
+  loan_grace: Data.Integer(),
   /** CloseCycle is invalid before this bound (null = quorum decides). */
   cycle_end: Data.Nullable(Data.Integer()),
   /** Sum of all members' share units — the load-bearing aggregate. */
@@ -46,6 +58,8 @@ export const SavingsFundFieldsSchema = Data.Object({
   savings_total: Data.Integer(),
   /** The welfare fund; never part of the share-out pot. */
   social_total: Data.Integer(),
+  /** Total principal currently lent out (the loan book total). */
+  loans_outstanding: Data.Integer(),
   status: FundStatusSchema,
 });
 export type SavingsFundFields = Data.Static<typeof SavingsFundFieldsSchema>;
@@ -60,9 +74,31 @@ export const SavingsDatumSchema = Data.Enum([
       share_units: Data.Integer(),
       /** Cumulative social-fund contributions (history, not redeemable). */
       social_paid: Data.Integer(),
+      /** Outstanding loan principal (0 = no active loan); locks shares. */
+      borrowed: Data.Integer(),
       /** Standing-layer event-capture consent (credentials, not scores). */
       consent: Data.Boolean(),
       joined_at: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    LoanAccount: Data.Object({
+      /** The Fund State NFT token name this loan belongs to. */
+      fund_id: Data.Bytes(),
+      /** The borrower's member (100) reference-token name. */
+      borrower_ref: Data.Bytes(),
+      principal: Data.Integer(),
+      /** Remaining principal; repayments reduce it. */
+      outstanding: Data.Integer(),
+      /** Flat charge fixed at disbursement (never compounds). */
+      service_charge: Data.Integer(),
+      /** Charge repaid so far (income — flows to the pot). */
+      charge_paid: Data.Integer(),
+      /** POSIX ms repayment deadline. */
+      due: Data.Integer(),
+      /** Ms after due before Late -> Defaulted; fixed at disbursement. */
+      grace: Data.Integer(),
+      status: LoanStatusSchema,
     }),
   }),
 ]);
@@ -73,6 +109,11 @@ export type MemberAccountFields = Extract<
   SavingsDatum,
   { MemberAccount: unknown }
 >["MemberAccount"];
+
+export type LoanAccountFields = Extract<
+  SavingsDatum,
+  { LoanAccount: unknown }
+>["LoanAccount"];
 
 // --- Redeemers (constructor order matches savings/types.ak exactly) ---
 
@@ -121,6 +162,42 @@ export const SavingsSpendRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
+    DisburseLoan: Data.Object({
+      fund_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      seed_input_index: Data.Integer(),
+      fund_output_index: Data.Integer(),
+      member_output_index: Data.Integer(),
+      loan_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    RepayLoan: Data.Object({
+      fund_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      loan_input_index: Data.Integer(),
+      fund_output_index: Data.Integer(),
+      member_output_index: Data.Integer(),
+      /** 99 closes the loan (BurnLoan pairs). */
+      loan_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    MarkArrears: Data.Object({
+      loan_input_index: Data.Integer(),
+      loan_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    WriteOffLoan: Data.Object({
+      fund_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      loan_input_index: Data.Integer(),
+      fund_output_index: Data.Integer(),
+      member_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
     RemoveAccount: Data.Object({ member_input_index: Data.Integer() }),
   }),
   Data.Object({
@@ -149,6 +226,10 @@ export const SavingsMintRedeemerSchema = Data.Enum([
       user_output_index: Data.Integer(),
     }),
   }),
+  Data.Object({
+    MintLoan: Data.Object({ seed_input_index: Data.Integer() }),
+  }),
+  Data.Literal("BurnLoan"),
   Data.Literal("BurnAccount"),
   Data.Literal("BurnFund"),
 ]);

@@ -27,6 +27,7 @@ import {
 import { assetNameLabels } from "../core/utils/assets.js";
 import {
   CredentialD,
+  LoanAccountFields,
   MemberAccountFields,
   SavingsDatum,
   SavingsDatumSchema,
@@ -73,6 +74,18 @@ export const withAssetDelta = (
   const next = { ...assets, [unit]: (assets[unit] ?? 0n) + delta };
   if (next[unit] === 0n) delete next[unit];
   return next;
+};
+
+/**
+ * The SORTED position of `target` among a transaction's reference inputs.
+ * The ledger presents reference inputs to scripts as a set sorted by
+ * (txHash, outputIndex) — never hardcode a reference-input index.
+ */
+export const sortedRefIndexOf = (target: UTxO, refs: UTxO[]): bigint => {
+  const key = (u: UTxO) =>
+    `${u.txHash}#${u.outputIndex.toString().padStart(8, "0")}`;
+  const sorted = [...refs].sort((a, b) => (key(a) < key(b) ? -1 : 1));
+  return BigInt(sorted.findIndex((u) => key(u) === key(target)));
 };
 
 /** The member account's CIP-68 units for a token suffix. */
@@ -148,6 +161,39 @@ export const resolveMemberAccount = (
       );
     }
     return { refUtxo, account: datum.MemberAccount, userUnit };
+  });
+
+/** Resolves a live loan record by its state-token name. */
+export const resolveLoan = (
+  lucid: LucidEvolution,
+  loanTokenName: string,
+): Effect.Effect<
+  { utxo: UTxO; loan: LoanAccountFields },
+  UtxoNotFoundError | LucidError | ConfigurationError,
+  never
+> =>
+  Effect.gen(function* () {
+    const unit = savingsPolicyId + loanTokenName;
+    const utxoRaw = yield* resolveUtxoByUnit(lucid, unit);
+    const utxo = patchInlineDatum(utxoRaw);
+    const datum = (yield* parseSafeDatum(utxo.datum, SavingsDatumSchema).pipe(
+      Effect.mapError(
+        (e) =>
+          new ConfigurationError({
+            configKey: "loanTokenName",
+            message: `UTxO holding ${unit} has no valid savings datum: ${String(e)}`,
+          }),
+      ),
+    )) as unknown as SavingsDatum;
+    if (typeof datum === "string" || !("LoanAccount" in datum)) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "loanTokenName",
+          message: "the resolved UTxO is not a loan record",
+        }),
+      );
+    }
+    return { utxo, loan: datum.LoanAccount };
   });
 
 /** The member's user-token UTxO from the connected wallet. */
