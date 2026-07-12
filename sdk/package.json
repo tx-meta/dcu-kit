@@ -29,6 +29,10 @@
     "./savings": {
       "import": "./dist/savings/index.js",
       "types": "./dist/savings/index.d.ts"
+    },
+    "./governance": {
+      "import": "./dist/governance/index.js",
+      "types": "./dist/governance/index.d.ts"
     }
   },
   "files": [
@@ -58,7 +62,7 @@
   ],
   "scripts": {
     "clean": "rimraf dist",
-    "build": "tsup src/index.ts src/multisig/index.ts src/core/index.ts src/escrow/index.ts src/escrow/v2/index.ts src/savings/index.ts --minify --format esm,cjs --dts --clean",
+    "build": "tsup src/index.ts src/multisig/index.ts src/core/index.ts src/escrow/index.ts src/escrow/v2/index.ts src/savings/index.ts src/governance/index.ts --minify --format esm,cjs --dts --clean",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,md}\"",
