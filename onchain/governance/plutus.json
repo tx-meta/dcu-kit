@@ -120,16 +120,32 @@
           "$ref": "#/definitions/governance~1types~1SettingsRedeemer"
         }
       },
-      "compiledCode": "588901010029800aba2aba1aab9faab9eaab9dab9a48888896600264653001300700198039804000cc01c0092225980099b8748000c01cdd500144c96600266e1d200030083754009132323322598009808001c528c5900e1bad300d001375a601a004601a00260126ea80122c8038dd7180518041baa0028b200c180380098019baa0078a4d1365640041",
-      "hash": "e9c40d40eec6a169e04114565b6924518f33c49231d0adf66a3b319d"
+      "parameters": [
+        {
+          "title": "_seed",
+          "schema": {
+            "$ref": "#/definitions/cardano~1transaction~1OutputReference"
+          }
+        }
+      ],
+      "compiledCode": "587f010100229800aba2aba1aab9faab9eaab9dab9a48888896600264653001300700198039804000cc01c0092225980099b8748000c01cdd500144c96600266e1d200030083754009132325980098070014528c5900c1bad300c0013009375400916401c6eb8c028c020dd50014590060c01c004c00cdd5003c52689b2b200201",
+      "hash": "84bb25330967947cac3a41c8545bde5fb3145fea7633699daa007efc"
     },
     {
       "title": "governance_settings.governance_settings.else",
       "redeemer": {
         "schema": {}
       },
-      "compiledCode": "588901010029800aba2aba1aab9faab9eaab9dab9a48888896600264653001300700198039804000cc01c0092225980099b8748000c01cdd500144c96600266e1d200030083754009132323322598009808001c528c5900e1bad300d001375a601a004601a00260126ea80122c8038dd7180518041baa0028b200c180380098019baa0078a4d1365640041",
-      "hash": "e9c40d40eec6a169e04114565b6924518f33c49231d0adf66a3b319d"
+      "parameters": [
+        {
+          "title": "_seed",
+          "schema": {
+            "$ref": "#/definitions/cardano~1transaction~1OutputReference"
+          }
+        }
+      ],
+      "compiledCode": "587f010100229800aba2aba1aab9faab9eaab9dab9a48888896600264653001300700198039804000cc01c0092225980099b8748000c01cdd500144c96600266e1d200030083754009132325980098070014528c5900c1bad300c0013009375400916401c6eb8c028c020dd50014590060c01c004c00cdd5003c52689b2b200201",
+      "hash": "84bb25330967947cac3a41c8545bde5fb3145fea7633699daa007efc"
     },
     {
       "title": "governance_voting.governance_voting.withdraw",
@@ -186,6 +202,7 @@
       ]
     },
     "ByteArray": {
+      "title": "ByteArray",
       "dataType": "bytes"
     },
     "Int": {
@@ -271,6 +288,27 @@
     "cardano/assets/PolicyId": {
       "title": "PolicyId",
       "dataType": "bytes"
+    },
+    "cardano/transaction/OutputReference": {
+      "title": "OutputReference",
+      "description": "An `OutputReference` is a unique reference to an output on-chain. The `output_index`\n corresponds to the position in the output list of the transaction (identified by its id)\n that produced that output",
+      "anyOf": [
+        {
+          "title": "OutputReference",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "transaction_id",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
     },
     "governance/types/GateDatum": {
       "title": "GateDatum",
@@ -770,10 +808,6 @@
           "dataType": "constructor",
           "index": 0,
           "fields": [
-            {
-              "title": "seed_input_index",
-              "$ref": "#/definitions/Int"
-            },
             {
               "title": "anchor_output_index",
               "$ref": "#/definitions/Int"

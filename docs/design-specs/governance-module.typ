@@ -112,7 +112,7 @@ The module is three validators plus a one-shot configuration token, deliberately
 
 + *Governance Settings Policy*
 
-  A one-shot minting policy that mints a single *Governance Anchor NFT*. The NFT authenticates the *anchor UTxO*, whose datum is the instance's charter and — critically — publishes the script hashes of the voting and gate validators. Every other validator is compiled with this policy as its only parameter and reads the anchor as a reference input to learn the trusted hashes at run time. This breaks the mutual-hash dependency between the three validators without a circular compile (the same role the ROSCA settings NFT plays), and it is the one config object a governance instance owns.
+  A one-shot minting policy, *parameterized by a seed `OutputReference`*, that mints a single *Governance Anchor NFT*. The seed parameter makes the policy — and therefore the instance's dispatcher, voting, and gate hashes — unique per governance instance. This is a security requirement, not a convenience: a target vault commits to a governance instance only through the `quorum: Credential` it points at, so that credential (the gate) must be instance-specific. Were the policy shared across instances, a malicious instance could pass a proposal naming another group's vault as its target and drain it — a decision minted under a shared dispatcher would satisfy the shared gate. With per-instance hashes, a decision is spendable only at its own instance's gate, which is not any other vault's quorum. The cost is per-instance reference scripts, amortized when one instance governs several vaults via `governed_targets`. The anchor UTxO the NFT authenticates carries the charter and publishes the voting and gate script hashes; every other validator is compiled with this policy as its only parameter and reads the anchor as a reference input to learn the trusted hashes at run time, breaking the mutual-hash dependency without a circular compile (the ROSCA settings-NFT role).
 
 + *Governance Dispatcher Validator* (mint + spend)
 
@@ -166,7 +166,7 @@ Key structural decisions:
 
   Minted once by the Governance Settings Policy when an instance is created; permanent reference data (no burn path — the charter is a lasting record). Authenticates the anchor UTxO that carries the charter and the published validator hashes.
 
-  - *TokenName:* `blake2b_256` of the seed `OutputReference`, guaranteeing one-shot uniqueness.
+  - *TokenName:* a fixed anchor label; one-shot uniqueness comes from the policy's seed parameter, so the instance is unique by policy id rather than by token name.
 
 + *Proposal State NFT*
 
@@ -194,22 +194,22 @@ The family is one settings policy and three validators. The settings policy and 
 \
 ==== Parameters
 \
-Nothing. The policy is a bare one-shot minting policy; uniqueness comes from the consumed seed input.
+- *`seed`: ```rs OutputReference```* – The UTxO consumed to make this instance one-shot. It fixes the policy id, and through it the instance's dispatcher, voting, and gate hashes — the isolation that lets a vault's quorum commit to one instance.
 \
 ==== Minting Purpose
 \
 ===== Redeemer
 \
 - *```rust
-  MintAnchor { seed_input_index: Int, anchor_output_index: Int }
+  MintAnchor { anchor_output_index: Int }
   ```*
 \
 ===== Validation
 \
 + *MintAnchor*
 
-  - The input at `seed_input_index` is spent; the minted NFT name equals `blake2b_256` of its `OutputReference`.
-  - Exactly one token of this policy is minted, quantity `+1`; no other token under this policy.
+  - The parameter `seed` `OutputReference` is present in `tx.inputs` (one-shot — ties this policy to a unique consumed UTxO).
+  - Exactly one token of this policy is minted, quantity `+1`, with the fixed anchor token name; no other token under this policy.
   - The output at `anchor_output_index` sits at the dispatcher script address, holds the minted NFT, and carries a well-formed `GovernanceAnchor` datum whose `voting_stake_hash` and `gate_hash` are non-empty.
   - *No burn path.* The anchor is permanent reference data; the burn case is `fail`.
 \
@@ -565,13 +565,13 @@ Creates a governance instance: consumes a seed input, mints the one-shot Anchor 
 \
 + *Creator Wallet UTxO.*
   - Address: Creator's wallet address
-  - Value: ADA for the anchor min-ADA and fees. The input at `seed_input_index` fixes the Anchor NFT name.
+  - Value: ADA for the anchor min-ADA and fees. This UTxO is the settings policy's `seed` parameter, fixing the instance's policy id and hashes.
 \
 ==== Mints
 \
 + *Governance Settings Policy*
   - Redeemer: MintAnchor
-  - Value: +1 Anchor NFT (`blake2b_256` of the seed `OutputReference`)
+  - Value: +1 Anchor NFT (fixed name; policy seeded by the consumed UTxO)
 \
 ==== Outputs
 \

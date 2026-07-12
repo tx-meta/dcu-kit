@@ -102,10 +102,14 @@ pub type GateDatum {
   }
 }
 
-// [spec 3.3.2]: Governance Settings Policy mint redeemer.
+// [spec 3.3.2]: Governance Settings Policy mint redeemer. The policy is
+// parameterized by the seed OutputReference (one-shot per instance), so the
+// settings_policy — and thus the whole instance's dispatcher/voting/gate
+// hashes — are unique. This is what lets a vault's quorum Credential commit to
+// ONE governance instance (cross-instance authorization is otherwise possible).
 pub type SettingsRedeemer {
-  // One-shot Anchor NFT from the consumed seed input.
-  MintAnchor { seed_input_index: Int, anchor_output_index: Int }
+  // The seed is the compile parameter; only the anchor output index is needed.
+  MintAnchor { anchor_output_index: Int }
 }
 
 // [spec 3.3.3]: Governance Dispatcher mint redeemer. Every variant except
