@@ -15,6 +15,7 @@ import {
 import { unsignedInitGovernanceTxProgram } from "../src/governance/endpoints/initGovernance.js";
 import { unsignedRegisterVotingStakeTxProgram } from "../src/governance/endpoints/registerVotingStake.js";
 import { unsignedOpenProposalTxProgram } from "../src/governance/endpoints/openProposal.js";
+import { unsignedCastVoteTxProgram } from "../src/governance/endpoints/castVote.js";
 import { resolveAnchor, resolveProposal } from "../src/governance/utils.js";
 import { advanceBlock } from "./effects.js";
 
@@ -115,6 +116,25 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
       expect(proposal.target_id).toBe(TARGET);
       expect(proposal.tally_yes).toBe(0n);
       expect(proposal.quorum).toBe(2n);
+
+      // Cast one approving vote — tally and turnout advance by one.
+      const { tx: voteTx } = yield* unsignedCastVoteTxProgram(lucid, {
+        instance,
+        proposalId,
+        approve: true,
+      });
+      yield* signAndSubmit(voteTx);
+      yield* advanceBlock(ctx.emulator, 2);
+
+      const { proposal: voted } = yield* resolveProposal(
+        lucid,
+        instance,
+        proposalId,
+      );
+      expect(voted.tally_yes).toBe(1n);
+      expect(voted.tally_no).toBe(0n);
+      expect(voted.votes_cast).toBe(1n);
+      expect(voted.status).toBe("Open");
     }),
   );
 });

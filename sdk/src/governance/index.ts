@@ -8,5 +8,6 @@ export * from "./utils.js";
 export * from "./endpoints/initGovernance.js";
 export * from "./endpoints/registerVotingStake.js";
 export * from "./endpoints/openProposal.js";
-// endpoints below are wired incrementally (castVote, finalize, execute,
-// authorize, expire, updateCharter) + queries.
+export * from "./endpoints/castVote.js";
+// endpoints below are wired incrementally (finalize, execute, authorize,
+// expire, updateCharter) + queries.
