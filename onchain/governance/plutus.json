@@ -1,0 +1,900 @@
+{
+  "preamble": {
+    "title": "txmeta/governance",
+    "description": "Standalone governance validators (primitive #9: propose → vote → decide) for the cooperative finance SDK",
+    "version": "0.0.0",
+    "plutusVersion": "v3",
+    "compiler": {
+      "name": "Aiken",
+      "version": "v1.1.22+39d6b04"
+    },
+    "license": "Apache-2.0"
+  },
+  "validators": [
+    {
+      "title": "governance_dispatcher.governance_dispatcher.mint",
+      "redeemer": {
+        "title": "redeemer",
+        "schema": {
+          "$ref": "#/definitions/governance~1types~1GovMintRedeemer"
+        }
+      },
+      "parameters": [
+        {
+          "title": "_settings_policy",
+          "schema": {
+            "$ref": "#/definitions/cardano~1assets~1PolicyId"
+          }
+        }
+      ],
+      "compiledCode": "590364010100229800aba2aba1aab9faab9eaab9dab9a9bae0024888888966003300130043754011370e90004dc3a4005370e90024dc3a400c9111119194c004c028dd5000cc03401e601a0049112cc004c02400e33001375c6020601c6ea8012264b3001300a0018a518acc004c02400629462b300130080018a518acc004c01c0062946294500d201a40348068c034dd5000cc034dd5000a444b3001300c00189919194c004dd6980b000cdd6980b001cdd6980b0012444b3001301a0048044590180c058004c054004c044dd50024566002601600313232323298009bad30170019bad30170049bad30170039bad30170024888966002603800b00a8b2034180b800980b000980a80098089baa0048acc004c02800626464653001375a602c003375a602c007375a602c0049112cc004c06801201116406030160013015001301137540091598009804800c4c8c966002602c0050048b2028375a602800260226ea80122b30013370e9004000c56600260226ea801200516404916403c807900f201e403c8acc004c02000e264653001159800980598079baa0018992cc004c03000629462b3001300b0018a518acc004c02800629462b300130090018a518a51403c807900f201e300f3754007164039300f37540073012002488966002601c00513232323232323298009bad301c0019bad301c0079bad301c0069bad301c0059bad301c0049bad301c003992cc004c06c0062b3001337129002180d000c5a2602a603400280ca2c80e0dd5180e00124444444b30013024008808c590220c070004c06c004c068004c064004c060004c05c004c04cdd50034566002601a00513232323298009bad30190019bad30190049bad30190039bad30190024888966002603c00b00b8b2038180c800980c000980b80098099baa0068acc004c03000a264646464653001375a6034003375a603400b375a6034009375a6034007375a6034004911112cc004c08001a01b164078301a0013019001301800130170013013375400d159800980580144c8c8cc896600260340070078b2030375a602e0026eb4c05c008c05c004c04cdd5003456600266e1d20080028991919912cc004c06800e00f1640606eb4c05c004dd6980b801180b80098099baa0068b20224044808901120221808980900098071baa0048b20184030300c300d001300c005452689b2b200401",
+      "hash": "414b23a98641e9cc37b27c02c333ddb4da10f610c4cc2ff690d326bf"
+    },
+    {
+      "title": "governance_dispatcher.governance_dispatcher.spend",
+      "datum": {
+        "title": "datum",
+        "schema": {
+          "$ref": "#/definitions/governance~1types~1GovernanceDatum"
+        }
+      },
+      "redeemer": {
+        "title": "redeemer",
+        "schema": {
+          "$ref": "#/definitions/governance~1types~1GovSpendRedeemer"
+        }
+      },
+      "parameters": [
+        {
+          "title": "_settings_policy",
+          "schema": {
+            "$ref": "#/definitions/cardano~1assets~1PolicyId"
+          }
+        }
+      ],
+      "compiledCode": "590364010100229800aba2aba1aab9faab9eaab9dab9a9bae0024888888966003300130043754011370e90004dc3a4005370e90024dc3a400c9111119194c004c028dd5000cc03401e601a0049112cc004c02400e33001375c6020601c6ea8012264b3001300a0018a518acc004c02400629462b300130080018a518acc004c01c0062946294500d201a40348068c034dd5000cc034dd5000a444b3001300c00189919194c004dd6980b000cdd6980b001cdd6980b0012444b3001301a0048044590180c058004c054004c044dd50024566002601600313232323298009bad30170019bad30170049bad30170039bad30170024888966002603800b00a8b2034180b800980b000980a80098089baa0048acc004c02800626464653001375a602c003375a602c007375a602c0049112cc004c06801201116406030160013015001301137540091598009804800c4c8c966002602c0050048b2028375a602800260226ea80122b30013370e9004000c56600260226ea801200516404916403c807900f201e403c8acc004c02000e264653001159800980598079baa0018992cc004c03000629462b3001300b0018a518acc004c02800629462b300130090018a518a51403c807900f201e300f3754007164039300f37540073012002488966002601c00513232323232323298009bad301c0019bad301c0079bad301c0069bad301c0059bad301c0049bad301c003992cc004c06c0062b3001337129002180d000c5a2602a603400280ca2c80e0dd5180e00124444444b30013024008808c590220c070004c06c004c068004c064004c060004c05c004c04cdd50034566002601a00513232323298009bad30190019bad30190049bad30190039bad30190024888966002603c00b00b8b2038180c800980c000980b80098099baa0068acc004c03000a264646464653001375a6034003375a603400b375a6034009375a6034007375a6034004911112cc004c08001a01b164078301a0013019001301800130170013013375400d159800980580144c8c8cc896600260340070078b2030375a602e0026eb4c05c008c05c004c04cdd5003456600266e1d20080028991919912cc004c06800e00f1640606eb4c05c004dd6980b801180b80098099baa0068b20224044808901120221808980900098071baa0048b20184030300c300d001300c005452689b2b200401",
+      "hash": "414b23a98641e9cc37b27c02c333ddb4da10f610c4cc2ff690d326bf"
+    },
+    {
+      "title": "governance_dispatcher.governance_dispatcher.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "parameters": [
+        {
+          "title": "_settings_policy",
+          "schema": {
+            "$ref": "#/definitions/cardano~1assets~1PolicyId"
+          }
+        }
+      ],
+      "compiledCode": "590364010100229800aba2aba1aab9faab9eaab9dab9a9bae0024888888966003300130043754011370e90004dc3a4005370e90024dc3a400c9111119194c004c028dd5000cc03401e601a0049112cc004c02400e33001375c6020601c6ea8012264b3001300a0018a518acc004c02400629462b300130080018a518acc004c01c0062946294500d201a40348068c034dd5000cc034dd5000a444b3001300c00189919194c004dd6980b000cdd6980b001cdd6980b0012444b3001301a0048044590180c058004c054004c044dd50024566002601600313232323298009bad30170019bad30170049bad30170039bad30170024888966002603800b00a8b2034180b800980b000980a80098089baa0048acc004c02800626464653001375a602c003375a602c007375a602c0049112cc004c06801201116406030160013015001301137540091598009804800c4c8c966002602c0050048b2028375a602800260226ea80122b30013370e9004000c56600260226ea801200516404916403c807900f201e403c8acc004c02000e264653001159800980598079baa0018992cc004c03000629462b3001300b0018a518acc004c02800629462b300130090018a518a51403c807900f201e300f3754007164039300f37540073012002488966002601c00513232323232323298009bad301c0019bad301c0079bad301c0069bad301c0059bad301c0049bad301c003992cc004c06c0062b3001337129002180d000c5a2602a603400280ca2c80e0dd5180e00124444444b30013024008808c590220c070004c06c004c068004c064004c060004c05c004c04cdd50034566002601a00513232323298009bad30190019bad30190049bad30190039bad30190024888966002603c00b00b8b2038180c800980c000980b80098099baa0068acc004c03000a264646464653001375a6034003375a603400b375a6034009375a6034007375a6034004911112cc004c08001a01b164078301a0013019001301800130170013013375400d159800980580144c8c8cc896600260340070078b2030375a602e0026eb4c05c008c05c004c04cdd5003456600266e1d20080028991919912cc004c06800e00f1640606eb4c05c004dd6980b801180b80098099baa0068b20224044808901120221808980900098071baa0048b20184030300c300d001300c005452689b2b200401",
+      "hash": "414b23a98641e9cc37b27c02c333ddb4da10f610c4cc2ff690d326bf"
+    },
+    {
+      "title": "governance_gate.governance_gate.spend",
+      "datum": {
+        "title": "datum",
+        "schema": {
+          "$ref": "#/definitions/governance~1types~1GateDatum"
+        }
+      },
+      "redeemer": {
+        "title": "redeemer",
+        "schema": {
+          "$ref": "#/definitions/governance~1types~1GateRedeemer"
+        }
+      },
+      "parameters": [
+        {
+          "title": "_gov_policy",
+          "schema": {
+            "$ref": "#/definitions/cardano~1assets~1PolicyId"
+          }
+        }
+      ],
+      "compiledCode": "58a2010100229800aba2aba1aab9faab9eaab9dab9a9bae002488888896600264653001300800198041804800cc0200092225980099b8748008c020dd500144c8c96600266e1d2000300a375400b132323322598009809001c56600266e1d2000300e37546022602400d14a31640351640406eb4c03c004dd69807801180780098059baa0058b2012300c0013009375400516401c300800130043754011149a26cac8011",
+      "hash": "0639103d029ce4d26b4ef2fe96c0963429684d8dbecc19b0299f07fd"
+    },
+    {
+      "title": "governance_gate.governance_gate.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "parameters": [
+        {
+          "title": "_gov_policy",
+          "schema": {
+            "$ref": "#/definitions/cardano~1assets~1PolicyId"
+          }
+        }
+      ],
+      "compiledCode": "58a2010100229800aba2aba1aab9faab9eaab9dab9a9bae002488888896600264653001300800198041804800cc0200092225980099b8748008c020dd500144c8c96600266e1d2000300a375400b132323322598009809001c56600266e1d2000300e37546022602400d14a31640351640406eb4c03c004dd69807801180780098059baa0058b2012300c0013009375400516401c300800130043754011149a26cac8011",
+      "hash": "0639103d029ce4d26b4ef2fe96c0963429684d8dbecc19b0299f07fd"
+    },
+    {
+      "title": "governance_settings.governance_settings.mint",
+      "redeemer": {
+        "title": "redeemer",
+        "schema": {
+          "$ref": "#/definitions/governance~1types~1SettingsRedeemer"
+        }
+      },
+      "compiledCode": "588901010029800aba2aba1aab9faab9eaab9dab9a48888896600264653001300700198039804000cc01c0092225980099b8748000c01cdd500144c96600266e1d200030083754009132323322598009808001c528c5900e1bad300d001375a601a004601a00260126ea80122c8038dd7180518041baa0028b200c180380098019baa0078a4d1365640041",
+      "hash": "e9c40d40eec6a169e04114565b6924518f33c49231d0adf66a3b319d"
+    },
+    {
+      "title": "governance_settings.governance_settings.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "compiledCode": "588901010029800aba2aba1aab9faab9eaab9dab9a48888896600264653001300700198039804000cc01c0092225980099b8748000c01cdd500144c96600266e1d200030083754009132323322598009808001c528c5900e1bad300d001375a601a004601a00260126ea80122c8038dd7180518041baa0028b200c180380098019baa0078a4d1365640041",
+      "hash": "e9c40d40eec6a169e04114565b6924518f33c49231d0adf66a3b319d"
+    },
+    {
+      "title": "governance_voting.governance_voting.withdraw",
+      "redeemer": {
+        "title": "redeemer",
+        "schema": {
+          "$ref": "#/definitions/governance~1types~1VotingAction"
+        }
+      },
+      "parameters": [
+        {
+          "title": "_settings_policy",
+          "schema": {
+            "$ref": "#/definitions/cardano~1assets~1PolicyId"
+          }
+        }
+      ],
+      "compiledCode": "5901c4010100229800aba2aba1aab9faab9eaab9dab9a9bae002488888896600264653001300800198041804800cdc3a400930080024888966002600460126ea800e26530011325980099b874800000629462b300130020018a518acc004c01000629462b30013370e9003000c528c528a0144028805100a18051baa00598051baa005980698059baa00448896600266e1d20000028991919912cc004c05400e00f16404c6eb4c048004dd69809001180900098071baa0088acc004c01000a2646464646530013259800980a000c56600266e25200430130018b44c028c04c0050124590151baa30150019bad30150059bad30150049bad30150039bad301500248888966002603600d00d8b2032180a800980a0009809800980900098071baa0088acc004c01800a264646644b30013015003803c590131bad3012001375a60240046024002601c6ea80222b30013370e900300144c8c8ca60026eb4c04c0066eb4c04c00e6eb4c04c00922259800980b80240262c80a860260026024002601c6ea80222b30013370e900400144c8c96600260260050058b2022375a6022002601c6ea80222c806100c2018403080606e1d20028b2010180400098021baa0088a4d1365640081",
+      "hash": "d90f7c05c85df8955e751024388002029df6b0bd55a6de46d039f8f2"
+    },
+    {
+      "title": "governance_voting.governance_voting.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "parameters": [
+        {
+          "title": "_settings_policy",
+          "schema": {
+            "$ref": "#/definitions/cardano~1assets~1PolicyId"
+          }
+        }
+      ],
+      "compiledCode": "5901c4010100229800aba2aba1aab9faab9eaab9dab9a9bae002488888896600264653001300800198041804800cdc3a400930080024888966002600460126ea800e26530011325980099b874800000629462b300130020018a518acc004c01000629462b30013370e9003000c528c528a0144028805100a18051baa00598051baa005980698059baa00448896600266e1d20000028991919912cc004c05400e00f16404c6eb4c048004dd69809001180900098071baa0088acc004c01000a2646464646530013259800980a000c56600266e25200430130018b44c028c04c0050124590151baa30150019bad30150059bad30150049bad30150039bad301500248888966002603600d00d8b2032180a800980a0009809800980900098071baa0088acc004c01800a264646644b30013015003803c590131bad3012001375a60240046024002601c6ea80222b30013370e900300144c8c8ca60026eb4c04c0066eb4c04c00e6eb4c04c00922259800980b80240262c80a860260026024002601c6ea80222b30013370e900400144c8c96600260260050058b2022375a6022002601c6ea80222c806100c2018403080606e1d20028b2010180400098021baa0088a4d1365640081",
+      "hash": "d90f7c05c85df8955e751024388002029df6b0bd55a6de46d039f8f2"
+    }
+  ],
+  "definitions": {
+    "Bool": {
+      "title": "Bool",
+      "anyOf": [
+        {
+          "title": "False",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": []
+        },
+        {
+          "title": "True",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": []
+        }
+      ]
+    },
+    "ByteArray": {
+      "dataType": "bytes"
+    },
+    "Int": {
+      "dataType": "integer"
+    },
+    "List<ByteArray>": {
+      "dataType": "list",
+      "items": {
+        "$ref": "#/definitions/ByteArray"
+      }
+    },
+    "Option<Int>": {
+      "title": "Option",
+      "anyOf": [
+        {
+          "title": "Some",
+          "description": "An optional value.",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "None",
+          "description": "Nothing.",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": []
+        }
+      ]
+    },
+    "Pairs<Int,governance/types/OpenerPolicy>": {
+      "title": "Pairs<Int, OpenerPolicy>",
+      "dataType": "map",
+      "keys": {
+        "$ref": "#/definitions/Int"
+      },
+      "values": {
+        "$ref": "#/definitions/governance~1types~1OpenerPolicy"
+      }
+    },
+    "aiken/crypto/ScriptHash": {
+      "title": "ScriptHash",
+      "dataType": "bytes"
+    },
+    "aiken/crypto/VerificationKeyHash": {
+      "title": "VerificationKeyHash",
+      "dataType": "bytes"
+    },
+    "cardano/address/Credential": {
+      "title": "Credential",
+      "description": "A general structure for representing an on-chain `Credential`.\n\n Credentials are always one of two kinds: a direct public/private key\n pair, or a script (native or Plutus).",
+      "anyOf": [
+        {
+          "title": "VerificationKey",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "$ref": "#/definitions/aiken~1crypto~1VerificationKeyHash"
+            }
+          ]
+        },
+        {
+          "title": "Script",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "$ref": "#/definitions/aiken~1crypto~1ScriptHash"
+            }
+          ]
+        }
+      ]
+    },
+    "cardano/assets/AssetName": {
+      "title": "AssetName",
+      "dataType": "bytes"
+    },
+    "cardano/assets/PolicyId": {
+      "title": "PolicyId",
+      "dataType": "bytes"
+    },
+    "governance/types/GateDatum": {
+      "title": "GateDatum",
+      "anyOf": [
+        {
+          "title": "Decision",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "target_id",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "action",
+              "$ref": "#/definitions/governance~1types~1GovAction"
+            },
+            {
+              "title": "exec_deadline",
+              "$ref": "#/definitions/Option<Int>"
+            }
+          ]
+        }
+      ]
+    },
+    "governance/types/GateRedeemer": {
+      "title": "GateRedeemer",
+      "anyOf": [
+        {
+          "title": "Authorize",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "decision_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "target_input_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    },
+    "governance/types/GovAction": {
+      "title": "GovAction",
+      "anyOf": [
+        {
+          "title": "ParamChange",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "field_tag",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "new_value",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "SocialPayout",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "recipient",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "amount",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "WriteOff",
+          "dataType": "constructor",
+          "index": 2,
+          "fields": [
+            {
+              "title": "loan_id",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            }
+          ]
+        },
+        {
+          "title": "TreasuryMove",
+          "dataType": "constructor",
+          "index": 3,
+          "fields": [
+            {
+              "title": "recipient",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "amount",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "MembershipChange",
+          "dataType": "constructor",
+          "index": 4,
+          "fields": [
+            {
+              "title": "member",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "admit",
+              "$ref": "#/definitions/Bool"
+            }
+          ]
+        }
+      ]
+    },
+    "governance/types/GovMintRedeemer": {
+      "title": "GovMintRedeemer",
+      "anyOf": [
+        {
+          "title": "OpenProposal",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "seed_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "proposal_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "withdrawal_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "CastVote",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "proposal_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "receipt_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "voter_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "withdrawal_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "ExecuteProposal",
+          "dataType": "constructor",
+          "index": 2,
+          "fields": [
+            {
+              "title": "proposal_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "decision_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "withdrawal_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "BurnProposal",
+          "dataType": "constructor",
+          "index": 3,
+          "fields": [
+            {
+              "title": "withdrawal_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "BurnDecision",
+          "dataType": "constructor",
+          "index": 4,
+          "fields": []
+        }
+      ]
+    },
+    "governance/types/GovSpendRedeemer": {
+      "title": "GovSpendRedeemer",
+      "anyOf": [
+        {
+          "title": "Vote",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "anchor_ref_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "proposal_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "proposal_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "voter_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "share_ref_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "approve",
+              "$ref": "#/definitions/Bool"
+            },
+            {
+              "title": "withdrawal_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "Finalize",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "anchor_ref_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "proposal_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "proposal_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "withdrawal_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "Execute",
+          "dataType": "constructor",
+          "index": 2,
+          "fields": [
+            {
+              "title": "anchor_ref_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "proposal_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "proposal_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "decision_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "withdrawal_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "Expire",
+          "dataType": "constructor",
+          "index": 3,
+          "fields": [
+            {
+              "title": "proposal_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "withdrawal_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "UpdateCharter",
+          "dataType": "constructor",
+          "index": 4,
+          "fields": [
+            {
+              "title": "anchor_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "anchor_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    },
+    "governance/types/GovernanceDatum": {
+      "title": "GovernanceDatum",
+      "anyOf": [
+        {
+          "title": "GovernanceAnchor",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "title",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "member_policy",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            },
+            {
+              "title": "governed_targets",
+              "$ref": "#/definitions/List<ByteArray>"
+            },
+            {
+              "title": "voting_mode",
+              "$ref": "#/definitions/governance~1types~1VotingMode"
+            },
+            {
+              "title": "default_quorum",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "default_threshold",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "opener_policy",
+              "$ref": "#/definitions/Pairs<Int,governance~1types~1OpenerPolicy>"
+            },
+            {
+              "title": "timelock",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "creator",
+              "$ref": "#/definitions/cardano~1address~1Credential"
+            },
+            {
+              "title": "voting_stake_hash",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "gate_hash",
+              "$ref": "#/definitions/ByteArray"
+            }
+          ]
+        },
+        {
+          "title": "Proposal",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "proposal_id",
+              "$ref": "#/definitions/cardano~1assets~1AssetName"
+            },
+            {
+              "title": "target_id",
+              "$ref": "#/definitions/ByteArray"
+            },
+            {
+              "title": "action",
+              "$ref": "#/definitions/governance~1types~1GovAction"
+            },
+            {
+              "title": "voting_mode",
+              "$ref": "#/definitions/governance~1types~1VotingMode"
+            },
+            {
+              "title": "quorum",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "threshold",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "deadline",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "exec_deadline",
+              "$ref": "#/definitions/Option<Int>"
+            },
+            {
+              "title": "timelock_until",
+              "$ref": "#/definitions/Option<Int>"
+            },
+            {
+              "title": "tally_yes",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "tally_no",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "votes_cast",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "status",
+              "$ref": "#/definitions/governance~1types~1ProposalStatus"
+            }
+          ]
+        }
+      ]
+    },
+    "governance/types/OpenerPolicy": {
+      "title": "OpenerPolicy",
+      "anyOf": [
+        {
+          "title": "AnyMember",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": []
+        },
+        {
+          "title": "CreatorOnly",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": []
+        }
+      ]
+    },
+    "governance/types/ProposalStatus": {
+      "title": "ProposalStatus",
+      "anyOf": [
+        {
+          "title": "Open",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": []
+        },
+        {
+          "title": "Passed",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": []
+        },
+        {
+          "title": "Rejected",
+          "dataType": "constructor",
+          "index": 2,
+          "fields": []
+        },
+        {
+          "title": "Executed",
+          "dataType": "constructor",
+          "index": 3,
+          "fields": []
+        },
+        {
+          "title": "Expired",
+          "dataType": "constructor",
+          "index": 4,
+          "fields": []
+        }
+      ]
+    },
+    "governance/types/SettingsRedeemer": {
+      "title": "SettingsRedeemer",
+      "anyOf": [
+        {
+          "title": "MintAnchor",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "seed_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "anchor_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    },
+    "governance/types/VotingAction": {
+      "title": "VotingAction",
+      "anyOf": [
+        {
+          "title": "OpenAction",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "proposal_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "opener_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "CastAction",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "proposal_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "proposal_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "voter_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "share_ref_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "approve",
+              "$ref": "#/definitions/Bool"
+            }
+          ]
+        },
+        {
+          "title": "FinalizeAction",
+          "dataType": "constructor",
+          "index": 2,
+          "fields": [
+            {
+              "title": "proposal_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "proposal_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "ExecuteAction",
+          "dataType": "constructor",
+          "index": 3,
+          "fields": [
+            {
+              "title": "proposal_input_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "proposal_output_index",
+              "$ref": "#/definitions/Int"
+            },
+            {
+              "title": "decision_output_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        },
+        {
+          "title": "ExpireAction",
+          "dataType": "constructor",
+          "index": 4,
+          "fields": [
+            {
+              "title": "proposal_input_index",
+              "$ref": "#/definitions/Int"
+            }
+          ]
+        }
+      ]
+    },
+    "governance/types/VotingMode": {
+      "title": "VotingMode",
+      "anyOf": [
+        {
+          "title": "OneMemberOneVote",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": []
+        },
+        {
+          "title": "ShareWeighted",
+          "dataType": "constructor",
+          "index": 1,
+          "fields": [
+            {
+              "title": "share_source_policy",
+              "$ref": "#/definitions/cardano~1assets~1PolicyId"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

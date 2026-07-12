@@ -49,7 +49,7 @@ aiken --version 2>/dev/null | grep -q '1\.1\.22' ||
   echo "WARN: aiken v1.1.22 expected, found: $(aiken --version 2>/dev/null || echo none)"
 
 # --- Verify Aiken (rosca, escrow) — fmt --check, build, check -------------
-for project in rosca escrow savings; do
+for project in rosca escrow savings governance; do
   run_tty "aiken fmt --check ($project)" "onchain/$project" "aiken fmt --check"
   run_tty "aiken build ($project)" "onchain/$project" "aiken build"
   run_tty "aiken check ($project)" "onchain/$project" "aiken check"

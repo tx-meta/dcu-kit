@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        project: [rosca, escrow, savings]
+        project: [rosca, escrow, savings, governance]
     defaults:
       run:
         working-directory: ./onchain/${{ matrix.project }}
