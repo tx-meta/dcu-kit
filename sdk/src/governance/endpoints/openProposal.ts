@@ -55,7 +55,12 @@ export type OpenProposalConfig = {
   deadline: bigint;
   /** POSIX ms by which a passed proposal must execute (omit for no expiry). */
   execDeadline?: bigint;
-  /** The seed UTxO for the one-shot proposal NFT. Defaults to a wallet UTxO. */
+  /** The opener's eligibility token unit (a token of the charter's
+   *  member_policy). Its wallet UTxO is spent as the seed and proves opener
+   *  authority (AnyMember) — omit only when the opener policy is CreatorOnly. */
+  openerTokenUnit?: string;
+  /** The seed UTxO for the one-shot proposal NFT. Defaults to the opener-token
+   *  UTxO, or any wallet UTxO. */
   seed?: UTxO;
 };
 
@@ -67,9 +72,18 @@ export const unsignedOpenProposalTxProgram = (
     const { instance } = config;
     const network = lucid.config().network ?? "Preprod";
 
+    const walletUtxos = sortUtxos(yield* getWalletUtxos(lucid)).filter(
+      (u) => !u.scriptRef,
+    );
+    // The opener's eligibility-token UTxO doubles as the one-shot seed, so the
+    // proposal seed and the opener authority resolve to the same input index.
     const seed =
       config.seed ??
-      sortUtxos(yield* getWalletUtxos(lucid)).filter((u) => !u.scriptRef)[0];
+      (config.openerTokenUnit
+        ? walletUtxos.find(
+            (u) => (u.assets[config.openerTokenUnit!] ?? 0n) > 0n,
+          )
+        : walletUtxos[0]);
     if (!seed) {
       return yield* Effect.fail(
         new InsufficientUtxosError({ required: 1, available: 0 }),
@@ -118,10 +132,17 @@ export const unsignedOpenProposalTxProgram = (
       inputs: [seed],
     };
 
-    const votingRedeemer = Data.to(
-      { OpenAction: { proposal_output_index: 0n, opener_index: 0n } },
-      VotingAction,
-    );
+    // The seed input is also the opener's eligibility-token input, so
+    // opener_index resolves to the same tracked input as the mint's seed index.
+    const votingRedeemer: RedeemerBuilder = {
+      kind: "selected",
+      makeRedeemer: (idx: bigint[]) =>
+        Data.to(
+          { OpenAction: { proposal_output_index: 0n, opener_index: idx[0] } },
+          VotingAction,
+        ),
+      inputs: [seed],
+    };
 
     const tx = yield* lucid
       .newTx()

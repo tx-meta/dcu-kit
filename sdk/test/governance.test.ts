@@ -3,10 +3,13 @@ import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import {
   Emulator,
+  fromText,
   generateEmulatorAccount,
   Lucid,
   LucidEvolution,
+  mintingPolicyToId,
   PROTOCOL_PARAMETERS_DEFAULT,
+  scriptFromNative,
 } from "@lucid-evolution/lucid";
 import {
   selectWalletFromSeed,
@@ -31,6 +34,25 @@ import {
 import { advanceBlock } from "./effects.js";
 
 const TARGET = "bb".repeat(28);
+
+// A permissionless "membership" policy: eligibility = holding a token of it.
+// Stands in for the savings user-token policy in cross-module production use.
+const membershipScript = scriptFromNative({ type: "all", scripts: [] });
+const MEMBER_POLICY = mintingPolicyToId(membershipScript);
+const MEMBER_UNIT = MEMBER_POLICY + fromText("member");
+
+// Mint one membership token to the connected wallet (idempotent per test wallet).
+const mintMembership = (lucid: LucidEvolution) =>
+  Effect.gen(function* () {
+    const tx = yield* Effect.promise(() =>
+      lucid
+        .newTx()
+        .mintAssets({ [MEMBER_UNIT]: 1n })
+        .attach.MintingPolicy(membershipScript)
+        .complete(),
+    );
+    yield* signAndSubmit(tx);
+  });
 
 // A creator plus two members, all seed wallets so each can pay fees and sign.
 type GovContext = {
@@ -62,7 +84,7 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
       selectWalletFromSeed(lucid, ctx.creator.seedPhrase);
       const { tx, instance } = yield* unsignedInitGovernanceTxProgram(lucid, {
         title: "Test Chama Governance",
-        memberPolicy: "aa".repeat(28),
+        memberPolicy: MEMBER_POLICY,
         governedTargets: [TARGET],
         quorum: 2n,
         threshold: 5000n,
@@ -92,7 +114,7 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
         lucid,
         {
           title: "Chama",
-          memberPolicy: "aa".repeat(28),
+          memberPolicy: MEMBER_POLICY,
           governedTargets: [TARGET],
           quorum: 2n,
           threshold: 5000n,
@@ -109,6 +131,10 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
       yield* signAndSubmit(regTx);
       yield* advanceBlock(ctx.emulator, 2);
 
+      // The opener needs a membership token (eligibility).
+      yield* mintMembership(lucid);
+      yield* advanceBlock(ctx.emulator, 2);
+
       // Open a ParamChange proposal on the governed target.
       const { tx: openTx, proposalId } = yield* unsignedOpenProposalTxProgram(
         lucid,
@@ -117,6 +143,7 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
           targetId: TARGET,
           action: { ParamChange: { field_tag: 0n, new_value: 100n } },
           deadline: BigInt(Date.now() + 7 * 24 * 3600 * 1000),
+          openerTokenUnit: MEMBER_UNIT,
         },
       );
       yield* signAndSubmit(openTx);
@@ -133,6 +160,7 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
         instance,
         proposalId,
         approve: true,
+        voterTokenUnit: MEMBER_UNIT,
       });
       yield* signAndSubmit(voteTx);
       yield* advanceBlock(ctx.emulator, 2);
@@ -162,7 +190,7 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
           lucid,
           {
             title: "Chama",
-            memberPolicy: "aa".repeat(28),
+            memberPolicy: MEMBER_POLICY,
             governedTargets: [TARGET],
             quorum: 1n,
             threshold: 5000n,
@@ -178,6 +206,9 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
         yield* signAndSubmit(regTx);
         yield* advanceBlock(ctx.emulator, 2);
 
+        yield* mintMembership(lucid);
+        yield* advanceBlock(ctx.emulator, 2);
+
         const { tx: openTx, proposalId } = yield* unsignedOpenProposalTxProgram(
           lucid,
           {
@@ -187,6 +218,7 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
               SocialPayout: { recipient: "cc".repeat(28), amount: 5_000_000n },
             },
             deadline: BigInt(Date.now() + 3600_000),
+            openerTokenUnit: MEMBER_UNIT,
           },
         );
         yield* signAndSubmit(openTx);
@@ -196,6 +228,7 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
           instance,
           proposalId,
           approve: true,
+          voterTokenUnit: MEMBER_UNIT,
         });
         yield* signAndSubmit(voteTx);
         yield* advanceBlock(ctx.emulator, 2);
@@ -273,7 +306,7 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
           lucid,
           {
             title: "Chama",
-            memberPolicy: "aa".repeat(28),
+            memberPolicy: MEMBER_POLICY,
             governedTargets: [TARGET],
             quorum: 2n,
             threshold: 5000n,
@@ -300,6 +333,8 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
         );
         yield* signAndSubmit(regTx);
         yield* advanceBlock(ctx.emulator, 2);
+        yield* mintMembership(lucid);
+        yield* advanceBlock(ctx.emulator, 2);
         const { tx: openTx, proposalId } = yield* unsignedOpenProposalTxProgram(
           lucid,
           {
@@ -307,6 +342,7 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
             targetId: TARGET,
             action: { ParamChange: { field_tag: 0n, new_value: 1n } },
             deadline: BigInt(Date.now() + 1000),
+            openerTokenUnit: MEMBER_UNIT,
           },
         );
         yield* signAndSubmit(openTx);

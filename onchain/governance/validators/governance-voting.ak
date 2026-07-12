@@ -5,48 +5,57 @@ use governance/types.{
   CastAction, ExecuteAction, ExpireAction, FinalizeAction, OpenAction,
   VotingAction,
 }
+use governance/validation.{read_anchor}
+use governance/voting.{
+  validate_cast, validate_execute, validate_expire, validate_finalize,
+  validate_open,
+}
 
 // governance_voting(settings_policy) — the withdraw-zero home of ALL heavy logic.
 // ─────────────────────────────────────────────────────────────────────────────
-// Executed once per transaction in this handler, triggered by a zero-lovelace
-// withdrawal from this script's stake credential. It validates every lifecycle
-// transition (open, cast, finalize, execute, expire) against the anchor charter
-// (read as a reference input, authenticated by settings_policy's NFT) and the
-// proposal datum. Splitting this out is mandatory: primitive #7's monolith
-// reached 97% of the deploy-size ceiling and governance's logic is heavier.
-//
-// STAGE 3 SCAFFOLD: always-succeeds. Real checks land in Stage 5 (see TODOs).
-validator governance_voting(_settings_policy: PolicyId) {
-  withdraw(redeemer: VotingAction, _credential: Credential, _self: Transaction) {
+// Executed once per transaction, triggered by a zero-lovelace withdrawal from
+// this script's stake credential. It reads the anchor charter (a reference input
+// authenticated by settings_policy's NFT) and validates the lifecycle transition
+// carried by the redeemer. The thin dispatcher couples to this withdrawal, so
+// the heavy checks run once regardless of how many proposal UTxOs are spent.
+validator governance_voting(settings_policy: PolicyId) {
+  withdraw(redeemer: VotingAction, _credential: Credential, self: Transaction) {
+    let anchor = read_anchor(self.reference_inputs, settings_policy)
     when redeemer is {
-      OpenAction { .. } ->
-        // TODO [spec 3.3.4 OpenAction]: opener authorized per
-        //   charter.opener_policy[action_tag]; target_id in governed_targets;
-        //   the new Proposal copies voting_mode/quorum/threshold from the
-        //   charter, deadline in the future, zero tallies, status = Open.
-        True
-      CastAction { .. } ->
-        // TODO [spec 3.3.4 CastAction]: proposal Open and now <= deadline;
-        //   voter presents a member_policy token; weight = 1 (1m1v) or
-        //   share_units from the referenced savings account (share-weighted);
-        //   tally_yes/tally_no += weight, votes_cast += 1.
-        True
-      FinalizeAction { .. } ->
-        // TODO [spec 3.3.4 FinalizeAction]: proposal Open and now > deadline;
-        //   cast = tally_yes + tally_no; Passed iff cast >= quorum and
-        //   tally_yes*10000 >= threshold*cast (else Rejected); set
-        //   timelock_until = now + charter.timelock on pass.
-        True
-      ExecuteAction { .. } ->
-        // TODO [spec 3.3.4 ExecuteAction]: proposal Passed; now >=
-        //   timelock_until; within exec_deadline; exactly one Decision token
-        //   (name = proposal_id) locked at gate_hash bound to (target_id,
-        //   action, exec_deadline); status -> Executed.
-        True
-      ExpireAction { .. } ->
-        // TODO [spec 3.3.4 ExpireAction]: Open past deadline under quorum, or
-        //   stale past exec_deadline; status -> Expired; burn the Proposal NFT.
-        True
+      OpenAction { proposal_output_index, opener_index } ->
+        validate_open(anchor, proposal_output_index, opener_index, self)
+      CastAction {
+        proposal_input_index,
+        proposal_output_index,
+        voter_index,
+        share_ref_index,
+        approve,
+      } ->
+        validate_cast(
+          anchor,
+          proposal_input_index,
+          proposal_output_index,
+          voter_index,
+          share_ref_index,
+          approve,
+          self,
+        )
+      FinalizeAction { proposal_input_index, proposal_output_index } ->
+        validate_finalize(proposal_input_index, proposal_output_index, self)
+      ExecuteAction {
+        proposal_input_index,
+        proposal_output_index,
+        decision_output_index,
+      } ->
+        validate_execute(
+          anchor,
+          proposal_input_index,
+          proposal_output_index,
+          decision_output_index,
+          self,
+        )
+      ExpireAction { proposal_input_index } ->
+        validate_expire(proposal_input_index, self)
     }
   }
 

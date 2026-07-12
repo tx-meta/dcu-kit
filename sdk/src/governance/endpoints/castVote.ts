@@ -7,7 +7,11 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../../core/errors.js";
-import { getWalletAddress, makeReturn } from "../../core/utils/index.js";
+import {
+  getWalletAddress,
+  getWalletUtxos,
+  makeReturn,
+} from "../../core/utils/index.js";
 import {
   GovernanceDatum,
   GovMintRedeemer,
@@ -46,6 +50,9 @@ export type CastVoteConfig = {
   /** The voter's eligibility-token name (the receipt binds to it). Defaults to
    *  the wallet's payment key hash. */
   voterRef?: string;
+  /** The voter's eligibility token unit (a token of the charter's member_policy).
+   *  Its wallet UTxO is spent to prove eligibility at voter_index. */
+  voterTokenUnit?: string;
   /** The vote weight to apply (share-weighted callers pass share_units).
    *  Defaults to 1 (one-member-one-vote). */
   weight?: bigint;
@@ -74,6 +81,17 @@ export const unsignedCastVoteTxProgram = (
     const receiptName = voteReceiptTokenName(config.proposalId, voterRef);
     const receiptUnit = instance.govPolicy + receiptName;
 
+    // The voter spends their eligibility-token UTxO to prove eligibility; its
+    // index resolves to voter_index. The token returns to the wallet as change.
+    const voterUtxo = config.voterTokenUnit
+      ? (yield* getWalletUtxos(lucid)).find(
+          (u) => (u.assets[config.voterTokenUnit!] ?? 0n) > 0n,
+        )
+      : undefined;
+    const votingInputs = voterUtxo ? [proposalUtxo, voterUtxo] : [proposalUtxo];
+    // voter_index: the voter-token input when present, else the proposal input.
+    const voterIdxPos = voterUtxo ? 1 : 0;
+
     // Continuation: increment the cached tally by weight; count one more voter.
     const updated: GovernanceDatum = {
       Proposal: {
@@ -101,7 +119,7 @@ export const unsignedCastVoteTxProgram = (
               anchor_ref_index: anchorRefIndex,
               proposal_input_index: idx[0],
               proposal_output_index: 0n,
-              voter_index: idx[0],
+              voter_index: idx[voterIdxPos],
               share_ref_index: NO_SHARE_REF,
               approve: config.approve,
               withdrawal_index: 0n,
@@ -109,7 +127,7 @@ export const unsignedCastVoteTxProgram = (
           },
           GovSpendRedeemer,
         ),
-      inputs: [proposalUtxo],
+      inputs: votingInputs,
     };
 
     const mintRedeemer: RedeemerBuilder = {
@@ -120,13 +138,13 @@ export const unsignedCastVoteTxProgram = (
             CastVote: {
               proposal_input_index: idx[0],
               receipt_output_index: 1n,
-              voter_index: idx[0],
+              voter_index: idx[voterIdxPos],
               withdrawal_index: 0n,
             },
           },
           GovMintRedeemer,
         ),
-      inputs: [proposalUtxo],
+      inputs: votingInputs,
     };
 
     const votingRedeemer: RedeemerBuilder = {
@@ -137,20 +155,23 @@ export const unsignedCastVoteTxProgram = (
             CastAction: {
               proposal_input_index: idx[0],
               proposal_output_index: 0n,
-              voter_index: idx[0],
+              voter_index: idx[voterIdxPos],
               share_ref_index: NO_SHARE_REF,
               approve: config.approve,
             },
           },
           VotingAction,
         ),
-      inputs: [proposalUtxo],
+      inputs: votingInputs,
     };
 
     const tx = yield* lucid
       .newTx()
       .collectFrom([proposalUtxo], spendRedeemer)
       .attach.SpendingValidator(instance.dispatcherValidator.spend)
+      .compose(
+        voterUtxo ? lucid.newTx().collectFrom([voterUtxo]) : lucid.newTx(),
+      )
       .readFrom([anchorUtxo])
       .mintAssets({ [receiptUnit]: 1n }, mintRedeemer)
       .attach.MintingPolicy(instance.dispatcherValidator.mint)

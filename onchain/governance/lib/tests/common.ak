@@ -2,7 +2,7 @@ use cardano/address.{Address}
 use cardano/address as addr
 use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{
-  InlineDatum, Input, Output, OutputReference, Transaction,
+  InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
 }
 use cardano/transaction as tx
 use governance/types.{
@@ -122,10 +122,74 @@ pub fn proposal(
   }
 }
 
+// A proposal datum with the fixed test id/target and given action, status, and
+// tallies (deadline 1000, quorum 1, threshold 5000, 1m1v).
+pub fn mk_proposal(
+  action: GovAction,
+  status: ProposalStatus,
+  yes: Int,
+  no: Int,
+  cast: Int,
+  timelock_until: Option<Int>,
+) -> GovernanceDatum {
+  Proposal {
+    proposal_id: proposal_id(),
+    target_id: target_id(),
+    action,
+    voting_mode: OneMemberOneVote,
+    quorum: 1,
+    threshold: 5000,
+    deadline: 1000,
+    exec_deadline: None,
+    timelock_until,
+    tally_yes: yes,
+    tally_no: no,
+    votes_cast: cast,
+    status,
+  }
+}
+
 pub fn with_ada(v: Value) -> Value {
   assets.merge(assets.from_lovelace(2_000_000), v)
 }
 
 pub fn empty_tx() -> Transaction {
   tx.placeholder
+}
+
+// ── Voting test builders ─────────────────────────────────────────────────────
+
+pub fn proposal_id() -> ByteArray {
+  #"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+
+pub fn ref_at(ix: Int) -> OutputReference {
+  OutputReference { transaction_id: proposal_id(), output_index: ix }
+}
+
+// A proposal output at the dispatcher address holding the proposal NFT + datum.
+pub fn proposal_output(d: GovernanceDatum) -> Output {
+  Output {
+    address: dispatcher_address(),
+    value: with_ada(assets.from_asset(gov_policy(), proposal_id(), 1)),
+    datum: InlineDatum(d),
+    reference_script: None,
+  }
+}
+
+pub fn proposal_input(d: GovernanceDatum) -> Input {
+  Input { output_reference: ref_at(0), output: proposal_output(d) }
+}
+
+// A wallet input holding a membership token (eligibility).
+pub fn member_input() -> Input {
+  Input {
+    output_reference: ref_at(1),
+    output: Output {
+      address: addr.from_verification_key(creator_pkh()),
+      value: with_ada(assets.from_asset(member_policy(), "member", 1)),
+      datum: NoDatum,
+      reference_script: None,
+    },
+  }
 }
