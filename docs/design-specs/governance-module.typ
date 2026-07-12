@@ -184,7 +184,7 @@ Key structural decisions:
 
   Minted under the dispatcher policy only when a proposal is executed from the `Passed` state; locked at the gate address; burned by the gate when the approved action is performed.
 
-  - *TokenName:* `proposal_id` — one decision per proposal, traceable to the vote that produced it.
+  - *TokenName:* `blake2b_256(proposal_id ++ "decision")` — one decision per proposal, distinct from the Proposal State NFT (`proposal_id`) so the two never collide into one unit under the dispatcher policy.
 \
 == Smart Contracts
 \
@@ -274,7 +274,7 @@ Every mint variant except `BurnDecision` couples to the voting validator: the tr
 + *ExecuteProposal*
 
   - A withdrawal from `settings.voting_stake_hash` is present with the `ExecuteAction` redeemer.
-  - Exactly one Decision token is minted, name `= proposal_id`, and the output at `decision_output_index` locks it at `settings.gate_hash`'s address with a `Decision` datum binding `(target_id, action, exec_deadline)` copied from the proposal. The voting validator enforces that the proposal is `Passed` and the timelock elapsed.
+  - Exactly one Decision token is minted, name `= blake2b_256(proposal_id ++ "decision")`, and the output at `decision_output_index` locks it at `settings.gate_hash`'s address with a `Decision` datum binding `(target_id, action, exec_deadline)` copied from the proposal. The voting validator enforces that the proposal is `Passed` and the timelock elapsed.
 
 + *BurnProposal*
 
@@ -826,7 +826,7 @@ A passed proposal past its timelock mints its one-shot Decision token, locked at
 \
 + *Governance Dispatcher*
   - Redeemer: ExecuteProposal
-  - Value: +1 Decision token (name `= proposal_id`)
+  - Value: +1 Decision token (name `= blake2b_256(proposal_id ++ "decision")`)
 + *Governance Voting Validator*
   - Withdrawal: 0 lovelace, redeemer `ExecuteAction` (asserts `Passed` + timelock, once)
 \

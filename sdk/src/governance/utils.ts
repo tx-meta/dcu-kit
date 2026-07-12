@@ -1,6 +1,7 @@
 import {
   Constr,
   Data,
+  fromText,
   LucidEvolution,
   Network,
   UTxO,
@@ -69,6 +70,16 @@ export const voteReceiptTokenName = (
   voterRef: string,
 ): string =>
   bytesToHex(blake2b(hexToBytes(proposalId + voterRef), { dkLen: 32 }));
+
+/**
+ * The Decision token name: blake2b_256(proposal_id ++ "decision"). Distinct
+ * from the Proposal State NFT (which is govPolicy + proposal_id) so the two
+ * never collide into the same unit under the dispatcher policy.
+ */
+export const decisionTokenName = (proposalId: string): string =>
+  bytesToHex(
+    blake2b(hexToBytes(proposalId + fromText("decision")), { dkLen: 32 }),
+  );
 
 /**
  * The SORTED position of `target` among a transaction's reference inputs — the

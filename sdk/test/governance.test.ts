@@ -16,7 +16,14 @@ import { unsignedInitGovernanceTxProgram } from "../src/governance/endpoints/ini
 import { unsignedRegisterVotingStakeTxProgram } from "../src/governance/endpoints/registerVotingStake.js";
 import { unsignedOpenProposalTxProgram } from "../src/governance/endpoints/openProposal.js";
 import { unsignedCastVoteTxProgram } from "../src/governance/endpoints/castVote.js";
-import { resolveAnchor, resolveProposal } from "../src/governance/utils.js";
+import { unsignedFinalizeProposalTxProgram } from "../src/governance/endpoints/finalizeProposal.js";
+import { unsignedExecuteDecisionTxProgram } from "../src/governance/endpoints/executeDecision.js";
+import {
+  decisionTokenName,
+  gateAddress,
+  resolveAnchor,
+  resolveProposal,
+} from "../src/governance/utils.js";
 import { advanceBlock } from "./effects.js";
 
 const TARGET = "bb".repeat(28);
@@ -136,5 +143,101 @@ describe("governance module (emulator, always-succeeds scaffold)", () => {
       expect(voted.votes_cast).toBe(1n);
       expect(voted.status).toBe("Open");
     }),
+  );
+
+  it.effect(
+    "full core loop: open → vote → finalize (Passed) → execute → decision at gate",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const { lucid } = ctx;
+        selectWalletFromSeed(lucid, ctx.creator.seedPhrase);
+
+        // quorum 1 so a single vote passes.
+        const { tx: initTx, instance } = yield* unsignedInitGovernanceTxProgram(
+          lucid,
+          {
+            title: "Chama",
+            memberPolicy: "aa".repeat(28),
+            governedTargets: [TARGET],
+            quorum: 1n,
+            threshold: 5000n,
+          },
+        );
+        yield* signAndSubmit(initTx);
+        yield* advanceBlock(ctx.emulator, 2);
+
+        const regTx = yield* unsignedRegisterVotingStakeTxProgram(
+          lucid,
+          instance,
+        );
+        yield* signAndSubmit(regTx);
+        yield* advanceBlock(ctx.emulator, 2);
+
+        const { tx: openTx, proposalId } = yield* unsignedOpenProposalTxProgram(
+          lucid,
+          {
+            instance,
+            targetId: TARGET,
+            action: {
+              SocialPayout: { recipient: "cc".repeat(28), amount: 5_000_000n },
+            },
+            deadline: BigInt(Date.now() + 3600_000),
+          },
+        );
+        yield* signAndSubmit(openTx);
+        yield* advanceBlock(ctx.emulator, 2);
+
+        const { tx: voteTx } = yield* unsignedCastVoteTxProgram(lucid, {
+          instance,
+          proposalId,
+          approve: true,
+        });
+        yield* signAndSubmit(voteTx);
+        yield* advanceBlock(ctx.emulator, 2);
+
+        const { tx: finalizeTx, passed } =
+          yield* unsignedFinalizeProposalTxProgram(lucid, {
+            instance,
+            proposalId,
+          });
+        expect(passed).toBe(true);
+        yield* signAndSubmit(finalizeTx);
+        yield* advanceBlock(ctx.emulator, 2);
+
+        const { proposal: finalized } = yield* resolveProposal(
+          lucid,
+          instance,
+          proposalId,
+        );
+        expect(finalized.status).toBe("Passed");
+
+        const { tx: execTx, decisionName } =
+          yield* unsignedExecuteDecisionTxProgram(lucid, {
+            instance,
+            proposalId,
+          });
+        yield* signAndSubmit(execTx);
+        yield* advanceBlock(ctx.emulator, 2);
+
+        const { proposal: executed } = yield* resolveProposal(
+          lucid,
+          instance,
+          proposalId,
+        );
+        expect(executed.status).toBe("Executed");
+        expect(decisionName).toBe(decisionTokenName(proposalId));
+
+        // The one-shot decision now sits at the gate address, ready to authorize.
+        const network = lucid.config().network!;
+        const gateUtxos = yield* Effect.promise(() =>
+          lucid.utxosAt(gateAddress(network, instance)),
+        );
+        const decisionUnit = instance.govPolicy + decisionName;
+        const decision = gateUtxos.find(
+          (u) => (u.assets[decisionUnit] ?? 0n) > 0n,
+        );
+        expect(decision).toBeDefined();
+      }),
   );
 });
