@@ -966,6 +966,24 @@ Permissionless cleanup: an `Open` proposal past its deadline that never met quor
 
 #pagebreak()
 
+= Implementation Status and Deferred Items
+\
+All four validators are implemented and were verified end-to-end on Preprod (anchor mint, voting-stake registration, propose, vote, finalize, execute, gate-authorize). Compiled sizes: dispatcher 3.9 KB, voting 5.2 KB, settings 1.7 KB, gate 0.7 KB — all far below the 16,128-byte reference-script ceiling, which is the payoff of splitting withdraw-zero from line one.
+
+The following are *deliberately deferred*. None is a hole in what is enforced today; each is a capability not yet turned on, listed here so the spec never overstates the implementation.
+
++ *Share-weighted voting is not enforced on-chain.* `VotingMode` accepts `ShareWeighted`, but casting a vote under it fails. Weight-by-shares requires the validator to decode a savings account datum across family boundaries — a cross-family decode contract that no test yet exercises. Shipping it untested would be a security risk, so one-member-one-vote (the cooperative default, and the anti-plutocracy one) is the enforced mode.
+
++ *Temporal gating is not enforced.* `deadline`, `exec_deadline`, and `timelock_until` are recorded and carried faithfully, but the validators do not yet compare them against the transaction validity range. Enforcing them requires plumbing explicit validity bounds through every SDK endpoint. Until then a proposal can be finalized before its deadline; the tally, quorum, and threshold are still enforced exactly.
+
++ *Gate binding is by target, not by action.* The gate proves a decision is genuine, bound to the target vault, and burned on use (no replay). It does not yet assert that the vault's *redeemer action* equals the decision's `action` — that needs a cross-family map from `GovAction` to each vault family's redeemer. The target vault independently enforces that its own action is well-formed, so the residual exposure is a decision approved for one action on a vault authorizing a different action *on that same vault*.
+
++ *Governance-of-charter.* `UpdateCharter` is creator-authorized. Amending the charter by a passed `ParamChange` decision consumed at the gate is specified but not yet wired.
+
++ *Batching.* Proposal spends require that exactly ONE proposal UTxO is spent per transaction. This is what closes double satisfaction without a full multi-UTxO indexer: the single withdraw-zero voting action validates one proposal, so batching two would leave the second's transition unchecked. Governance has no batching use case; if one appears, the remedy is `multi_utxo_indexer` with strictly-increasing indices.
+
+#pagebreak()
+
 = References and Prior Art
 \
 The design draws on the following sources (consulted July 2026).
