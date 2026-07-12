@@ -85,7 +85,16 @@
     "savings-loan-disburse": "pnpm run build && node dist/savings-loan-disburse.js",
     "savings-loan-repay": "pnpm run build && node dist/savings-loan-repay.js",
     "savings-loan-arrears": "pnpm run build && node dist/savings-loan-arrears.js",
-    "savings-loan-writeoff": "pnpm run build && node dist/savings-loan-writeoff.js"
+    "savings-loan-writeoff": "pnpm run build && node dist/savings-loan-writeoff.js",
+    "governance-init": "pnpm run build && node dist/governance-init.js",
+    "governance-propose": "pnpm run build && node dist/governance-propose.js",
+    "governance-vote": "pnpm run build && node dist/governance-vote.js",
+    "governance-finalize": "pnpm run build && node dist/governance-finalize.js",
+    "governance-execute": "pnpm run build && node dist/governance-execute.js",
+    "governance-authorize": "pnpm run build && node dist/governance-authorize.js",
+    "governance-expire": "pnpm run build && node dist/governance-expire.js",
+    "governance-inspect": "pnpm run build && node dist/governance-inspect.js",
+    "governance-mint-tokens": "pnpm run build && node dist/governance-mint-tokens.js"
   },
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.31",

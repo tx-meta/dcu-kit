@@ -83,6 +83,19 @@ export type ExampleState = {
   savingsMemberSuffixUser2?: string; // USER2
   savingsMemberSuffixAdmin?: string; // ADMIN
 
+  // Governance module (@tx-meta/dcu-kit/governance — primitive #9, standalone
+  // family). The instance is PER-SEED: buildGovernance(governanceSeed) re-derives
+  // every hash (settings policy → dispatcher → gate, plus the voting stake
+  // validator), so the seed OutRef is the only durable identity we persist.
+  // The four scripts are small (0.7–5.2 KB) and ride inline; no ref script needed.
+  governanceSeed?: ScriptRefOutRef;
+  governanceProposalId?: string; // last proposal opened by governance-propose
+  // The eligibility token unit (charter member_policy + a name) the opener/voter
+  // spends to prove membership, and the governed vault's state-token unit the
+  // gate binds a decision to.
+  governanceMemberUnit?: string;
+  governanceTargetUnit?: string;
+
   // Native multisig built by create-multisig.ts. The script CBOR is the
   // spendability proof for assign-admin (destinationScript) and the witness
   // update-group / delete-group attach (adminScript) when the group admin 222
