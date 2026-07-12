@@ -24,7 +24,7 @@
 #v(1cm)
 
 #set text(22pt, fill: white)
-#align(center)[#strong[DCU Toolkit — Savings Module]]
+#align(center)[#strong[DCU Toolkit — Savings & Credit Module]]
 #set text(20pt, fill: white)
 #align(center)[#strong[Design Specification]]
 
@@ -67,7 +67,7 @@
       #set text(size: 11pt, fill: black)
       *TxMeta – *
       #set text(size: 11pt, fill: gray)
-      *DCU-Toolkit Savings Module*
+      *DCU-Toolkit Savings & Credit Module*
       #v(-3mm)
       Project Design Specification
       #v(-3mm)
@@ -83,7 +83,7 @@
 #set terms(separator: [: ], hanging-indent: 18mm)
 #align(center)[
   #set text(size: 20pt)
-  #strong[DCU Toolkit — Savings Module (Primitive \#7)]]
+  #strong[DCU Toolkit — Savings & Credit Module (Primitives \#7 + \#8)]]
 #v(20pt)
 \
 
@@ -93,32 +93,38 @@
 = Overview
 \
 
-The Savings Module gives every member of a savings-credit group (ASCA, VSLA, table-banking group) a persistent on-chain capital account: how many share units they have purchased, what they have paid into the social fund, and what claim that gives them at end-of-cycle share-out. It is primitive \#7 of the cooperative finance OS — the persistent per-member capital account — and the direct prerequisite for the lending module (\#8), which will read member share balances for loan eligibility.
+The Savings & Credit Module gives every member of a savings-credit group (ASCA, VSLA, table-banking group) a persistent on-chain capital account — how many share units they have purchased, what they have paid into the social fund, what claim that gives them at end-of-cycle share-out — and lets members borrow from the pooled fund they saved into. It implements primitives \#7 (persistent per-member capital accounts) and \#8 (internal loans) of the cooperative finance OS as ONE engine: loans draw from the savings vault, eligibility is capped by the borrower's own shares, and repaid service charges grow everyone's share-out pot.
+
+The credit half is honest about its mechanism-design ceiling: a loan is SECURED up to the borrower's own share value (the write-off path can seize shares — code-enforceable) and UNSECURED above it (a pseudonymous borrower cannot be forced to repay beyond what is locked; the on-chain record — a Defaulted loan status — is the standing signal that social enforcement, future loan denial, and the later collateral primitive \#10 build on). A fund opts into unsecured lending deliberately: the charter's loan multiple defaults to 1 (fully secured).
 
 The module is built with Aiken on Cardano and ships as a standalone validator family (`onchain/savings/`), following the same additive-module policy as the escrow family: it introduces no changes to any deployed validator. The offchain layer is TypeScript with Lucid Evolution and Effect, following the DCU Toolkit SDK conventions. Under the trust-state rule (July 11, 2026), every balance another member must trust — share units, fund totals, the share-out snapshot — lives on-chain; member personal data never does.
 
 Design lineage: the pooled-custody vault with individually-owned member state generalizes the escrow pool vault (`PoolDeposit` pattern); the quorum `Credential` socket and one-shot state token reuse the escrow v2 idioms; member accounts are CIP-68 pairs following the account validator idiom. Share-out is member-claimed (each member spends only their own account), so the module has no O(N) distribution transaction and no on-chain member ceiling.
 
-Deliberate v1 exclusions: loan disbursement and repayment (module \#8 — arrives as a versioned successor of this validator per the version-never-replace policy), transferable share positions (share units are datum balances, not fungible tokens), time-weighted share-out (v1 is proportional to share units held at close), and on-chain meeting/attendance records (product layer).
+Deliberate v1 exclusions: transferable share positions (share units are datum balances, not fungible tokens), time-weighted share-out (v1 is proportional to share units held at close), on-chain meeting/attendance records (product layer), concurrent loans per member (one active loan at a time), compounding interest (the service charge is a flat amount fixed at disbursement), and external collateral (primitive \#10 — the write-off path seizes only the borrower's own shares).
 
 #pagebreak()
 \
 = Architecture
 \
 
-The module is one multi-validator, mirroring the pool vault's shape: a single script whose minting purpose controls fund and account token lifecycles and whose spending purpose guards two datum variants at one address.
+The module is one multi-validator, mirroring the pool vault's shape: a single script whose minting purpose controls fund, account, and loan token lifecycles and whose spending purpose guards three datum variants at one address.
 
 + *Savings Vault Validator*
 
-  A multi-validator with two datum variants. The *fund anchor* UTxO holds the group's charter (rules, quorum, asset) and custodies the pooled funds in a single UTxO; its datum tracks the fund totals and the cycle status. Each *member account* is a CIP-68 reference UTxO at the same address holding that member's share units and social-fund history; the paired user token in the member's wallet is the spending authority for the account.
+  A multi-validator with three datum variants. The *fund anchor* UTxO holds the group's charter (rules, quorum, asset) and custodies the pooled funds in a single UTxO; its datum tracks the fund totals, the outstanding loan book total, and the cycle status. Each *member account* is a CIP-68 reference UTxO at the same address holding that member's share units, social-fund history, and outstanding borrowing; the paired user token in the member's wallet is the spending authority for the account. Each *loan account* is a record UTxO (one per active loan) holding the loan's terms and repayment state, authenticated by a one-shot Loan State NFT.
 
 Key structural decisions:
 
-+ *Pooled custody, individual accounting.* All deposited value sits in the fund anchor UTxO (one vault), so the future loan fund (\#8) has one pot to draw from. Member claims on that pot are datum balances in per-member account UTxOs. The conservation invariant binds them: the vault's asset value always covers `savings_total + social_total`.
++ *Pooled custody, individual accounting.* All deposited value sits in the fund anchor UTxO (one vault); loans draw from that single pot. Member claims on the pot are datum balances in per-member account UTxOs. The conservation invariant binds them: the vault's asset value plus the outstanding loan book always covers `savings_total + social_total`.
+
++ *Loans are records, not vaults.* Disbursed principal goes to the borrower's wallet; the loan account UTxO holds only its min-ADA and the Loan State NFT — it is the on-chain loan book entry (terms, outstanding, arrears status), not a second pot. The record's min-ADA is funded by the disbursement transaction's builder and released when the loan closes.
+
++ *Shares back loans.* A member's account tracks `borrowed` (their outstanding principal). Eligibility caps a loan at `max_loan_multiple` times the member's share value; withdrawals cannot take shares that back a live loan; write-off seizes shares first and socializes only the remainder. At the charter default (`max_loan_multiple = 1`) every loan is fully self-collateralized.
 
 + *Joins do not touch the vault.* Minting a member account references the fund anchor read-only, so onboarding never contends with deposits. Nothing on-chain iterates members — there is no member list and no member count in any datum; aggregate trust state is carried by `shares_total`.
 
-+ *Untagged value is welcome.* Penalties, donations, and (later) loan interest can enter the vault as plain value top-ups with no datum change. Everything in the vault above the social fund is captured into the share-out pot at cycle close. This keeps the v1 datum small and gives \#8 a place to deposit repayment income without a datum migration.
++ *Untagged value is welcome.* Penalties, donations, and the service-charge portion of loan repayments enter the vault as plain value above the tracked totals. Everything in the vault above the social fund is captured into the share-out pot at cycle close — loan income reaches members automatically, pro-rata to shares.
 
 + *Member-claimed share-out.* Cycle close freezes a snapshot (`pot`, `shares`); each member then claims their proportional payout by spending their own account against the vault. Claims are independent transactions — concurrent, crank-free, and unbounded by group size.
 
@@ -132,9 +138,17 @@ Key structural decisions:
 
   An entity holding a Member Account user token (CIP-68 label 222). Members buy share units (deposits), contribute to the social fund, withdraw where the fund's policy allows, claim their share-out after cycle close, and exit by burning their account pair. A member's on-chain identity for this module is the account token suffix.
 
++ *Borrower*
+
+  A member with an active loan. Disbursement requires BOTH the quorum's ratification and the borrower's user token in the transaction inputs — mutual consent, and the borrower's signature is what directs the principal to their own wallet. The borrower repays with their user token; one active loan per member.
+
 + *Quorum*
 
-  The fund's ratification authority, a `Credential` (native multisig script or verification key; a vote-tally script later, by rotation — the primitive \#9 socket). The quorum ratifies rule updates, social-fund payouts, cycle close, and fund closure. The quorum never holds member funds and has no path to withdraw member savings to itself before cycle close.
+  The fund's ratification authority, a `Credential` (native multisig script or verification key; a vote-tally script later, by rotation — the primitive \#9 socket). The quorum ratifies rule updates, social-fund payouts, loan disbursements (the loan committee), write-offs, cycle close, and fund closure. The quorum never holds member funds: it cannot reach member savings, and loans it ratifies are bounded by the borrower-consent rule and the eligibility cap.
+
++ *Anyone (arrears crank)*
+
+  Marking an overdue loan Late, then Defaulted, is permissionless — the on-chain default record never depends on the quorum's diligence.
 \
 
 == Tokens
@@ -144,6 +158,12 @@ Key structural decisions:
   A one-shot state token identifying the fund instance, locked in the fund anchor UTxO forever until fund closure burns it.
 
   - *TokenName:* 32-byte `blake2b_256` digest of the seed `OutputReference` consumed at creation (single state token — no CIP-68 prefix), as in the escrow pool vault.
+
++ *Loan State NFT*
+
+  A one-shot state token identifying an active loan, locked in the loan account UTxO. Minted at disbursement, burned at loan closure (final repayment or write-off).
+
+  - *TokenName:* 32-byte `blake2b_256` digest of the seed `OutputReference` consumed at disbursement — the same construction as the Fund State NFT. Fund and loan tokens are told apart by the datum variant they authenticate, never by name shape.
 
 + *Member Account NFT pair*
 
@@ -181,6 +201,14 @@ Nothing — uniqueness comes from one-shot token names derived from consumed see
   ```*
 
 - *```rust
+  MintLoan { seed_input_index: Int }
+  ```*
+
+- *```rust
+  BurnLoan
+  ```*
+
+- *```rust
   BurnAccount
   ```*
 
@@ -198,8 +226,8 @@ Nothing — uniqueness comes from one-shot token names derived from consumed see
   - The input at `seed_input_index` is consumed; the token name equals `blake2b_256(serialise(seed.output_reference))`.
   - Exactly one token of the own policy is minted in the transaction, quantity `+1`.
   - The output at `fund_output_index` is at the own script address, carries the Fund State NFT, and holds an inline `SavingsFund` datum.
-  - *Charter sanity:* `share_value > 0`, `0 < min_shares_per_deposit <= max_shares_per_deposit`, `withdrawal_policy` is `0` or `1`, `status` is `Active`.
-  - *Zero start:* `shares_total == 0`, `savings_total == 0`, `social_total == 0`.
+  - *Charter sanity:* `share_value > 0`, `0 < min_shares_per_deposit <= max_shares_per_deposit`, `withdrawal_policy` is `0` or `1`, `max_loan_multiple >= 0` (`0` disables lending), `loan_grace >= 0`, `status` is `Active`.
+  - *Zero start:* `shares_total == 0`, `savings_total == 0`, `social_total == 0`, `loans_outstanding == 0`.
   - The anchor output's non-ADA value is exactly the Fund State NFT (no foreign tokens smuggled in at creation).
 
 + *MintAccount*
@@ -211,6 +239,18 @@ Nothing — uniqueness comes from one-shot token names derived from consumed see
   - Exactly two tokens of the own policy are minted: reference token (`000643b0` + suffix) and user token (`000de140` + suffix), quantity `+1` each.
   - The output at `ref_output_index` is at the own script address, carries the reference token, and holds an inline `MemberAccount` datum with: `fund_id` equal to the referenced Fund State NFT's token name, `share_units == 0`, `social_paid == 0`, `joined_at` inside the transaction validity window.
   - *User token destination:* the output at `user_output_index` pays the user token to a `VerificationKey` payment credential (never a script).
+
++ *MintLoan*
+
+  Mints one Loan State NFT. Runs only alongside the fund anchor spend under `DisburseLoan`, which carries the full loan-origination validation; this policy enforces the token's shape and one-shot uniqueness.
+
+  - The input at `seed_input_index` is consumed; the token name equals `blake2b_256(serialise(seed.output_reference))` and is not CIP-68 prefixed.
+  - Exactly one token of the own policy is minted, quantity `+1`.
+  - At least one spending input sits at the own script address (the anchor spend — every own spend path except `DisburseLoan` forbids own-policy mints, so the coupling is transitive).
+
++ *BurnLoan*
+
+  - Exactly one token of the own policy is minted, quantity `-1`, with a Fund-State-shaped name (32 bytes, not CIP-68 prefixed). The loan spend paths (`RepayLoan` closing, `WriteOffLoan`) authorize which token actually burns.
 
 + *BurnAccount*
 
@@ -238,6 +278,8 @@ The address holds one datum type with two variants.
   - *`share_value`: ```rs Int```* – Price of one share unit, in base units of the fund asset. Immutable for the fund's lifetime — the unit that keeps share math exact.
   - *`min_shares_per_deposit`: ```rs Int```* / *`max_shares_per_deposit`: ```rs Int```* – VSLA-style per-transaction purchase band.
   - *`withdrawal_policy`: ```rs Int```* – `0` = savings locked until share-out (VSLA preset); `1` = flexible withdrawal (ASCA preset).
+  - *`max_loan_multiple`: ```rs Int```* – Loan eligibility cap: a member may borrow up to this multiple of their share value. `0` disables lending; `1` (the SDK default) keeps every loan fully self-collateralized; above `1` the excess is unsecured by construction.
+  - *`loan_grace`: ```rs Int```* – Milliseconds after a loan's `due` before `Late` can become `Defaulted`.
   - *`cycle_end`: ```rs Option<Int>```* – POSIX ms; before this bound, `CloseCycle` is invalid (`None` = quorum may close at any time).
   - *`shares_total`: ```rs Int```* – Sum of all members' share units. The load-bearing aggregate.
   - *`savings_total`: ```rs Int```* – Always `shares_total * share_value`; tracked explicitly so every transition can assert the invariant cheaply.
@@ -253,7 +295,20 @@ The address holds one datum type with two variants.
   - *`consent`: ```rs Bool```* – Standing-layer event-capture consent flag (credentials-not-scores; set at join, member-changeable).
   - *`joined_at`: ```rs Int```* – POSIX ms.
 
-No datum field in either variant carries personal data. Balances, flags, and identifiers only.
+- *```rust
+  LoanAccount
+  ```* — one per active loan (the loan book entry):
+  - *`fund_id`: ```rs AssetName```* – The Fund State NFT token name this loan belongs to.
+  - *`borrower_ref`: ```rs AssetName```* – The borrower's member (100) reference-token name.
+  - *`principal`: ```rs Int```* – Amount disbursed, in base units of the fund asset.
+  - *`outstanding`: ```rs Int```* – Remaining principal; repayments reduce it.
+  - *`service_charge`: ```rs Int```* – The flat charge due, fixed at disbursement (never compounds).
+  - *`charge_paid`: ```rs Int```* – Charge repaid so far (income — flows to the pot).
+  - *`due`: ```rs Int```* – POSIX ms repayment deadline; arrears transitions key off it.
+  - *`grace`: ```rs Int```* – Milliseconds after `due` before `Late` can become `Defaulted`. Copied from the charter's `loan_grace` at disbursement — like the service charge, arrears terms are FIXED at disbursement and immune to later charter updates.
+  - *`status`: ```rs LoanStatus```* – `Current`, `Late` (past due), or `Defaulted` (past `due + grace`).
+
+No datum field in any variant carries personal data. Balances, flags, terms, and identifiers only.
 \
 
 ===== Redeemer
@@ -299,6 +354,43 @@ No datum field in either variant carries personal data. Balances, flags, and ide
   ```*
 
 - *```rust
+  DisburseLoan {
+    fund_input_index: Int,
+    member_input_index: Int,
+    seed_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+    loan_output_index: Int,
+  }
+  ```*
+
+- *```rust
+  RepayLoan {
+    fund_input_index: Int,
+    member_input_index: Int,
+    loan_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+    loan_output_index: Int,
+  }
+  ```*
+  (`loan_output_index = 99` when the repayment closes the loan — no loan continuation; the Loan State NFT burns.)
+
+- *```rust
+  MarkArrears { loan_input_index: Int, loan_output_index: Int }
+  ```*
+
+- *```rust
+  WriteOffLoan {
+    fund_input_index: Int,
+    member_input_index: Int,
+    loan_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+  }
+  ```*
+
+- *```rust
   RemoveAccount { member_input_index: Int }
   ```*
 
@@ -306,7 +398,7 @@ No datum field in either variant carries personal data. Balances, flags, and ide
   CloseFund { fund_input_index: Int }
   ```*
 
-Paired transitions (`Deposit`, `Withdraw`, `ClaimShareOut`) spend the fund anchor and the member's reference UTxO in one transaction; both script inputs present the same redeemer value, and validation branches on the spent input's own datum variant (the pool-vault idiom).
+Paired transitions (`Deposit`, `Withdraw`, `ClaimShareOut`) spend the fund anchor and the member's reference UTxO in one transaction; triple transitions (`DisburseLoan`, `RepayLoan`, `WriteOffLoan`) additionally spend or create the loan account UTxO. All spent script inputs present the same redeemer value, and validation branches on the spent input's own datum variant (the pool-vault idiom): the ANCHOR branch always carries the full transition check; member and loan branches only verify that their fund's anchor is a spending input in the same transaction.
 \
 
 ===== Validation
@@ -314,7 +406,7 @@ Paired transitions (`Deposit`, `Withdraw`, `ClaimShareOut`) spend the fund ancho
 Common checks on every spend (stated once, applied everywhere):
 
 - *Self-reference:* the input at the redeemer index for the spent UTxO resolves to the UTxO being validated (`inputs[i].output_reference == own_ref`), and its payment credential yields the own policy ID.
-- *Input discipline:* the transaction spends exactly the expected own-script inputs for the redeemer — one (anchor-only and member-only actions) or two (paired actions). No third own-script input may ride along.
+- *Input discipline:* the transaction spends exactly the expected own-script inputs for the redeemer — one (anchor-only, member-only, and loan-only actions), two (paired actions), or three (loan transitions: anchor + member + loan). Nothing extra may ride along.
 - *Datum present:* a missing datum fails before any branch.
 - *Continuation integrity:* every continuing output returns to the own script address, keeps its state token, and holds an inline datum; only the fields named per-redeemer may change.
 
@@ -337,6 +429,7 @@ Common checks on every spend (stated once, applied everywhere):
   - Member user token present; `fund_id` matches; anchor `status == Active`.
   - *Policy gate:* anchor `withdrawal_policy == 1`.
   - Let `units` = decrease of member `share_units`. `0 < units <= share_units`.
+  - *Loan lock:* the remaining shares must still back the member's live loan — `borrowed <= max_loan_multiple * (share_units - units) * share_value`. A borrower cannot withdraw the shares securing their own loan.
   - The anchor's fund-asset value decreases by exactly `units * share_value`; anchor `shares_total -= units`, `savings_total -= units * share_value`.
   - `social_paid`, `social_total`, and all charter fields unchanged.
 
@@ -362,6 +455,7 @@ Common checks on every spend (stated once, applied everywhere):
   Freezes the share-out snapshot.
 
   - `credential_authorized(quorum, tx)`; `status == Active`; if `cycle_end` is `Some(t)`, the transaction validity range starts at or after `t`.
+  - *Loans clear first (VSLA rule):* `loans_outstanding == 0` — every loan is repaid or written off before the share-out snapshot freezes.
   - Let `vault` = the anchor's fund-asset value, and `buffer` = `2_000_000` when the fund asset is ADA, else `0` (the anchor's protocol min-ADA buffer is not a deposit — excluding it keeps the last claims from breaking on min-ADA). New status, EXACT: `SharingOut { pot: vault - social_total - buffer, shares: shares_total, shares_remaining: shares_total }` — everything else is distributable, including untagged top-ups. Exactness keeps the quorum honest: it cannot understate the pot to enlarge the closure residual.
   - Anchor continuation: `shares_total = 0`, `savings_total = 0` (superseded by the frozen snapshot); `social_total` and charter unchanged; value unchanged (freezing moves no money).
 
@@ -375,12 +469,56 @@ Common checks on every spend (stated once, applied everywhere):
   - Member continuation: `share_units = 0`; `social_paid`, `consent`, `joined_at` unchanged.
   - *Dust honesty:* floor remainders accumulate in the vault and are swept at `CloseFund`; a claim never rounds up.
 
++ *DisburseLoan* (triple: anchor + member + loan creation; quorum AND borrower authorized)
+
+  The loan committee disburses a loan to a consenting member. Principal goes to the borrower's wallet; the loan account UTxO is the on-chain loan book entry.
+
+  - `credential_authorized(quorum, tx)` AND the borrower's user token (matching the member account's suffix) is present in the inputs — mutual consent; the borrower's signature is what directs the principal.
+  - Anchor `status == Active`; `max_loan_multiple > 0` (lending enabled).
+  - Member `fund_id` matches; *one loan at a time:* member `borrowed == 0`.
+  - Read the new loan's terms from the output at `loan_output_index` (inline `LoanAccount` datum): `fund_id` = the anchor's Fund State NFT name, `borrower_ref` = the member's (100) token name, `principal > 0`, `outstanding == principal`, `service_charge >= 0`, `charge_paid == 0`, `due` beyond the transaction validity's upper bound, `grace` equal to the charter's `loan_grace`, `status == Current`.
+  - *Eligibility cap:* `principal <= max_loan_multiple * share_units * share_value`.
+  - *Liquidity guard:* the vault's fund-asset value after disbursement is at least `social_total` (plus the min-ADA buffer for ADA funds) — loans never draw the welfare fund or the protocol buffer.
+  - The loan output carries exactly the one-shot Loan State NFT (minted via `MintLoan` from the consumed seed at `seed_input_index`) plus its min-ADA — no fund asset (the record is not a vault); the record's min-ADA is funded by the transaction, not the vault.
+  - Anchor continuation: fund-asset value decreases by exactly `principal`; `loans_outstanding += principal`; all other fields unchanged.
+  - Member continuation: `borrowed = principal`; value and all other fields unchanged.
+
++ *RepayLoan* (triple: anchor + member + loan; borrower-authorized)
+
+  The borrower repays — partially or fully. The principal portion restores vault liquidity; the charge portion is income and flows to the share-out pot as untagged surplus.
+
+  - Borrower's user token present; loan `fund_id` and member `fund_id` match the anchor; loan `borrower_ref` matches the member's token.
+  - Let `principal_paid` = decrease of loan `outstanding` and `charge_inc` = increase of loan `charge_paid`. `principal_paid >= 0`, `charge_inc >= 0`, `principal_paid + charge_inc > 0`; `principal_paid <= outstanding`; `charge_paid + charge_inc <= service_charge`.
+  - The anchor's fund-asset value increases by exactly `principal_paid + charge_inc`; `loans_outstanding -= principal_paid`; all other anchor fields unchanged.
+  - Member continuation: `borrowed -= principal_paid`; all else unchanged.
+  - *Partial:* loan continues at the script with the updated datum — only `outstanding` and `charge_paid` may change (terms and status are immutable through repayment); value unchanged (min-ADA + Loan State NFT).
+  - *Closing* (`loan_output_index == 99`): requires `outstanding` reaches `0` AND `charge_paid` reaches `service_charge`; the Loan State NFT burns (`BurnLoan`); the record's min-ADA is released to wherever the borrower directs it.
+  - Repayment is valid in ANY loan status (a Late or Defaulted borrower can always still pay) and in both fund phases.
+
++ *MarkArrears* (loan only; permissionless)
+
+  Anyone advances an overdue loan's status — the default record never waits on the quorum.
+
+  - Status transition is exactly one step: `Current -> Late` valid when the transaction validity's lower bound is past `due`; `Late -> Defaulted` valid when it is past `due + grace` (both read from the loan record itself — no anchor needed, the transition stays permissionless and contention-free).
+  - Only `status` changes; every other datum field, and the UTxO's value, are immutable.
+  - No own-policy tokens minted or burned.
+
++ *WriteOffLoan* (triple: anchor + member + loan consumption; quorum-authorized)
+
+  Closes a `Defaulted` loan so the cycle can end. The borrower's own shares are seized first (the secured portion); only the remainder is socialized.
+
+  - `credential_authorized(quorum, tx)`; loan `status == Defaulted`; loan and member both belong to the anchor's fund; loan `borrower_ref` matches the member.
+  - *Share seizure:* `seized_units = min(share_units, ceil(outstanding / share_value))`; `seized_value = seized_units * share_value`. Rounding is against the defaulter and bounded by one share.
+  - Anchor continuation: `loans_outstanding -= outstanding`; `shares_total -= seized_units`; `savings_total -= seized_value`; the fund-asset value is UNCHANGED (no money moves — the loss already happened at disbursement; seized shares are cancelled, and any shortfall beyond the seizure shrinks the future pot: the socialized remainder).
+  - Member continuation: `share_units -= seized_units`; `borrowed = 0`; all else unchanged.
+  - The Loan State NFT burns (`BurnLoan`); the defaulted record leaves the loan book with its status permanently visible in the transaction history (the standing signal).
+
 + *RemoveAccount* (member only; member-authorized; standalone)
 
   A member exits and reclaims their reference UTxO's min-ADA.
 
   - Member user token present in inputs.
-  - `share_units == 0` (claim or withdraw first — an exit can never strand savings).
+  - `share_units == 0` and `borrowed == 0` (claim or withdraw first; repay first — an exit can never strand savings or walk out on a live loan).
   - The paired `BurnAccount` mint is present: both tokens of the suffix burn at `-1`.
   - No continuation — the reference UTxO's ADA is released to wherever the exiting member directs it (they authorize the transaction). Works with or without a live fund anchor, so accounts are never stuck after fund closure.
 
@@ -1069,6 +1207,408 @@ None.
 + *Member Wallet UTxO:* receives `paid` in `SA`.
 #pagebreak()
 
+=== Spend :: DisburseLoan + Mint :: MintLoan
+\
+The loan committee (quorum) disburses 8 ADA to a member holding 10 shares (`max_loan_multiple` 1): principal to the borrower's wallet, a loan record UTxO to the vault. Both the quorum and the borrower authorize.
+\
+#transaction(
+  "DisburseLoan",
+  inputs: (
+    (
+      name: "Fund Anchor UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Fund_State_NFT: 1,
+        SA: 22000000,
+      ),
+      datum: (
+        shares_total: 15,
+        savings_total: 15000000,
+        loans_outstanding: 0,
+        status: "Active",
+      ),
+      redeemer: "DisburseLoan",
+    ),
+    (
+      name: "Member Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Account_Ref_NFT: 1,
+      ),
+      datum: (share_units: 10, borrowed: 0),
+      redeemer: "DisburseLoan",
+    ),
+    (
+      name: "Borrower Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 6000000,
+        Account_User_NFT: 1,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Fund Anchor UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Fund_State_NFT: 1,
+        SA: 14000000,
+      ),
+      datum: (
+        shares_total: 15,
+        savings_total: 15000000,
+        loans_outstanding: 8000000,
+        status: "Active",
+      ),
+    ),
+    (
+      name: "Member Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Account_Ref_NFT: 1,
+      ),
+      datum: (share_units: 10, borrowed: 8000000),
+    ),
+    (
+      name: "Loan Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Loan_State_NFT: 1,
+      ),
+      datum: (
+        principal: 8000000,
+        outstanding: 8000000,
+        service_charge: 400000,
+        status: "Current",
+      ),
+    ),
+    (
+      name: "Borrower Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 1500000,
+        Account_User_NFT: 1,
+        SA: 8000000,
+      ),
+    ),
+  ),
+  signatures: ("Quorum", "Borrower"),
+  show_mints: true,
+  notes: [DisburseLoan Transaction — eligibility: 8 ADA <= 1 x 10 shares x 1 ADA],
+)
+\
+==== Inputs
+\
++ *Fund Anchor UTxO.* Redeemer: DisburseLoan; `status = Active`, `max_loan_multiple > 0`.
++ *Member Account UTxO.* Redeemer: DisburseLoan; `borrowed = 0` (one loan at a time).
++ *Borrower Wallet UTxO.* Carries the Account User NFT — borrower consent; also funds the loan record's min-ADA and pays fees. The seed input at `seed_input_index` names the Loan State NFT.
+\
+==== Mints
+\
++ *Savings Vault Validator*
+  - Redeemer: MintLoan
+  - Value: +1 Loan State NFT
+\
+==== Outputs
+\
++ *Fund Anchor UTxO:* fund asset decreased by exactly the principal; `loans_outstanding` increased by the principal; liquidity guard holds (remaining vault covers the social fund + buffer).
++ *Member Account UTxO:* `borrowed = principal`; value unchanged.
++ *Loan Account UTxO:* min-ADA + Loan State NFT; `LoanAccount` datum with the fixed terms (`principal`, `service_charge`, `due`, `grace`) and `status = Current`.
++ *Borrower Wallet UTxO:* receives the principal.
+#pagebreak()
+
+=== Spend :: RepayLoan
+\
+The borrower repays 5 ADA principal plus the full 0.4 ADA service charge. Partial repayments are allowed; the charge portion is income above the tracked totals and flows to the next share-out pot.
+\
+#transaction(
+  "RepayLoan",
+  inputs: (
+    (
+      name: "Fund Anchor UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Fund_State_NFT: 1,
+        SA: 14000000,
+      ),
+      datum: (loans_outstanding: 8000000, status: "Active"),
+      redeemer: "RepayLoan",
+    ),
+    (
+      name: "Member Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Account_Ref_NFT: 1,
+      ),
+      datum: (share_units: 10, borrowed: 8000000),
+      redeemer: "RepayLoan",
+    ),
+    (
+      name: "Loan Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Loan_State_NFT: 1,
+      ),
+      datum: (
+        outstanding: 8000000,
+        service_charge: 400000,
+        charge_paid: 0,
+        status: "Current",
+      ),
+      redeemer: "RepayLoan",
+    ),
+    (
+      name: "Borrower Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 8000000,
+        Account_User_NFT: 1,
+      ),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Fund Anchor UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Fund_State_NFT: 1,
+        SA: 19400000,
+      ),
+      datum: (loans_outstanding: 3000000, status: "Active"),
+    ),
+    (
+      name: "Member Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Account_Ref_NFT: 1,
+      ),
+      datum: (share_units: 10, borrowed: 3000000),
+    ),
+    (
+      name: "Loan Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Loan_State_NFT: 1,
+      ),
+      datum: (
+        outstanding: 3000000,
+        service_charge: 400000,
+        charge_paid: 400000,
+        status: "Current",
+      ),
+    ),
+    (
+      name: "Borrower Wallet UTxO",
+      address: "member_wallet",
+      value: (
+        ada: 2300000,
+        Account_User_NFT: 1,
+      ),
+    ),
+  ),
+  signatures: ("Borrower",),
+  show_mints: true,
+  notes: [RepayLoan Transaction — 5 ADA principal + 0.4 ADA charge; closing repayment burns the Loan State NFT instead of continuing the record],
+)
+\
+==== Inputs
+\
++ *Fund Anchor UTxO.* Redeemer: RepayLoan.
++ *Member Account UTxO.* Redeemer: RepayLoan; `borrowed` tracks the loan's outstanding.
++ *Loan Account UTxO.* Redeemer: RepayLoan; any status (a Late or Defaulted borrower can always still pay).
++ *Borrower Wallet UTxO.* Carries the user token and the repayment.
+\
+==== Mints
+\
+None (closing repayment: −1 Loan State NFT via BurnLoan).
+\
+==== Outputs
+\
++ *Fund Anchor UTxO:* fund asset increased by exactly `principal_paid + charge_inc`; `loans_outstanding -= principal_paid`.
++ *Member Account UTxO:* `borrowed -= principal_paid`.
++ *Loan Account UTxO:* `outstanding` and `charge_paid` updated; terms immutable. Omitted when the repayment closes the loan (`outstanding` hits 0 and the charge is fully paid) — the NFT burns and the record's min-ADA returns to the borrower.
+#pagebreak()
+
+=== Spend :: MarkArrears
+\
+Anyone advances an overdue loan one status step: `Current -> Late` past `due`, `Late -> Defaulted` past `due + grace`. The default record never waits on the quorum.
+\
+#transaction(
+  "MarkArrears",
+  inputs: (
+    (
+      name: "Loan Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Loan_State_NFT: 1,
+      ),
+      datum: (
+        outstanding: 3000000,
+        due: 1700000000000,
+        status: "Current",
+      ),
+      redeemer: "MarkArrears",
+    ),
+    (
+      name: "Crank Wallet UTxO",
+      address: "any_wallet",
+      value: (ada: 3000000),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Loan Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Loan_State_NFT: 1,
+      ),
+      datum: (
+        outstanding: 3000000,
+        due: 1700000000000,
+        status: "Late",
+      ),
+    ),
+    (
+      name: "Crank Wallet UTxO",
+      address: "any_wallet",
+      value: (ada: 2800000),
+    ),
+  ),
+  signatures: ("Anyone",),
+  show_mints: true,
+  notes: [MarkArrears Transaction — validity lower bound proves the deadline passed],
+)
+\
+==== Inputs
+\
++ *Loan Account UTxO.* Redeemer: MarkArrears; the transaction validity's lower bound is past `due` (or past `due + grace` for the second step).
+\
+==== Mints
+\
+None.
+\
+==== Outputs
+\
++ *Loan Account UTxO:* only `status` advanced by exactly one step; value and every other field immutable.
+#pagebreak()
+
+=== Spend :: WriteOffLoan + Mint :: BurnLoan
+\
+The quorum closes a Defaulted loan: the borrower's shares are seized up to the outstanding amount (3 shares here), the remainder is socialized (shrinks the future pot), and the loan leaves the book. No value moves — the loss happened at disbursement.
+\
+#transaction(
+  "WriteOffLoan",
+  inputs: (
+    (
+      name: "Fund Anchor UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Fund_State_NFT: 1,
+        SA: 19400000,
+      ),
+      datum: (
+        shares_total: 15,
+        savings_total: 15000000,
+        loans_outstanding: 3000000,
+      ),
+      redeemer: "WriteOffLoan",
+    ),
+    (
+      name: "Member Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Account_Ref_NFT: 1,
+      ),
+      datum: (share_units: 10, borrowed: 3000000),
+      redeemer: "WriteOffLoan",
+    ),
+    (
+      name: "Loan Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Loan_State_NFT: 1,
+      ),
+      datum: (outstanding: 3000000, status: "Defaulted"),
+      redeemer: "WriteOffLoan",
+    ),
+    (
+      name: "Quorum UTxO",
+      address: "quorum_multisig",
+      value: (ada: 2000000),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Fund Anchor UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Fund_State_NFT: 1,
+        SA: 19400000,
+      ),
+      datum: (
+        shares_total: 12,
+        savings_total: 12000000,
+        loans_outstanding: 0,
+      ),
+    ),
+    (
+      name: "Member Account UTxO",
+      address: "savings_vault",
+      value: (
+        ada: 2000000,
+        Account_Ref_NFT: 1,
+      ),
+      datum: (share_units: 7, borrowed: 0),
+    ),
+    (
+      name: "Quorum UTxO",
+      address: "quorum_multisig",
+      value: (ada: 4300000),
+    ),
+  ),
+  signatures: ("Quorum",),
+  show_mints: true,
+  notes: [WriteOffLoan Transaction — seized = ceil(3M / 1M) = 3 shares; vault value unchanged],
+)
+\
+==== Inputs
+\
++ *Fund Anchor UTxO.* Redeemer: WriteOffLoan.
++ *Member Account UTxO.* Redeemer: WriteOffLoan; the defaulter's account.
++ *Loan Account UTxO.* Redeemer: WriteOffLoan; `status = Defaulted` only.
++ *Quorum UTxO.* Authority per `credential_authorized`.
+\
+==== Mints
+\
++ *Savings Vault Validator*
+  - Redeemer: BurnLoan
+  - Value: −1 Loan State NFT
+\
+==== Outputs
+\
++ *Fund Anchor UTxO:* `loans_outstanding -= outstanding`; `shares_total -= seized_units`; `savings_total -= seized_value`; fund-asset value UNCHANGED.
++ *Member Account UTxO:* `share_units -= seized_units`; `borrowed = 0`.
++ *Quorum (or any) Wallet:* the loan record's min-ADA, released as the quorum directs.
+#pagebreak()
+
 === Spend :: RemoveAccount + Mint :: BurnAccount (Exit)
 \
 A member with a zeroed balance exits: the account reference UTxO is spent, both tokens of the pair burn, and the reference UTxO's minimum ADA returns to the member. Works with or without a live fund anchor — accounts are never stuck after fund closure.
@@ -1180,11 +1720,15 @@ After every share has been claimed (`shares_remaining = 0`), the quorum closes t
 
 = Invariants and Security Notes
 \
-+ *Conservation.* In `Active` status the anchor's fund-asset value is always at least `savings_total + social_total`; `savings_total == shares_total * share_value` at all times. Every paired transition changes vault value and datum totals by the same amount, or fails.
++ *Conservation.* In `Active` status the anchor's fund-asset value PLUS `loans_outstanding` is always at least `savings_total + social_total`; `savings_total == shares_total * share_value` at all times; `loans_outstanding` equals the sum of live loans' `outstanding` and of member `borrowed` fields (each loan transition updates all three sides atomically). Every transition changes vault value and datum totals by the same amount, or fails.
 
 + *Self-reference and input discipline.* Every spend resolves its own input by redeemer index and verifies `output_reference` equality; transactions spend exactly the expected own-script inputs (one or two) — the double-satisfaction guard for paired transitions.
 
-+ *Authority separation.* Members move only their own balances (user-token authorization). The quorum moves only the social fund and the post-close residual, and cannot touch member savings or the share-out pot: `CloseCycle` moves no value, and `ClaimShareOut` pays only user-token holders by share math.
++ *Authority separation.* Members move only their own balances (user-token authorization). The quorum moves only the social fund, ratified loan disbursements (which additionally require the borrower's consent and are capped by the borrower's own shares), write-offs of Defaulted loans, and the post-close residual. It cannot touch member savings or the share-out pot: `CloseCycle` moves no value, and `ClaimShareOut` pays only user-token holders by share math.
+
++ *Credit honesty (the mechanism-design ceiling, stated plainly).* A loan is secured up to the borrower's seizable share value and unsecured above it. At `max_loan_multiple = 1` no loss is possible; above 1, the unsecured portion is recoverable only socially — the protocol ENFORCES the secured part (share seizure at write-off) and RECORDS the rest (the permanent `Defaulted` history that standing, future loan denial, and primitive \#10 collateral build on). Code does not pretend to close what game theory leaves open.
+
++ *Loans clear before share-out.* `CloseCycle` requires `loans_outstanding == 0` (the VSLA rule): every loan is repaid or written off before the pot freezes, so claims never race the loan book.
 
 + *No stranded state.* `RemoveAccount` requires a zero balance (exits cannot strand savings) and works without a live anchor (fund closure cannot strand accounts). `CloseFund` requires `shares_remaining == 0` (closure cannot strand claims).
 
@@ -1194,4 +1738,4 @@ After every share has been claimed (`shares_remaining = 0`), the quorum closes t
 
 + *Else-fail.* The validator's `else` handler fails: no staking withdrawals, certificates, or governance actions from the vault script.
 
-+ *Module versioning.* Loan disbursement (\#8) will require new spend paths on this vault and therefore a new script hash — it ships as `savings v2` beside this validator, per the version-never-replace policy. The untagged top-up path (tag 2) is the forward-compatible income inlet: v2 repayment interest lands there without a datum migration.
++ *Module versioning.* Primitive \#8 was folded into this validator BEFORE any deployment (July 12, 2026 — nothing was live, so version-never-replace did not yet bind; the savings-only revision of this spec is in git history). From the first deployment onward the policy binds: future additions ship as versioned validators beside this one. The untagged top-up path (tag 2) remains the forward-compatible income inlet for later modules.
