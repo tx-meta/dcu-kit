@@ -1,0 +1,100 @@
+{
+  "dedicatedWalletAddress": "addr_test1qzuvqgfaeuvunwpp5yv899rmmtr569v0u2s2etp7clswwchlsejml0dat0ud3vxddp96r2tpqekvshqht0dx72aynqhs5ljpzn",
+  "fundTx": "(already funded)",
+  "runs": [
+    {
+      "endpoint": "escrow-v1-create",
+      "prepTx": "9861a5e7f721ddc1fed68cee8c080e7ec694db2566751c8d9a43c2a6b66c46b0",
+      "sortedWalletSet": [
+        {
+          "outRef": "9861a5e7f721ddc1fed68cee8c080e7ec694db2566751c8d9a43c2a6b66c46b0#0",
+          "lovelace": "3000000",
+          "hasScriptRef": true
+        },
+        {
+          "outRef": "9861a5e7f721ddc1fed68cee8c080e7ec694db2566751c8d9a43c2a6b66c46b0#1",
+          "lovelace": "287101594",
+          "hasScriptRef": false
+        }
+      ],
+      "scriptRefUtxo": "9861a5e7f721ddc1fed68cee8c080e7ec694db2566751c8d9a43c2a6b66c46b0#0",
+      "scriptRefFirstInSortOrder": true,
+      "endpointSkippedScriptRef": true,
+      "selectedSeed": "9861a5e7f721ddc1fed68cee8c080e7ec694db2566751c8d9a43c2a6b66c46b0#1",
+      "scriptRefUnspentAfter": true,
+      "createTx": "dbf6b868443ca05db5a0676af4de9bf4dcd0391736221af05db3ddd24d670e08",
+      "pass": true
+    },
+    {
+      "endpoint": "escrow-v2-create",
+      "prepTx": "08edc63145b902bbe255cb5d41ae2570efc6112593f401c8469d469835dd1c77",
+      "sortedWalletSet": [
+        {
+          "outRef": "08edc63145b902bbe255cb5d41ae2570efc6112593f401c8469d469835dd1c77#0",
+          "lovelace": "3000000",
+          "hasScriptRef": true
+        },
+        {
+          "outRef": "08edc63145b902bbe255cb5d41ae2570efc6112593f401c8469d469835dd1c77#1",
+          "lovelace": "282548716",
+          "hasScriptRef": false
+        }
+      ],
+      "scriptRefUtxo": "08edc63145b902bbe255cb5d41ae2570efc6112593f401c8469d469835dd1c77#0",
+      "scriptRefFirstInSortOrder": true,
+      "endpointSkippedScriptRef": true,
+      "selectedSeed": "08edc63145b902bbe255cb5d41ae2570efc6112593f401c8469d469835dd1c77#1",
+      "scriptRefUnspentAfter": true,
+      "createTx": "6a587a3a982a91aedacb6ddd11753dcc35ccb7b9666975df1c3306a9e7d44d3c",
+      "pass": true
+    },
+    {
+      "endpoint": "pool-create",
+      "prepTx": "ce62aecce061d01eafe81ef267ae097b23d6b7bd5352e9771875b4ab46ee3186",
+      "sortedWalletSet": [
+        {
+          "outRef": "ce62aecce061d01eafe81ef267ae097b23d6b7bd5352e9771875b4ab46ee3186#0",
+          "lovelace": "3000000",
+          "hasScriptRef": true
+        },
+        {
+          "outRef": "ce62aecce061d01eafe81ef267ae097b23d6b7bd5352e9771875b4ab46ee3186#1",
+          "lovelace": "279313567",
+          "hasScriptRef": false
+        }
+      ],
+      "scriptRefUtxo": "ce62aecce061d01eafe81ef267ae097b23d6b7bd5352e9771875b4ab46ee3186#0",
+      "scriptRefFirstInSortOrder": true,
+      "endpointSkippedScriptRef": true,
+      "selectedSeed": "ce62aecce061d01eafe81ef267ae097b23d6b7bd5352e9771875b4ab46ee3186#1",
+      "scriptRefUnspentAfter": true,
+      "createTx": "f18ca52bbf40ecd6222009252c4af6f71c46058301138259b09c947917bb7397",
+      "pass": true
+    },
+    {
+      "endpoint": "project-create",
+      "prepTx": "4e3d20ccee2477d6870a99037e3bc674aae7d883ba9c740f9e4ded6f528c390a",
+      "sortedWalletSet": [
+        {
+          "outRef": "4e3d20ccee2477d6870a99037e3bc674aae7d883ba9c740f9e4ded6f528c390a#0",
+          "lovelace": "3000000",
+          "hasScriptRef": true
+        },
+        {
+          "outRef": "4e3d20ccee2477d6870a99037e3bc674aae7d883ba9c740f9e4ded6f528c390a#1",
+          "lovelace": "276761979",
+          "hasScriptRef": false
+        }
+      ],
+      "scriptRefUtxo": "4e3d20ccee2477d6870a99037e3bc674aae7d883ba9c740f9e4ded6f528c390a#0",
+      "scriptRefFirstInSortOrder": true,
+      "endpointSkippedScriptRef": true,
+      "selectedSeed": "4e3d20ccee2477d6870a99037e3bc674aae7d883ba9c740f9e4ded6f528c390a#1",
+      "scriptRefUnspentAfter": true,
+      "createTx": "cde52ef2d8efcb0dde4c5fe40450c0641b8baf61e3d901313c949a74613bf0f6",
+      "pass": true
+    }
+  ],
+  "note": "Dedicated wallet = ADMIN seed at accountIndex 1 (recoverable). A first attempt funded a generated-seed wallet whose phrase was not persisted; its 60 tADA (fund tx 78b44fab…) is stranded — testnet only.",
+  "capturedAt": "2026-07-17T13:54:08.632Z"
+}

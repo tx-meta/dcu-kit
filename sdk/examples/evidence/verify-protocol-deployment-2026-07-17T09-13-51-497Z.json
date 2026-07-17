@@ -1,0 +1,121 @@
+{
+  "ok": true,
+  "issues": [],
+  "deployAddress": "addr_test1wq3vnggra5ljl2tunqkhd4hz4agvt422cvrfswcedj8um2cwsu3l3",
+  "settingsUnit": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d73657474696e6773",
+  "refs": {
+    "treasury": {
+      "outRef": {
+        "txHash": "32ed531dd7d119b9da091ded2e599034eb8a16fe5b42b4101beefef556cd5d83",
+        "outputIndex": 0
+      },
+      "found": true,
+      "atDeployAddress": true,
+      "scriptMatches": true,
+      "onChainScriptHash": "0ba6478fdb7651c557d052c0ee49a8d3ff302e826e277631b6a312ea",
+      "expectedScriptHash": "0ba6478fdb7651c557d052c0ee49a8d3ff302e826e277631b6a312ea",
+      "hashMatches": true
+    },
+    "group": {
+      "outRef": {
+        "txHash": "880b914172d6fdd1aaefb57a96bcb6f1243b7edcbb19c4ce3664c2d387063306",
+        "outputIndex": 0
+      },
+      "found": true,
+      "atDeployAddress": true,
+      "scriptMatches": true,
+      "onChainScriptHash": "3cfdf8bf653ca8be1af605e4df4f00433f704ab0172e420b54209416",
+      "expectedScriptHash": "3cfdf8bf653ca8be1af605e4df4f00433f704ab0172e420b54209416",
+      "hashMatches": true
+    },
+    "treasuryRounds": {
+      "outRef": {
+        "txHash": "b29e7092d39f8b93e2f45535ec0eb6e1ef3c24b60f68adbb399529e952464a66",
+        "outputIndex": 0
+      },
+      "found": true,
+      "atDeployAddress": true,
+      "scriptMatches": true,
+      "onChainScriptHash": "4689e405085170a8cf03ac1b6bb88bf1a3c048bed603e5564f344d15",
+      "expectedScriptHash": "4689e405085170a8cf03ac1b6bb88bf1a3c048bed603e5564f344d15",
+      "hashMatches": true
+    },
+    "treasuryLifecycle": {
+      "outRef": {
+        "txHash": "fae7e405eafb985e887ad6711fa898eecf59e76335db3d850c33e4ee129c663a",
+        "outputIndex": 0
+      },
+      "found": true,
+      "atDeployAddress": true,
+      "scriptMatches": true,
+      "onChainScriptHash": "89aeb986765a0b61d0231b96313c4bf72d7ff23d0376e1149bcb386a",
+      "expectedScriptHash": "89aeb986765a0b61d0231b96313c4bf72d7ff23d0376e1149bcb386a",
+      "hashMatches": true
+    },
+    "treasuryRecovery": {
+      "outRef": {
+        "txHash": "76c7e8126185494235bf8dbea90ad1d55ddefe893f89ff5951a47af5a75f0471",
+        "outputIndex": 0
+      },
+      "found": true,
+      "atDeployAddress": true,
+      "scriptMatches": true,
+      "onChainScriptHash": "891e8c8cc613967dd4c0155f5db321ba51db97d741fca2ee7a16c550",
+      "expectedScriptHash": "891e8c8cc613967dd4c0155f5db321ba51db97d741fca2ee7a16c550",
+      "hashMatches": true
+    },
+    "treasuryReserve": {
+      "outRef": {
+        "txHash": "39ea5fb76144d894509e5dd6ebf01e23c3c1e8c6dad52a3bf0f4705f7e210e79",
+        "outputIndex": 0
+      },
+      "found": true,
+      "atDeployAddress": true,
+      "scriptMatches": true,
+      "onChainScriptHash": "46ce037514b1e7e69b78681100560ba568c75d1f076870ca8d5c2bf8",
+      "expectedScriptHash": "46ce037514b1e7e69b78681100560ba568c75d1f076870ca8d5c2bf8",
+      "hashMatches": true
+    }
+  },
+  "settings": {
+    "found": true,
+    "settingsUnit": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d73657474696e6773",
+    "settingsAddress": "addr_test1wq3vnggra5ljl2tunqkhd4hz4agvt422cvrfswcedj8um2cwsu3l3",
+    "utxoAddress": "addr_test1wq3vnggra5ljl2tunqkhd4hz4agvt422cvrfswcedj8um2cwsu3l3",
+    "settings": {
+      "account_policy": "7fd4e55c7ab5b620e0409a7d9c89e5553390d96f2b5a8249c675b6a9",
+      "group_policy": "3cfdf8bf653ca8be1af605e4df4f00433f704ab0172e420b54209416",
+      "treasury_policy": "0ba6478fdb7651c557d052c0ee49a8d3ff302e826e277631b6a312ea",
+      "treasury_rounds_stake": "4689e405085170a8cf03ac1b6bb88bf1a3c048bed603e5564f344d15",
+      "treasury_lifecycle_stake": "89aeb986765a0b61d0231b96313c4bf72d7ff23d0376e1149bcb386a",
+      "treasury_recovery_stake": "891e8c8cc613967dd4c0155f5db321ba51db97d741fca2ee7a16c550",
+      "treasury_reserve_stake": "46ce037514b1e7e69b78681100560ba568c75d1f076870ca8d5c2bf8"
+    },
+    "consistent": true
+  },
+  "settingsAtDeployAddress": true,
+  "stakeRegistrations": {
+    "rounds": {
+      "rewardAddress": "stake_test17prgneq9ppghp2x0qwkpk6ac30c68szghmtq8e2kfu6y69g0cwse7",
+      "status": "registered"
+    },
+    "lifecycle": {
+      "rewardAddress": "stake_test17zy6awvxwedqkcwsyvdevvfuf0mj6llj85phdcg5n09ns6sl3x32d",
+      "status": "registered"
+    },
+    "recovery": {
+      "rewardAddress": "stake_test17zy3aryvccfevlw5cq247hdnyxa9rkuh6aqleghw0gtv25q9yvqfj",
+      "status": "registered"
+    },
+    "reserve": {
+      "rewardAddress": "stake_test17prvuqm4zjc70e5m0p5pzqzkpwjk336arurksux234wzh7q3jknq5",
+      "status": "registered"
+    }
+  },
+  "registry": {
+    "sdkVersion": "0.5.5",
+    "fingerprintsMatch": true,
+    "mismatches": []
+  },
+  "capturedAt": "2026-07-17T09:13:51.497Z"
+}

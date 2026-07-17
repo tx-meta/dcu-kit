@@ -1,0 +1,15 @@
+{
+  "label": "C7 premature execute-recovery",
+  "rejected": true,
+  "evaluatorError": "TxBuilderError: { Complete: \"failed script execution Withdraw[0] the validator crashed / exited prematurely\" }",
+  "attemptedDatum": null,
+  "evaluation": "local-uplc",
+  "deployment": {
+    "network": "Preprod",
+    "settingsPolicy": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d",
+    "groupPolicyId": "3cfdf8bf653ca8be1af605e4df4f00433f704ab0172e420b54209416",
+    "treasuryPolicyId": "0ba6478fdb7651c557d052c0ee49a8d3ff302e826e277631b6a312ea",
+    "accountPolicyId": "7fd4e55c7ab5b620e0409a7d9c89e5553390d96f2b5a8249c675b6a9"
+  },
+  "timestamp": "2026-07-17T13:28:48.678Z"
+}

@@ -1,0 +1,79 @@
+{
+  "name": "P2 exact-hash rehearsal deployment (rosca launch surface)",
+  "network": "Preprod",
+  "date": "2026-07-17",
+  "gitCommit": "076302227c62b70da7dc6c0f12c062d2565782c3",
+  "sdkVersion": "0.5.5",
+  "tarball": {
+    "file": "dcu-kit-0.5.5.tgz",
+    "sha256": "3636ef7d35cb2d4e67ff353cb6baaf98c58fa795f5fb20f15febf3a189c301a7"
+  },
+  "validatorRegistrySha256": "5f744620ea8583a01eeb1f4cee3080fe22940f867b9eb8d1c58e65f2b42dc228",
+  "settings": {
+    "policy": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d",
+    "unit": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d73657474696e6773",
+    "seed": {
+      "txHash": "544e2222d529ffa634e252969855467d2be38af078a9b063f05a5c1aac8d53bc",
+      "outputIndex": 2
+    },
+    "initTxHash": "674395645bfbfae2ba678aa0a2a263996ffdaa78c3bc653511f8a673a629f817"
+  },
+  "deployAddress": "addr_test1wq3vnggra5ljl2tunqkhd4hz4agvt422cvrfswcedj8um2cwsu3l3",
+  "scriptHashes": {
+    "account": "7fd4e55c7ab5b620e0409a7d9c89e5553390d96f2b5a8249c675b6a9",
+    "treasury": "0ba6478fdb7651c557d052c0ee49a8d3ff302e826e277631b6a312ea",
+    "group": "3cfdf8bf653ca8be1af605e4df4f00433f704ab0172e420b54209416",
+    "treasuryRounds": "4689e405085170a8cf03ac1b6bb88bf1a3c048bed603e5564f344d15",
+    "treasuryLifecycle": "89aeb986765a0b61d0231b96313c4bf72d7ff23d0376e1149bcb386a",
+    "treasuryRecovery": "891e8c8cc613967dd4c0155f5db321ba51db97d741fca2ee7a16c550",
+    "treasuryReserve": "46ce037514b1e7e69b78681100560ba568c75d1f076870ca8d5c2bf8"
+  },
+  "referenceScripts": {
+    "treasury": { "txHash": "32ed531dd7d119b9da091ded2e599034eb8a16fe5b42b4101beefef556cd5d83", "outputIndex": 0 },
+    "group": { "txHash": "880b914172d6fdd1aaefb57a96bcb6f1243b7edcbb19c4ce3664c2d387063306", "outputIndex": 0 },
+    "treasuryRounds": { "txHash": "b29e7092d39f8b93e2f45535ec0eb6e1ef3c24b60f68adbb399529e952464a66", "outputIndex": 0 },
+    "treasuryLifecycle": { "txHash": "fae7e405eafb985e887ad6711fa898eecf59e76335db3d850c33e4ee129c663a", "outputIndex": 0 },
+    "treasuryRecovery": { "txHash": "76c7e8126185494235bf8dbea90ad1d55ddefe893f89ff5951a47af5a75f0471", "outputIndex": 0 },
+    "treasuryReserve": { "txHash": "39ea5fb76144d894509e5dd6ebf01e23c3c1e8c6dad52a3bf0f4705f7e210e79", "outputIndex": 0 }
+  },
+  "stakeRegistrations": {
+    "rounds": {
+      "rewardAddress": "stake_test17prgneq9ppghp2x0qwkpk6ac30c68szghmtq8e2kfu6y69g0cwse7",
+      "txHash": "b4fadeef2aea232d2e3222fe4201f309de0a37f608ae1603a8aedd2682a19ab0"
+    },
+    "lifecycle": {
+      "rewardAddress": "stake_test17zy6awvxwedqkcwsyvdevvfuf0mj6llj85phdcg5n09ns6sl3x32d",
+      "txHash": "6db6bdde3d275eb3d4b61ade6c43fc02657401b82e8f08320aa70a8984686470"
+    },
+    "recovery": {
+      "rewardAddress": "stake_test17zy3aryvccfevlw5cq247hdnyxa9rkuh6aqleghw0gtv25q9yvqfj",
+      "txHash": "62733b5104a367b1a2d9472778e0d72e70b1aeb6d37c35662f432fa85c403025"
+    },
+    "reserve": {
+      "rewardAddress": "stake_test17prvuqm4zjc70e5m0p5pzqzkpwjk336arurksux234wzh7q3jknq5",
+      "txHash": "525f46bf09b3f1c1b809d474d528fbb1a31c121643459147db263a02bbcca1bc"
+    }
+  },
+  "protocolParametersSnapshot": {
+    "epoch": 301,
+    "protocolVersion": "11.0",
+    "minFeeA": 44,
+    "minFeeB": 155381,
+    "maxTxSize": 16384,
+    "maxValSize": 5000,
+    "coinsPerUtxoSize": 4310,
+    "keyDeposit": 2000000,
+    "maxTxExMem": 16500000,
+    "maxTxExSteps": 10000000000
+  },
+  "verification": {
+    "op": "verifyProtocolDeployment (E1 identity chain)",
+    "result": "ok",
+    "evidence": "sdk/examples/evidence/verify-protocol-deployment-2026-07-17T09-13-51-497Z.json",
+    "note": "First run (tarball 5a452a31…) reported the four stake registrations not-registered — Blockfrost 'active' vs 'registered' field semantics, fixed in PR #84; re-verified green on the merge result."
+  },
+  "evidenceLocation": "sdk/examples/evidence/",
+  "priorDeployments": {
+    "note": "The previous Preprod instance (settingsPolicy f90df179…) stays operable; its state was backed up to sdk/examples/state.json.bak-2026-07-17 before this deployment (matrix E3)."
+  }
+}
