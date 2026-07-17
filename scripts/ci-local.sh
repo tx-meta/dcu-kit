@@ -66,6 +66,18 @@ else
   FAILED+=("blueprint drift")
 fi
 
+# --- Guard: validator registry (a validator hash change must be declared
+# in validator-registry.json before it can ship) ------------------------------
+run "validator registry" . node scripts/check-validator-registry.mjs
+
+# --- Secret scan (CI runs gitleaks over full history; local runs need the
+# binary on PATH — skip with a note otherwise, CI remains the gate) -----------
+if command -v gitleaks >/dev/null; then
+  run "gitleaks (full history)" . gitleaks git --redact --no-banner --config .gitleaks.toml
+else
+  echo "(skip) gitleaks not installed — CI secrets-scan job remains the gate"
+fi
+
 # --- Verify SDK — the exact package scripts CI runs -------------------------
 run "pnpm format:check" sdk pnpm format:check
 run "pnpm lint" sdk pnpm lint

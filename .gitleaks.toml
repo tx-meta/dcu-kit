@@ -1,0 +1,43 @@
+# Gitleaks configuration — secret scanning for the DCU Toolkit repo.
+# CI runs this over the full history on every push/PR; run locally with:
+#   gitleaks git --redact --no-banner
+# Engine pinned in CI to v8.24.3 — keep local runs on the same major.
+
+[extend]
+# Start from the built-in default ruleset (AWS, GitHub, npm tokens, ...).
+useDefault = true
+
+# ── Cardano-specific rules ───────────────────────────────────────────────────
+
+[[rules]]
+id = "blockfrost-project-key"
+description = "Blockfrost project key (preprod/preview/mainnet + 32 hex-ish chars)"
+regex = '''(?i)\b(preprod|preview|mainnet)[A-Za-z0-9]{24,40}\b'''
+keywords = ["preprod", "preview", "mainnet"]
+
+[[rules]]
+id = "cardano-bech32-signing-key"
+description = "Cardano bech32-encoded private/signing key material"
+regex = '''\b(ed25519_sk|acct_sk|root_sk|stake_sk|addr_sk|xprv)[0-9a-z]{20,}\b'''
+keywords = ["ed25519_sk", "acct_sk", "root_sk", "stake_sk", "addr_sk", "xprv"]
+
+[[rules]]
+id = "cip-1852-mnemonic"
+description = "Likely BIP-39 seed phrase assigned to a variable (12/15/24 lowercase words)"
+regex = '''(?i)(mnemonic|seed[_-]?phrase|recovery[_-]?phrase)\s*[:=]\s*["']([a-z]+\s+){11,23}[a-z]+["']'''
+keywords = ["mnemonic", "seed_phrase", "seedphrase", "recovery_phrase"]
+
+# ── Allowlist ────────────────────────────────────────────────────────────────
+
+[allowlist]
+description = "Documented placeholders and templates"
+regexTarget = "line"
+paths = [
+  '''sdk/\.env\.example$''',
+]
+regexes = [
+  # The documented placeholder shape in READMEs: preprodXXXXXXXX...
+  '''(preprod|preview|mainnet)X{8,}''',
+  # CIP-68 token suffixes / asset names are public on-chain identifiers.
+  '''(?i)token(suffix|name)"?\s*[:=]?\s*"?[0-9a-f]{40,64}''',
+]
