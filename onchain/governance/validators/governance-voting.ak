@@ -3,12 +3,12 @@ use cardano/assets.{PolicyId}
 use cardano/transaction.{Transaction}
 use governance/types.{
   CastAction, ExecuteAction, ExpireAction, FinalizeAction, OpenAction,
-  VotingAction,
+  RegisterAction, VotingAction,
 }
 use governance/validation.{read_anchor}
 use governance/voting.{
   validate_cast, validate_execute, validate_expire, validate_finalize,
-  validate_open,
+  validate_open, validate_register,
 }
 
 // governance_voting(settings_policy) — the withdraw-zero home of ALL heavy logic.
@@ -28,6 +28,8 @@ validator governance_voting(settings_policy: PolicyId) {
         proposal_input_index,
         proposal_output_index,
         voter_index,
+        record_input_index,
+        record_output_index,
         share_ref_index,
         approve,
       } ->
@@ -36,12 +38,19 @@ validator governance_voting(settings_policy: PolicyId) {
           proposal_input_index,
           proposal_output_index,
           voter_index,
+          record_input_index,
+          record_output_index,
           share_ref_index,
           approve,
           self,
         )
       FinalizeAction { proposal_input_index, proposal_output_index } ->
-        validate_finalize(proposal_input_index, proposal_output_index, self)
+        validate_finalize(
+          anchor,
+          proposal_input_index,
+          proposal_output_index,
+          self,
+        )
       ExecuteAction {
         proposal_input_index,
         proposal_output_index,
@@ -56,6 +65,21 @@ validator governance_voting(settings_policy: PolicyId) {
         )
       ExpireAction { proposal_input_index } ->
         validate_expire(proposal_input_index, self)
+      RegisterAction {
+        roster_input_index,
+        roster_output_index,
+        record_output_index,
+        member_index,
+      } ->
+        validate_register(
+          anchor,
+          settings_policy,
+          roster_input_index,
+          roster_output_index,
+          record_output_index,
+          member_index,
+          self,
+        )
     }
   }
 

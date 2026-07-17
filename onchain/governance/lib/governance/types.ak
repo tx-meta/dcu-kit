@@ -34,10 +34,17 @@ pub type GovAction {
   WriteOff { loan_id: AssetName }
   TreasuryMove { recipient: ByteArray, amount: Int }
   MembershipChange { member: AssetName, admit: Bool }
+  // Forward-compatibility arm: action kinds designed AFTER this enum froze.
+  // `tag` names the future kind, `payload` carries its CBOR-encoded parameters.
+  // Governance treats it opaquely (freeze, tally, bind, burn — same as any
+  // action); ONLY a vault version that decodes and understands a given tag may
+  // act on it. Without this arm, any new action kind forces a governance v2.
+  Generic { tag: Int, payload: ByteArray }
 }
 
 // [spec 3.3]: datum at the dispatcher address — the charter (with published
-// validator hashes) and every open/decided proposal. No PII, ever.
+// validator hashes), every open/decided proposal, each member's voter record,
+// and the registration roster. No PII, ever.
 pub type GovernanceDatum {
   GovernanceAnchor {
     // Human-readable instance name (group-level, not PII).
@@ -45,8 +52,9 @@ pub type GovernanceDatum {
     // Eligibility token policy: holding a token of this policy makes a voter
     // (e.g. the savings account user-token policy).
     member_policy: PolicyId,
-    // Target ids (vault anchor names / policies) this instance may govern.
-    governed_targets: List<ByteArray>,
+    // The (policy, state-NFT name) of each vault this instance may govern.
+    // Both halves are binding — a name alone is forgeable under any policy.
+    governed_targets: Pairs<PolicyId, AssetName>,
     // Default weight rule, copied into each proposal at open.
     voting_mode: VotingMode,
     // Minimum total weight CAST (yes + no) for a proposal to be decidable.
@@ -67,8 +75,11 @@ pub type GovernanceDatum {
   Proposal {
     // The Proposal State NFT name.
     proposal_id: AssetName,
-    // The single vault this proposal governs (a member of governed_targets).
-    target_id: ByteArray,
+    // The policy of the governed vault's state NFT.
+    target_policy: PolicyId,
+    // The state-NFT name of the single vault this proposal governs. The
+    // (target_policy, target_id) pair must be a member of governed_targets.
+    target_id: AssetName,
     // The typed, parameterized action to authorize.
     action: GovAction,
     // Frozen from the charter at open.
@@ -79,7 +90,7 @@ pub type GovernanceDatum {
     deadline: Int,
     // POSIX ms by which a passed proposal must execute (None = never expires).
     exec_deadline: Option<Int>,
-    // Set when the proposal passes (= now + charter.timelock).
+    // Set when the proposal passes (= finalize time + charter.timelock).
     timelock_until: Option<Int>,
     // Running weight for and against.
     tally_yes: Int,
@@ -88,13 +99,30 @@ pub type GovernanceDatum {
     votes_cast: Int,
     status: ProposalStatus,
   }
+  // [spec 3.3 voter record]: one per registered member — the double-vote
+  // nullifier. A vote SPENDS this UTxO and appends the proposal id to `voted`;
+  // the ledger's own double-spend prevention makes concurrent double votes
+  // impossible, and the appended list rejects sequential ones.
+  VoterRecord {
+    // The member's eligibility-token name this record is bound to.
+    member_id: AssetName,
+    // Proposal ids this member has already voted on.
+    voted: List<AssetName>,
+  }
+  // [spec 3.3 roster]: the ever-registered member set (one per instance,
+  // created at init). Registration appends and nothing removes — this is what
+  // makes voter-record creation one-shot per member; a re-registration would
+  // otherwise mint a fresh empty record and re-enable double voting.
+  Roster { members: List<AssetName> }
 }
 
 // [spec 3.3]: datum at the gate address, locked with the decision token.
 pub type GateDatum {
   Decision {
-    // The vault this decision authorizes.
-    target_id: ByteArray,
+    // The policy of the vault state NFT this decision authorizes.
+    target_policy: PolicyId,
+    // The vault state-NFT name this decision authorizes.
+    target_id: AssetName,
     // The exact action authorized, with parameters.
     action: GovAction,
     // POSIX ms after which the decision is dead even if unspent.
@@ -108,8 +136,9 @@ pub type GateDatum {
 // hashes — are unique. This is what lets a vault's quorum Credential commit to
 // ONE governance instance (cross-instance authorization is otherwise possible).
 pub type SettingsRedeemer {
-  // The seed is the compile parameter; only the anchor output index is needed.
-  MintAnchor { anchor_output_index: Int }
+  // The seed is the compile parameter; the anchor and roster output indices
+  // locate the two UTxOs the one-shot mint creates.
+  MintAnchor { anchor_output_index: Int, roster_output_index: Int }
 }
 
 // [spec 3.3.3]: Governance Dispatcher mint redeemer. Every variant except
@@ -120,10 +149,10 @@ pub type GovMintRedeemer {
     proposal_output_index: Int,
     withdrawal_index: Int,
   }
-  CastVote {
-    proposal_input_index: Int,
-    receipt_output_index: Int,
-    voter_index: Int,
+  RegisterVoter {
+    roster_input_index: Int,
+    record_output_index: Int,
+    member_index: Int,
     withdrawal_index: Int,
   }
   ExecuteProposal {
@@ -136,14 +165,17 @@ pub type GovMintRedeemer {
 }
 
 // [spec 3.3.3]: Governance Dispatcher spend redeemer. Guards the Anchor
-// (UpdateCharter) and every Proposal (Vote/Finalize/Execute/Expire). Each
-// defers the heavy check to the coupled Governance Voting withdrawal.
+// (UpdateCharter), every Proposal (Vote/Finalize/Execute/Expire), the roster
+// (RosterSpend, registration only) and each voter record (VoteRecordSpend,
+// casting only). Each defers the heavy check to the coupled withdrawal.
 pub type GovSpendRedeemer {
   Vote {
     anchor_ref_index: Int,
     proposal_input_index: Int,
     proposal_output_index: Int,
     voter_index: Int,
+    record_input_index: Int,
+    record_output_index: Int,
     // 99 under OneMemberOneVote (no share reference input read).
     share_ref_index: Int,
     approve: Bool,
@@ -164,6 +196,8 @@ pub type GovSpendRedeemer {
   }
   Expire { proposal_input_index: Int, withdrawal_index: Int }
   UpdateCharter { anchor_input_index: Int, anchor_output_index: Int }
+  VoteRecordSpend { withdrawal_index: Int }
+  RosterSpend { withdrawal_index: Int }
 }
 
 // [spec 3.3.4]: Governance Voting withdraw redeemer — the withdraw-zero home
@@ -174,6 +208,8 @@ pub type VotingAction {
     proposal_input_index: Int,
     proposal_output_index: Int,
     voter_index: Int,
+    record_input_index: Int,
+    record_output_index: Int,
     share_ref_index: Int,
     approve: Bool,
   }
@@ -184,6 +220,12 @@ pub type VotingAction {
     decision_output_index: Int,
   }
   ExpireAction { proposal_input_index: Int }
+  RegisterAction {
+    roster_input_index: Int,
+    roster_output_index: Int,
+    record_output_index: Int,
+    member_index: Int,
+  }
 }
 
 // [spec 3.3.5]: Governance Gate spend redeemer — authorize one vault action

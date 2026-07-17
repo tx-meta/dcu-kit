@@ -7,9 +7,9 @@ use cardano/transaction.{
 use cardano/transaction as tx
 use governance/types.{
   AnyMember, GovAction, GovernanceAnchor, GovernanceDatum, OneMemberOneVote,
-  Proposal, ProposalStatus, VotingMode,
+  OpenerPolicy, Proposal, ProposalStatus, Roster, VoterRecord, VotingMode,
 }
-use governance/validation.{anchor_name}
+use governance/validation.{anchor_name, roster_name, voter_record_name}
 
 pub fn settings_policy() -> PolicyId {
   #"5a715a715a715a715a715a715a715a715a715a715a715a715a715a71"
@@ -35,8 +35,22 @@ pub fn member_policy() -> PolicyId {
   #"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
 }
 
+// The governed vault's state-NFT policy — 28 bytes, distinct from every other
+// policy in these tests so decoy-target cases are meaningful.
+pub fn target_policy() -> PolicyId {
+  #"7a707a707a707a707a707a707a707a707a707a707a707a707a707a70"
+}
+
 pub fn target_id() -> ByteArray {
   #"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}
+
+pub fn member_id() -> ByteArray {
+  "member"
+}
+
+pub fn record_name() -> ByteArray {
+  voter_record_name(member_id())
 }
 
 pub fn seed_ref() -> OutputReference {
@@ -65,7 +79,7 @@ pub fn charter_hashes(
   GovernanceAnchor {
     title: "Chama",
     member_policy: member_policy(),
-    governed_targets: [target_id()],
+    governed_targets: [Pair(target_policy(), target_id())],
     voting_mode: vote,
     default_quorum: quorum,
     default_threshold: threshold,
@@ -79,6 +93,23 @@ pub fn charter_hashes(
 
 pub fn charter(vote: VotingMode, quorum: Int, threshold: Int) -> GovernanceDatum {
   charter_hashes(vote, quorum, threshold, voting_hash(), gate_hash())
+}
+
+// The default charter with custom opener rules (deny-by-default otherwise).
+pub fn charter_openers(openers: Pairs<Int, OpenerPolicy>) -> GovernanceDatum {
+  GovernanceAnchor {
+    title: "Chama",
+    member_policy: member_policy(),
+    governed_targets: [Pair(target_policy(), target_id())],
+    voting_mode: OneMemberOneVote,
+    default_quorum: 1,
+    default_threshold: 5000,
+    opener_policy: openers,
+    timelock: 0,
+    creator: addr.VerificationKey(creator_pkh()),
+    voting_stake_hash: voting_hash(),
+    gate_hash: gate_hash(),
+  }
 }
 
 pub fn default_charter() -> GovernanceDatum {
@@ -107,6 +138,7 @@ pub fn proposal(
 ) -> GovernanceDatum {
   Proposal {
     proposal_id: id,
+    target_policy: target_policy(),
     target_id: target_id(),
     action,
     voting_mode: OneMemberOneVote,
@@ -122,8 +154,9 @@ pub fn proposal(
   }
 }
 
-// A proposal datum with the fixed test id/target and given action, status, and
-// tallies (deadline 1000, quorum 1, threshold 5000, 1m1v).
+// A proposal datum with the fixed test id/target and given action, status,
+// tallies, timelock, and exec_deadline (deadline 1000, quorum 1, threshold
+// 5000, 1m1v).
 pub fn mk_proposal(
   action: GovAction,
   status: ProposalStatus,
@@ -131,16 +164,18 @@ pub fn mk_proposal(
   no: Int,
   cast: Int,
   timelock_until: Option<Int>,
+  exec_deadline: Option<Int>,
 ) -> GovernanceDatum {
   Proposal {
     proposal_id: proposal_id(),
+    target_policy: target_policy(),
     target_id: target_id(),
     action,
     voting_mode: OneMemberOneVote,
     quorum: 1,
     threshold: 5000,
     deadline: 1000,
-    exec_deadline: None,
+    exec_deadline,
     timelock_until,
     tally_yes: yes,
     tally_no: no,
@@ -187,9 +222,41 @@ pub fn member_input() -> Input {
     output_reference: ref_at(1),
     output: Output {
       address: addr.from_verification_key(creator_pkh()),
-      value: with_ada(assets.from_asset(member_policy(), "member", 1)),
+      value: with_ada(assets.from_asset(member_policy(), member_id(), 1)),
       datum: NoDatum,
       reference_script: None,
     },
   }
+}
+
+// ── Voter record + roster builders ───────────────────────────────────────────
+
+// The member's voter record UTxO at the dispatcher — the double-vote nullifier.
+pub fn voter_record_output(voted: List<ByteArray>) -> Output {
+  let d: GovernanceDatum = VoterRecord { member_id: member_id(), voted }
+  Output {
+    address: dispatcher_address(),
+    value: with_ada(assets.from_asset(gov_policy(), record_name(), 1)),
+    datum: InlineDatum(d),
+    reference_script: None,
+  }
+}
+
+pub fn voter_record_input(voted: List<ByteArray>) -> Input {
+  Input { output_reference: ref_at(2), output: voter_record_output(voted) }
+}
+
+// The instance roster UTxO at the dispatcher (settings-policy roster NFT).
+pub fn roster_output(members: List<ByteArray>) -> Output {
+  let d: GovernanceDatum = Roster { members }
+  Output {
+    address: dispatcher_address(),
+    value: with_ada(assets.from_asset(settings_policy(), roster_name, 1)),
+    datum: InlineDatum(d),
+    reference_script: None,
+  }
+}
+
+pub fn roster_input(members: List<ByteArray>) -> Input {
+  Input { output_reference: ref_at(3), output: roster_output(members) }
 }
