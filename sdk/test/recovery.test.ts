@@ -30,14 +30,15 @@ import { advanceBlock } from "./effects.js";
 // Cluster A — lost-member recovery (propose/approve/cancel/execute).
 //
 // Setup shared by both tests: a 2-member group (user1 = the "lost" member who will be
-// recovered, user2 = the approver) with a SHORT recovery_timelock (30s = 1.5 advanceBlock
-// calls) so the round-trip is reachable without excessive emulator advancement.
-// recovery_threshold stays at its default (1) — a single approver is sufficient quorum.
+// recovered, user2 = the approver) at the envelope-floor recovery_timelock (1 day =
+// 4320 emulator blocks; awaitBlock advances instantly, so the warp is cheap).
+// recovery_threshold = 2 (the envelope floor); in the 2-member fixture the execute-time
+// clamp (member_count - 1, floored at 1) makes a single approver sufficient quorum.
 const setupRecoveryFixture = (options?: { withSecondApprover?: boolean }) =>
   Effect.gen(function* () {
     const base = yield* setupBase();
     const { context, groupUtxo } = yield* setupGroup(base, {
-      recovery_timelock: 30_000n, // 30s — cleared by 2 advanceBlock calls (40s)
+      recovery_timelock: 86_400_000n, // envelope floor (min_recovery_timelock)
     });
     const { lucid, users } = context;
 
@@ -202,7 +203,8 @@ describe("Cluster A — lost-member recovery", () => {
         }
 
         // --- ExecuteRecovery (after timelock) ---
-        yield* advanceBlock(context.emulator, 2); // 40s > 30s timelock
+        // 4321 blocks × 20s = 86,420s > the 1-day timelock.
+        yield* advanceBlock(context.emulator, 4321);
 
         selectWalletFromSeed(lucid, users.user1.seedPhrase); // anyone may execute
         const executeTx = yield* unsignedExecuteRecoveryTxProgram(
