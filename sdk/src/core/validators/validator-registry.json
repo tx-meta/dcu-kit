@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "sdkVersion": "0.4.1",
+  "sdkVersion": "0.5.0",
   "families": {
     "rosca": {
       "status": "launch",
@@ -99,6 +99,12 @@
     }
   },
   "history": [
+    {
+      "date": "2026-07-17",
+      "sdkVersion": "0.5.0",
+      "changed": [],
+      "note": "v0.5.0: savings, governance, and escrow v2 validators enter the registry; rosca and escrow v1 fingerprints unchanged from 0.4.1"
+    },
     {
       "date": "2026-07-17",
       "sdkVersion": "0.4.1",
