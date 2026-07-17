@@ -1,0 +1,80 @@
+{
+  "claim": "Escrow validator bytecode is byte-identical to the 2026-07-11 Preprod live sweep; the sweep evidence stands for the current escrow launch surface. P1 (group/account) did not touch escrow.",
+  "sweepEraCommit": "b80c418",
+  "headCommit": "076302227c62b70da7dc6c0f12c062d2565782c3",
+  "escrowFingerprints": {
+    "sweepEra": {
+      "escrow_v2_validator.escrow_v2_validator.mint": "ae2685589763d930b1cc28ff19e9f5dce5d362ffd594846dfcf4f05a053f109f",
+      "escrow_v2_validator.escrow_v2_validator.spend": "ae2685589763d930b1cc28ff19e9f5dce5d362ffd594846dfcf4f05a053f109f",
+      "escrow_v2_validator.escrow_v2_validator.else": "ae2685589763d930b1cc28ff19e9f5dce5d362ffd594846dfcf4f05a053f109f",
+      "escrow_validator.escrow_validator.mint": "984b94b0b1ad8110dcc44d5ef2bb978c0199c5225e5e103f3d380bf02f46a9bb",
+      "escrow_validator.escrow_validator.spend": "984b94b0b1ad8110dcc44d5ef2bb978c0199c5225e5e103f3d380bf02f46a9bb",
+      "escrow_validator.escrow_validator.else": "984b94b0b1ad8110dcc44d5ef2bb978c0199c5225e5e103f3d380bf02f46a9bb",
+      "pool_vault_validator.pool_vault.mint": "9de4fe9f2f5fb691731e6bba6752c1a5af37cc0d3808a66295fcda4f4e39504b",
+      "pool_vault_validator.pool_vault.spend": "9de4fe9f2f5fb691731e6bba6752c1a5af37cc0d3808a66295fcda4f4e39504b",
+      "pool_vault_validator.pool_vault.else": "9de4fe9f2f5fb691731e6bba6752c1a5af37cc0d3808a66295fcda4f4e39504b",
+      "project_validator.project_validator.mint": "46b894b3c319f310f823b881c73a60a9c7d00ce2efa19a19505afa75f79435bf",
+      "project_validator.project_validator.spend": "46b894b3c319f310f823b881c73a60a9c7d00ce2efa19a19505afa75f79435bf",
+      "project_validator.project_validator.else": "46b894b3c319f310f823b881c73a60a9c7d00ce2efa19a19505afa75f79435bf"
+    },
+    "head": {
+      "escrow_v2_validator.escrow_v2_validator.mint": "ae2685589763d930b1cc28ff19e9f5dce5d362ffd594846dfcf4f05a053f109f",
+      "escrow_v2_validator.escrow_v2_validator.spend": "ae2685589763d930b1cc28ff19e9f5dce5d362ffd594846dfcf4f05a053f109f",
+      "escrow_v2_validator.escrow_v2_validator.else": "ae2685589763d930b1cc28ff19e9f5dce5d362ffd594846dfcf4f05a053f109f",
+      "escrow_validator.escrow_validator.mint": "984b94b0b1ad8110dcc44d5ef2bb978c0199c5225e5e103f3d380bf02f46a9bb",
+      "escrow_validator.escrow_validator.spend": "984b94b0b1ad8110dcc44d5ef2bb978c0199c5225e5e103f3d380bf02f46a9bb",
+      "escrow_validator.escrow_validator.else": "984b94b0b1ad8110dcc44d5ef2bb978c0199c5225e5e103f3d380bf02f46a9bb",
+      "pool_vault_validator.pool_vault.mint": "9de4fe9f2f5fb691731e6bba6752c1a5af37cc0d3808a66295fcda4f4e39504b",
+      "pool_vault_validator.pool_vault.spend": "9de4fe9f2f5fb691731e6bba6752c1a5af37cc0d3808a66295fcda4f4e39504b",
+      "pool_vault_validator.pool_vault.else": "9de4fe9f2f5fb691731e6bba6752c1a5af37cc0d3808a66295fcda4f4e39504b",
+      "project_validator.project_validator.mint": "46b894b3c319f310f823b881c73a60a9c7d00ce2efa19a19505afa75f79435bf",
+      "project_validator.project_validator.spend": "46b894b3c319f310f823b881c73a60a9c7d00ce2efa19a19505afa75f79435bf",
+      "project_validator.project_validator.else": "46b894b3c319f310f823b881c73a60a9c7d00ce2efa19a19505afa75f79435bf"
+    }
+  },
+  "fingerprintEquality": "IDENTICAL",
+  "mismatches": [],
+  "postSweepEscrowCommits": [
+    {
+      "commit": "7fe15be",
+      "desc": "fix(escrow): seed selection skips reference-script utxos",
+      "scope": "offchain-only",
+      "changedFiles": [
+        "sdk/src/escrow/endpoints/createEscrow.ts",
+        "sdk/src/escrow/v2/endpoints/createEscrow.ts",
+        "sdk/src/escrow/v2/endpoints/createPool.ts",
+        "sdk/src/escrow/v2/endpoints/createProject.ts"
+      ],
+      "onchainTouched": false
+    },
+    {
+      "commit": "cefebe1",
+      "desc": "fix(escrow-v2): pool allocation computes the anchor's sorted reference-input index",
+      "scope": "offchain-only",
+      "changedFiles": [
+        "sdk/src/escrow/v2/endpoints/allocateToEscrow.ts",
+        "sdk/test/escrowV2.test.ts"
+      ],
+      "onchainTouched": false
+    },
+    {
+      "commit": "b80c418",
+      "desc": "style: aiken fmt across escrow v2 additions",
+      "scope": "source-format-only (bytecode identical, verified above)",
+      "onchainTouched": true,
+      "bytecodeChanged": false
+    }
+  ],
+  "priorSweepEvidence_2026_07_11": {
+    "provider": "Blockfrost Preprod, wallets ADMIN/USER1/USER2",
+    "escrowV2RefScript": "405011cb…#0 (spend ref, recoverable at USER1)",
+    "quorumFundedEscrow": "d299bef6…",
+    "escrowRelease": "0b1fbf74",
+    "poolClose": "fe06af04",
+    "poolVault": "6a017597… (2 deposits, USER2 exit 07db4b7d, release 205be0d0, quorum rotation 08856b93)",
+    "amendmentTopUp": "a1b59d52",
+    "note": "Full escrow/pool/project endpoint+mode coverage chain-proven; see memory escrow.md for the complete list."
+  },
+  "smokePointer": "D3 (deterministic scriptRef-skip on all four create endpoints) and D4 (pool_ref_index > 0) exercise the two offchain fixes on the fresh deployment; see p2-acceptance-matrix.md.",
+  "generatedAt": "2026-07-17T12:18:06.964Z"
+}

@@ -1,0 +1,15 @@
+{
+  "groupTokenSuffix": "58aab8c8ddb493de871f2281c2552302de157e79b11fc8ff6632ae62",
+  "groupPolicyId": "3cfdf8bf653ca8be1af605e4df4f00433f704ab0172e420b54209416",
+  "groupStartTime": 1784288161000,
+  "groupIntervalLength": 300000,
+  "groupNumRounds": 2,
+  "accountTokenSuffix": "b314ee9cd6b87c8e2916768684318b38adcad80e3fd5375c829a68bb",
+  "user2AccountTokenSuffix": "ad864b5741b2775a94ccba936602eff06de5b20d127e50257e7d3c7f",
+  "adminAccountTokenSuffix": "18b47e8ea5bf2a9b5020da3e6f8431a68054289e728d532b4c1b8b78",
+  "label": "P2 recovery group",
+  "recoveryTargetSuffix": "b314ee9cd6b87c8e2916768684318b38adcad80e3fd5375c829a68bb",
+  "recoveryNewAccountSuffix": "ad864b5741b2775a94ccba936602eff06de5b20d127e50257e7d3c7f",
+  "recoveryNewPkh": "0dab0474537f067aeb2ac25c42e26ea855bbbe350b176816bb369032",
+  "earliestExecutionSlotMs": 1784374635000
+}
