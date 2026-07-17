@@ -1,0 +1,154 @@
+{
+  "registryVersion": 1,
+  "sdkVersion": "0.5.0",
+  "families": {
+    "rosca": {
+      "status": "launch",
+      "blueprint": "sdk/src/core/plutus.json",
+      "onchainSource": "onchain/rosca/plutus.json",
+      "plutusVersion": "v3",
+      "validators": {
+        "account_validator.account.mint": "c77bc925d007058e07868646482014825d4d16c5359a366c115ec725714b0f64",
+        "account_validator.account.spend": "c77bc925d007058e07868646482014825d4d16c5359a366c115ec725714b0f64",
+        "account_validator.account.else": "c77bc925d007058e07868646482014825d4d16c5359a366c115ec725714b0f64",
+        "always_fails.always_fails.else": "298a6f97975239ee083f4283730710fbbb80441de81ea18e87358df3c49f7e49",
+        "group_validator.group_validator.mint": "c5d0106ddffe1cac9160f93cd341b956ea46914f0ae5b4deaf98b0798201b540",
+        "group_validator.group_validator.spend": "c5d0106ddffe1cac9160f93cd341b956ea46914f0ae5b4deaf98b0798201b540",
+        "group_validator.group_validator.else": "c5d0106ddffe1cac9160f93cd341b956ea46914f0ae5b4deaf98b0798201b540",
+        "settings_validator.settings_nft.mint": "e4a180204d9284758fab9d4f80b470684e0f593d9af0ffca65bae9729bf5f322",
+        "settings_validator.settings_nft.else": "e4a180204d9284758fab9d4f80b470684e0f593d9af0ffca65bae9729bf5f322",
+        "treasury_lifecycle.treasury_lifecycle.withdraw": "01240b24ec655cb75c3c9480b63e0af390ffb4464ee1734911c12f3b3bc699d5",
+        "treasury_lifecycle.treasury_lifecycle.else": "01240b24ec655cb75c3c9480b63e0af390ffb4464ee1734911c12f3b3bc699d5",
+        "treasury_recovery.treasury_recovery.withdraw": "1055eea52378656640fc47fdc9661fe4a6ae322a84b721947c82bdd48a702f40",
+        "treasury_recovery.treasury_recovery.else": "1055eea52378656640fc47fdc9661fe4a6ae322a84b721947c82bdd48a702f40",
+        "treasury_reserve.treasury_reserve.withdraw": "c34852fdc18fcd473e71f3b0181997ac2932322ff27daaf3a590fe6efd17f049",
+        "treasury_reserve.treasury_reserve.else": "c34852fdc18fcd473e71f3b0181997ac2932322ff27daaf3a590fe6efd17f049",
+        "treasury_rounds.treasury_rounds.withdraw": "e6c2c756502a2a22a3f97f30780b8b1d9be360d3db5441f3d725baa16cb32e80",
+        "treasury_rounds.treasury_rounds.else": "e6c2c756502a2a22a3f97f30780b8b1d9be360d3db5441f3d725baa16cb32e80",
+        "treasury_validator.treasury.mint": "d9ed1ca795aa1f6e8678dc4088f45e964dd707647a053aded70c4530a29ab175",
+        "treasury_validator.treasury.spend": "d9ed1ca795aa1f6e8678dc4088f45e964dd707647a053aded70c4530a29ab175",
+        "treasury_validator.treasury.else": "d9ed1ca795aa1f6e8678dc4088f45e964dd707647a053aded70c4530a29ab175"
+      },
+      "deployments": {
+        "preprod": {
+          "date": "2026-07-04",
+          "note": "R4 ref scripts + settings f90df179"
+        }
+      }
+    },
+    "escrow": {
+      "status": "launch",
+      "blueprint": "sdk/src/escrow/plutus.json",
+      "onchainSource": "onchain/escrow/plutus.json",
+      "plutusVersion": "v3",
+      "validators": {
+        "escrow_v2_validator.escrow_v2_validator.mint": "ae2685589763d930b1cc28ff19e9f5dce5d362ffd594846dfcf4f05a053f109f",
+        "escrow_v2_validator.escrow_v2_validator.spend": "ae2685589763d930b1cc28ff19e9f5dce5d362ffd594846dfcf4f05a053f109f",
+        "escrow_v2_validator.escrow_v2_validator.else": "ae2685589763d930b1cc28ff19e9f5dce5d362ffd594846dfcf4f05a053f109f",
+        "escrow_validator.escrow_validator.mint": "984b94b0b1ad8110dcc44d5ef2bb978c0199c5225e5e103f3d380bf02f46a9bb",
+        "escrow_validator.escrow_validator.spend": "984b94b0b1ad8110dcc44d5ef2bb978c0199c5225e5e103f3d380bf02f46a9bb",
+        "escrow_validator.escrow_validator.else": "984b94b0b1ad8110dcc44d5ef2bb978c0199c5225e5e103f3d380bf02f46a9bb",
+        "pool_vault_validator.pool_vault.mint": "9de4fe9f2f5fb691731e6bba6752c1a5af37cc0d3808a66295fcda4f4e39504b",
+        "pool_vault_validator.pool_vault.spend": "9de4fe9f2f5fb691731e6bba6752c1a5af37cc0d3808a66295fcda4f4e39504b",
+        "pool_vault_validator.pool_vault.else": "9de4fe9f2f5fb691731e6bba6752c1a5af37cc0d3808a66295fcda4f4e39504b",
+        "project_validator.project_validator.mint": "46b894b3c319f310f823b881c73a60a9c7d00ce2efa19a19505afa75f79435bf",
+        "project_validator.project_validator.spend": "46b894b3c319f310f823b881c73a60a9c7d00ce2efa19a19505afa75f79435bf",
+        "project_validator.project_validator.else": "46b894b3c319f310f823b881c73a60a9c7d00ce2efa19a19505afa75f79435bf"
+      },
+      "deployments": {
+        "preprod": {
+          "date": "2026-07-11",
+          "note": "escrow v2 sweep"
+        }
+      }
+    },
+    "savings": {
+      "status": "experimental",
+      "blueprint": "sdk/src/savings/plutus.json",
+      "onchainSource": "onchain/savings/plutus.json",
+      "plutusVersion": "v3",
+      "validators": {
+        "savings_vault_validator.savings_vault.mint": "33974493468d0efda804c4549f0c937c0fa5a9685f7df92ec5a1f3621270465f",
+        "savings_vault_validator.savings_vault.spend": "33974493468d0efda804c4549f0c937c0fa5a9685f7df92ec5a1f3621270465f",
+        "savings_vault_validator.savings_vault.else": "33974493468d0efda804c4549f0c937c0fa5a9685f7df92ec5a1f3621270465f"
+      },
+      "deployments": {}
+    },
+    "governance": {
+      "status": "experimental",
+      "blueprint": "sdk/src/governance/plutus.json",
+      "onchainSource": "onchain/governance/plutus.json",
+      "plutusVersion": "v3",
+      "validators": {
+        "governance_dispatcher.governance_dispatcher.mint": "6bd77ced806c2d7312e06eb99896975829272cbb4f61b2a9efc4effd90ed4a03",
+        "governance_dispatcher.governance_dispatcher.spend": "6bd77ced806c2d7312e06eb99896975829272cbb4f61b2a9efc4effd90ed4a03",
+        "governance_dispatcher.governance_dispatcher.else": "6bd77ced806c2d7312e06eb99896975829272cbb4f61b2a9efc4effd90ed4a03",
+        "governance_gate.governance_gate.spend": "23f9a64ec621c707393d4f44231412304f744392407f126dd25b3e8a5b7d6a06",
+        "governance_gate.governance_gate.else": "23f9a64ec621c707393d4f44231412304f744392407f126dd25b3e8a5b7d6a06",
+        "governance_settings.governance_settings.mint": "16d5f0a1c6f0cf693e4775f7116baa1cf7d14d7105cf22ccd6680e7f60e9d617",
+        "governance_settings.governance_settings.else": "16d5f0a1c6f0cf693e4775f7116baa1cf7d14d7105cf22ccd6680e7f60e9d617",
+        "governance_voting.governance_voting.withdraw": "ab1c2157cba6a7d6eebfabca8069966adf0fc3e38751ba921835e9debc69b2f2",
+        "governance_voting.governance_voting.else": "ab1c2157cba6a7d6eebfabca8069966adf0fc3e38751ba921835e9debc69b2f2"
+      },
+      "deployments": {
+        "preprod": {
+          "date": "2026-07-12",
+          "note": "pre-fix instance (settings bd981f93) — superseded by the 2026-07-16 critical fixes"
+        }
+      }
+    }
+  },
+  "history": [
+    {
+      "date": "2026-07-17",
+      "sdkVersion": "0.5.0",
+      "changed": [],
+      "note": "v0.5.0: savings, governance, and escrow v2 validators enter the registry; rosca and escrow v1 fingerprints unchanged from 0.4.1"
+    },
+    {
+      "date": "2026-07-17",
+      "sdkVersion": "0.4.1",
+      "changed": [
+        "governance:governance_dispatcher.governance_dispatcher.mint",
+        "governance:governance_dispatcher.governance_dispatcher.spend",
+        "governance:governance_dispatcher.governance_dispatcher.else",
+        "governance:governance_settings.governance_settings.mint",
+        "governance:governance_settings.governance_settings.else",
+        "governance:governance_voting.governance_voting.withdraw",
+        "governance:governance_voting.governance_voting.else"
+      ],
+      "note": "governance: add GovAction Generic{tag,payload} forward-compatibility arm (opener key 5)"
+    },
+    {
+      "date": "2026-07-16",
+      "sdkVersion": "0.4.1",
+      "changed": [
+        "governance:governance_voting.governance_voting.withdraw",
+        "governance:governance_voting.governance_voting.else"
+      ],
+      "note": "governance criticals + review fixes: voter-record nullifier + roster (CRIT-1), (policy,name) target binding (CRIT-2), validity-interval enforcement, charter invariants, decision token-name pinning (MLabs-2), continuation address pinning (MLabs-11)"
+    },
+    {
+      "date": "2026-07-16",
+      "sdkVersion": "0.4.1",
+      "changed": [
+        "governance:governance_dispatcher.governance_dispatcher.mint",
+        "governance:governance_dispatcher.governance_dispatcher.spend",
+        "governance:governance_dispatcher.governance_dispatcher.else",
+        "governance:governance_gate.governance_gate.spend",
+        "governance:governance_gate.governance_gate.else",
+        "governance:governance_settings.governance_settings.mint",
+        "governance:governance_settings.governance_settings.else",
+        "governance:governance_voting.governance_voting.withdraw",
+        "governance:governance_voting.governance_voting.else"
+      ],
+      "note": "governance criticals: voter-record nullifier + roster (CRIT-1), (policy,name) target binding (CRIT-2), validity-interval enforcement, charter invariants"
+    },
+    {
+      "date": "2026-07-16",
+      "sdkVersion": "0.4.1",
+      "changed": [],
+      "note": "baseline: registry introduced at 0.4.1; rosca+escrow Preprod-deployed, savings+governance experimental"
+    }
+  ]
+}

@@ -1,9 +1,9 @@
 name: Publish SDK to npm
 
 # Triggers when you create a GitHub Release (which also creates the git tag).
-# The CI workflow already runs on every PR, so tests are guaranteed to have
-# passed before any release is created from main.
-# workflow_dispatch allows manual publish from the Actions tab if needed.
+# The publish job re-runs the full verification suite itself — it must not
+# trust that CI ran on some other ref. workflow_dispatch allows manual publish
+# from the Actions tab if needed; the same guards apply.
 on:
   release:
     types: [published]
@@ -18,22 +18,35 @@ jobs:
         working-directory: ./sdk
 
     permissions:
-      contents: read
-      id-token: write
+      contents: write # release-asset upload (SBOM); checkout is read
+      id-token: write # npm provenance via OIDC
 
     steps:
       - name: 📥 Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: 🧾 Verify ref is on main
+        working-directory: .
+        run: |
+          git fetch origin main --quiet
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "✅ $GITHUB_SHA is on main."
+          else
+            echo "❌ Refusing to publish: $GITHUB_SHA is not an ancestor of origin/main."
+            exit 1
+          fi
 
       - name: 🔧 Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
-          version: 9
+          version: 11
 
       # registry-url is required — it writes a .npmrc that wires NODE_AUTH_TOKEN
       # into the npm auth for registry.npmjs.org automatically.
       - name: 🔧 Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
@@ -41,20 +54,50 @@ jobs:
       - name: 📦 Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: 🎨 Format Check
+        run: pnpm format:check
+
+      - name: 🔍 Lint
+        run: pnpm lint
+
+      - name: 🔍 Type Check
+        run: pnpm tsc --noEmit
+
       - name: 🏗️ Build
         run: pnpm run build
+
+      - name: 🧾 Validator Registry Check
+        run: node ../scripts/check-validator-registry.mjs
+
+      - name: 🧪 Run Tests
+        run: pnpm test
+        env:
+          NETWORK: Custom
 
       - name: 🔍 Check if version already published
         id: version_check
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           PKG_NAME=$(node -p "require('./package.json').name")
+          echo "pkg_version=${PKG_VERSION}" >> $GITHUB_OUTPUT
           if npm view "${PKG_NAME}@${PKG_VERSION}" version 2>/dev/null | grep -q "${PKG_VERSION}"; then
             echo "already_published=true" >> $GITHUB_OUTPUT
             echo "⚠️ ${PKG_NAME}@${PKG_VERSION} is already on npm — skipping publish."
           else
             echo "already_published=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: 🧾 Generate SBOM (CycloneDX)
+        if: steps.version_check.outputs.already_published == 'false'
+        run: |
+          pnpm dlx @cyclonedx/cyclonedx-npm@6.0.0 --omit dev \
+            --output-file sbom.cdx.json
+
+      - name: 📤 Attach SBOM to release
+        if: steps.version_check.outputs.already_published == 'false' && github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" sbom.cdx.json --clobber
 
       - name: 🚀 Publish
         if: steps.version_check.outputs.already_published == 'false'

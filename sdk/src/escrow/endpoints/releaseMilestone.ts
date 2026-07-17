@@ -34,7 +34,8 @@ import {
  * - Pays `milestones[released_count]` of the escrowed asset to the beneficiary's
  *   full address (stake credential pinned by the datum).
  * - Non-final: continues the escrow at the same address with `released_count + 1`.
- * - Final tranche: burns the state token; the escrow ends.
+ * - Final tranche: burns the state token and returns the remainder (the
+ *   min-ADA buffer) to the funder's full address; the escrow ends.
  * - VK verifier: the endpoint adds the required signer (the verifier signs the tx).
  *   Script verifier (multisig): pass `verifierWitness` — the endpoint spends and
  *   returns a dust UTxO at the script address (the on-chain authorization proof).
@@ -89,6 +90,7 @@ export const unsignedReleaseMilestoneTxProgram = (
       network,
       datum.beneficiary,
     );
+    const funderAddress = yield* fromOnchainAddress(network, datum.funder);
 
     const assetUnit = escrowAssetUnit(datum);
     const isAda = assetUnit === "lovelace";
@@ -124,13 +126,32 @@ export const unsignedReleaseMilestoneTxProgram = (
       .validTo(validTo);
 
     const withOutputs = isFinal
-      ? baseTx
-          .mintAssets(
-            { [stateUnit]: -1n },
-            Data.to("BurnEscrow", EscrowMintRedeemer),
-          )
-          .attach.MintingPolicy(escrowValidator.mintEscrow)
-          .pay.ToAddress(beneficiaryAddress, payoutAssets)
+      ? (() => {
+          // The remainder (the min-ADA buffer, minus the lovelace the token
+          // payout consumes) goes back to the funder, mirroring reclaim — the
+          // verifier's change must never absorb escrow funds.
+          const funderRemainder: Assets = { ...escrowUtxo.assets };
+          delete funderRemainder[stateUnit];
+          funderRemainder[assetUnit] =
+            (funderRemainder[assetUnit] ?? 0n) - tranche;
+          if (!isAda) {
+            funderRemainder.lovelace =
+              (funderRemainder.lovelace ?? 0n) - payoutAssets.lovelace;
+          }
+          for (const [unit, amount] of Object.entries(funderRemainder)) {
+            if (amount <= 0n) delete funderRemainder[unit];
+          }
+          const burnTx = baseTx
+            .mintAssets(
+              { [stateUnit]: -1n },
+              Data.to("BurnEscrow", EscrowMintRedeemer),
+            )
+            .attach.MintingPolicy(escrowValidator.mintEscrow)
+            .pay.ToAddress(beneficiaryAddress, payoutAssets);
+          return Object.keys(funderRemainder).length > 0
+            ? burnTx.pay.ToAddress(funderAddress, funderRemainder)
+            : burnTx;
+        })()
       : (() => {
           const continuationAssets: Assets = { ...escrowUtxo.assets };
           continuationAssets[assetUnit] =

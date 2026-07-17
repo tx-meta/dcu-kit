@@ -6,6 +6,56 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-17
+
+Feature release. All 20 rosca validators and the v1 escrow validator are
+byte-identical to 0.4.1 — existing deployments and state.json files continue to
+work. The new validators are additive; `validator-registry.json` records every
+fingerprint from this release on.
+
+### Added
+
+- **Savings module** (`@tx-meta/dcu-kit/savings`) — ASCA/VSLA savings-and-credit
+  engine in one `savings_vault` validator: member shares with member-claimed
+  share-out, and share-secured loans (disburse, repay, arrears, write-off). Ten
+  endpoints, loan queries, reference-script deploy, and lifecycle examples.
+  `experimental` family: emulator-tested, not yet run on a public network.
+- **Governance module** (`@tx-meta/dcu-kit/governance`) — propose → vote → decide
+  across settings, thin dispatcher, withdraw-zero voting, and gate-seam validators.
+  Voter-record nullifier and roster, (policy, name) action binding, validity-interval
+  enforcement, charter invariants, and a `GovAction::Generic` arm (opener class 5,
+  deny-by-default). Full lifecycle proven on Preprod, including on-chain rejection of
+  a double vote and a premature expiry. `experimental` family.
+- **Escrow v2** — split beneficiaries with co-beneficiary payouts, project anchor,
+  and the pooled commitment vault (create, deposit, exit, allocate, tranche, close)
+  as three new validators (`escrow_v2`, `pool_vault`, `project`) beside the untouched
+  v1 escrow.
+- **Validator registry** — `validator-registry.json` (plus a bundled SDK copy) with
+  per-family status, per-validator fingerprints, deployments, and a hash-change
+  history; `isDeployAllowed` restricts Mainnet deploys to `launch` families.
+  `VERSIONING.md`, `THREAT_MODEL.md`, and `DEPENDENCY_POLICY.md` document the rules.
+- **CI and release integrity** — registry drift check, gitleaks secret scanning,
+  production dependency audit, Semgrep pilot, and per-project blueprint-drift checks;
+  CI is a required status check on `main` and `staging`. The publish workflow re-runs
+  the full suite, verifies the tag is an ancestor of `main`, and emits a CycloneDX
+  SBOM with npm provenance.
+
+### Changed
+
+- Governance `finalizeProposal` / `executeDecision` / `expireProposal` align clamped
+  `validFrom` bounds up to whole slots, so boundary-adjacent transactions build
+  correctly on live networks.
+- `governance-mint-tokens` mints member and target tokens into separate outputs, as
+  voter registration expects single-token-name eligibility inputs.
+
+### Fixed
+
+- Escrow final `Release` returns the funder's min-ADA buffer instead of stranding it
+  with the beneficiary.
+- Escrow seed selection skips reference-script UTxOs.
+- Pool allocation computes the anchor's sorted reference-input index, fixing
+  allocation against pools with reference scripts present.
+
 ## [0.4.1] - 2026-07-05
 
 Patch release on the v0.4.0 deployment. No validator hash changes; deployments and

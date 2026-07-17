@@ -25,15 +25,15 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: 🔧 Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
-          version: 9
+          version: 11
 
       - name: 🔧 Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
 
@@ -52,8 +52,11 @@ jobs:
       - name: 🏗️ Build
         run: pnpm run build
 
+      - name: 🧾 Validator Registry Check
+        run: node ../scripts/check-validator-registry.mjs
+
       - name: 📤 Upload Build Artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: sdk-dist
           path: sdk/dist
@@ -72,17 +75,17 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        project: [rosca, escrow]
+        project: [rosca, escrow, savings, governance]
     defaults:
       run:
         working-directory: ./onchain/${{ matrix.project }}
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: 🔧 Setup Aiken
-        uses: aiken-lang/setup-aiken@v1
+        uses: aiken-lang/setup-aiken@1728a4be43be099752e22d8b841706caaa6fdd88 # v1
         with:
           version: v1.1.22
 
@@ -94,10 +97,78 @@ jobs:
         env:
           RUST_BACKTRACE: 1
 
+      - name: 🧾 Blueprint Drift Check
+        run: git diff --exit-code -- plutus.json
+
       - name: 🧪 Run Tests
         run: aiken check
         env:
           RUST_BACKTRACE: 1
+
+  # ------------------------------------------------------------
+  # Job: Secret Scanning (full history)
+  # ------------------------------------------------------------
+  secrets-scan:
+    name: 🔒 Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Repository (full history)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: 🔒 Run gitleaks
+        env:
+          GITLEAKS_VERSION: 8.24.3
+          GITLEAKS_SHA256: 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c
+        run: |
+          curl -sSfL -o gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
+          tar xzf gitleaks.tgz gitleaks
+          ./gitleaks git --redact --no-banner --config .gitleaks.toml
+
+  # ------------------------------------------------------------
+  # Job: Dependency Advisory Scan
+  # ------------------------------------------------------------
+  deps-audit:
+    name: 🧬 Dependency Audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./sdk
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: 🔧 Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 11
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: 🧬 Audit production dependencies
+        run: pnpm audit --prod --audit-level high
+
+  # ------------------------------------------------------------
+  # Job: Semgrep (pilot — baseline only, not a required gate yet)
+  # ------------------------------------------------------------
+  semgrep:
+    name: 🔬 Semgrep (pilot)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    container:
+      image: semgrep/semgrep@sha256:177c6f424f5698aab5f0112eb939656e01eaad238ca629133f5c5a09d4553198 # 1.130.0
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: 🔬 Scan SDK source
+        run: semgrep scan --config p/typescript --config p/security-audit --error sdk/src
 
   # ------------------------------------------------------------
   # Job: Verify Design Specs (Typst)
@@ -111,20 +182,23 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: 🔧 Setup Typst
-        uses: typst-community/setup-typst@v5
+        uses: typst-community/setup-typst@63ac138db421d586de61f7f5ac3bcef6a2e6c78c # v5
 
       - name: 🔨 Compile Design Specs
-        run: typst compile dcu-kit.typ
+        run: |
+          typst compile dcu-kit.typ
+          typst compile savings-module.typ
+          typst compile governance-module.typ
 
   # ------------------------------------------------------------
   # Job: Gatekeeper (Required Status Check)
   # ------------------------------------------------------------
   ci-success:
     name: ✅ CI Success
-    needs: [sdk-verify, aiken-verify, docs-verify]
+    needs: [sdk-verify, aiken-verify, docs-verify, secrets-scan, deps-audit]
     if: always()
     runs-on: ubuntu-latest
     steps:
