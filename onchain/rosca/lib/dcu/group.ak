@@ -21,6 +21,17 @@ use dcu/utils.{get_lower_bound, output_holds_only_own}
 /// raise/lower this constant to sit safely below the crossover. See [[scale-ceiling-findings]].
 pub const max_group_members: Int = 20
 
+/// Config-safety envelope floors — production-safe minimums a group config can
+/// never go below, at creation or by pre-join update (POSIX ms where a time).
+/// recovery: one member must never satisfy a recovery quorum alone, and every
+/// group keeps a real CancelRecovery veto window. recommit: a re-seal can never
+/// happen without a member opt-out window.
+pub const min_recovery_threshold: Int = 2
+
+pub const min_recovery_timelock: Int = 86_400_000
+
+pub const min_recommit_window: Int = 86_400_000
+
 /// CIP-68 wrapper for the group (100) reference token datum.
 /// Wallets resolve the group name by reading metadata["name"] from this datum.
 /// `extra` holds all protocol state; metadata and version are preserved unchanged
@@ -298,6 +309,57 @@ fn group_admin_authorized(
 //                        enforces a valid payment key hash
 // [spec CreateGroup 14]: metadata["name"] must be non-empty — prevents anonymous groups
 // [spec CreateGroup 15]: CIP-68 wrapper version == 1
+// [spec CreateGroup 17]: recovery_threshold in [min_recovery_threshold, max_members]
+// [spec CreateGroup 18]: recovery_timelock >= min_recovery_timelock
+// [spec CreateGroup 19]: recommit_window >= min_recommit_window
+
+// is_group_config_valid
+// ─────────────────────────────────────────────────────────────────────────────
+// Pure-CONFIG invariants of a GroupDatum — every field a creator chooses, with
+// its production-safe envelope. Enforced at CreateGroup AND at every pre-join
+// UpdateGroup (member_count == 0), so an update can never publish a config that
+// creation would reject. Lifecycle-state checks (member_count == 0, num_rounds
+// == 0, start_time == 0, ...) live at the call sites — they are state, not
+// config. A future config field added to GroupDatum MUST be added here
+// explicitly; this function cannot detect fields it does not name.
+pub fn is_group_config_valid(datum: GroupDatum) -> Bool {
+  and {
+    (datum.contribution_fee > 0)?,
+    (datum.joining_fee >= 0)?,
+    (datum.penalty_fee >= 0)?,
+    // [spec CreateGroup 7]: creator_bond >= 0; 0 is valid for trusted groups
+    (datum.creator_bond >= 0)?,
+    // [spec CreateGroup 7b]: grace_period_length >= 0; 0 = immediate enforcement
+    (datum.grace_period_length >= 0)?,
+    (datum.interval_length > 0)?,
+    // [spec CreateGroup 11a]: max_members must be > 0
+    (datum.max_members > 0)?,
+    // [spec CreateGroup 11b / scale]: max_members must not exceed the protocol ceiling, so
+    // a group can never grow past a submittable distribute/next-cycle tx. See max_group_members.
+    (datum.max_members <= max_group_members)?,
+    // [spec CreateGroup 16]: collateral_rounds in [1, max_members]
+    // 1 = PerRound (default), max_members = FullUpfront, k = partial.
+    (datum.collateral_rounds >= 1)?,
+    (datum.collateral_rounds <= datum.max_members)?,
+    // [spec CreateGroup 17]: a single member must never satisfy a recovery quorum alone
+    (datum.recovery_threshold >= min_recovery_threshold)?,
+    (datum.recovery_threshold <= datum.max_members)?,
+    // [spec CreateGroup 18]: every group keeps a real CancelRecovery veto window
+    (datum.recovery_timelock >= min_recovery_timelock)?,
+    // [spec CreateGroup 19]: a re-seal can never happen without an opt-out window
+    (datum.recommit_window >= min_recommit_window)?,
+    // [spec Reserve C2]: levies are non-negative; 0 = off
+    (datum.reserve_join_levy >= 0)?,
+    (datum.reserve_round_levy >= 0)?,
+    // [spec CreateGroup 13]: creator_payment_credential carries a valid 28-byte hash,
+    // whether it is a wallet key (VerificationKey) or a multisig/contract (Script)
+    when datum.creator_payment_credential is {
+      VerificationKey(h) -> bytearray.length(h) == 28
+      Script(h) -> bytearray.length(h) == 28
+    }?,
+  }
+}
+
 pub fn validate_create_group(
   policy_id: PolicyId,
   input_index: Int,
@@ -365,21 +427,11 @@ pub fn validate_create_group(
     // [spec CreateGroup 15]: version must be 1 at creation
     (version == 1)?,
     name_valid?,
-    (datum.contribution_fee > 0)?,
-    (datum.joining_fee >= 0)?,
-    (datum.penalty_fee >= 0)?,
-    // [spec CreateGroup 7]: creator_bond >= 0; 0 is valid for trusted groups
-    (datum.creator_bond >= 0)?,
-    // [spec CreateGroup 7b]: grace_period_length >= 0; 0 = immediate enforcement
-    (datum.grace_period_length >= 0)?,
-    (datum.interval_length > 0)?,
+    // Config envelope — every creator-chosen field, shared with the pre-join
+    // UpdateGroup branch (specs CreateGroup 4-8, 11, 13, 16-19, Reserve C2).
+    is_group_config_valid(datum)?,
     // [spec CreateGroup 9]: num_rounds must be 0 at creation — set at startGroup
     (datum.num_rounds == 0)?,
-    // [spec CreateGroup 11a]: max_members must be > 0
-    (datum.max_members > 0)?,
-    // [spec CreateGroup 11b / scale]: max_members must not exceed the protocol ceiling, so
-    // a group can never grow past a submittable distribute/next-cycle tx. See max_group_members.
-    (datum.max_members <= max_group_members)?,
     (datum.member_count == 0)?,
     // [spec CreateGroup 10e]: active_member_count == 0 at creation; startGroup sets it to member_count
     (datum.active_member_count == 0)?,
@@ -391,28 +443,10 @@ pub fn validate_create_group(
     (datum.start_time == 0)?,
     // [spec CreateGroup 10c]: no rounds have run yet
     (datum.last_distributed_round == -1)?,
-    // [spec CreateGroup 13]: creator_payment_credential carries a valid 28-byte hash,
-    // whether it is a wallet key (VerificationKey) or a multisig/contract (Script)
-    when datum.creator_payment_credential is {
-      VerificationKey(h) -> bytearray.length(h) == 28
-      Script(h) -> bytearray.length(h) == 28
-    }?,
-    // [spec CreateGroup 16]: collateral_rounds in [1, max_members]
-    // 1 = PerRound (default), max_members = FullUpfront, k = partial.
-    (datum.collateral_rounds >= 1)?,
-    (datum.collateral_rounds <= datum.max_members)?,
-    (datum.recovery_threshold >= 1)?,
-    (datum.recovery_threshold <= datum.max_members)?,
-    (datum.recovery_timelock >= 0)?,
-    // [spec Recommit]: slots are assigned at StartGroup — the map is empty until sealed,
-    // the era counter starts at 0, and the opt-out window length is non-negative
+    // [spec Recommit]: slots are assigned at StartGroup — the map is empty until
+    // sealed and the era counter starts at 0
     (datum.member_slots == [])?,
     (datum.era_start_round == 0)?,
-    (datum.recommit_window >= 0)?,
-    // [spec Reserve C2]: levies are non-negative; 0 = off. Frozen once any member has
-    // joined by the record-freeze below, like every other economic field.
-    (datum.reserve_join_levy >= 0)?,
-    (datum.reserve_round_levy >= 0)?,
   }
 }
 
@@ -498,7 +532,30 @@ pub fn validate_update_group(
     is_active: updated_datum.is_active,
   }
 
-  let is_safe_update = current_datum.member_count == 0 || metadata_frozen && only_is_active_differs
+  // Pre-join (member_count == 0): any config field may change, but the result
+  // must satisfy the same envelope as creation ([spec UpdateGroup 8]), the
+  // CIP-68 wrapper must stay well-formed, and the lifecycle fields must stay in
+  // their creation state. Post-join: the whole record is frozen except
+  // is_active (allowlist below). member_count, num_rounds, is_started,
+  // last_distributed_round, member_token_names, member_slots, era_start_round
+  // are pinned unconditionally in the and-block underneath.
+  let output_name_valid = when
+    list.find(output_metadata, fn(p) { p.1st == cip68_name_key })
+  is {
+    Some(Pair(_, name)) -> bytearray.length(name) > 0
+    None -> False
+  }
+  let is_safe_update = if current_datum.member_count == 0 {
+    and {
+      is_group_config_valid(updated_datum)?,
+      (output_version == 1)?,
+      output_name_valid?,
+      (updated_datum.active_member_count == 0)?,
+      (updated_datum.start_time == 0)?,
+    }
+  } else {
+    metadata_frozen && only_is_active_differs
+  }
 
   // [security 7]: ADA preservation — admin must not drain the group UTxO during update
   let in_ada = assets.lovelace_of(group_input.output.value)
