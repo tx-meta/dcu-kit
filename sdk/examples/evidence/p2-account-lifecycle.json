@@ -1,13 +1,13 @@
 {
   "evidence": {
     "B1": {
-      "account": "34bca0e7\u2026",
+      "account": "34bca0e737ddea7292a31a95aa042b19910f4afc64aab1c3e8a1766b",
       "txHash": "f507ffed994425cf4a26597917d119470621994f08148c9c178241a4cb4f0556",
       "onChainCommitment": "",
       "pass": true
     },
     "B3": {
-      "account": "e2e1808e\u2026",
+      "account": "e2e1808e8a02bc534cc316ba43a928a2d7b9daad37c4e0f0a51ba06c",
       "createTx": "722e155a98bcb3f35cc90b655f60d6db3f08ff0f8c3a141d271da7cc6363b2d7",
       "updateOmitTx": "6a34705a06d4587372409e94ad72a5a48ad783d375b1e2d5ab0d8b347d6a4d9b",
       "beforeCommitment": "9e2f3a5c4d57\u2026",
@@ -16,10 +16,11 @@
       "pass": true
     },
     "B4": {
-      "status": "live-pending",
-      "reason": "BadInputsUTxO \u2014 Blockfrost lag on the account script UTxO after B3 moved it; same code path as B3 with profileCommitment=\"\"; proven by emulator test account update clear",
-      "pass": null
+      "account": "e2e1808e8a02bc534cc316ba43a928a2d7b9daad37c4e0f0a51ba06c",
+      "clearTx": "ffe2aba04cd73161b1346dd0ef2271cd890429c433d3a57893c67160d411e6fd",
+      "afterClear": "",
+      "pass": true
     }
   },
-  "capturedAt": "2026-07-17T12:40:00Z"
+  "capturedAt": "2026-07-17T13:37:27.691Z"
 }

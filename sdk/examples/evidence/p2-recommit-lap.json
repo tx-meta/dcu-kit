@@ -1,0 +1,55 @@
+{
+  "group": "cb57d564125ecb8e41b8da8127bbc05193ef4aaddfffee6a67234648",
+  "steps": [
+    {
+      "step": "B10 distribute round 0",
+      "txHash": "a8447fef0dcd2b4965b03610ae5f141303a8e5e15dcd9b016e2f2338e7467bd9"
+    },
+    {
+      "step": "B9 contribute (1053643c…)",
+      "txHash": "19aaec571c4492ac6f9ede33258c23f8e86c4e8e0a18025c50c5b0951602cddc"
+    },
+    {
+      "step": "B9 contribute (924fe76f…)",
+      "txHash": "54a83473e5ad0f9acdcb8b3b42f45a7c8722a549f5a5863d5d7a7996eb70125d"
+    },
+    {
+      "step": "B10 distribute round 1 (lap boundary)",
+      "txHash": "bf0dc412dd6520427c0bafe9ec985cf6a9c56b99d7cd53082a364fc79f81259e"
+    },
+    {
+      "step": "B14 begin-recommit (window opens)",
+      "txHash": "566a9ddb014b189212b225cb7724a140ca75486af7297a231b0016fb2c2a344e"
+    },
+    {
+      "step": "C8",
+      "evidence": {
+        "label": "C8 premature re-seal (recommit window open, before start_time+window)",
+        "rejected": true,
+        "evaluatorError": "TxBuilderError: { Complete: \"failed script execution Spend[0] the validator crashed / exited prematurely\" }",
+        "attemptedDatum": null,
+        "evaluation": "local-uplc",
+        "deployment": {
+          "network": "Preprod",
+          "settingsPolicy": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d",
+          "groupPolicyId": "3cfdf8bf653ca8be1af605e4df4f00433f704ab0172e420b54209416",
+          "treasuryPolicyId": "0ba6478fdb7651c557d052c0ee49a8d3ff302e826e277631b6a312ea",
+          "accountPolicyId": "7fd4e55c7ab5b620e0409a7d9c89e5553390d96f2b5a8249c675b6a9"
+        },
+        "timestamp": "2026-07-17T13:32:42.668Z"
+      }
+    }
+  ],
+  "finalDatum": {
+    "last_distributed_round": "1",
+    "era_start_round": "0",
+    "is_started": false
+  },
+  "capturedAt": "2026-07-17T13:32:43.862Z",
+  "windowActions": {
+    "freeExitTx": "3585aa0f7fe527de0d49888cbfc718b1b7ea6a4e06a010c168879319bcf78b12",
+    "windowJoinTx": "652036d5b5cfc3dca74cd200228eee2a20492419fc94f1d286ae731459e27978",
+    "memberCountAfter": "2",
+    "capturedAt": "2026-07-17T13:45:38.438Z"
+  }
+}

@@ -55,20 +55,20 @@ settings policy `138efe0f…`.
 | B1 | create-account (default, no commitment) | datum profile_commitment == "" | account `34bca0e7…` tx `f507ffed…`; on-chain commitment read back == "" | ☑ |
 | B2 | create-account (with computeProfileCommitment) | commitment on-chain | USER1 account `b314ee9c…` tx `5bf42bf6…` (with commitment); on the new account policy `7fd4e55c…` — first live proof of the P1 account-datum change | ☑ |
 | B3 | update-account (omitted) | commitment PRESERVED | account `e2e1808e…` create `722e155a…`, update-omit `6a34705a…`; commitment `9e2f3a5c…` unchanged before/after | ☑ |
-| B4 | update-account ("" ) | commitment cleared | live run hit Blockfrost lag on the account UTxO after B3 (BadInputsUTxO); same code path as B3 with `""`; emulator-proven. Retry live day 2. | ☐ (day 2) |
+| B4 | update-account ("" ) | commitment cleared | account `e2e1808e…` clear tx `ffe2aba0…`; commitment read back == "" | ☑ |
 | B5 | create-group (envelope-satisfying config, threshold=majority, timelock/recommit=86_400_000) | group created | recovery group `58aab8c8…` tx `7511f7b4…` (recovery_timelock=recommit_window=86_400_000); recommit group `40e8ca8e…` tx `117c9f44…` | ☑ |
-| B6 | update-group pre-join (config change within envelope) | accepted | | ☐ (pending) |
+| B6 | update-group pre-join (config change within envelope) | accepted | group `88608c45…` (USER1): create `2d82ef99…`, update `3662358a…` (fee 5→4 ADA, timelock floor→2d), datum read back verified | ☑ |
 | B7 | join-group ×N (incl. joining fee routing) | member_count=N | recovery group: ADMIN `6df9275d…` slot 0, USER1 `c1df6b64…` slot 1 → member_count=2 | ☑ |
 | B8 | start-group | sealed, slots assigned | recovery group start tx (start_time 2026-07-17T11:36:01Z, num_rounds=2) | ☑ |
-| B9 | contribute | deposit accepted | | ☐ |
-| B10 | distribute-payout (round 0, then sequential) | pot paid per mode | | ☐ |
+| B9 | contribute | deposit accepted | recommit group: `19aaec57…` (member 1053643c…), `54a83473…` (member 924fe76f…) | ☑ |
+| B10 | distribute-payout (round 0, then sequential) | pot paid per mode | recommit group: round 0 `a8447fef…`, round 1 (lap boundary) `bf0dc412…` (Push mode) | ☑ |
 | B11 | claim-payout (Pull mode group) | earmark withdrawn | | ☐ |
 | B12 | update-payout-credential | credential rotated | | ☐ |
 | B13 | extend-grace-window / terminate-default | grace then removal | | ☐ |
-| B14 | begin-recommit → free exit during window → re-seal. Datum stays `recommit_window = 86_400_000`; ACT at least 25h after `start_time` (the window's clock anchor, group.ak ~L884). | era advances | **CLOCK B ANCHORED day 1**: recommit group `cb57d564…` (members `1053643c…`+`924fe76f…`, both in ADMIN wallet), joins `1df6789f…`+`f0768faf…`, start_time `2026-07-17T12:21:02Z`, recommit_window=86_400_000 → **re-seal valid 2026-07-18T12:21:02Z (day 2)**. Snapshot `sdk/examples/evidence/p2-recommit-group-snapshot.json`. Day 2: rotation lap + begin-recommit → re-seal. | ◔ anchored, re-seal day 2 |
+| B14 | begin-recommit → free exit during window → re-seal. | era advances | **CLOCK B, mostly done day 1**: start_time 2026-07-17T12:21:02Z; rotation lap complete (B9/B10); begin-recommit `566a9ddb…` opened the window; free exit `3585aa0f…` + window join `652036d5…` both ran INSIDE the window (member_count back to 2). ONLY the re-seal (start-group) remains, valid ≥2026-07-18T12:21:02Z (day 2). | ◑ re-seal day 2 |
 | B15 | propose-recovery (day 1) → approve → execute. Datum stays `recovery_timelock = 86_400_000`; ACT at least 25h after PROPOSAL time. | identity rotated N→N' | **CLOCK A ARMED day 1**: propose `f055c0d1…` (USER1 `b314ee9c…` lost → USER2 `ad864b57…` recoveree); approval collected at propose time (APPROVER_WALLETS=ADMIN), RecoveryRequest.approvals=[ADMIN 18b47e8e…], quorum=1 met. `earliest_execution_slot=1784374635000` → **execute valid 2026-07-18T11:37:15Z (day 2)**. Snapshot `sdk/examples/evidence/p2-recovery-group-snapshot.json` | ◔ armed, execute day 2 |
-| B16 | cancel-recovery (separate request) | request burned | | ☐ |
-| B17 | top-up-reserve / reserve cover path | reserve balance moves | | ☐ |
+| B16 | cancel-recovery (separate request) | request burned | recovery group `58aab8c8…`: second request propose `ff312f0f…` (target ADMIN `18b47e8e…`) then cancel `2ddfc795…` — request burned, leaving the original day-1 request untouched | ☑ |
+| B17 | top-up-reserve / reserve cover path | reserve balance moves | recommit group `cb57d564…`: top-up `4bc0c3ba…`, reserve balance 0 → 2000000. (Fixed an example gap: top-up-reserve.ts passed only the treasury ref, needed the full scriptRefs.) | ☑ |
 | B18 | assign-admin (incl. script-held admin variant) | admin token moved | | ☐ |
 | B19 | exit-group (mature) → terminate-group → delete-group | group burned, bond returned | | ☐ |
 | B20 | delete-account | account pair burned | | ☐ |
@@ -88,12 +88,12 @@ attempted datum + deployment id + timestamp + seed-unspent confirmation).
 | C1 | create-group recovery_threshold = 1 | ConfigurationError (guard + emulator test) | LIVE rejection `C1-2026-07-17T12-24-51…json`, seedUnspentAfter=true | ☑ |
 | C2 | create-group recovery_timelock = 86_399_999 | ConfigurationError | LIVE rejection `C2-2026-07-17T12-24-57…json`, seedUnspentAfter=true | ☑ |
 | C3 | create-group recommit_window = 0 | ConfigurationError | LIVE rejection `C3-2026-07-17T12-25-03…json` | ☑ |
-| C4 | pre-join update-group lowering timelock below floor | (no SDK guard on updateGroup — validator proof only) | emulator-tested; LIVE pending (needs a pre-join group) | ☐ (day 2) |
-| C5 | pre-join update-group mutating CIP-68 version / emptying name | — | emulator-tested; LIVE pending (needs a pre-join group) | ☐ (day 2) |
+| C4 | pre-join update-group lowering timelock below floor | (no SDK guard on updateGroup — validator proof only) | LIVE rejection `C4-2026-07-17T13-34-03…json` on group `88608c45…` | ☑ |
+| C5 | pre-join update-group mutating CIP-68 version / emptying name | — | LIVE rejections `C5-…13-34-10…json` (version=2) + `C5-…13-34-16…json` (empty metadata) on group `88608c45…` | ☑ |
 | C6 | create-account 31-byte commitment | TransactionBuildError | LIVE rejection `C6-2026-07-17T12-25-08…json`, seedUnspentAfter=true | ☑ |
-| C7 | premature execute-recovery (before timelock) | — | day 2: the recovery clock's timelock IS this proof — execute before 2026-07-18T11:37:15Z rejects | ☐ (day 2) |
-| C8 | premature re-seal (before recommit window) | — | day 2: re-seal before 2026-07-18T12:21:02Z rejects | ☐ (day 2) |
-| C9 | join beyond max_members | TransactionBuildError (eval) | emulator-tested; LIVE pending | ☐ (day 2) |
+| C7 | premature execute-recovery (before timelock) | — | LIVE rejection `C7-2026-07-17T13-28-48…json`: execute-recovery on the armed request (earliest valid 2026-07-18T11:37:15Z) rejected at evaluation ~22h early, never submitted | ☑ |
+| C8 | premature re-seal (before recommit window) | — | LIVE rejection in `p2-recommit-lap.json`: begin-recommit `566a9ddb…` opened the window, immediate re-seal attempt rejected at evaluation (~23h before start_time+window), never submitted | ☑ |
+| C9 | join beyond max_members | TransactionBuildError (eval) | LIVE rejection `C9-*.json`: group `88608c45…` filled to max_members=2 (joins `3f687f1a…`+`e041e233…`), third join (ADMIN acct `34bca0e7…`) rejected at evaluation | ☑ |
 
 ## D. Escrow (bytes unchanged — machine-verifiable reuse + targeted smoke)
 
@@ -101,7 +101,7 @@ attempted datum + deployment id + timestamp + seed-unspent confirmation).
 |---|---|---|---|
 | D1 | v1 create/release/reclaim/abort validator evidence | prior sweeps — CITE tx hashes + their deployment identity | ☐ |
 | D2 | **Machine-verifiable reuse bundle**: prior sweep tx hashes + deployment identity · prior validator fingerprints · current fingerprints · explicit equality result · the two SDK-only commit ids (7fe15be, cefebe1) with changed-file lists · pointer to D3/D4 smoke | `sdk/examples/evidence/d2-escrow-reuse-bundle.json`: escrow fingerprints **IDENTICAL** sweep-era (b80c418) vs HEAD; 7fe15be + cefebe1 both `onchainTouched: false`; b80c418 fmt-only (bytecode identical). Escrow bytecode byte-identical to the 2026-07-11 sweep → sweep evidence stands. | ☑ |
-| D3 | SDK smoke on ALL FOUR 7fe15be endpoints: escrow-create, **escrow-v2-create**, pool-create, project-create. Old logic was `sortUtxos(wallet)[0]`, so the skip is provable DETERMINISTICALLY: use a dedicated test wallet whose entire UTxO set is one prep tx with output#0 = pay-to-self WITH scriptRef and output#1 = ordinary seed — same txid, so out-ref sort puts the scriptRef UTxO first by output index, no retries. Fresh prep tx before EACH endpoint run (the change output breaks determinism otherwise). Evidence per run: (1) the wallet's full sorted UTxO set, (2) scriptRef UTxO first in sort order, (3) endpoint skipped it, (4) selected ordinary seed recorded, (5) scriptRef UTxO unspent after. | one live run each, deterministic skip evidence | ☐ |
+| D3 | ☑ DONE — `d3-skip-smoke.json`: all four (escrow-v1/v2, pool, project) scriptRefFirst=true, endpoint skipped it, scriptRef unspent after. Deterministic prep (out#0 scriptRef, out#1 seed). ORIG:  SDK smoke on ALL FOUR 7fe15be endpoints: escrow-create, **escrow-v2-create**, pool-create, project-create. Old logic was `sortUtxos(wallet)[0]`, so the skip is provable DETERMINISTICALLY: use a dedicated test wallet whose entire UTxO set is one prep tx with output#0 = pay-to-self WITH scriptRef and output#1 = ordinary seed — same txid, so out-ref sort puts the scriptRef UTxO first by output index, no retries. Fresh prep tx before EACH endpoint run (the change output breaks determinism otherwise). Evidence per run: (1) the wallet's full sorted UTxO set, (2) scriptRef UTxO first in sort order, (3) endpoint skipped it, (4) selected ordinary seed recorded, (5) scriptRef UTxO unspent after. | one live run each, deterministic skip evidence | ☐ |
 | D4 | SDK smoke: pool-allocate with a **nonzero** computed `pool_ref_index` — if the anchor sorts first, the old hardcoded 0 would also pass. Against the deployment's FIXED reference txids, a fresh anchor's sort position is NOT ~50% (it depends on where the fixed txid sits in the 256-bit range): bound attempts at EIGHT, re-creating the anchor each time; if none sorts nonzero, FAIL the smoke explicitly rather than retrying indefinitely. Record every attempt's out-refs and sorted order, the final computed index, and recover/close unused anchors where possible (record any that cannot be). | one live run with index > 0, bounded attempts | ☐ |
 
 ## E. Cross-cutting
