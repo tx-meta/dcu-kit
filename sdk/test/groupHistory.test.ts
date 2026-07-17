@@ -13,7 +13,7 @@ const REF_UNIT = `${GROUP_POLICY}${assetNameLabels.prefix100}${SUFFIX}`;
 
 // Synthetic fixture derived from the real Group A Preprod datum (name "Kiambu Land Chama",
 // contribution_fee 5_000_000). Re-encoded with Data.to(GroupCip68DatumSchema) to include
-// the two Phase 0 fields (recovery_threshold=1, recovery_timelock=259_200_000) appended at
+// the two Phase 0 fields (recovery_threshold=2, recovery_timelock=259_200_000) appended at
 // the end of GroupDatum, the Phase 2 Credential-typed creator_payment_credential
 // (VerificationKey Constr-0 wrapper around the same 28-byte hash), and the Phase 6
 // reserve levies (reserve_join_levy=0, reserve_round_levy=0). Verified round-trips

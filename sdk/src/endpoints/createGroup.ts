@@ -29,6 +29,9 @@ import {
   resolveUtxoByUnit,
   assetNameLabels,
   reserveTokenName,
+  MIN_RECOVERY_THRESHOLD,
+  MIN_RECOVERY_TIMELOCK_MS,
+  MIN_RECOMMIT_WINDOW_MS,
 } from "../core/utils/index.js";
 import {
   ConfigurationError,
@@ -100,6 +103,23 @@ export const unsignedCreateGroupTxProgram = (
       yield* Effect.fail(
         new ValidatorNotFoundError({ validatorName: "group.mint" }),
       );
+
+    // Config-safety envelope guard — mirrors the on-chain floors so callers get a
+    // clean error instead of an on-chain rejection (group.ak is_group_config_valid).
+    if (
+      groupDatum.recovery_threshold < MIN_RECOVERY_THRESHOLD ||
+      groupDatum.recovery_threshold > groupDatum.max_members ||
+      groupDatum.recovery_timelock < MIN_RECOVERY_TIMELOCK_MS ||
+      groupDatum.recommit_window < MIN_RECOMMIT_WINDOW_MS
+    ) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "groupDatum",
+          message:
+            "group config below the on-chain safety envelope: recovery_threshold in [2, max_members], recovery_timelock and recommit_window >= 86_400_000 ms (1 day)",
+        }),
+      );
+    }
 
     // Creator-credential guard. The credential is the joining-fee destination and is
     // frozen once anyone joins, so a Script credential must be proven spendable

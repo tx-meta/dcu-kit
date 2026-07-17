@@ -84,8 +84,7 @@ export type DistributePayoutResult = {
 // --- Account Actions ---
 
 export type CreateAccountTestParams = {
-  display_name?: string;
-  contact?: string;
+  profileCommitment?: string;
   userSeed?: string; // defaults to users.user1 if not provided
 };
 
@@ -102,7 +101,7 @@ export const createAccountTestCase = (
 > =>
   Effect.gen(function* () {
     const { lucid, users } = context;
-    const { display_name, contact, userSeed } = params;
+    const { profileCommitment, userSeed } = params;
 
     selectWalletFromSeed(lucid, userSeed ?? users.user1.seedPhrase);
 
@@ -129,8 +128,7 @@ export const createAccountTestCase = (
 
     const accountConfig: CreateAccountConfig = {
       selected_out_ref: selectedUTxO,
-      display_name,
-      contact,
+      profileCommitment,
     };
 
     const { tx: createAccountTx, accountTokenSuffix } =
@@ -179,8 +177,7 @@ export const createAccountTestCase = (
 
 export type UpdateAccountTestParams = {
   accountUtxo: UTxO;
-  display_name?: string;
-  contact?: string;
+  profileCommitment?: string;
 };
 
 export const updateAccountTestCase = (
@@ -193,7 +190,7 @@ export const updateAccountTestCase = (
 > =>
   Effect.gen(function* () {
     const { lucid } = context;
-    const { accountUtxo, display_name, contact } = params;
+    const { accountUtxo, profileCommitment } = params;
 
     const accountTokenSuffix = extractTokenSuffix(
       accountUtxo,
@@ -202,8 +199,7 @@ export const updateAccountTestCase = (
     );
     const updateConfig: UpdateAccountConfig = {
       accountTokenSuffix,
-      display_name,
-      contact,
+      profileCommitment,
     };
 
     const updateAccountTx = yield* unsignedUpdateAccountTxProgram(

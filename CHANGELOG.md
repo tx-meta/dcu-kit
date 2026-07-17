@@ -6,6 +6,45 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-07-17
+
+The final hash-changing release on the ROSCA launch surface before audit wave 1.
+The **group and account validators change hash** (fresh protocol deployment
+required — see MIGRATION.md); treasury, settings, and escrow are byte-identical
+to 0.5.0.
+
+### Added
+
+- **Config-safety envelope, on-chain** — group configs must satisfy
+  `recovery_threshold` in `[2, max_members]`, `recovery_timelock` ≥ 1 day, and
+  `recommit_window` ≥ 1 day (`min_recovery_threshold` / `min_recovery_timelock`
+  / `min_recommit_window` in group.ak). One member can no longer propose and
+  execute a recovery alone, every group keeps a real `CancelRecovery` veto
+  window, and a re-seal always has a member opt-out window.
+- **Pre-join update re-validation** — the shared `is_group_config_valid` runs at
+  CreateGroup AND every pre-join UpdateGroup, which also now pins CIP-68
+  `version`, a non-empty metadata name, `active_member_count`, and `start_time`.
+  A pre-join update can no longer publish a group state creation would reject.
+- `computeProfileCommitment(profile, saltHex)` — canonical salted blake2b-256
+  profile commitment (`dcu:profile:v1` domain), with frozen test vectors.
+- SDK pre-flight validation of the envelope floors in `createGroup`
+  (`MIN_RECOVERY_THRESHOLD`, `MIN_RECOVERY_TIMELOCK_MS`, `MIN_RECOMMIT_WINDOW_MS`).
+
+### Changed
+
+- **`AccountDatum` (breaking)** — raw UTF-8 `display_name`/`contact` are
+  replaced by one optional `profile_commitment` (length 0 or 32, enforced
+  on-chain). No personally identifying information is stored on-chain. Create
+  defaults to `""`; `updateAccount` preserves the current value when the field
+  is omitted and clears it on explicit `""`.
+- `examples/create-group.ts` respects the protocol ceiling (`max_members` 20,
+  was 30) and defaults `recovery_threshold` to a majority instead of 1.
+
+### Removed
+
+- `display_name` / `contact` from `AccountDatum`, `createAccount`, and
+  `updateAccount` — migration steps in MIGRATION.md.
+
 ## [0.5.0] - 2026-07-17
 
 Feature release. All 20 rosca validators and the v1 escrow validator are

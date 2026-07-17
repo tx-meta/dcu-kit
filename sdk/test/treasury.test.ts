@@ -756,18 +756,37 @@ describe("Treasury Endpoints", () => {
   );
 
   // --- Negative: joinGroup when group is at max capacity ---
-  // Group capped at 1 member; first join fills it (member_count becomes 1).
-  // A second join attempt is rejected by the on-chain validator: member_count < max_members → 1 < 1 → False.
+  // Group capped at 2 members (the envelope floor implies max_members >= 2);
+  // setupMembership's join plus user2 fill it. A third join attempt is rejected
+  // by the on-chain validator: member_count < max_members → 2 < 2 → False.
   it.effect("should reject joining a group when at max capacity", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
 
-      const { context, groupUtxo, userUtxo } = yield* setupMembership(base, {
-        max_members: 1n,
+      const { context, groupUtxo } = yield* setupMembership(base, {
+        max_members: 2n,
       });
       const { lucid, users } = context;
 
-      selectWalletFromSeed(lucid, users.user1.seedPhrase);
+      // Fill the second (last) slot with user2.
+      const {
+        outputs: { userUtxo: user2Account },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.user2.seedPhrase,
+      });
+      yield* joinGroupTestCase(context, {
+        groupUtxo,
+        accountUtxo: user2Account,
+        userSeed: users.user2.seedPhrase,
+      });
+
+      // A third member must be rejected at capacity.
+      const {
+        outputs: { userUtxo: thirdAccount },
+      } = yield* createAccountTestCase(context, {
+        userSeed: users.admin.seedPhrase,
+      });
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
 
       const groupTokenSuffix = extractTokenSuffix(
         groupUtxo,
@@ -775,7 +794,7 @@ describe("Treasury Endpoints", () => {
         assetNameLabels.prefix100,
       );
       const accountTokenSuffix = extractTokenSuffix(
-        userUtxo,
+        thirdAccount,
         accountPolicyId,
         assetNameLabels.prefix222,
       );

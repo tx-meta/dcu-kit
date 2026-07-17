@@ -3,8 +3,9 @@ import { Data } from "@lucid-evolution/lucid";
 // --- Account Validator Types ---
 
 export const AccountDatumSchema = Data.Object({
-  display_name: Data.Bytes(),
-  contact: Data.Bytes(),
+  // blake2b-256 commitment to a salted off-chain profile ("" = no profile).
+  // Length 0 or 32 bytes, enforced on-chain. See computeProfileCommitment.
+  profile_commitment: Data.Bytes(),
 });
 export type AccountDatum = Data.Static<typeof AccountDatumSchema>;
 export const AccountDatum = AccountDatumSchema as unknown as AccountDatum;

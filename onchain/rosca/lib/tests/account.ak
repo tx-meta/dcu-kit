@@ -17,51 +17,35 @@ fn with_min_ada(value: assets.Value) -> assets.Value {
   assets.merge(assets.from_lovelace(2_000_000), value)
 }
 
-fn valid_display_name() {
-  bytearray.take(
-    #"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
-    32,
-  )
-}
-
-fn valid_contact() {
-  bytearray.take(
-    #"2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
-    32,
-  )
+// 32 bytes — a full blake2b-256 profile commitment.
+fn valid_commitment() {
+  #"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 }
 
 fn test_account_datum() -> AccountDatum {
-  AccountDatum { display_name: valid_display_name(), contact: valid_contact() }
+  AccountDatum { profile_commitment: valid_commitment() }
 }
 
 // ─── is_account_datum_valid ───────────────────────────────────────────────────
 
-test datum_valid__both_hashes() {
+test datum_valid__full_commitment() {
   is_account_datum_valid(test_account_datum())
 }
 
-test datum_valid__display_name_only() {
-  let datum = AccountDatum {
-    display_name: valid_display_name(),
-    // contact is too short — invalid
-    contact: #"aabb",
-  }
-  is_account_datum_valid(datum)
+test datum_valid__empty_commitment() {
+  is_account_datum_valid(AccountDatum { profile_commitment: #"" })
 }
 
-test datum_valid__contact_only() {
-  let datum = AccountDatum {
-    // display_name is empty — invalid
-    display_name: #"",
-    contact: valid_contact(),
-  }
-  is_account_datum_valid(datum)
+test datum_invalid__short_commitment() {
+  !is_account_datum_valid(AccountDatum { profile_commitment: #"aabb" })
 }
 
-test datum_invalid__both_empty() {
-  let datum = AccountDatum { display_name: #"", contact: #"" }
-  !is_account_datum_valid(datum)
+test datum_invalid__long_commitment() {
+  !is_account_datum_valid(
+    AccountDatum {
+      profile_commitment: bytearray.concat(valid_commitment(), #"00"),
+    },
+  )
 }
 
 // ─── validate_create_account ─────────────────────────────────────────────────
@@ -103,8 +87,8 @@ test create_account_rejects_invalid_datum() {
   let mint = assets.from_asset(policy_id, ref_tn, 1)
     |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
 
-  // Both hashes are empty — invalid datum
-  let bad_datum = AccountDatum { display_name: #"", contact: #"" }
+  // Commitment is neither empty nor 32 bytes — invalid datum
+  let bad_datum = AccountDatum { profile_commitment: #"aabb" }
   let ref_output = common.test_script_utxo(
     policy_id,
     with_min_ada(assets.from_asset(policy_id, ref_tn, 1)),
@@ -293,10 +277,8 @@ test update_account_success() {
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
 
   let old_datum = test_account_datum()
-  let new_datum = AccountDatum {
-    display_name: valid_display_name(),
-    contact: valid_contact(),
-  }
+  // Update clears the commitment ("" = no profile) — the other valid length.
+  let new_datum = AccountDatum { profile_commitment: #"" }
 
   let account_utxo = common.test_script_utxo(
     policy_id,
@@ -765,8 +747,8 @@ test update__rejects_invalid_output_datum() {
     user_utxo,
   )
 
-  // Output datum has both hashes empty — fails is_account_datum_valid
-  let bad_datum = AccountDatum { display_name: #"", contact: #"" }
+  // Output commitment is neither empty nor 32 bytes — fails is_account_datum_valid
+  let bad_datum = AccountDatum { profile_commitment: #"aabb" }
   let output_bad_datum = common.test_script_utxo(
     policy_id,
     with_min_ada(assets.from_asset(policy_id, ref_tn, 1)),
@@ -862,8 +844,7 @@ test remove__rejects_wrong_ref_token_burn_amount() {
 // ─── Property tests ───────────────────────────────────────────────────────────
 
 test prop_create_account_datum_validity(datum via gen_account_datum()) {
-  let name_valid = bytearray.length(datum.display_name) > 0
-  let contact_valid = bytearray.length(datum.contact) > 0
-  let expected = name_valid || contact_valid
+  let len = bytearray.length(datum.profile_commitment)
+  let expected = len == 0 || len == 32
   is_account_datum_valid(datum) == expected
 }

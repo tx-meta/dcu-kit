@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "sdkVersion": "0.5.0",
+  "sdkVersion": "0.5.5",
   "families": {
     "rosca": {
       "status": "launch",
@@ -8,13 +8,13 @@
       "onchainSource": "onchain/rosca/plutus.json",
       "plutusVersion": "v3",
       "validators": {
-        "account_validator.account.mint": "c77bc925d007058e07868646482014825d4d16c5359a366c115ec725714b0f64",
-        "account_validator.account.spend": "c77bc925d007058e07868646482014825d4d16c5359a366c115ec725714b0f64",
-        "account_validator.account.else": "c77bc925d007058e07868646482014825d4d16c5359a366c115ec725714b0f64",
+        "account_validator.account.mint": "ae548bb50a0a438624a1ce990ea4c8deaaaddf2ebd24e23bc9445d357f686034",
+        "account_validator.account.spend": "ae548bb50a0a438624a1ce990ea4c8deaaaddf2ebd24e23bc9445d357f686034",
+        "account_validator.account.else": "ae548bb50a0a438624a1ce990ea4c8deaaaddf2ebd24e23bc9445d357f686034",
         "always_fails.always_fails.else": "298a6f97975239ee083f4283730710fbbb80441de81ea18e87358df3c49f7e49",
-        "group_validator.group_validator.mint": "c5d0106ddffe1cac9160f93cd341b956ea46914f0ae5b4deaf98b0798201b540",
-        "group_validator.group_validator.spend": "c5d0106ddffe1cac9160f93cd341b956ea46914f0ae5b4deaf98b0798201b540",
-        "group_validator.group_validator.else": "c5d0106ddffe1cac9160f93cd341b956ea46914f0ae5b4deaf98b0798201b540",
+        "group_validator.group_validator.mint": "9ba3202a6d23f3132b78269e2f4f1fd4ff778824ba86e14dead1d7ca62713817",
+        "group_validator.group_validator.spend": "9ba3202a6d23f3132b78269e2f4f1fd4ff778824ba86e14dead1d7ca62713817",
+        "group_validator.group_validator.else": "9ba3202a6d23f3132b78269e2f4f1fd4ff778824ba86e14dead1d7ca62713817",
         "settings_validator.settings_nft.mint": "e4a180204d9284758fab9d4f80b470684e0f593d9af0ffca65bae9729bf5f322",
         "settings_validator.settings_nft.else": "e4a180204d9284758fab9d4f80b470684e0f593d9af0ffca65bae9729bf5f322",
         "treasury_lifecycle.treasury_lifecycle.withdraw": "01240b24ec655cb75c3c9480b63e0af390ffb4464ee1734911c12f3b3bc699d5",
@@ -99,6 +99,19 @@
     }
   },
   "history": [
+    {
+      "date": "2026-07-17",
+      "sdkVersion": "0.5.5",
+      "changed": [
+        "rosca:account_validator.account.mint",
+        "rosca:account_validator.account.spend",
+        "rosca:account_validator.account.else",
+        "rosca:group_validator.group_validator.mint",
+        "rosca:group_validator.group_validator.spend",
+        "rosca:group_validator.group_validator.else"
+      ],
+      "note": "P1 launch-surface last call: recovery/recommit config-safety envelope with pre-join re-validation (group), profile-commitment account datum replacing raw display_name/contact (account)"
+    },
     {
       "date": "2026-07-17",
       "sdkVersion": "0.5.0",

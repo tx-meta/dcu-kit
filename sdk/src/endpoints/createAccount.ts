@@ -21,18 +21,15 @@ import {
   accountValidator,
   accountPolicyId,
 } from "../core/validators/constants.js";
-import { fromText } from "@lucid-evolution/lucid";
 
 // --- Configuration ---
 
 export type CreateAccountConfig = {
   selected_out_ref: OutRef;
-  // Raw UTF-8 display name (username, ADA Handle, Discord handle, etc.).
-  // Defaults to wallet address when omitted.
-  display_name?: string;
-  // Raw UTF-8 secondary contact identifier.
-  // Defaults to wallet address when omitted.
-  contact?: string;
+  /** Optional salted profile commitment — 64 hex chars from
+   *  `computeProfileCommitment`. Omitted = no profile (`""`). The chain never
+   *  stores raw identity data; the profile and salt stay with the caller. */
+  profileCommitment?: string;
 };
 
 // --- Endpoint ---
@@ -44,11 +41,12 @@ export type CreateAccountConfig = {
  * - Mints a unique pair of CIP-68 tokens (Reference + User Auth).
  * - Locks the Reference NFT in the Account Script with the provided datum.
  * - Sends the User Auth NFT to the user's wallet.
- * - Initializes the Account Datum (display_name, contact) on-chain as raw UTF-8.
- *   Both fields default to the wallet address when omitted.
+ * - Initializes the Account Datum with an optional salted profile commitment
+ *   (`profile_commitment`, blake2b-256). Omitted = no profile — the datum holds
+ *   `""` and no identity data ever goes on-chain.
  *
  * @param lucid - Lucid instance with wallet selected.
- * @param config - CreateAccountConfig (UTxO + optional identity fields).
+ * @param config - CreateAccountConfig (UTxO + optional profile commitment).
  * @returns Effect yielding `{ tx, accountTokenSuffix }` — the `TxSignBuilder` to
  *   sign/submit, plus the permanent 28-byte CIP-68 token suffix (hex) derived from
  *   the spent UTxO. The suffix is the stable account identity used by all subsequent
@@ -57,16 +55,17 @@ export type CreateAccountConfig = {
  *
  * @example
  * ```ts
-import { createAccount } from "@tx-meta/dcu-kit";
+import { createAccount, computeProfileCommitment } from "@tx-meta/dcu-kit";
+import { randomBytes } from "node:crypto";
 
-// Minimal — both fields default to wallet address
+// Minimal — no profile, nothing identifying on-chain
 const program = createAccount(lucid, { selected_out_ref: utxo });
 
-// With explicit identity
+// With a salted profile commitment (store the salt + profile off-chain)
+const salt = randomBytes(32).toString("hex");
 const program = createAccount(lucid, {
   selected_out_ref: utxo,
-  display_name: "@alice",
-  contact: "alice@dcu.io",
+  profileCommitment: computeProfileCommitment('{"name":"@alice"}', salt),
 });
 ```
  */
@@ -98,9 +97,18 @@ export const unsignedCreateAccountTxProgram = (
       assetNameLabels.prefix100.length,
     );
 
+    const commitment = config.profileCommitment ?? "";
+    if (commitment !== "" && !/^[0-9a-fA-F]{64}$/.test(commitment)) {
+      return yield* Effect.fail(
+        new TransactionBuildError({
+          operation: "createAccount",
+          error:
+            "profileCommitment must be 64 hex characters (a blake2b-256 commitment) or omitted",
+        }),
+      );
+    }
     const accountDatum: AccountDatum = {
-      display_name: fromText(config.display_name ?? address),
-      contact: fromText(config.contact ?? address),
+      profile_commitment: commitment.toLowerCase(),
     };
     const datum = Data.to(accountDatum, AccountDatum);
 

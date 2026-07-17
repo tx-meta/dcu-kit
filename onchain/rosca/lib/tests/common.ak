@@ -134,7 +134,8 @@ pub fn test_group_datum(policy_id: PolicyId) -> GroupDatum {
     member_token_names: [],
     collateral_rounds: 1,
     payout_mode: Push,
-    recovery_threshold: 1,
+    // envelope floor (min_recovery_threshold)
+    recovery_threshold: 2,
     recovery_timelock: 259_200_000,
     // [] before startGroup; tests simulating a started rotation set this parallel to
     // member_token_names (registry is newest-first, so slots count DOWN: [N-1 .. 0])
