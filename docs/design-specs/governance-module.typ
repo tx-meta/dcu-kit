@@ -116,7 +116,7 @@ The module is three validators plus a one-shot configuration token, deliberately
 
 + *Governance Dispatcher Validator* (mint + spend)
 
-  The identity of a governance instance: proposal NFTs, vote receipts, and decision tokens are all minted under this hash, and proposal UTxOs sit at its address. It validates nothing heavy itself. Its mint and spend handlers only confirm that a withdrawal from the published voting validator is present and carries the matching action (the withdraw-zero coupling). Keeping it thin is what lets the lifecycle logic grow without pushing this script toward the size ceiling.
+  The identity of a governance instance: proposal NFTs, voter-record tokens, and decision tokens are all minted under this hash, and the proposal, voter-record, and roster UTxOs sit at its address. It validates nothing heavy itself. Its mint and spend handlers only confirm that a withdrawal from the published voting validator is present and carries the matching action (the withdraw-zero coupling). Keeping it thin is what lets the lifecycle logic grow without pushing this script toward the size ceiling.
 
 + *Governance Voting Validator* (staking / withdraw-zero)
 
@@ -130,7 +130,7 @@ Key structural decisions:
 
 + *Enforcement by a one-shot beacon.* A passed proposal mints exactly one decision token bound to `(target_id, action)`. It is the beacon that both proves authorization and is destroyed on use, so a decision can never be replayed against a second vault or a second action. The gate consumes it under the strictly-increasing-index discipline of `multi_utxo_indexer`, which is how a validator that reads another script's action in the same transaction avoids the double-satisfaction class of bug.
 
-+ *No on-chain member iteration.* Votes are member-cast: a member spends nothing of the group's and mints their own vote receipt while updating the proposal's cached tally by one entry. The proposal datum carries the running `tally_yes`, `tally_no`, and `votes_cast`; nothing ever scans a member list. There is no member ceiling and no crank — the same scale property as the savings share-out.
++ *No on-chain member iteration.* Votes are member-cast: a member spends nothing of the group's but their own voter record while updating the proposal's cached tally by one entry. The proposal datum carries the running `tally_yes`, `tally_no`, and `votes_cast`; nothing ever scans a member list at vote time. The one bounded set is the roster (the ever-registered members, appended once per member at registration) — practical to a few hundred members, consistent with the finish-for-200 decision.
 
 + *Frozen rules per proposal.* Quorum, threshold, voting mode, and deadline are copied from the charter into the proposal datum at open time and are immutable thereafter. Moving the goalposts mid-vote is therefore impossible by construction, not by policy.
 
@@ -174,11 +174,17 @@ Key structural decisions:
 
   - *TokenName:* `blake2b_256` of the proposal's seed `OutputReference`. This value is the `proposal_id`.
 
-+ *Vote Receipt Token*
++ *Roster NFT*
 
-  Minted under the dispatcher policy when a member casts a vote; one per member per proposal. Its existence is what prevents a second vote — the same name cannot be minted twice. Sent to the voter's wallet as their receipt.
+  Minted one-shot by the settings policy alongside the anchor; authenticates the instance's *roster* UTxO at the dispatcher address — the ever-registered voter set. Registration appends a member and nothing ever removes one, which is what makes voter-record creation one-shot per member.
 
-  - *TokenName:* `blake2b_256(proposal_id ++ voter_ref)`, where `voter_ref` is the member's eligibility-token name. Deterministic in the member and proposal, so a re-vote attempt mints a name that already exists and fails.
+  - *TokenName:* `"roster"` (constant; the seeded settings policy makes the instance unique).
+
++ *Voter Record Token*
+
+  Minted under the dispatcher policy when a member registers as a voter (once, ever — enforced against the roster). It authenticates the member's *voter record* UTxO at the dispatcher address, whose datum lists the proposals the member has voted on. Casting a vote SPENDS this UTxO and appends the proposal id: the ledger's own double-spend prevention plus the appended list make a second vote structurally impossible — this is the double-vote nullifier.
+
+  - *TokenName:* `blake2b_256("voter" ++ member_id)`, where `member_id` is the member's eligibility-token name. Derived, so one member maps to exactly one record name.
 
 + *Decision Token*
 
@@ -201,7 +207,7 @@ The family is one settings policy and three validators. The settings policy and 
 ===== Redeemer
 \
 - *```rust
-  MintAnchor { anchor_output_index: Int }
+  MintAnchor { anchor_output_index: Int, roster_output_index: Int }
   ```*
 \
 ===== Validation
@@ -209,9 +215,11 @@ The family is one settings policy and three validators. The settings policy and 
 + *MintAnchor*
 
   - The parameter `seed` `OutputReference` is present in `tx.inputs` (one-shot — ties this policy to a unique consumed UTxO).
-  - Exactly one token of this policy is minted, quantity `+1`, with the fixed anchor token name; no other token under this policy.
-  - The output at `anchor_output_index` sits at the dispatcher script address, holds the minted NFT, and carries a well-formed `GovernanceAnchor` datum whose `voting_stake_hash` and `gate_hash` are non-empty.
-  - *No burn path.* The anchor is permanent reference data; the burn case is `fail`.
+  - Exactly the anchor NFT and the roster NFT are minted under this policy (`+1` each); nothing else.
+  - The output at `anchor_output_index` sits at the dispatcher script address, holds the anchor NFT, and carries a well-formed `GovernanceAnchor` datum whose `voting_stake_hash` and `gate_hash` are non-empty.
+  - *Charter invariants (config-safety envelope):* `default_quorum ≥ 1`, `0 ≤ default_threshold ≤ 10000`, `timelock ≥ 0`, every `governed_targets` entry a well-formed (28-byte policy, ≤32-byte name) pair, opener tags in `0..5`. A charter outside this envelope is a security hole created by configuration.
+  - The output at `roster_output_index` holds the roster NFT with datum `Roster { members: [] }` — the roster is born EMPTY; registration is the only append path.
+  - *No burn path.* Both are permanent reference data; the burn case is `fail`.
 \
 === Governance Dispatcher Validator
 \
@@ -232,10 +240,10 @@ The family is one settings policy and three validators. The settings policy and 
   ```*
 
 - *```rust
-  CastVote {
-    proposal_input_index: Int,
-    receipt_output_index: Int,
-    voter_index: Int,
+  RegisterVoter {
+    roster_input_index: Int,
+    record_output_index: Int,
+    member_index: Int,
     withdrawal_index: Int,
   }
   ```*
@@ -266,15 +274,15 @@ Every mint variant except `BurnDecision` couples to the voting validator: the tr
   - Exactly one Proposal State NFT is minted, name `= blake2b_256` of `inputs[seed_input_index].output_reference`.
   - The output at `proposal_output_index` is a fresh `Proposal` UTxO at the dispatcher address holding that NFT. (Field-level checks live in the voting validator.)
 
-+ *CastVote*
++ *RegisterVoter*
 
-  - A withdrawal from `settings.voting_stake_hash` is present at `withdrawal_index` with the `CastAction` redeemer.
-  - Exactly one Vote Receipt is minted, name `= blake2b_256(proposal_id ++ voter_ref)`, where `proposal_id` is read from the spent proposal at `proposal_input_index` and `voter_ref` from the eligibility token at `voter_index`. *One vote per member is fixed here:* a duplicate vote reproduces an existing token name and the mint fails.
+  - A withdrawal from `settings.voting_stake_hash` is present at `withdrawal_index` with the `RegisterAction` redeemer.
+  - Exactly one Voter Record token is minted; the name, the roster append, and the fresh record's shape are validated by the coupled `RegisterAction` (the mint only pins "exactly one token under this policy").
 
 + *ExecuteProposal*
 
   - A withdrawal from `settings.voting_stake_hash` is present with the `ExecuteAction` redeemer.
-  - Exactly one Decision token is minted, name `= blake2b_256(proposal_id ++ "decision")`, and the output at `decision_output_index` locks it at `settings.gate_hash`'s address with a `Decision` datum binding `(target_id, action, exec_deadline)` copied from the proposal. The voting validator enforces that the proposal is `Passed` and the timelock elapsed.
+  - Exactly one Decision token is minted, name `= blake2b_256(proposal_id ++ "decision")`, and the output at `decision_output_index` locks it at `settings.gate_hash`'s address with a `Decision` datum binding `(target_policy, target_id, action, exec_deadline)` copied from the proposal. The voting validator enforces that the proposal is `Passed` and the timelock elapsed.
 
 + *BurnProposal*
 
@@ -297,7 +305,7 @@ The address holds one datum type with two variants.
   ```* — the charter and published hashes:
   - *`title`: ```rs ByteArray```* – Human-readable instance name (group-level, not PII).
   - *`member_policy`: ```rs PolicyId```* – The eligibility token policy; holding a token of this policy makes an actor a voter (e.g. the savings account user-token policy).
-  - *`governed_targets`: ```rs List<ByteArray>```* – Target ids (vault anchor names / policies) this instance may govern. A proposal's `target_id` must be a member of this list.
+  - *`governed_targets`: ```rs Pairs<PolicyId, AssetName>```* – The (state-NFT policy, state-NFT name) of each vault this instance may govern. Both halves bind — a name alone is forgeable under a permissionless policy (the decoy-target attack). A proposal's `(target_policy, target_id)` pair must be a member of this list.
   - *`voting_mode`: ```rs VotingMode```* – Default weight rule: `OneMemberOneVote` or `ShareWeighted { share_source_policy }`. Copied into each proposal at open.
   - *`default_quorum`: ```rs Int```* – Minimum total weight *cast* (yes + no) for a proposal to be decidable. Measured over votes cast, never over total membership.
   - *`default_threshold`: ```rs Int```* – Minimum yes weight as basis points (0–10000) of weight cast, required to pass.
@@ -311,7 +319,8 @@ The address holds one datum type with two variants.
   Proposal
   ```* — one per open/decided proposal:
   - *`proposal_id`: ```rs AssetName```* – The Proposal State NFT name.
-  - *`target_id`: ```rs ByteArray```* – The single vault this proposal governs (a member of `governed_targets`).
+  - *`target_policy`: ```rs PolicyId```* – The governed vault's state-NFT policy.
+  - *`target_id`: ```rs AssetName```* – The governed vault's state-NFT name; `(target_policy, target_id)` must be a member of `governed_targets`.
   - *`action`: ```rs GovAction```* – The typed, parameterized action to authorize (closed enum below).
   - *`voting_mode`: ```rs VotingMode```* – Frozen from the charter at open.
   - *`quorum`: ```rs Int```* / *`threshold`: ```rs Int```* – Frozen from the charter at open.
@@ -322,9 +331,20 @@ The address holds one datum type with two variants.
   - *`votes_cast`: ```rs Int```* – Count of distinct voters recorded (turnout).
   - *`status`: ```rs ProposalStatus```* – `Open`, `Passed`, `Rejected`, `Executed`, or `Expired`.
 
+- *```rust
+  VoterRecord
+  ```* — one per registered member (the double-vote nullifier):
+  - *`member_id`: ```rs AssetName```* – The member's eligibility-token name this record is bound to.
+  - *`voted`: ```rs List<AssetName>```* – Proposal ids this member has already voted on. A cast spends the record, requires the proposal absent, and appends it.
+
+- *```rust
+  Roster
+  ```* — one per instance (created at init):
+  - *`members`: ```rs List<AssetName>```* – The ever-registered member set. Registration appends and nothing removes — a member can register (and therefore obtain an empty voter record) exactly once, which is the uniqueness root the nullifier rests on. There is no deregistration; a record's min-ADA stays locked for the instance's life.
+
 Supporting types:
 
-- *`GovAction`* (closed enum — *fixed, not configurable:* an open action space cannot be exhaustively validated on-chain, and each variant is a distinct gate check):
+- *`GovAction`* (closed enum — *fixed, not configurable:* an open action space cannot be exhaustively validated on-chain, and each variant is a distinct gate check; the one escape hatch is the `Generic` arm below, which extends the *vocabulary* without reopening the enum):
   - *```rust
     ParamChange { field_tag: Int, new_value: Int }
     ```* — amend a numeric charter/vault field.
@@ -340,6 +360,9 @@ Supporting types:
   - *```rust
     MembershipChange { member: AssetName, admit: Bool }
     ```* — admit or remove a member.
+  - *```rust
+    Generic { tag: Int, payload: ByteArray }
+    ```* — forward-compatibility arm for action kinds designed after this enum froze: `tag` names the future kind, `payload` carries its CBOR-encoded parameters. Governance treats it opaquely (freeze, tally, bind, burn — identical to any action); *only* a vault version that decodes and understands a given `tag` may act on it, so an unknown tag is inert by construction. All `Generic` actions share one opener class (charter key `5`) — the inner `tag` is vault-decode vocabulary, not an opener key. Without this arm, any new action kind would force a governance v2.
 - *`VotingMode`*: `OneMemberOneVote` | `ShareWeighted { share_source_policy: PolicyId }`.
 - *`OpenerPolicy`*: `AnyMember` | `CreatorOnly`.
 - *`ProposalStatus`*: `Open` | `Passed` | `Rejected` | `Executed` | `Expired`.
@@ -355,12 +378,24 @@ No datum field carries personal data. Identifiers, tallies, thresholds, and time
     proposal_input_index: Int,
     proposal_output_index: Int,
     voter_index: Int,
+    record_input_index: Int,
+    record_output_index: Int,
     share_ref_index: Int,
     approve: Bool,
     withdrawal_index: Int,
   }
   ```*
   (`share_ref_index = 99` under `OneMemberOneVote`, where no share reference input is read.)
+
+- *```rust
+  VoteRecordSpend { withdrawal_index: Int }
+  ```*
+  (The voter-record input in a cast; asserts the coupling to `CastAction` and that exactly one record is spent.)
+
+- *```rust
+  RosterSpend { withdrawal_index: Int }
+  ```*
+  (The roster input in a registration; asserts the coupling to `RegisterAction`.)
 
 - *```rust
   Finalize {
@@ -408,39 +443,49 @@ Common checks on every proposal spend (stated once):
 
 The following are enforced in the *voting validator's* `withdraw` handler (the withdraw-zero home), keyed by its action redeemer, one per proposal spend:
 
-+ *OpenAction* (couples to `Vote`? no — to mint `OpenProposal`)
+All temporal conditions run on the transaction validity interval: "entirely before `t`" proves `now < t`, "entirely after `t`" proves `now > t`.
+
++ *OpenAction* (couples to the `OpenProposal` mint)
 
   - The opener is authorized: `charter.opener_policy[action_tag]` is present and satisfied (`AnyMember` ⇒ a token of `member_policy` is present; `CreatorOnly` ⇒ `credential_authorized(charter.creator, tx)`).
-  - `target_id` ∈ `charter.governed_targets`.
-  - The new `Proposal` copies `voting_mode`, `quorum`, `threshold` from the charter; `deadline` is in the future; tallies are zero; `status = Open`.
+  - `(target_policy, target_id)` ∈ `charter.governed_targets`.
+  - The new `Proposal` copies `voting_mode`, `quorum`, `threshold` from the charter; the tx is entirely before `deadline`; `exec_deadline`, when set, is after `deadline`; tallies are zero; `status = Open`.
 
-+ *CastAction* (couples to `Vote` spend + `CastVote` mint)
++ *RegisterAction* (couples to `RosterSpend` + the `RegisterVoter` mint)
 
-  - The proposal is `Open` and `now ≤ deadline` (validity upper bound enforced).
-  - The voter presents an eligibility token of `charter.member_policy` at `voter_index`.
-  - *Weight:* under `OneMemberOneVote`, weight `= 1`. Under `ShareWeighted`, the reference input at `share_ref_index` is the voter's savings account of `voting_mode.share_source_policy`, its user token matches `voter_ref`, and weight `= share_units` from its datum (an authenticated reference-read, never a spend).
-  - Exactly one Vote Receipt of name `blake2b_256(proposal_id ++ voter_ref)` is minted (double-vote prevention).
+  - The spent roster input holds the one-shot roster NFT (genuine), and the registrant presents an eligibility token of `charter.member_policy` at `member_index` — its name is `member_id`.
+  - `member_id` ∉ `roster.members` — *one registration per member, ever.*
+  - The roster continuation preserves the NFT and address, appends `member_id`, and skims no value.
+  - Exactly one Voter Record token of name `blake2b_256("voter" ++ member_id)` is minted into a record UTxO at the dispatcher with datum `VoterRecord { member_id, voted: [] }`.
+
++ *CastAction* (couples to `Vote` + `VoteRecordSpend` spends)
+
+  - The proposal is `Open` and the tx is entirely before `deadline`.
+  - The voter presents an eligibility token of `charter.member_policy` at `voter_index` — its name is `member_id`.
+  - *Nullifier:* the voter's record UTxO (token name `blake2b_256("voter" ++ member_id)`, bound `member_id` matching) is SPENT; `proposal_id` ∉ `record.voted`; the continuation appends it, preserving token, address, and value. Exactly one voter record is spent in the transaction. Voting twice therefore requires either a UTxO the ledger already consumed or a successor datum that already lists the proposal — both impossible.
+  - *Weight:* under `OneMemberOneVote`, weight `= 1`. Under `ShareWeighted`, the reference input at `share_ref_index` is the voter's savings account of `voting_mode.share_source_policy`, its user token matches `member_id`, and weight `= share_units` from its datum (an authenticated reference-read, never a spend). On-chain share-weighted enforcement is deferred; a cast under it fails.
   - The proposal output increments `tally_yes` (if `approve`) or `tally_no` by weight, and `votes_cast` by one; all other fields unchanged.
 
 + *FinalizeAction* (couples to `Finalize`)
 
-  - The proposal is `Open` and `now > deadline`.
-  - Let `cast = tally_yes + tally_no`. If `cast ≥ quorum` and `tally_yes * 10000 ≥ threshold * cast`, `status → Passed` and `timelock_until = Some(now + charter.timelock)`; otherwise `status → Rejected`. No value moves; only status and `timelock_until` change.
+  - The proposal is `Open` and the tx is entirely after `deadline` — an early finalize under a small quorum is a capture attack.
+  - Let `cast = tally_yes + tally_no`. If `cast ≥ quorum` and `tally_yes * 10000 ≥ threshold * cast`, `status → Passed` and `timelock_until = Some(t)` with `lower_bound + charter.timelock ≤ t ≤ upper_bound + charter.timelock` (both validity bounds finite — the timelock is pinned to real time, not attacker-chosen); otherwise `status → Rejected` and `timelock_until = None`. No value moves.
 
 + *ExecuteAction* (couples to `Execute` spend + `ExecuteProposal` mint)
 
-  - The proposal is `Passed`; `timelock_until` is `Some(t)` with `now ≥ t`; and if `exec_deadline = Some(d)`, `now ≤ d`.
-  - Exactly one Decision token of name `proposal_id` is minted and locked at `gate_hash`'s address with datum `Decision { target_id, action, exec_deadline }`.
+  - The proposal is `Passed`; the tx is entirely after `timelock_until`; and when `exec_deadline = Some(d)`, entirely before `d`.
+  - Exactly one Decision token is minted and locked at `gate_hash`'s address with datum `Decision { target_policy, target_id, action, exec_deadline }` copied from the proposal.
   - The proposal output sets `status → Executed`; no other field changes.
 
 + *ExpireAction* (couples to `Expire`)
 
-  - Either the proposal is `Open` with `now > deadline` and it did not meet quorum/threshold, or it is `Passed`/`Executed`-stale past `exec_deadline`. `status → Expired`; the Proposal State NFT is burned and min-ADA reclaimed by the cranker.
+  - Retiring stays permissionless (the min-ADA is the garbage-collection incentive) but can never cut a LIVE proposal short: `Open` only entirely after `deadline`; `Passed` only entirely after `exec_deadline` (a `Passed` proposal with `exec_deadline = None` is never expirable — execute it instead); `Executed` and `Rejected` any time. The Proposal State NFT is burned and the min-ADA reclaimed by the cranker.
 
 + *UpdateCharter*
 
-  - `credential_authorized(charter.creator, tx)` (bootstrap path) *or* a Decision for a `ParamChange` action targeting this anchor is consumed at the gate in the same transaction (governance-of-charter path).
-  - `voting_stake_hash`, `gate_hash`, `creator`, and `member_policy` are unchanged; only tunable fields (`voting_mode`, quorum/threshold defaults, `opener_policy`, `timelock`, `governed_targets`, `title`) may change.
+  - `credential_authorized(charter.creator, tx)` (bootstrap path; amending via a passed `ParamChange` decision consumed at the gate is a documented follow-up).
+  - The anchor continuation preserves the NFT at its address (exact-token + only ADA and the settings policy) and skims no value.
+  - `voting_stake_hash`, `gate_hash`, `creator`, and `member_policy` are byte-identical (immutable); only tunable fields (`voting_mode`, quorum/threshold defaults, `opener_policy`, `timelock`, `governed_targets`, `title`) may change, and the new charter must satisfy the same invariants enforced at mint: `default_quorum ≥ 1`, `0 ≤ default_threshold ≤ 10000`, `timelock ≥ 0`, well-formed `governed_targets` pairs, opener tags in `0..5`.
 \
 === Governance Voting Validator
 \
@@ -458,7 +503,7 @@ One `VotingAction` type carrying the transition and the indices the heavy check 
   OpenAction   { proposal_output_index: Int, opener_index: Int }
   ```*
 - *```rust
-  CastAction   { proposal_input_index: Int, proposal_output_index: Int, voter_index: Int, share_ref_index: Int, approve: Bool }
+  CastAction   { proposal_input_index: Int, proposal_output_index: Int, voter_index: Int, record_input_index: Int, record_output_index: Int, share_ref_index: Int, approve: Bool }
   ```*
 - *```rust
   FinalizeAction { proposal_input_index: Int, proposal_output_index: Int }
@@ -469,10 +514,13 @@ One `VotingAction` type carrying the transition and the indices the heavy check 
 - *```rust
   ExpireAction   { proposal_input_index: Int }
   ```*
+- *```rust
+  RegisterAction { roster_input_index: Int, roster_output_index: Int, record_output_index: Int, member_index: Int }
+  ```*
 \
 ===== Validation
 \
-The handler reads the anchor charter once, then runs the matching check from the *Spend Purpose → Validation* list above (`OpenAction … ExpireAction`). Because the escrow/savings-style multi-input coupling applies, when several proposal inputs share this credential the handler validates them under the `multi_utxo_indexer` strictly-increasing-index rule so no output is double-counted. The `else` branch fails, blocking deregistration, governance votes, and proposals from this stake credential.
+The handler reads the anchor charter once, then runs the matching check from the *Spend Purpose → Validation* list above (`OpenAction … RegisterAction`). The dispatcher pins exactly one spent UTxO per kind (proposal / voter record / roster, distinguished by datum shape) per transaction, so the single coupled action always validates the transition it indexes. The `else` branch fails, blocking deregistration, governance votes, and proposals from this stake credential.
 \
 === Governance Gate Validator
 \
@@ -487,7 +535,8 @@ The handler reads the anchor charter once, then runs the matching check from the
 - *```rust
   Decision
   ```* — locked with the decision token:
-  - *`target_id`: ```rs ByteArray```* – The vault this decision authorizes.
+  - *`target_policy`: ```rs PolicyId```* – The policy of the vault state NFT this decision authorizes.
+  - *`target_id`: ```rs AssetName```* – The vault state-NFT name this decision authorizes.
   - *`action`: ```rs GovAction```* – The exact action authorized, with parameters.
   - *`exec_deadline`: ```rs Option<Int>```* – POSIX ms after which the decision is dead even if unspent.
 \
@@ -505,7 +554,7 @@ The handler reads the anchor charter once, then runs the matching check from the
 + *Authorize*
 
   - *Self-reference:* `inputs[decision_input_index].output_reference == own_ref`, and it holds a Decision token of `gov_policy`.
-  - *Binding:* the input at `target_input_index` is the vault named by `datum.target_id`, and *the vault's own redeemer in this transaction* (located by purpose) is the action named by `datum.action` with matching parameters. This is the decision→action binding — the gate authorizes exactly one action on exactly one vault.
+  - *Binding:* the input at `target_input_index` holds the governed vault's state NFT under the exact `(datum.target_policy, datum.target_id)` — a name alone is forgeable under a permissionless policy (the decoy-target attack), so both halves bind. Action-level binding (the vault's redeemer matches `datum.action` with parameters) lives in each primitive's NEXT version, which decodes the frozen `GovAction` directly; the gate stays semantics-free by design.
   - *Freshness:* if `exec_deadline = Some(d)`, `now ≤ d`.
   - *One-shot:* the Decision token is burned in this transaction (`BurnDecision`, `-1`), so it cannot be reused. *Fixed, not configurable:* replay protection is the gate's entire purpose.
   - *No double satisfaction:* the gate consumes exactly one decision per authorized action; when several decisions/actions appear in one transaction they are matched pairwise by strictly-increasing index (`multi_utxo_indexer`), never many-to-one. The `else` branch fails.
@@ -657,9 +706,73 @@ A member opens a proposal. The anchor is a reference input; the voting validator
 + *Opener Wallet UTxO:* change ADA + eligibility token returned.
 #pagebreak()
 
+=== Mint :: RegisterVoter
+\
+A member registers as a voter (once, ever): the roster appends their `member_id` and their voter-record token is minted into a fresh record UTxO with an empty `voted` list.
+\
+#transaction(
+  "RegisterVoter",
+  inputs: (
+    (
+      name: "Roster UTxO",
+      address: "governance_dispatcher",
+      redeemer: [RosterSpend],
+      value: (ada: 2000000, Roster_NFT: 1),
+      datum: (members: ()),
+    ),
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (ada: 5000000, Member_Token: 1),
+    ),
+  ),
+  outputs: (
+    (
+      name: "Roster UTxO",
+      address: "governance_dispatcher",
+      value: (ada: 2000000, Roster_NFT: 1),
+      datum: (members: ("m1",)),
+    ),
+    (
+      name: "Voter Record UTxO",
+      address: "governance_dispatcher",
+      value: (ada: 2000000, Voter_Record: 1),
+      datum: (member_id: "m1", voted: ()),
+    ),
+    (
+      name: "Member Wallet UTxO",
+      address: "member_wallet",
+      value: (ada: 2800000, Member_Token: 1),
+    ),
+  ),
+  signatures: ("Member",),
+  show_mints: true,
+  notes: [RegisterVoter — couples to voting RegisterAction; one registration per member, ever],
+)
+\
+==== Inputs
+\
++ *Roster UTxO.* Spent (redeemer `RosterSpend`); holds the one-shot roster NFT; `member_id ∉ members`.
++ *Member Wallet UTxO.* Presents the eligibility token of `member_policy`; its name becomes the registered `member_id`.
+\
+==== Mints
+\
++ *Governance Dispatcher*
+  - Redeemer: RegisterVoter
+  - Value: +1 Voter Record (`blake2b_256("voter" ++ member_id)`)
++ *Governance Voting Validator*
+  - Withdrawal: 0 lovelace, redeemer `RegisterAction` (roster append + record shape, once)
+\
+==== Outputs
+\
++ *Roster UTxO:* `members` gains `member_id`; NFT, address, and value preserved.
++ *Voter Record UTxO:* fresh record at the dispatcher — `VoterRecord { member_id, voted: [] }` with the minted token. Its min-ADA stays locked for the instance's life (no deregistration).
++ *Member Wallet UTxO:* change ADA, eligibility token returned.
+#pagebreak()
+
 === Spend :: Vote
 \
-A member casts one weighted vote. Share-weighted mode reads the voter's savings account as a reference input; the receipt token makes a second vote impossible.
+A member casts one weighted vote. The member's voter record is SPENT and appends the proposal id — the double-vote nullifier; the tx must land entirely before the deadline.
 \
 #transaction(
   "Vote",
@@ -672,16 +785,16 @@ A member casts one weighted vote. Share-weighted mode reads the voter's savings 
       datum: (tally_yes: 4, tally_no: 1, votes_cast: 5, status: "Open"),
     ),
     (
+      name: "Voter Record UTxO",
+      address: "governance_dispatcher",
+      redeemer: [VoteRecordSpend],
+      value: (ada: 2000000, Voter_Record: 1),
+      datum: (member_id: "m1", voted: ()),
+    ),
+    (
       name: "Voter Wallet UTxO",
       address: "member_wallet",
       value: (ada: 5000000, Member_Token: 1),
-    ),
-    (
-      name: "Voter Savings Account",
-      address: "savings_vault",
-      reference: true,
-      value: (ada: 2000000, Account_Ref_NFT: 1),
-      datum: (share_units: 3),
     ),
   ),
   outputs: (
@@ -689,37 +802,41 @@ A member casts one weighted vote. Share-weighted mode reads the voter's savings 
       name: "Proposal UTxO",
       address: "governance_dispatcher",
       value: (ada: 2000000, Proposal_NFT: 1),
-      datum: (tally_yes: 7, tally_no: 1, votes_cast: 6, status: "Open"),
+      datum: (tally_yes: 5, tally_no: 1, votes_cast: 6, status: "Open"),
+    ),
+    (
+      name: "Voter Record UTxO",
+      address: "governance_dispatcher",
+      value: (ada: 2000000, Voter_Record: 1),
+      datum: (member_id: "m1", voted: ("proposal_id",)),
     ),
     (
       name: "Voter Wallet UTxO",
       address: "member_wallet",
-      value: (ada: 2800000, Member_Token: 1, Vote_Receipt: 1),
+      value: (ada: 4800000, Member_Token: 1),
     ),
   ),
   signatures: ("Member",),
-  show_mints: true,
-  notes: [Vote — approve, share-weighted (+3), couples to voting CastAction],
+  show_mints: false,
+  notes: [Vote — approve (+1, 1m1v), couples to voting CastAction; entirely before deadline],
 )
 \
 ==== Inputs
 \
-+ *Proposal UTxO.* Spent; `Open` and `now ≤ deadline`. Redeemer `Vote { approve, … }`.
-+ *Voter Wallet UTxO.* Presents the eligibility token of `member_policy`.
-+ *Voter Savings Account* (reference, share-weighted only). Supplies `share_units` as the vote weight; matched to the voter by user-token name.
++ *Proposal UTxO.* Spent; `Open`, tx entirely before `deadline`. Redeemer `Vote { approve, … }`.
++ *Voter Record UTxO.* Spent (redeemer `VoteRecordSpend`); token name `blake2b_256("voter" ++ member_id)`; `proposal_id ∉ voted`.
++ *Voter Wallet UTxO.* Presents the eligibility token of `member_policy`; its name is `member_id`.
 \
-==== Mints
+==== Withdrawals
 \
-+ *Governance Dispatcher*
-  - Redeemer: CastVote
-  - Value: +1 Vote Receipt (`blake2b_256(proposal_id ++ voter_ref)`) — reproducing this name on a re-vote fails
 + *Governance Voting Validator*
-  - Withdrawal: 0 lovelace, redeemer `CastAction` (weight + tally update, once)
+  - Withdrawal: 0 lovelace, redeemer `CastAction` (nullifier + weight + tally update, once). No mint — casting creates no token.
 \
 ==== Outputs
 \
 + *Proposal UTxO:* `tally_yes` (or `tally_no`) increased by weight, `votes_cast` +1; all else unchanged.
-+ *Voter Wallet UTxO:* change ADA, eligibility token returned, +1 Vote Receipt.
++ *Voter Record UTxO:* `voted` gains `proposal_id`; token, address, and value preserved.
++ *Voter Wallet UTxO:* change ADA, eligibility token returned.
 #pagebreak()
 
 === Spend :: Finalize
@@ -948,7 +1065,7 @@ Permissionless cleanup: an `Open` proposal past its deadline that never met quor
 = Invariants and Security Notes
 \
 
-+ *One vote per member, always.* The Vote Receipt name is deterministic in `(proposal_id, voter_ref)`; a second vote reproduces an existing token name and the mint fails. This is not configurable — a group cannot opt into double voting.
++ *One vote per member, always.* A vote SPENDS the member's voter record and appends the proposal id; the record is one-per-member (rooted in the roster's one-registration-per-member rule), so a second vote needs either a UTxO the ledger already consumed or a successor datum that already lists the proposal — both impossible. This is not configurable — a group cannot opt into double voting.
 
 + *Decision binding is total.* A Decision authorizes exactly one `action` on exactly one `target_id`, is valid only until `exec_deadline`, and is burned on use. It cannot be replayed against another vault, another action, or a second time. The gate reads the vault's redeemer to confirm the action matches — an explicit, read-only cross-family inspection, never a co-mutation.
 
