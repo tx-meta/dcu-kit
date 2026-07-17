@@ -16,6 +16,8 @@ export type VerifySettingsResult = {
   found: boolean;
   settingsUnit: string;
   settingsAddress: string;
+  /** The address the settings UTxO actually sits at, when found. */
+  utxoAddress?: string;
   /** The published trusted policies, if the settings UTxO was found and parsed. */
   settings?: {
     account_policy: string;
@@ -76,6 +78,7 @@ export const unsignedVerifySettingsProgram = (
       found: true,
       settingsUnit,
       settingsAddress,
+      utxoAddress: utxo.address,
       settings: {
         account_policy: parsed.account_policy,
         group_policy: parsed.group_policy,
