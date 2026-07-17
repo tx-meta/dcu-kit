@@ -9,12 +9,11 @@ use dcu/utils.{output_holds_only_own}
 
 /// Account Validator Datum
 pub type AccountDatum {
-  // Raw UTF-8 display name shown in the UI (username, ADA Handle, Discord handle, etc.).
-  // Stored as-is — no hashing. At least one of display_name or contact must be non-empty.
-  display_name: ByteArray,
-  // Raw UTF-8 secondary contact identifier (social handle, email, etc.).
-  // Stored as-is — no hashing.
-  contact: ByteArray,
+  // blake2b-256 commitment to a salted off-chain profile ("" = no profile).
+  // The chain stores only the commitment; the profile preimage and salt stay
+  // with the account holder / product layer. See the SDK's
+  // computeProfileCommitment for the exact construction.
+  profile_commitment: ByteArray,
 }
 
 /// Account Validator Redeemer
@@ -36,12 +35,11 @@ pub type AccountRedeemer {
 
 // is_account_datum_valid
 // ─────────────────────────────────────────────────────────────────────────────
-// [spec AccountDatum 1]: at least one of display_name or contact must be non-empty.
-//                        Both may be set; either alone is sufficient.
+// [spec AccountDatum 1]: profile_commitment is either absent ("") or a full
+//                        blake2b-256 commitment (exactly 32 bytes).
 pub fn is_account_datum_valid(datum: AccountDatum) -> Bool {
-  let name_valid = bytearray.length(datum.display_name) > 0
-  let contact_valid = bytearray.length(datum.contact) > 0
-  name_valid || contact_valid
+  let len = bytearray.length(datum.profile_commitment)
+  len == 0 || len == 32
 }
 
 // validate_create_account
@@ -50,7 +48,7 @@ pub fn is_account_datum_valid(datum: AccountDatum) -> Bool {
 // [spec CreateAccount 2]: exactly two tokens minted — ref (100) qty 1, user (222) qty 1
 // [spec CreateAccount 3]: output at output_index is at the Account Script address
 // [spec CreateAccount 4]: output holds EXACTLY the ref (100) token and no other policy tokens
-// [spec CreateAccount 5]: output carries a valid AccountDatum (username/contact hash validation)
+// [spec CreateAccount 5]: output carries a valid AccountDatum (profile_commitment length validation)
 // [spec CreateAccount 6]: user (222) token must go to a VerificationKey address —
 //                         if sent to a script, account authority is permanently lost
 // [security     ]: output holds only ADA + own policy — prevents unbounded value accumulation
@@ -82,7 +80,7 @@ pub fn validate_create_account(
 
   // [spec CreateAccount 3]: output at output_index is at the Account Script address
   // [spec CreateAccount 4]: output holds the ref (100) token
-  // [spec CreateAccount 5]: output carries a valid AccountDatum (username/contact hash validation)
+  // [spec CreateAccount 5]: output carries a valid AccountDatum (profile_commitment length validation)
   expect Some(output) = list.at(outputs, output_index)
   expect InlineDatum(d) = output.datum
   expect datum: AccountDatum = d
@@ -159,7 +157,7 @@ pub fn validate_burn_account(
 // [spec UpdateAccount 3]: output at account_output_index is back at the same script address
 // [spec UpdateAccount 4]: output retains EXACTLY the ref (100) token — no other policy tokens
 //                         (prevents account-merge when two accounts are updated in one tx)
-// [spec UpdateAccount 5]: output carries a valid updated AccountDatum (username/contact hash validation)
+// [spec UpdateAccount 5]: output carries a valid updated AccountDatum (profile_commitment length validation)
 // [security     ]: output holds only ADA + own policy — prevents unbounded value accumulation
 pub fn validate_update_account(
   policy_id: PolicyId,
@@ -190,7 +188,7 @@ pub fn validate_update_account(
 
   // [spec UpdateAccount 3]: output at account_output_index is back at the same script address
   // [spec UpdateAccount 4]: output retains the ref (100) token
-  // [spec UpdateAccount 5]: output carries a valid updated AccountDatum (username/contact hash validation)
+  // [spec UpdateAccount 5]: output carries a valid updated AccountDatum (profile_commitment length validation)
   expect Some(output) = list.at(outputs, account_output_index)
   expect InlineDatum(d) = output.datum
   expect datum: AccountDatum = d

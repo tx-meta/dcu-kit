@@ -70,7 +70,7 @@ pub fn gen_group_datum() {
       member_token_names: [],
       collateral_rounds,
       payout_mode: Push,
-      recovery_threshold: 1,
+      recovery_threshold: 2,
       recovery_timelock: 259_200_000,
       member_slots: [],
       era_start_round: 0,
@@ -100,9 +100,13 @@ pub fn gen_valid_group_datum() {
   let grace_period_length <- fuzz.and_then(fuzz.int_at_least(0))
   let creator_bond <- fuzz.and_then(fuzz.int_at_least(0))
   let interval_length <- fuzz.and_then(fuzz.int_at_least(1))
-  // Within the protocol ceiling (max_group_members = 20) so generated datums stay VALID.
-  let max_members <- fuzz.and_then(fuzz.int_between(1, 20))
+  // Within the protocol ceiling (max_group_members = 20) so generated datums stay
+  // VALID. Floor 2: the envelope requires recovery_threshold in [2, max_members].
+  let max_members <- fuzz.and_then(fuzz.int_between(2, 20))
   let collateral_rounds <- fuzz.and_then(fuzz.int_between(1, max_members))
+  let recovery_threshold <- fuzz.and_then(fuzz.int_between(2, max_members))
+  let recovery_timelock <- fuzz.and_then(fuzz.int_at_least(86_400_000))
+  let recommit_window <- fuzz.and_then(fuzz.int_at_least(86_400_000))
   let creator_payment_credential <- fuzz.and_then(gen_credential())
   let reserve_join_levy <- fuzz.and_then(fuzz.int_at_least(0))
   let reserve_round_levy <- fuzz.and_then(fuzz.int_at_least(0))
@@ -135,11 +139,11 @@ pub fn gen_valid_group_datum() {
       member_token_names: [],
       collateral_rounds,
       payout_mode: Push,
-      recovery_threshold: 1,
-      recovery_timelock: 259_200_000,
+      recovery_threshold,
+      recovery_timelock,
       member_slots: [],
       era_start_round: 0,
-      recommit_window: 259_200_000,
+      recommit_window,
       reserve_join_levy,
       reserve_round_levy,
     },
@@ -149,8 +153,7 @@ pub fn gen_valid_group_datum() {
 // --- Account Datum Fuzzer ---
 
 pub fn gen_account_datum() {
-  let display_name <- fuzz.and_then(fuzz.bytearray())
-  let contact <- fuzz.and_then(fuzz.bytearray())
+  let profile_commitment <- fuzz.and_then(fuzz.bytearray())
 
-  fuzz.constant(AccountDatum { display_name, contact })
+  fuzz.constant(AccountDatum { profile_commitment })
 }
