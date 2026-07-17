@@ -712,7 +712,7 @@ packages:
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
   '@tx-meta/dcu-kit@file:../dcu-kit-0.4.1.tgz':
-    resolution: {integrity: sha512-bMGOlLbUmFFjovDyyUp30UNk4KQpELTB+wgLvec0HEyCW1RiEP+1jbIDSBL3ya+iXnWNXeVIiSEn08SKcGm7wg==, tarball: file:../dcu-kit-0.4.1.tgz}
+    resolution: {integrity: sha512-6E8o4LBuaLsyAeUi0p8vHkieNwjMl1nN5wpI1y92gn+CpeJCF43KE2f1CLh1nY8j6b9JLoO8FNVh6muuCNasTg==, tarball: file:../dcu-kit-0.4.1.tgz}
     version: 0.4.1
 
   '@types/estree@1.0.9':

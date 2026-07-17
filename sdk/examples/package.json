@@ -87,6 +87,7 @@
     "savings-loan-arrears": "pnpm run build && node dist/savings-loan-arrears.js",
     "savings-loan-writeoff": "pnpm run build && node dist/savings-loan-writeoff.js",
     "governance-init": "pnpm run build && node dist/governance-init.js",
+    "governance-register": "pnpm run build && node dist/governance-register.js",
     "governance-propose": "pnpm run build && node dist/governance-propose.js",
     "governance-vote": "pnpm run build && node dist/governance-vote.js",
     "governance-finalize": "pnpm run build && node dist/governance-finalize.js",

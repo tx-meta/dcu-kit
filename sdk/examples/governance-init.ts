@@ -20,8 +20,9 @@
  *   TITLE="..."             max 64 UTF-8 bytes
  *   MEMBER_POLICY=<policy>  eligibility token policy (e.g. the savings user-token
  *                           policy). Holding a token of it makes a voter.
- *   GOVERNED_TARGETS=a,b    target ids (hex) this instance may govern — the state
- *                           token NAME of each governed vault
+ *   GOVERNED_TARGETS=p1:n1,p2:n2  the vaults this instance may govern, as
+ *                           <state-NFT policy>:<state-NFT name> hex pairs —
+ *                           both halves bind (a name alone is forgeable)
  *   QUORUM=2                min total weight cast for a proposal to be decidable
  *   THRESHOLD=5000          min yes-share in basis points (5000 = 50%)
  *   TIMELOCK_MS=0           delay between Passed and the earliest Executed
@@ -61,10 +62,19 @@ async function main() {
   const governedTargets = (process.env.GOVERNED_TARGETS ?? "")
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((pair): [string, string] => {
+      const [policy, name] = pair.split(":");
+      if (!policy || policy.length !== 56 || !name) {
+        throw new Error(
+          `GOVERNED_TARGETS entry "${pair}" must be <56-hex policy>:<hex name>`,
+        );
+      }
+      return [policy, name];
+    });
   if (governedTargets.length === 0) {
     throw new Error(
-      "GOVERNED_TARGETS is required — comma-separated state-token names of the vaults this instance governs.",
+      "GOVERNED_TARGETS is required — comma-separated policy:name pairs of the vaults this instance governs.",
     );
   }
 
@@ -86,6 +96,11 @@ async function main() {
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
   await lucid.awaitTx(txHash);
 
+  // Blockfrost lags spend-indexing by ~60s: without settling between the
+  // sequential transactions below, the next build sees stale (already-spent)
+  // wallet inputs and fails submission.
+  const settle = () => new Promise((r) => setTimeout(r, 60_000));
+
   saveState({ governanceSeed: instance.seed });
   console.log("Governance instance created.");
   console.log("  settings policy :", instance.settingsPolicy);
@@ -97,7 +112,10 @@ async function main() {
   );
 
   // Register the voting stake credential (one-time; the withdraw-zero trigger).
-  console.log("\nRegistering the voting stake credential...");
+  console.log(
+    "\nWaiting 60s for Blockfrost indexing, then registering the voting stake credential...",
+  );
+  await settle();
   const regTx = await registerVotingStake(lucid, instance).unsafeRun();
   const regSigned = await regTx.sign.withWallet().complete();
   const regHash = await regSigned.submit();
@@ -105,8 +123,42 @@ async function main() {
   console.log("View on Cexplorer:", cexplorerTxUrl(regHash));
   await lucid.awaitTx(regHash);
 
+  // Deploy the two large validators as reference scripts — the dispatcher and
+  // voting scripts no longer fit inline together within the 16KB tx limit.
+  const address = await lucid.wallet().address();
+  const deployments: Array<
+    ["scriptRefGovernanceDispatcher" | "scriptRefGovernanceVoting", string]
+  > = [
+    [
+      "scriptRefGovernanceDispatcher",
+      instance.dispatcherValidator.spend.script,
+    ],
+    ["scriptRefGovernanceVoting", instance.votingValidator.script],
+  ];
+  for (const [key, script] of deployments) {
+    console.log(
+      `\nWaiting 60s, then deploying ${key} as a reference script...`,
+    );
+    await settle();
+    const refTx = await lucid
+      .newTx()
+      .pay.ToAddressWithData(
+        address,
+        undefined,
+        { lovelace: 20_000_000n },
+        { type: "PlutusV3", script },
+      )
+      .complete();
+    const refSigned = await refTx.sign.withWallet().complete();
+    const refHash = await refSigned.submit();
+    console.log("Submitted. Hash:", refHash);
+    await lucid.awaitTx(refHash);
+    saveState({ [key]: { txHash: refHash, outputIndex: 0 } });
+  }
+
+  console.log("\nVoting stake registered and reference scripts deployed.");
   console.log(
-    "\nVoting stake registered. Open a proposal with governance-propose.",
+    "Register voters with governance-register, then open a proposal with governance-propose.",
   );
 }
 

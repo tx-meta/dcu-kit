@@ -1,5 +1,6 @@
 import {
   Data,
+  fromText,
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
@@ -33,7 +34,8 @@ export type UpdateCharterConfig = {
   quorum?: bigint;
   threshold?: bigint;
   timelock?: bigint;
-  governedTargets?: string[];
+  /** [state-NFT policy (hex), state-NFT name (hex)] pairs. */
+  governedTargets?: [string, string][];
   openerPolicy?: [bigint, OpenerPolicy][];
 };
 
@@ -52,12 +54,15 @@ export const unsignedUpdateCharterTxProgram = (
     const updated: GovernanceDatum = {
       GovernanceAnchor: {
         ...anchor,
-        title: config.title !== undefined ? config.title : anchor.title,
+        title:
+          config.title !== undefined ? fromText(config.title) : anchor.title,
         voting_mode: config.votingMode ?? anchor.voting_mode,
         default_quorum: config.quorum ?? anchor.default_quorum,
         default_threshold: config.threshold ?? anchor.default_threshold,
         timelock: config.timelock ?? anchor.timelock,
-        governed_targets: config.governedTargets ?? anchor.governed_targets,
+        governed_targets: config.governedTargets
+          ? new Map(config.governedTargets)
+          : anchor.governed_targets,
         opener_policy: config.openerPolicy
           ? new Map(config.openerPolicy)
           : anchor.opener_policy,

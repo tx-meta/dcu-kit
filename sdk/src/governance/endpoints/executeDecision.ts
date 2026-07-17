@@ -23,6 +23,7 @@ import {
   decisionTokenName,
   dispatcherAddress,
   gateAddress,
+  GovScriptRefs,
   MIN_ADA_BUFFER,
   resolveAnchor,
   resolveProposal,
@@ -43,6 +44,11 @@ import {
 export type ExecuteDecisionConfig = {
   instance: GovernanceInstance;
   proposalId: string;
+  /** Override the wall clock (emulator tests pass emulator.now()). */
+  currentTime?: bigint;
+  /** Reference-script UTxOs — required in practice: dispatcher + voting no
+   *  longer fit inline together under the 16,384-byte tx limit. */
+  scriptRefs?: GovScriptRefs;
 };
 
 export const unsignedExecuteDecisionTxProgram = (
@@ -73,10 +79,36 @@ export const unsignedExecuteDecisionTxProgram = (
       );
     }
 
+    // Temporal window: execution lands ENTIRELY after timelock_until and,
+    // when an exec_deadline is set, entirely before it.
+    const now = config.currentTime ?? BigInt(Date.now());
+    const drift = network === "Custom" ? 0n : 60_000n;
+    const timelockUntil = proposal.timelock_until ?? 0n;
+    // Slot-align the bound UP: ledger validity is in whole-second slots, so a
+    // ms bound like timelock+1 floors back to/below the timelock and fails the
+    // validator's entirely-after check.
+    const afterTimelock = ((timelockUntil + 1000n) / 1000n) * 1000n;
+    const validFrom = now - drift > afterTimelock ? now - drift : afterTimelock;
+    const validTo =
+      proposal.exec_deadline !== null &&
+      proposal.exec_deadline - 1n < now + 900_000n
+        ? proposal.exec_deadline - 1n
+        : now + 900_000n;
+    if (validTo <= validFrom) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "proposalId",
+          message:
+            "outside the execution window (timelock not elapsed, or exec deadline passed)",
+        }),
+      );
+    }
+
     const decisionName = decisionTokenName(config.proposalId);
     const decisionUnit = instance.govPolicy + decisionName;
 
     const decisionDatum: GateDatum = {
+      target_policy: proposal.target_policy,
       target_id: proposal.target_id,
       action: proposal.action,
       exec_deadline: proposal.exec_deadline,
@@ -142,12 +174,22 @@ export const unsignedExecuteDecisionTxProgram = (
     const tx = yield* lucid
       .newTx()
       .collectFrom([proposalUtxo], spendRedeemer)
-      .attach.SpendingValidator(instance.dispatcherValidator.spend)
       .readFrom([anchorUtxo])
       .mintAssets({ [decisionUnit]: 1n }, mintRedeemer)
-      .attach.MintingPolicy(instance.dispatcherValidator.mint)
+      .compose(
+        config.scriptRefs?.dispatcher
+          ? lucid.newTx().readFrom([config.scriptRefs.dispatcher])
+          : lucid
+              .newTx()
+              .attach.SpendingValidator(instance.dispatcherValidator.spend)
+              .attach.MintingPolicy(instance.dispatcherValidator.mint),
+      )
       .withdraw(votingRewardAddress(network, instance), 0n, votingRedeemer)
-      .attach.WithdrawalValidator(instance.votingValidator)
+      .compose(
+        config.scriptRefs?.voting
+          ? lucid.newTx().readFrom([config.scriptRefs.voting])
+          : lucid.newTx().attach.WithdrawalValidator(instance.votingValidator),
+      )
       .pay.ToContract(
         dispatcherAddress(network, instance),
         { kind: "inline", value: Data.to(updated, GovernanceDatum) },
@@ -158,6 +200,8 @@ export const unsignedExecuteDecisionTxProgram = (
         { kind: "inline", value: Data.to(decisionDatum, GateDatum) },
         { lovelace: MIN_ADA_BUFFER, [decisionUnit]: 1n },
       )
+      .validFrom(Number(validFrom))
+      .validTo(Number(validTo))
       .completeProgram()
       .pipe(
         Effect.mapError(

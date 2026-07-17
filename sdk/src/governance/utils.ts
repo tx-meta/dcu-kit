@@ -23,11 +23,26 @@ import {
   GovernanceDatum,
   GovernanceDatumSchema,
   ProposalFields,
+  RosterFields,
+  VoterRecordFields,
 } from "./types.js";
 import { GovernanceInstance } from "./validators.js";
 
 /** Lovelace buffer locked in each governance UTxO (shared protocol convention). */
 export const MIN_ADA_BUFFER = 2_000_000n;
+
+/**
+ * Reference-script UTxOs for this instance's two large validators. The
+ * dispatcher (~7.5KB) and voting (~10KB) scripts no longer fit inline together
+ * within the 16,384-byte tx limit, so every voting-coupled endpoint accepts
+ * refs and falls back to inline attach only when they are omitted (which fits
+ * only for single-script transactions). One dispatcher ref serves both its
+ * mint and spend purposes (same hash). Deploy per instance after init.
+ */
+export type GovScriptRefs = {
+  dispatcher?: UTxO;
+  voting?: UTxO;
+};
 
 /** The dispatcher script address (anchor + proposal UTxOs) for a network. */
 export const dispatcherAddress = (
@@ -61,15 +76,12 @@ export const proposalStateTokenName = (seed: UTxO): Effect.Effect<string> =>
   });
 
 /**
- * The Vote Receipt name: blake2b_256(proposal_id ++ voter_ref). Deterministic
- * in the member and proposal, so a re-vote reproduces an existing token name
- * and the mint fails (one vote per member).
+ * The Voter Record token name: blake2b_256("voter" ++ member_id). Derived from
+ * the member's eligibility-token name, so one member maps to exactly one record
+ * name (matches the on-chain voter_record_name).
  */
-export const voteReceiptTokenName = (
-  proposalId: string,
-  voterRef: string,
-): string =>
-  bytesToHex(blake2b(hexToBytes(proposalId + voterRef), { dkLen: 32 }));
+export const voterRecordTokenName = (memberId: string): string =>
+  bytesToHex(blake2b(hexToBytes(fromText("voter") + memberId), { dkLen: 32 }));
 
 /**
  * The Decision token name: blake2b_256(proposal_id ++ "decision"). Distinct
@@ -126,6 +138,78 @@ export const resolveAnchor = (
       );
     }
     return { utxo, anchor: datum.GovernanceAnchor };
+  });
+
+/** Resolves the instance's roster UTxO (ever-registered member set). */
+export const resolveRoster = (
+  lucid: LucidEvolution,
+  instance: GovernanceInstance,
+): Effect.Effect<
+  { utxo: UTxO; roster: RosterFields },
+  UtxoNotFoundError | LucidError | ConfigurationError,
+  never
+> =>
+  Effect.gen(function* () {
+    const utxoRaw = yield* resolveUtxoByUnit(lucid, instance.rosterUnit);
+    const utxo = patchInlineDatum(utxoRaw);
+    const datum = (yield* parseSafeDatum(
+      utxo.datum,
+      GovernanceDatumSchema,
+    ).pipe(
+      Effect.mapError(
+        (e) =>
+          new ConfigurationError({
+            configKey: "rosterUnit",
+            message: `roster UTxO has no valid governance datum: ${String(e)}`,
+          }),
+      ),
+    )) as unknown as GovernanceDatum;
+    if (typeof datum === "string" || !("Roster" in datum)) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "rosterUnit",
+          message: "the resolved UTxO is not the roster",
+        }),
+      );
+    }
+    return { utxo, roster: datum.Roster };
+  });
+
+/** Resolves a member's voter record UTxO by their eligibility-token name. */
+export const resolveVoterRecord = (
+  lucid: LucidEvolution,
+  instance: GovernanceInstance,
+  memberId: string,
+): Effect.Effect<
+  { utxo: UTxO; record: VoterRecordFields },
+  UtxoNotFoundError | LucidError | ConfigurationError,
+  never
+> =>
+  Effect.gen(function* () {
+    const unit = instance.govPolicy + voterRecordTokenName(memberId);
+    const utxoRaw = yield* resolveUtxoByUnit(lucid, unit);
+    const utxo = patchInlineDatum(utxoRaw);
+    const datum = (yield* parseSafeDatum(
+      utxo.datum,
+      GovernanceDatumSchema,
+    ).pipe(
+      Effect.mapError(
+        (e) =>
+          new ConfigurationError({
+            configKey: "memberId",
+            message: `voter record UTxO has no valid governance datum: ${String(e)}`,
+          }),
+      ),
+    )) as unknown as GovernanceDatum;
+    if (typeof datum === "string" || !("VoterRecord" in datum)) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "memberId",
+          message: "the resolved UTxO is not a voter record",
+        }),
+      );
+    }
+    return { utxo, record: datum.VoterRecord };
   });
 
 /** Resolves a live proposal UTxO by its id (state-token name) and parses it. */

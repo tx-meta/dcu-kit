@@ -11,7 +11,8 @@
  *
  * Env:
  *   MEMBER_UNIT=<policy+name>  the opener's eligibility token unit (required)
- *   TARGET_ID=<hex>            the governed vault's state-token name
+ *   TARGET_POLICY=<hex>        the governed vault's state-NFT policy
+ *   TARGET_ID=<hex>            the governed vault's state-NFT name
  *   ACTION=ParamChange|SocialPayout|WriteOff|TreasuryMove|MembershipChange
  *   RECIPIENT=<hex>  AMOUNT=<n>        (SocialPayout / TreasuryMove)
  *   FIELD_TAG=<n>    NEW_VALUE=<n>     (ParamChange)
@@ -33,6 +34,7 @@ import {
   selectEnvWallet,
 } from "./context.js";
 import { loadState, saveState } from "./state.js";
+import { govScriptRefs } from "./governance-common.js";
 
 function buildAction(): GovAction {
   const kind = process.env.ACTION ?? "ParamChange";
@@ -90,14 +92,16 @@ async function main() {
       "MEMBER_UNIT is required — the opener's eligibility token (charter member_policy).",
     );
   }
+  const targetPolicy = process.env.TARGET_POLICY;
   const targetId = process.env.TARGET_ID;
-  if (!targetId) {
+  if (!targetPolicy || !targetId) {
     throw new Error(
-      "TARGET_ID is required — the governed vault's state-token name.",
+      "TARGET_POLICY and TARGET_ID are required — the governed vault's state-NFT (policy, name).",
     );
   }
 
   const instance = buildGovernance(state.governanceSeed);
+  const scriptRefs = await govScriptRefs(lucid, state);
   const deadline = BigInt(
     Date.now() + Number(process.env.DEADLINE_MINUTES ?? 60) * 60_000,
   );
@@ -110,11 +114,13 @@ async function main() {
   );
   const { tx, proposalId } = await openProposal(lucid, {
     instance,
+    targetPolicy,
     targetId,
     action: buildAction(),
     deadline,
     ...(execDeadline ? { execDeadline } : {}),
     openerTokenUnit: memberUnit,
+    scriptRefs,
   }).unsafeRun();
 
   const signed = await tx.sign.withWallet().complete();

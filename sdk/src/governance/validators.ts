@@ -35,6 +35,9 @@ const withPolicyParam = (script: Script, policyId: string): Script => ({
  *  unique, so a constant name is enough. Must match the Aiken validator. */
 export const ANCHOR_TOKEN_NAME = fromText("anchor");
 
+/** Fixed roster token name, minted one-shot alongside the anchor. */
+export const ROSTER_TOKEN_NAME = fromText("roster");
+
 export interface GovernanceInstance {
   seed: { txHash: string; outputIndex: number };
   /** Per-instance one-shot settings policy id. */
@@ -43,6 +46,8 @@ export interface GovernanceInstance {
   settingsValidator: Script;
   /** Unit (policyId + assetName) of this instance's anchor NFT. */
   anchorUnit: string;
+  /** Unit (policyId + assetName) of this instance's roster NFT. */
+  rosterUnit: string;
   /** Dispatcher mint + spend share one hash — the instance identity (govPolicy). */
   dispatcherValidator: { mint: Script; spend: Script };
   govPolicy: string;
@@ -106,6 +111,7 @@ export const buildGovernance = (seed: {
     settingsPolicy,
     settingsValidator,
     anchorUnit: settingsPolicy + ANCHOR_TOKEN_NAME,
+    rosterUnit: settingsPolicy + ROSTER_TOKEN_NAME,
     dispatcherValidator,
     govPolicy,
     votingValidator,

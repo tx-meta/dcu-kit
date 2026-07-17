@@ -71,6 +71,18 @@ export const GovActionSchema = Data.Enum([
       admit: Data.Boolean(),
     }),
   }),
+  /**
+   * Forward-compatibility arm: action kinds designed after the enum froze.
+   * `tag` names the future kind, `payload` carries its CBOR-encoded
+   * parameters. Governance treats it opaquely; only a vault version that
+   * decodes and understands a given tag may act on it.
+   */
+  Data.Object({
+    Generic: Data.Object({
+      tag: Data.Integer(),
+      payload: Data.Bytes(),
+    }),
+  }),
 ]);
 export type GovAction = Data.Static<typeof GovActionSchema>;
 export const GovAction = GovActionSchema as unknown as GovAction;
@@ -82,6 +94,8 @@ export const GOV_ACTION_TAG = {
   WriteOff: 2n,
   TreasuryMove: 3n,
   MembershipChange: 4n,
+  /** All Generic actions share one opener class — the inner tag is not a key. */
+  Generic: 5n,
 } as const;
 
 // --- Datum at the dispatcher address (charter + proposals) ---
@@ -91,8 +105,11 @@ export const GovernanceAnchorFieldsSchema = Data.Object({
   title: Data.Bytes(),
   /** Eligibility token policy: holding one makes a voter. */
   member_policy: Data.Bytes(),
-  /** Target ids (vault anchor names / policies) this instance may govern. */
-  governed_targets: Data.Array(Data.Bytes()),
+  /**
+   * The (state-NFT policy, state-NFT name) of each vault this instance may
+   * govern. Both halves bind — a name alone is forgeable under any policy.
+   */
+  governed_targets: Data.Map(Data.Bytes(), Data.Bytes()),
   /** Default weight rule, copied into each proposal at open. */
   voting_mode: VotingModeSchema,
   /** Minimum total weight cast (yes + no) for a proposal to be decidable. */
@@ -117,7 +134,9 @@ export type GovernanceAnchorFields = Data.Static<
 export const ProposalFieldsSchema = Data.Object({
   /** The Proposal State NFT name. */
   proposal_id: Data.Bytes(),
-  /** The single vault this proposal governs (a member of governed_targets). */
+  /** The policy of the governed vault's state NFT. */
+  target_policy: Data.Bytes(),
+  /** The state-NFT name of the single vault this proposal governs. */
   target_id: Data.Bytes(),
   /** The typed, parameterized action to authorize. */
   action: GovActionSchema,
@@ -140,9 +159,25 @@ export const ProposalFieldsSchema = Data.Object({
 });
 export type ProposalFields = Data.Static<typeof ProposalFieldsSchema>;
 
+export const VoterRecordFieldsSchema = Data.Object({
+  /** The member's eligibility-token name this record is bound to. */
+  member_id: Data.Bytes(),
+  /** Proposal ids this member has already voted on — the nullifier set. */
+  voted: Data.Array(Data.Bytes()),
+});
+export type VoterRecordFields = Data.Static<typeof VoterRecordFieldsSchema>;
+
+export const RosterFieldsSchema = Data.Object({
+  /** The ever-registered member set (nothing removes — one record per member). */
+  members: Data.Array(Data.Bytes()),
+});
+export type RosterFields = Data.Static<typeof RosterFieldsSchema>;
+
 export const GovernanceDatumSchema = Data.Enum([
   Data.Object({ GovernanceAnchor: GovernanceAnchorFieldsSchema }),
   Data.Object({ Proposal: ProposalFieldsSchema }),
+  Data.Object({ VoterRecord: VoterRecordFieldsSchema }),
+  Data.Object({ Roster: RosterFieldsSchema }),
 ]);
 export type GovernanceDatum = Data.Static<typeof GovernanceDatumSchema>;
 export const GovernanceDatum =
@@ -151,7 +186,9 @@ export const GovernanceDatum =
 // --- Datum at the gate address (locked with the decision token) ---
 
 export const DecisionFieldsSchema = Data.Object({
-  /** The vault this decision authorizes. */
+  /** The policy of the vault state NFT this decision authorizes. */
+  target_policy: Data.Bytes(),
+  /** The vault state-NFT name this decision authorizes. */
   target_id: Data.Bytes(),
   /** The exact action authorized, with parameters. */
   action: GovActionSchema,
@@ -169,9 +206,11 @@ export const GateDatum = GateDatumSchema as unknown as GateDatum;
 // --- Redeemers (constructor order matches governance/types.ak exactly) ---
 
 // SettingsRedeemer has a single Aiken constructor (MintAnchor), so it encodes
-// as Constr(0, [anchor_output_index]) — plain fields, no variant wrapper.
+// as Constr(0, [anchor_output_index, roster_output_index]) — plain fields,
+// no variant wrapper.
 export const SettingsRedeemerSchema = Data.Object({
   anchor_output_index: Data.Integer(),
+  roster_output_index: Data.Integer(),
 });
 export type SettingsRedeemer = Data.Static<typeof SettingsRedeemerSchema>;
 export const SettingsRedeemer =
@@ -186,10 +225,10 @@ export const GovMintRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    CastVote: Data.Object({
-      proposal_input_index: Data.Integer(),
-      receipt_output_index: Data.Integer(),
-      voter_index: Data.Integer(),
+    RegisterVoter: Data.Object({
+      roster_input_index: Data.Integer(),
+      record_output_index: Data.Integer(),
+      member_index: Data.Integer(),
       withdrawal_index: Data.Integer(),
     }),
   }),
@@ -216,6 +255,8 @@ export const GovSpendRedeemerSchema = Data.Enum([
       proposal_input_index: Data.Integer(),
       proposal_output_index: Data.Integer(),
       voter_index: Data.Integer(),
+      record_input_index: Data.Integer(),
+      record_output_index: Data.Integer(),
       /** 99 under OneMemberOneVote (no share reference input read). */
       share_ref_index: Data.Integer(),
       approve: Data.Boolean(),
@@ -251,6 +292,12 @@ export const GovSpendRedeemerSchema = Data.Enum([
       anchor_output_index: Data.Integer(),
     }),
   }),
+  Data.Object({
+    VoteRecordSpend: Data.Object({ withdrawal_index: Data.Integer() }),
+  }),
+  Data.Object({
+    RosterSpend: Data.Object({ withdrawal_index: Data.Integer() }),
+  }),
 ]);
 export type GovSpendRedeemer = Data.Static<typeof GovSpendRedeemerSchema>;
 export const GovSpendRedeemer =
@@ -268,6 +315,8 @@ export const VotingActionSchema = Data.Enum([
       proposal_input_index: Data.Integer(),
       proposal_output_index: Data.Integer(),
       voter_index: Data.Integer(),
+      record_input_index: Data.Integer(),
+      record_output_index: Data.Integer(),
       share_ref_index: Data.Integer(),
       approve: Data.Boolean(),
     }),
@@ -287,6 +336,14 @@ export const VotingActionSchema = Data.Enum([
   }),
   Data.Object({
     ExpireAction: Data.Object({ proposal_input_index: Data.Integer() }),
+  }),
+  Data.Object({
+    RegisterAction: Data.Object({
+      roster_input_index: Data.Integer(),
+      roster_output_index: Data.Integer(),
+      record_output_index: Data.Integer(),
+      member_index: Data.Integer(),
+    }),
   }),
 ]);
 export type VotingAction = Data.Static<typeof VotingActionSchema>;

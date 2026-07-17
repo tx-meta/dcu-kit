@@ -17,6 +17,7 @@ import {
   selectEnvWallet,
 } from "./context.js";
 import { loadState } from "./state.js";
+import { govScriptRefs } from "./governance-common.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -33,10 +34,12 @@ async function main() {
     throw new Error("Run governance-init and governance-propose first.");
   }
   const instance = buildGovernance(state.governanceSeed);
+  const scriptRefs = await govScriptRefs(lucid, state);
 
   const tx = await expireProposal(lucid, {
     instance,
     proposalId: state.governanceProposalId,
+    scriptRefs,
   }).unsafeRun();
 
   const signed = await tx.sign.withWallet().complete();

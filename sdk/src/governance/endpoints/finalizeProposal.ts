@@ -5,12 +5,17 @@ import {
   TxSignBuilder,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { DcuError, TransactionBuildError } from "../../core/errors.js";
+import {
+  ConfigurationError,
+  DcuError,
+  TransactionBuildError,
+} from "../../core/errors.js";
 import { makeReturn } from "../../core/utils/index.js";
 import { GovernanceDatum, GovSpendRedeemer, VotingAction } from "../types.js";
 import { GovernanceInstance } from "../validators.js";
 import {
   dispatcherAddress,
+  GovScriptRefs,
   resolveAnchor,
   resolveProposal,
   sortedRefIndexOf,
@@ -30,6 +35,11 @@ import {
 export type FinalizeProposalConfig = {
   instance: GovernanceInstance;
   proposalId: string;
+  /** Override the wall clock (emulator tests pass emulator.now()). */
+  currentTime?: bigint;
+  /** Reference-script UTxOs — required in practice: dispatcher + voting no
+   *  longer fit inline together under the 16,384-byte tx limit. */
+  scriptRefs?: GovScriptRefs;
 };
 
 export const unsignedFinalizeProposalTxProgram = (
@@ -51,13 +61,32 @@ export const unsignedFinalizeProposalTxProgram = (
     const passed =
       cast >= proposal.quorum &&
       proposal.tally_yes * 10000n >= proposal.threshold * cast;
-    const now = BigInt(Date.now());
+
+    // Temporal window: finalize lands ENTIRELY after the voting deadline; on
+    // pass, timelock_until is pinned to the validity lower bound + charter
+    // timelock (the validator enforces both bounds).
+    const now = config.currentTime ?? BigInt(Date.now());
+    const drift = network === "Custom" ? 0n : 60_000n;
+    // Slot-align the bound UP: ledger validity is in whole-second slots, so a
+    // ms bound like deadline+1 floors back to/below the deadline and fails the
+    // validator's entirely-after check.
+    const afterDeadline = ((proposal.deadline + 1000n) / 1000n) * 1000n;
+    const validFrom = now - drift > afterDeadline ? now - drift : afterDeadline;
+    const validTo = now + 900_000n;
+    if (validTo <= validFrom) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "proposalId",
+          message: "voting is still open — finalize after the deadline",
+        }),
+      );
+    }
 
     const updated: GovernanceDatum = {
       Proposal: {
         ...proposal,
         status: passed ? "Passed" : "Rejected",
-        timelock_until: passed ? now + anchor.timelock : null,
+        timelock_until: passed ? validFrom + anchor.timelock : null,
       },
     };
 
@@ -98,15 +127,27 @@ export const unsignedFinalizeProposalTxProgram = (
     const tx = yield* lucid
       .newTx()
       .collectFrom([proposalUtxo], spendRedeemer)
-      .attach.SpendingValidator(instance.dispatcherValidator.spend)
+      .compose(
+        config.scriptRefs?.dispatcher
+          ? lucid.newTx().readFrom([config.scriptRefs.dispatcher])
+          : lucid
+              .newTx()
+              .attach.SpendingValidator(instance.dispatcherValidator.spend),
+      )
       .readFrom([anchorUtxo])
       .withdraw(votingRewardAddress(network, instance), 0n, votingRedeemer)
-      .attach.WithdrawalValidator(instance.votingValidator)
+      .compose(
+        config.scriptRefs?.voting
+          ? lucid.newTx().readFrom([config.scriptRefs.voting])
+          : lucid.newTx().attach.WithdrawalValidator(instance.votingValidator),
+      )
       .pay.ToContract(
         dispatcherAddress(network, instance),
         { kind: "inline", value: Data.to(updated, GovernanceDatum) },
         proposalUtxo.assets,
       )
+      .validFrom(Number(validFrom))
+      .validTo(Number(validTo))
       .completeProgram()
       .pipe(
         Effect.mapError(

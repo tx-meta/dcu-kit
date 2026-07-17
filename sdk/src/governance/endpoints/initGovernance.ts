@@ -52,8 +52,11 @@ export type InitGovernanceConfig = {
   title: string;
   /** Eligibility token policy — holding a token of this policy makes a voter. */
   memberPolicy: string;
-  /** Target ids (vault anchor names / policies, hex) this instance may govern. */
-  governedTargets: string[];
+  /**
+   * The governed vaults as [state-NFT policy (hex), state-NFT name (hex)]
+   * pairs — both halves bind (a name alone is forgeable under any policy).
+   */
+  governedTargets: [string, string][];
   /** Default weight rule. Defaults to one-member-one-vote. */
   votingMode?: VotingMode;
   /** Minimum total weight cast for a proposal to be decidable. */
@@ -96,7 +99,7 @@ export const unsignedInitGovernanceTxProgram = (
       );
     }
     if (
-      config.quorum < 0n ||
+      config.quorum < 1n ||
       config.threshold < 0n ||
       config.threshold > 10000n
     ) {
@@ -104,7 +107,16 @@ export const unsignedInitGovernanceTxProgram = (
         new ConfigurationError({
           configKey: "threshold",
           message:
-            "quorum must be >= 0 and threshold in basis points (0..10000)",
+            "quorum must be >= 1 and threshold in basis points (0..10000)",
+        }),
+      );
+    }
+    if (config.governedTargets.some(([policy]) => policy.length !== 56)) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "governedTargets",
+          message:
+            "each governed target needs a 28-byte state-NFT policy (56 hex chars)",
         }),
       );
     }
@@ -138,7 +150,7 @@ export const unsignedInitGovernanceTxProgram = (
       GovernanceAnchor: {
         title: titleHex,
         member_policy: config.memberPolicy,
-        governed_targets: config.governedTargets,
+        governed_targets: new Map(config.governedTargets),
         voting_mode: config.votingMode ?? "OneMemberOneVote",
         default_quorum: config.quorum,
         default_threshold: config.threshold,
@@ -153,20 +165,35 @@ export const unsignedInitGovernanceTxProgram = (
     const redeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: () =>
-        Data.to({ anchor_output_index: 0n }, SettingsRedeemer),
+        Data.to(
+          { anchor_output_index: 0n, roster_output_index: 1n },
+          SettingsRedeemer,
+        ),
       inputs: [seed],
     };
+
+    // The roster starts as the EMPTY ever-registered set; registration is the
+    // only append path (the voter-record one-shot root).
+    const rosterDatum: GovernanceDatum = { Roster: { members: [] } };
 
     const network = lucid.config().network ?? "Preprod";
     const tx = yield* lucid
       .newTx()
       .collectFrom([seed])
-      .mintAssets({ [instance.anchorUnit]: 1n }, redeemer)
+      .mintAssets(
+        { [instance.anchorUnit]: 1n, [instance.rosterUnit]: 1n },
+        redeemer,
+      )
       .attach.MintingPolicy(instance.settingsValidator)
       .pay.ToContract(
         dispatcherAddress(network, instance),
         { kind: "inline", value: Data.to(datum, GovernanceDatum) },
         { lovelace: MIN_ADA_BUFFER, [instance.anchorUnit]: 1n },
+      )
+      .pay.ToContract(
+        dispatcherAddress(network, instance),
+        { kind: "inline", value: Data.to(rosterDatum, GovernanceDatum) },
+        { lovelace: MIN_ADA_BUFFER, [instance.rosterUnit]: 1n },
       )
       .completeProgram()
       .pipe(

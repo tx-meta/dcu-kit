@@ -43,7 +43,12 @@ async function main() {
   );
   console.log("  timelock (ms)   :", charter.timelock.toString());
   console.log("  member policy   :", charter.member_policy);
-  console.log("  governed targets:", charter.governed_targets.join(", "));
+  console.log(
+    "  governed targets:",
+    [...charter.governed_targets.entries()]
+      .map(([policy, name]) => `${policy}:${name}`)
+      .join(", "),
+  );
   console.log("  voting stake    :", charter.voting_stake_hash);
   console.log("  gate (quorum)   :", charter.gate_hash);
 

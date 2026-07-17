@@ -1,10 +1,10 @@
 /**
  * Cast Vote Example
  *
- * Casts one weighted vote: spends the proposal to advance its cached tally and
- * mints a one-per-proposal receipt (blake2b(proposal_id ++ voter_ref)) — a
- * re-vote reproduces an existing token name and the mint fails, so one member
- * gets one vote by construction.
+ * Casts one weighted vote: spends the proposal to advance its cached tally AND
+ * the member's voter record to append this proposal to its voted list — the
+ * double-vote nullifier. The member must have registered once
+ * (governance-register) before their first vote.
  *
  * The voter spends their eligibility-token UTxO to prove membership at a
  * resolved index; the token returns to the wallet as change.
@@ -26,6 +26,7 @@ import {
   selectEnvWallet,
 } from "./context.js";
 import { loadState } from "./state.js";
+import { govScriptRefs } from "./governance-common.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -52,16 +53,18 @@ async function main() {
   }
 
   const instance = buildGovernance(state.governanceSeed);
+  const scriptRefs = await govScriptRefs(lucid, state);
   const approve = (process.env.APPROVE ?? "true") === "true";
 
   console.log(
     `Voting ${approve ? "FOR" : "AGAINST"} proposal ${state.governanceProposalId}`,
   );
-  const { tx, receiptName } = await castVote(lucid, {
+  const { tx, recordName } = await castVote(lucid, {
     instance,
     proposalId: state.governanceProposalId,
     approve,
     voterTokenUnit: memberUnit,
+    scriptRefs,
   }).unsafeRun();
 
   const signed = await tx.sign.withWallet().complete();
@@ -70,7 +73,7 @@ async function main() {
   console.log("View on Cexplorer:", cexplorerTxUrl(txHash));
   await lucid.awaitTx(txHash);
 
-  console.log("Vote recorded. Receipt:", receiptName);
+  console.log("Vote recorded. Voter record:", recordName);
   console.log("Inspect the tally with governance-inspect.");
 }
 

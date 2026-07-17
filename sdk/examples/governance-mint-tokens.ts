@@ -56,10 +56,16 @@ async function main() {
   console.log("  eligibility token:", memberUnit);
   console.log("  target vault token:", targetUnit);
 
+  // Mint into SEPARATE outputs: the on-chain member_id derivation requires the
+  // eligibility input to hold exactly one token name under the member policy,
+  // so a UTxO mixing both tokens is rejected at register/vote time.
+  const address = await lucid.wallet().address();
   const tx = await lucid
     .newTx()
     .mintAssets({ [memberUnit]: 1n, [targetUnit]: 1n })
     .attach.MintingPolicy(script)
+    .pay.ToAddress(address, { [memberUnit]: 1n })
+    .pay.ToAddress(address, { [targetUnit]: 1n })
     .complete();
 
   const signed = await tx.sign.withWallet().complete();
@@ -75,7 +81,7 @@ async function main() {
 
   console.log("\nTokens minted. Now run governance-init with:");
   console.log(`  MEMBER_POLICY=${policy}`);
-  console.log(`  GOVERNED_TARGETS=${targetName}`);
+  console.log(`  GOVERNED_TARGETS=${policy}:${targetName}`);
 }
 
 main().catch((e) => {

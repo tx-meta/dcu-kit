@@ -7,6 +7,7 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
+  ConfigurationError,
   DcuError,
   InsufficientUtxosError,
   TransactionBuildError,
@@ -25,6 +26,7 @@ import {
 import { GovernanceInstance } from "../validators.js";
 import {
   dispatcherAddress,
+  GovScriptRefs,
   MIN_ADA_BUFFER,
   proposalStateTokenName,
   resolveAnchor,
@@ -47,7 +49,10 @@ import {
 export type OpenProposalConfig = {
   /** The governance instance (from buildGovernance / initGovernance). */
   instance: GovernanceInstance;
-  /** The vault this proposal governs (a member of the charter's governed_targets). */
+  /** The governed vault's state-NFT policy (with targetId, a member of the
+   *  charter's governed_targets). */
+  targetPolicy: string;
+  /** The governed vault's state-NFT name. */
   targetId: string;
   /** The typed, parameterized action to authorize. */
   action: GovAction;
@@ -62,6 +67,11 @@ export type OpenProposalConfig = {
   /** The seed UTxO for the one-shot proposal NFT. Defaults to the opener-token
    *  UTxO, or any wallet UTxO. */
   seed?: UTxO;
+  /** Override the wall clock (emulator tests pass emulator.now()). */
+  currentTime?: bigint;
+  /** Reference-script UTxOs — required in practice: dispatcher + voting no
+   *  longer fit inline together under the 16,384-byte tx limit. */
+  scriptRefs?: GovScriptRefs;
 };
 
 export const unsignedOpenProposalTxProgram = (
@@ -71,6 +81,34 @@ export const unsignedOpenProposalTxProgram = (
   Effect.gen(function* () {
     const { instance } = config;
     const network = lucid.config().network ?? "Preprod";
+
+    // Temporal window: the open must land ENTIRELY before the voting deadline
+    // (and the exec window, when set, must open after it).
+    const now = config.currentTime ?? BigInt(Date.now());
+    const validFrom = now - (network === "Custom" ? 0n : 60_000n);
+    const validTo =
+      config.deadline - 1n < now + 900_000n
+        ? config.deadline - 1n
+        : now + 900_000n;
+    if (validTo <= validFrom) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "deadline",
+          message: "the voting deadline is already in the past",
+        }),
+      );
+    }
+    if (
+      config.execDeadline !== undefined &&
+      config.execDeadline <= config.deadline
+    ) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "execDeadline",
+          message: "execDeadline must be after the voting deadline",
+        }),
+      );
+    }
 
     const walletUtxos = sortUtxos(yield* getWalletUtxos(lucid)).filter(
       (u) => !u.scriptRef,
@@ -99,6 +137,7 @@ export const unsignedOpenProposalTxProgram = (
     const datum: GovernanceDatum = {
       Proposal: {
         proposal_id: proposalId,
+        target_policy: config.targetPolicy,
         target_id: config.targetId,
         action: config.action,
         voting_mode: anchor.voting_mode,
@@ -149,14 +188,26 @@ export const unsignedOpenProposalTxProgram = (
       .collectFrom([seed])
       .readFrom([anchorUtxo])
       .mintAssets({ [proposalUnit]: 1n }, mintRedeemer)
-      .attach.MintingPolicy(instance.dispatcherValidator.mint)
+      .compose(
+        config.scriptRefs?.dispatcher
+          ? lucid.newTx().readFrom([config.scriptRefs.dispatcher])
+          : lucid
+              .newTx()
+              .attach.MintingPolicy(instance.dispatcherValidator.mint),
+      )
       .withdraw(votingRewardAddress(network, instance), 0n, votingRedeemer)
-      .attach.WithdrawalValidator(instance.votingValidator)
+      .compose(
+        config.scriptRefs?.voting
+          ? lucid.newTx().readFrom([config.scriptRefs.voting])
+          : lucid.newTx().attach.WithdrawalValidator(instance.votingValidator),
+      )
       .pay.ToContract(
         dispatcherAddress(network, instance),
         { kind: "inline", value: Data.to(datum, GovernanceDatum) },
         { lovelace: MIN_ADA_BUFFER, [proposalUnit]: 1n },
       )
+      .validFrom(Number(validFrom))
+      .validTo(Number(validTo))
       .completeProgram()
       .pipe(
         Effect.mapError(

@@ -5,11 +5,16 @@ import {
   TxSignBuilder,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { DcuError, TransactionBuildError } from "../../core/errors.js";
+import {
+  ConfigurationError,
+  DcuError,
+  TransactionBuildError,
+} from "../../core/errors.js";
 import { makeReturn } from "../../core/utils/index.js";
 import { GovMintRedeemer, GovSpendRedeemer, VotingAction } from "../types.js";
 import { GovernanceInstance } from "../validators.js";
 import {
+  GovScriptRefs,
   resolveAnchor,
   resolveProposal,
   votingRewardAddress,
@@ -27,6 +32,11 @@ import {
 export type ExpireProposalConfig = {
   instance: GovernanceInstance;
   proposalId: string;
+  /** Override the wall clock (emulator tests pass emulator.now()). */
+  currentTime?: bigint;
+  /** Reference-script UTxOs — required in practice: dispatcher + voting no
+   *  longer fit inline together under the 16,384-byte tx limit. */
+  scriptRefs?: GovScriptRefs;
 };
 
 export const unsignedExpireProposalTxProgram = (
@@ -38,12 +48,49 @@ export const unsignedExpireProposalTxProgram = (
     const network = lucid.config().network ?? "Preprod";
 
     const { utxo: anchorUtxo } = yield* resolveAnchor(lucid, instance);
-    const { utxo: proposalUtxo } = yield* resolveProposal(
+    const { utxo: proposalUtxo, proposal } = yield* resolveProposal(
       lucid,
       instance,
       config.proposalId,
     );
     const proposalUnit = instance.govPolicy + config.proposalId;
+
+    // Temporal gate mirrors the validator: an Open proposal expires only after
+    // its deadline, a Passed one only after its exec_deadline (None = never),
+    // Executed/Rejected any time.
+    const now = config.currentTime ?? BigInt(Date.now());
+    const drift = network === "Custom" ? 0n : 60_000n;
+    const notBefore =
+      proposal.status === "Open"
+        ? proposal.deadline + 1n
+        : proposal.status === "Passed"
+          ? proposal.exec_deadline !== null
+            ? proposal.exec_deadline + 1n
+            : null
+          : 0n;
+    if (notBefore === null) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "proposalId",
+          message:
+            "a Passed proposal with no exec_deadline is not expirable — execute it instead",
+        }),
+      );
+    }
+    // Slot-align the bound UP: ledger validity is in whole-second slots, so a
+    // ms bound like deadline+1 floors back to/below the deadline and fails the
+    // validator's entirely-after check.
+    const notBeforeSlot = ((notBefore + 999n) / 1000n) * 1000n;
+    const validFrom = now - drift > notBeforeSlot ? now - drift : notBeforeSlot;
+    const validTo = now + 900_000n;
+    if (validTo <= validFrom) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "proposalId",
+          message: "the proposal is still live — it cannot be expired yet",
+        }),
+      );
+    }
 
     const spendRedeemer: RedeemerBuilder = {
       kind: "selected",
@@ -70,15 +117,30 @@ export const unsignedExpireProposalTxProgram = (
       inputs: [proposalUtxo],
     };
 
-    const tx = yield* lucid
+    // NOTE: no .compose() here — under lucid 0.4.31, composing after a burn
+    // mintAssets duplicates the burn during balancing. Attach conditionally
+    // on the single chain instead.
+    let builder = lucid
       .newTx()
       .collectFrom([proposalUtxo], spendRedeemer)
-      .attach.SpendingValidator(instance.dispatcherValidator.spend)
-      .readFrom([anchorUtxo])
+      .readFrom(
+        config.scriptRefs?.dispatcher && config.scriptRefs?.voting
+          ? [anchorUtxo, config.scriptRefs.dispatcher, config.scriptRefs.voting]
+          : [anchorUtxo],
+      )
       .mintAssets({ [proposalUnit]: -1n }, burnRedeemer)
-      .attach.MintingPolicy(instance.dispatcherValidator.mint)
-      .withdraw(votingRewardAddress(network, instance), 0n, votingRedeemer)
-      .attach.WithdrawalValidator(instance.votingValidator)
+      .withdraw(votingRewardAddress(network, instance), 0n, votingRedeemer);
+    if (!config.scriptRefs?.dispatcher) {
+      builder = builder.attach
+        .SpendingValidator(instance.dispatcherValidator.spend)
+        .attach.MintingPolicy(instance.dispatcherValidator.mint);
+    }
+    if (!config.scriptRefs?.voting) {
+      builder = builder.attach.WithdrawalValidator(instance.votingValidator);
+    }
+    const tx = yield* builder
+      .validFrom(Number(validFrom))
+      .validTo(Number(validTo))
       .completeProgram()
       .pipe(
         Effect.mapError(

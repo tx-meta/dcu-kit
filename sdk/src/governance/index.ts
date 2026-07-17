@@ -7,6 +7,7 @@ export * from "./utils.js";
 
 export * from "./endpoints/initGovernance.js";
 export * from "./endpoints/registerVotingStake.js";
+export * from "./endpoints/registerVoter.js";
 export * from "./endpoints/openProposal.js";
 export * from "./endpoints/castVote.js";
 export * from "./endpoints/finalizeProposal.js";
