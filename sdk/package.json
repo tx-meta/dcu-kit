@@ -33,6 +33,10 @@
     "./governance": {
       "import": "./dist/governance/index.js",
       "types": "./dist/governance/index.d.ts"
+    },
+    "./harness": {
+      "import": "./dist/harness/index.js",
+      "types": "./dist/harness/index.d.ts"
     }
   },
   "files": [
@@ -62,7 +66,7 @@
   ],
   "scripts": {
     "clean": "rimraf dist",
-    "build": "tsup src/index.ts src/multisig/index.ts src/core/index.ts src/escrow/index.ts src/escrow/v2/index.ts src/savings/index.ts src/governance/index.ts --minify --format esm,cjs --dts --clean",
+    "build": "tsup src/index.ts src/multisig/index.ts src/core/index.ts src/escrow/index.ts src/escrow/v2/index.ts src/savings/index.ts src/governance/index.ts src/harness/index.ts --minify --format esm,cjs --dts --clean",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,md}\"",
