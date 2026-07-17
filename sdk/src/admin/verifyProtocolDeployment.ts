@@ -180,10 +180,18 @@ const stakeRegistrationStatus = (
         if (res.status === 404) return "not-registered";
         if (!res.ok) return "unknown";
         const body = (await res.json()) as {
+          registered?: boolean;
           active?: boolean;
           error?: string;
         };
         if (body.error) return "not-registered";
+        // `registered` is the registration state. `active` stays false until
+        // the credential is delegated/epoch-activated, so it cannot answer
+        // this question — a freshly registered credential reports
+        // { registered: true, active: false }. Older API versions lack
+        // `registered`; fall back to `active` there.
+        if (typeof body.registered === "boolean")
+          return body.registered ? "registered" : "not-registered";
         return body.active === true ? "registered" : "not-registered";
       },
       catch: () => "unknown" as const,
