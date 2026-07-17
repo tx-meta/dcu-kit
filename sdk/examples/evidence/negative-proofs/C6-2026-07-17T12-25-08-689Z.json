@@ -1,0 +1,20 @@
+{
+  "label": "C6 create-account 31-byte commitment",
+  "rejected": true,
+  "evaluatorError": "TxBuilderError: { Complete: Error: EvaluateTransaction fails: {\"EvaluationFailure\":{\"ScriptFailures\":{}}} }",
+  "attemptedDatum": "d8799f581fabababababababababababababababababababababababababababababababff",
+  "evaluation": "provider",
+  "deployment": {
+    "network": "Preprod",
+    "settingsPolicy": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d",
+    "groupPolicyId": "3cfdf8bf653ca8be1af605e4df4f00433f704ab0172e420b54209416",
+    "treasuryPolicyId": "0ba6478fdb7651c557d052c0ee49a8d3ff302e826e277631b6a312ea",
+    "accountPolicyId": "7fd4e55c7ab5b620e0409a7d9c89e5553390d96f2b5a8249c675b6a9"
+  },
+  "timestamp": "2026-07-17T12:25:08.689Z",
+  "seedOutRef": {
+    "txHash": "9032d5b13ecf1478cbd48e2dc40401f75a6f7a9df293895c971bb38ad1590c3f",
+    "outputIndex": 3
+  },
+  "seedUnspentAfter": true
+}

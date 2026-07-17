@@ -1,0 +1,22 @@
+{
+  "label": "P2 recommit group",
+  "groupTokenSuffix": "cb57d564125ecb8e41b8da8127bbc05193ef4aaddfffee6a67234648",
+  "groupPolicyId": "3cfdf8bf653ca8be1af605e4df4f00433f704ab0172e420b54209416",
+  "memberAccountSuffixes": [
+    "1053643ca0010f8b45220eb77a2cc3f662b1a0aa96e78ee6c2415cdd",
+    "924fe76f89d13594b0d671d92c51dda4b74b56c85a716220eb566096"
+  ],
+  "creatorWallet": "ADMIN (holds both member accounts + group admin token)",
+  "startTxMemberJoins": {
+    "accountA_join": "1df6789fa44deda01edc196b40d56a14d74ecb3c889132476cfd80bca1272b01",
+    "accountB_join": "f0768faf5235bbcbc953bb1cecede9b22725efe459d71edb5154b609bdcf2b13"
+  },
+  "startTimeMs": 1784290862000,
+  "startTimeIso": "2026-07-17T12:21:02Z",
+  "numRounds": 2,
+  "intervalLengthMs": 300000,
+  "recommitWindowMs": 86400000,
+  "reSealValidAtMs": 1784377262000,
+  "reSealValidAtIso": "2026-07-18T12:21:02Z",
+  "day2": "Run rotation lap (contribute+distribute per round) + begin-recommit, then re-seal (start-group) after reSealValidAt. Restore state.json groupTokenSuffix=cb57d564 first."
+}
