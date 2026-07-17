@@ -1,0 +1,16 @@
+{
+  "label": "P2 pre-join group (B6 + C4/C5/C9 fixture)",
+  "groupTokenSuffix": "88608c45b86239f4b423998f72531f9905d17efc227b2d03a782c693",
+  "creatorWallet": "USER1",
+  "maxMembers": "2",
+  "createTxHash": "2d82ef9901c0563c82c3aab31e99ba010c8b623e626f776ea03c1bcea1140672",
+  "B6": {
+    "updateTxHash": "3662358a6a341fa584601ca25f3849b2f594fb1f25a3175206fd299706bd8eb0",
+    "changed": {
+      "contribution_fee": "5000000 -> 4000000",
+      "recovery_timelock": "86400000 -> 172800000"
+    },
+    "verifiedOnChain": true
+  },
+  "capturedAt": "2026-07-17T13:31:58.420Z"
+}
