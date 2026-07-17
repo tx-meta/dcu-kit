@@ -58,11 +58,13 @@ async function main() {
     `Reserve before: balance ${before.balance}  stand-in rounds ${before.standinRounds}`,
   );
 
-  const { treasury } = await loadScriptRefs(lucid);
+  // The top-up carries the reserve family withdrawal — pass the full ref set
+  // (the reserve family validator does not fit inline on Preprod).
+  const scriptRefs = await loadScriptRefs(lucid);
   const config: TopUpReserveConfig = {
     groupTokenSuffix,
     amount,
-    scriptRefs: { treasury },
+    scriptRefs,
   };
 
   console.log(`Building top-up transaction (${amount} units)...`);
