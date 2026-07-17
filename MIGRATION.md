@@ -8,6 +8,55 @@ cryptic script errors. Validator hashes for each release are tabled at the botto
 
 ---
 
+## `0.5.0` → `0.5.5` (P1 launch-surface last call)
+
+The group and account validators change hash; treasury, settings, and escrow are
+byte-identical. Because the protocol settings UTxO pins the group/account policy
+IDs immutably, this is a **fresh protocol deployment** (new settings NFT + new
+reference scripts via `deploy-scripts`), not a script swap. Nothing is deployed on
+Mainnet; existing Preprod instances keep working through the OLD deployment and
+the SDK version that created them — no state migrates.
+
+### `AccountDatum` ABI break (wire format)
+
+`display_name` / `contact` (raw UTF-8, PII on-chain) are REPLACED by a single
+`profile_commitment: ByteArray` — either `""` (no profile, the default) or a
+32-byte salted blake2b-256 commitment computed off-chain via
+`computeProfileCommitment(profile, saltHex)`. The caller keeps the profile and
+salt; the chain stores no identity data. Accounts created under 0.5.x or earlier
+are not decodable by this SDK version — close them with the OLD SDK version, or
+leave them on the old deployment.
+
+```ts
+// before
+createAccount(lucid, { selected_out_ref, display_name: "@alice", contact: "a@b" });
+// after — private by default…
+createAccount(lucid, { selected_out_ref });
+// …or with a commitment (store profile + salt off-chain)
+createAccount(lucid, {
+  selected_out_ref,
+  profileCommitment: computeProfileCommitment('{"name":"@alice"}', salt),
+});
+```
+
+`updateAccount`: `profileCommitment` omitted = preserve the current on-chain
+value; explicit `""` = clear it.
+
+### Group config-safety envelope (create + pre-join update)
+
+`createGroup` datums must now satisfy: `recovery_threshold` in `[2, max_members]`
+(so `max_members >= 2`), `recovery_timelock >= 86_400_000` ms (1 day), and
+`recommit_window >= 86_400_000` ms (1 day). The same envelope is re-validated by
+every pre-join `UpdateGroup`. Group configs created with `recovery_threshold: 1`
+or shorter windows are rejected on-chain and by the SDK's pre-flight check.
+
+### Kyama / indexer note
+
+Credential-based indexing is unaffected. Display names must come from the
+product-layer store — they no longer exist on-chain anywhere.
+
+---
+
 ## Unreleased (Coop-SDK — Treasury split)
 
 The treasury validator is now a dispatcher (`9c54823e…`) plus four withdraw-zero family
