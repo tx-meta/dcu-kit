@@ -9,7 +9,6 @@ import {
   Maestro,
   Network,
   PROTOCOL_PARAMETERS_DEFAULT,
-  UTxO,
   validatorToAddress,
 } from "@lucid-evolution/lucid";
 import { ConfigurationError } from "../src/core/errors.js";

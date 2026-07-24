@@ -10,7 +10,13 @@ import {
 import { SetupError } from "../src/core/errors.js";
 import { unsignedDeleteAccountTxProgram } from "../src/endpoints/deleteAccount.js";
 import { accountPolicyId } from "../src/core/validators/constants.js";
-import { assetNameLabels } from "../src/core/utils/index.js";
+import {
+  assetNameLabels,
+  computeProfileCommitment,
+  parseSafeDatum,
+  patchInlineDatum,
+} from "../src/core/utils/index.js";
+import { AccountDatum } from "../src/core/types.js";
 import { extractTokenSuffix } from "./utils.js";
 
 describe("Account Endpoints", () => {
@@ -39,6 +45,71 @@ describe("Account Endpoints", () => {
     }).pipe(Effect.asVoid),
   );
 
+  // --- Profile commitment lifecycle ---
+  it.effect(
+    "creates with no profile by default, preserves on omitted update, clears on explicit empty",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+
+        // Default create → empty commitment on-chain.
+        const { outputs } = yield* createAccountTestCase(base.context);
+        const createdDatum = yield* parseSafeDatum<AccountDatum>(
+          patchInlineDatum(outputs.accountUtxo).datum,
+          AccountDatum,
+        );
+        expect(createdDatum.profile_commitment).toBe("");
+
+        // Set a real commitment via update.
+        const commitment = computeProfileCommitment(
+          '{"name":"@alice"}',
+          "0f".repeat(32),
+        );
+        const afterSet = yield* updateAccountTestCase(base.context, {
+          accountUtxo: outputs.accountUtxo,
+          profileCommitment: commitment,
+        });
+        const setDatum = yield* parseSafeDatum<AccountDatum>(
+          patchInlineDatum(afterSet.outputs.accountUtxo).datum,
+          AccountDatum,
+        );
+        expect(setDatum.profile_commitment).toBe(commitment);
+
+        // Omitted commitment → the current value is PRESERVED.
+        const afterOmit = yield* updateAccountTestCase(base.context, {
+          accountUtxo: afterSet.outputs.accountUtxo,
+        });
+        const omitDatum = yield* parseSafeDatum<AccountDatum>(
+          patchInlineDatum(afterOmit.outputs.accountUtxo).datum,
+          AccountDatum,
+        );
+        expect(omitDatum.profile_commitment).toBe(commitment);
+
+        // Explicit "" → cleared.
+        const afterClear = yield* updateAccountTestCase(base.context, {
+          accountUtxo: afterOmit.outputs.accountUtxo,
+          profileCommitment: "",
+        });
+        const clearDatum = yield* parseSafeDatum<AccountDatum>(
+          patchInlineDatum(afterClear.outputs.accountUtxo).datum,
+          AccountDatum,
+        );
+        expect(clearDatum.profile_commitment).toBe("");
+      }),
+  );
+
+  it.effect("rejects a malformed profile commitment", () =>
+    Effect.gen(function* () {
+      const base = yield* setupBase();
+      const result = yield* Effect.either(
+        createAccountTestCase(base.context, {
+          profileCommitment: "ab".repeat(31) + "a", // 63 hex chars
+        }),
+      );
+      expect(result._tag).toBe("Left");
+    }),
+  );
+
   // --- Update Account ---
   it.effect("should update an account successfully", () =>
     Effect.gen(function* () {
@@ -50,8 +121,7 @@ describe("Account Endpoints", () => {
 
       const { txHash } = yield* updateAccountTestCase(context, {
         accountUtxo,
-        display_name: "updated_alice",
-        contact: "updated@dcu.io",
+        profileCommitment: "ab".repeat(32),
       });
 
       expect(txHash).toBeDefined();

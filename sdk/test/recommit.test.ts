@@ -25,7 +25,7 @@ import {
 import { UTxO } from "@lucid-evolution/lucid";
 
 // Recommit lifecycle on the emulator. interval_length = 20_000ms (one block);
-// recommit_window = 40_000ms (two blocks) so re-seals are reachable in-test.
+// recommit_window = 86_400_000ms (the envelope floor; 4320 emulator blocks — awaitBlock is instant, so the warp is cheap).
 // collateral_rounds = 4 covers two full 2-member laps without defaults.
 
 const beginRecommitAction = (context: BaseSetup["context"], groupUtxo: UTxO) =>
@@ -76,7 +76,7 @@ describe("recommit lifecycle (emulator)", () => {
         const { context, groupUtxo } = yield* setupGroup(base, {
           interval_length: 20_000n,
           collateral_rounds: 4n,
-          recommit_window: 40_000n,
+          recommit_window: 86_400_000n, // envelope floor (min_recommit_window)
         });
         const { users } = context;
 
@@ -119,8 +119,9 @@ describe("recommit lifecycle (emulator)", () => {
         expect(windowDatum.member_slots).toEqual([]);
         expect(windowDatum.last_distributed_round).toBe(1n);
 
-        // Opt-out window elapses (2 blocks); nobody leaves — re-seal.
-        yield* advanceBlock(context.emulator, 2);
+        // Opt-out window elapses (1 day = 4320 blocks past era start); nobody
+        // leaves — re-seal.
+        yield* advanceBlock(context.emulator, 4321);
         yield* startGroupTestCase(context, { groupUtxo });
 
         const era2 = yield* readGroupDatum(context);
@@ -149,7 +150,7 @@ describe("recommit lifecycle (emulator)", () => {
         const { context, groupUtxo } = yield* setupGroup(base, {
           interval_length: 20_000n,
           collateral_rounds: 4n,
-          recommit_window: 40_000n,
+          recommit_window: 86_400_000n, // envelope floor (min_recommit_window)
           penalty_fee: 1_000_000n,
         });
         const { users } = context;
@@ -232,7 +233,7 @@ describe("recommit lifecycle (emulator)", () => {
         const { context, groupUtxo } = yield* setupGroup(base, {
           interval_length: 20_000n,
           collateral_rounds: 4n,
-          recommit_window: 100_000n,
+          recommit_window: 86_400_000n, // envelope floor (min_recommit_window)
         });
         const { users } = context;
 
@@ -275,14 +276,14 @@ describe("recommit lifecycle (emulator)", () => {
         });
         yield* beginRecommitAction(context, groupUtxo);
 
-        // Re-seal before recommit_window (100s) elapses must fail on-chain.
+        // Re-seal before recommit_window (1 day) elapses must fail on-chain.
         const early = yield* Effect.either(
           startGroupTestCase(context, { groupUtxo }),
         );
         expect(early._tag).toBe("Left");
 
         // After the window it succeeds.
-        yield* advanceBlock(context.emulator, 5);
+        yield* advanceBlock(context.emulator, 4321);
         const sealed = yield* startGroupTestCase(context, { groupUtxo });
         expect(sealed.txHash).toHaveLength(64);
       }),

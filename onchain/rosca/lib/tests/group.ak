@@ -274,6 +274,140 @@ test create_group_missing_ref_token_fails() {
 
 // --- Update Group Tests ---
 
+// ─── Config-safety envelope (P1) ─────────────────────────────────────────────
+// Create-side: floors rejected below minimum. Update-side: the pre-join branch
+// re-validates the envelope and pins version / name / lifecycle fields.
+
+fn create_with_datum(datum: GroupDatum) -> Bool {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let mint = assets.from_asset(policy_id, ref_tn, 1)
+    |> assets.merge(assets.from_asset(policy_id, user_tn, 1))
+  let output_value = assets.from_lovelace(2_000_000)
+    |> assets.merge(assets.from_asset(policy_id, ref_tn, 1))
+  let output = common.test_script_utxo(
+    policy_id,
+    output_value,
+    cip68_with(policy_id, datum),
+  )
+  let input = common.test_input(output_ref, output)
+  let user_output = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, datum),
+  )
+  validate_create_group(policy_id, 0, 0, [input], [output, user_output], mint)
+}
+
+// Pre-join update from the valid baseline datum to an arbitrary CIP-68 output.
+fn update_pre_join_to(output_datum: GroupCip68Datum) -> Bool {
+  let policy_id = common.test_policy_id()
+  let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)
+  let base_datum = common.test_group_datum(policy_id)
+  let group_input_utxo = common.test_script_utxo(
+    policy_id,
+    assets.from_asset(policy_id, ref_tn, 1),
+    cip68_with(policy_id, base_datum),
+  )
+  let group_input = common.test_input(output_ref, group_input_utxo)
+  let admin_input_utxo = common.test_user_utxo(
+    common.test_pkh(),
+    assets.from_asset(policy_id, user_tn, 1),
+    cip68_with(policy_id, base_datum),
+  )
+  let admin_input = common.test_input(output_ref, admin_input_utxo)
+  let group_output_utxo = common.test_script_utxo(
+    policy_id,
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(assets.from_asset(policy_id, ref_tn, 1)),
+    output_datum,
+  )
+  validate_update_group(
+    policy_id,
+    ref_tn,
+    1,
+    0,
+    0,
+    [group_input, admin_input],
+    [group_output_utxo],
+  )
+}
+
+test create_group_rejects_threshold_below_floor() {
+  let base = common.test_group_datum(common.test_policy_id())
+  !create_with_datum(GroupDatum { ..base, recovery_threshold: 1 })
+}
+
+test create_group_rejects_timelock_below_floor() {
+  let base = common.test_group_datum(common.test_policy_id())
+  !create_with_datum(GroupDatum { ..base, recovery_timelock: 86_399_999 })
+}
+
+test create_group_rejects_recommit_window_below_floor() {
+  let base = common.test_group_datum(common.test_policy_id())
+  !create_with_datum(GroupDatum { ..base, recommit_window: 0 })
+}
+
+test update_group_pre_join_rejects_config_below_floor() {
+  let policy_id = common.test_policy_id()
+  let base = common.test_group_datum(policy_id)
+  !update_pre_join_to(
+    cip68_with(policy_id, GroupDatum { ..base, recovery_timelock: 0 }),
+  )
+}
+
+test update_group_pre_join_rejects_version_change() {
+  let policy_id = common.test_policy_id()
+  let base = common.test_group_datum(policy_id)
+  let updated = GroupDatum { ..base, contribution_fee: 2000 }
+  !update_pre_join_to(
+    GroupCip68Datum { ..cip68_with(policy_id, updated), version: 2 },
+  )
+}
+
+test update_group_pre_join_rejects_empty_name() {
+  let policy_id = common.test_policy_id()
+  let base = common.test_group_datum(policy_id)
+  let updated = GroupDatum { ..base, contribution_fee: 2000 }
+  !update_pre_join_to(
+    GroupCip68Datum {
+      ..cip68_with(policy_id, updated),
+      metadata: [Pair(#"6e616d65", "")],
+    },
+  )
+}
+
+test update_group_pre_join_rejects_nonzero_active_member_count() {
+  let policy_id = common.test_policy_id()
+  let base = common.test_group_datum(policy_id)
+  !update_pre_join_to(
+    cip68_with(policy_id, GroupDatum { ..base, active_member_count: 1 }),
+  )
+}
+
+test update_group_pre_join_rejects_nonzero_start_time() {
+  let policy_id = common.test_policy_id()
+  let base = common.test_group_datum(policy_id)
+  !update_pre_join_to(
+    cip68_with(policy_id, GroupDatum { ..base, start_time: 1000 }),
+  )
+}
+
+test update_group_pre_join_allows_envelope_config_change() {
+  let policy_id = common.test_policy_id()
+  let base = common.test_group_datum(policy_id)
+  update_pre_join_to(
+    cip68_with(
+      policy_id,
+      GroupDatum {
+        ..base,
+        recovery_timelock: 172_800_000,
+        contribution_fee: 2000,
+      },
+    ),
+  )
+}
+
 test update_group_success() {
   let policy_id = common.test_policy_id()
   let (output_ref, ref_tn, user_tn) = common.setup_cip68(policy_id)

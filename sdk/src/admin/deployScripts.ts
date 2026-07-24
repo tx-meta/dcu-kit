@@ -10,6 +10,7 @@ import {
   Protocol,
 } from "../core/validators/constants.js";
 import { DcuError, TransactionBuildError, SetupError } from "../core/errors.js";
+import { isDeployAllowed } from "../core/validators/registry.js";
 import { getWalletAddress } from "../core/utils/index.js";
 import {
   registerTreasuryStake,
@@ -139,6 +140,18 @@ export const deployScripts = (
   Effect.gen(function* () {
     const address = yield* getWalletAddress(lucid);
     const network = lucid.config().network!;
+
+    // Launch-surface freeze: Mainnet deployment is allowed only for families
+    // marked `launch` in validator-registry.json (see VERSIONING.md).
+    if (!isDeployAllowed("rosca", network)) {
+      return yield* Effect.fail(
+        new SetupError({
+          message:
+            "rosca is not marked 'launch' in validator-registry.json — Mainnet deployment is frozen",
+        }),
+      );
+    }
+
     const deployAddress = validatorToAddress(
       network,
       alwaysFailsValidator.elseAlwaysFails,

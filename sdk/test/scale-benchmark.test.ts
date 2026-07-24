@@ -9,7 +9,6 @@ import {
   startGroupTestCase,
 } from "./actions.js";
 import { unsignedDistributePayoutTxProgram } from "../src/endpoints/distributePayout.js";
-import { extractTokenSuffix } from "./utils.js";
 import { assetNameLabels } from "../src/core/utils/assets.js";
 import { selectWalletFromSeed } from "../src/core/utils/wallet.js";
 import { resolveUtxoByUnit } from "../src/core/utils/resolve.js";
@@ -47,11 +46,11 @@ const sumTxExUnits = (txb: {
       redeemers: () => {
         as_arr_legacy_redeemer?: () => {
           len: () => number;
-          get: (i: number) => CmlRedeemer;
+          get: (_i: number) => CmlRedeemer;
         } | null;
         as_map_redeemer_key_to_redeemer_val?: () => {
-          keys: () => { len: () => number; get: (i: number) => unknown };
-          get: (k: unknown) => CmlRedeemer;
+          keys: () => { len: () => number; get: (_i: number) => unknown };
+          get: (_k: unknown) => CmlRedeemer;
         } | null;
       } | null;
     };
@@ -147,7 +146,6 @@ describe("Scale benchmark — distribute ex-units vs members", () => {
             status: "built ok",
           });
         }
-        // eslint-disable-next-line no-console
         console.table(rows);
       }),
     { timeout: 600_000 },

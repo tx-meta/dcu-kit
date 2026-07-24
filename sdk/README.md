@@ -18,12 +18,19 @@ pnpm add @tx-meta/dcu-kit
 Every endpoint returns a `ProgramRunner` with three execution methods:
 
 ```ts
-import { createAccount, CreateAccountConfig } from "@tx-meta/dcu-kit";
+import {
+  computeProfileCommitment,
+  createAccount,
+  CreateAccountConfig,
+} from "@tx-meta/dcu-kit";
 
 const config: CreateAccountConfig = {
   selected_out_ref: utxos[0],
-  email: "user@example.com",
-  phone: "555-0100",
+  // Optional: keep the profile and salt off-chain.
+  profileCommitment: computeProfileCommitment(
+    JSON.stringify({ name: "@alice" }),
+    saltHex,
+  ),
 };
 
 // Unsafe: throws on failure
@@ -64,7 +71,6 @@ const txHash = await signed.submit();
 | `updateGroup`    | Update group parameters               |
 | `deleteGroup`    | Delete an unstarted group             |
 | `terminateGroup` | Admin: terminate with penalty         |
-| `nextCycle`      | Advance to next ROSCA cycle           |
 
 ### Treasury Endpoints
 
@@ -81,6 +87,42 @@ const txHash = await signed.submit();
 | ------------------ | -------------------------------------- |
 | `deployScripts`    | Deploy validators as reference scripts |
 | `verifyDeployment` | Verify reference script UTxOs          |
+
+### Escrow (`@tx-meta/dcu-kit/escrow` — v1, and `@tx-meta/dcu-kit/escrow/v2`)
+
+Validators are versioned, never replaced: v1 keeps serving existing escrows on its
+original hash; v2 is a new validator generation for new contracts.
+
+v2 adds per-milestone deadlines with a grace (cure) window, `Upfront` and
+`PerMilestone` funding (`contribute` tops up), a timeout policy (`RefundToFunder`
+reclaim, or `ReleaseToBeneficiary` auto-release — "silence approves"), deliverable
+evidence hashes, party rotation (wallet migration / verifier handoff / assigning the
+receivable), consensual milestone amendment, an optional arbiter with dispute
+freeze + terminal split, and a Project anchor that groups escrows
+(`getProjectEscrows` = the funding dashboard).
+
+All parties are passed as plain bech32 addresses (script callers may pass
+`{ type, hash }`); no UI should ever ask a person for a credential or key.
+
+| Function (v2)                                              | Description                                              |
+| ---------------------------------------------------------- | -------------------------------------------------------- |
+| `createEscrow`                                             | Lock funds against a deadline-bearing milestone schedule |
+| `releaseMilestone`                                         | Verifier approves the next tranche                       |
+| `timeoutRelease`                                           | Crank an overdue tranche (auto-release escrows)          |
+| `reclaimEscrow`                                            | Funder recovers an overdue escrow (refund escrows)       |
+| `contribute`                                               | Fund-as-you-go top-up (`PerMilestone`)                   |
+| `submitEvidence`                                           | Beneficiary anchors a deliverable hash                   |
+| `rotateParty`                                              | A party replaces its own credential                      |
+| `amendMilestones`                                          | Funder + beneficiary reshape unreleased milestones       |
+| `raiseDispute`                                             | Freeze fund paths for the arbiter                        |
+| `resolveDispute`                                           | Arbiter's terminal split between the parties             |
+| `abortEscrow`                                              | Mutual-consent early exit                                |
+| `createProject` / `updateProject` / `closeProject`         | Project anchor lifecycle                                 |
+| `getEscrowState` / `getProjectState` / `getProjectEscrows` | Read-only queries                                        |
+
+Grace guidance: strict supplier delivery 3–7 days; professional services 14 days
+(the default); construction and grant reporting 30 days. Grace covers coordination
+lag — real project delays are handled by `amendMilestones`.
 
 ## Development
 
@@ -110,4 +152,6 @@ NETWORK=Emulator pnpm test -- -t "pattern"        # Filter by name
 
 ## License
 
-MIT
+Business Source License 1.1. See the repository's
+[LICENSE](https://github.com/tx-meta/dcu-kit/blob/main/LICENSE). Each published
+version converts to Apache-2.0 on its Change Date.

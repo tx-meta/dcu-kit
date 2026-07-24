@@ -3,7 +3,9 @@ import {
   CreateAccountConfig,
   accountPolicyId,
   assetNameLabels,
+  computeProfileCommitment,
 } from "@tx-meta/dcu-kit";
+import { randomBytes } from "node:crypto";
 import {
   makeLucid,
   cexplorerTxUrl,
@@ -50,24 +52,17 @@ async function main() {
       `No UTxOs in ${activeWallet} wallet. Please fund it first.`,
     );
 
-  // display_name is the raw UTF-8 string shown in the UI (ADA handle, username, etc.)
-  // contact is a secondary identifier (social handle, email address, etc.)
-  // Both are optional — omitting either defaults to the wallet address as a fallback.
-  const displayNames: Record<string, string> = {
-    ADMIN: "@admin",
-    USER1: "@user1",
-    USER2: "@user2",
-  };
-  const contacts: Record<string, string> = {
-    ADMIN: "admin@web3.ada",
-    USER1: "user1@web3.ada",
-    USER2: "user2@web3.ada",
-  };
+  // The account datum stores NO raw identity data — only an optional salted
+  // blake2b-256 profile commitment. Omit profileCommitment for the private
+  // default (""), or commit to an off-chain profile and STORE THE SALT +
+  // PROFILE yourself: they are what lets you later prove what was committed.
+  const profile = JSON.stringify({ name: `@${activeWallet.toLowerCase()}` });
+  const salt = randomBytes(32).toString("hex");
+  console.log("Profile salt (store this with the profile):", salt);
 
   const config: CreateAccountConfig = {
     selected_out_ref: utxos[0],
-    display_name: displayNames[activeWallet] ?? "@member",
-    contact: contacts[activeWallet] ?? "member@web3.ada",
+    profileCommitment: computeProfileCommitment(profile, salt),
   };
 
   console.log("Building transaction...");

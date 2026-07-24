@@ -74,10 +74,11 @@ async function main() {
   const PENALTY_FEE = 2_000_000n; // 2 ADA — adjust per your group's policy
 
   // --- Member cap ---
-  // Max number of members allowed in the group. distributePayout consumes one
-  // UTxO per member in a single tx; beyond ~30 members the tx may exceed the
-  // Cardano size/execution limits. Set to match your expected group size.
-  const MAX_MEMBERS = TEST_MODE ? 5n : 30n;
+  // Max number of members allowed in the group. The on-chain protocol ceiling is
+  // 20 (max_group_members) — distributePayout consumes one UTxO per member in a
+  // single tx and the execution budget is measured to that size. Set to match
+  // your expected group size, never above 20.
+  const MAX_MEMBERS = TEST_MODE ? 5n : 20n;
 
   const groupDatum: GroupDatum = {
     contribution_fee_policyid: "",
@@ -114,10 +115,13 @@ async function main() {
     //       and withdrawn later via ClaimPayout — the lost-wallet-safe mode.
     // Set PAYOUT_MODE=Pull to create a Pull-mode group.
     payout_mode: process.env.PAYOUT_MODE === "Pull" ? "Pull" : "Push",
-    // Minimum approvals required to authorize a lost-member recovery (absolute count).
-    recovery_threshold: 1n,
-    // Veto window before a recovery proposal can execute (POSIX ms). 3 days default;
-    // RECOVERY_TIMELOCK_MS shortens it for live testing.
+    // Minimum approvals required to authorize a lost-member recovery (absolute
+    // count). The envelope requires [2, max_members]; majority is the sensible
+    // default (3 of 5 in test mode, 10 of 20 otherwise).
+    recovery_threshold: (MAX_MEMBERS + 1n) / 2n,
+    // Veto window before a recovery proposal can execute (POSIX ms). 3 days
+    // default; RECOVERY_TIMELOCK_MS may lower it for live testing, but never
+    // below the on-chain floor of 86_400_000 (1 day).
     recovery_timelock: BigInt(process.env.RECOVERY_TIMELOCK_MS ?? "259200000"),
 
     member_count: 0n,
@@ -130,8 +134,8 @@ async function main() {
     // The round number the current era (rotation lap numbering) started at.
     era_start_round: 0n,
     // Minimum duration of a recommit window (POSIX ms) — the guaranteed free-exit
-    // period between eras. 3 days default; RECOMMIT_WINDOW_MS shortens it for
-    // live testing.
+    // period between eras. 3 days default; RECOMMIT_WINDOW_MS may lower it for
+    // live testing, but never below the on-chain floor of 86_400_000 (1 day).
     recommit_window: BigInt(process.env.RECOMMIT_WINDOW_MS ?? "259200000"),
     // Mutual reserve levies, in the CONTRIBUTION asset. 0n = off. Frozen once a
     // member joins. RESERVE_JOIN_LEVY fires once per join; RESERVE_ROUND_LEVY per

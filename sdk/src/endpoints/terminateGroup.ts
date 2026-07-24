@@ -5,7 +5,6 @@ import {
   RedeemerBuilder,
   Assets,
   toUnit,
-  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";

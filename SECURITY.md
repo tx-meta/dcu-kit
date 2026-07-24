@@ -8,7 +8,10 @@ they can still be fixed without migrating funds.
 
 This project is pre-1.0 and under active development. Only the latest release on the default branch is
 supported. Deployed on-chain validators are versioned by their script hash; report against the hash you
-are testing where possible.
+are testing where possible. `validator-registry.json` maps SDK versions to validator hashes and records
+each family's status (`launch` vs `experimental`); the rules for changing it are in `VERSIONING.md`,
+and the trust-boundary map is in `THREAT_MODEL.md`. `savings` and `governance` are experimental — not
+externally audited and not approved for mainnet or real funds.
 
 ## Reporting a vulnerability
 

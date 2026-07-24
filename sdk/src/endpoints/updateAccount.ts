@@ -16,21 +16,21 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  parseSafeDatum,
 } from "../core/utils/index.js";
 import {
   accountValidator,
   accountPolicyId,
 } from "../core/validators/constants.js";
-import { fromText } from "@lucid-evolution/lucid";
 
 // --- Configuration ---
 
 export type UpdateAccountConfig = {
   accountTokenSuffix: string;
-  // Raw UTF-8 display name. Defaults to wallet address when omitted.
-  display_name?: string;
-  // Raw UTF-8 secondary contact identifier. Defaults to wallet address when omitted.
-  contact?: string;
+  /** Salted profile commitment — 64 hex chars from `computeProfileCommitment`.
+   *  OMITTED = preserve the current on-chain value; explicit `""` = clear it.
+   *  An omitted update never silently destroys an existing commitment. */
+  profileCommitment?: string;
 };
 
 // --- Endpoint ---
@@ -39,19 +39,25 @@ export type UpdateAccountConfig = {
  * Creates an unsigned transaction for updating a DCU Account.
  *
  * **Functionality:**
- * - Updates the AccountDatum (`display_name`, `contact`) on-chain.
+ * - Updates the AccountDatum (`profile_commitment`) on-chain: omitted config
+ *   preserves the current commitment, explicit `""` clears it.
  * - Requires the User Auth NFT in the wallet for authorization.
  *
  * @param lucid - Lucid instance with wallet selected.
- * @param config - UpdateAccountConfig containing UTxOs and updated datum.
+ * @param config - UpdateAccountConfig (token suffix + optional commitment).
  * @returns Effect yielding TxSignBuilder.
  *
  * @example
  * ```typescript
+ * // Rotate the commitment
  * const program = unsignedUpdateAccountTxProgram(lucid, {
- *   account_utxo,
- *   user_utxo,
- *   account_datum: { ... }
+ *   accountTokenSuffix,
+ *   profileCommitment: computeProfileCommitment(profileJson, newSalt),
+ * });
+ * // Clear it
+ * const program = unsignedUpdateAccountTxProgram(lucid, {
+ *   accountTokenSuffix,
+ *   profileCommitment: "",
  * });
  * ```
  */
@@ -60,7 +66,7 @@ export const unsignedUpdateAccountTxProgram = (
   config: UpdateAccountConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
-    const { accountTokenSuffix, display_name, contact } = config;
+    const { accountTokenSuffix, profileCommitment } = config;
     const address = yield* getWalletAddress(lucid);
 
     const refUnit =
@@ -81,9 +87,29 @@ export const unsignedUpdateAccountTxProgram = (
       accountValidator.spendAccount,
     );
 
+    if (
+      profileCommitment !== undefined &&
+      profileCommitment !== "" &&
+      !/^[0-9a-fA-F]{64}$/.test(profileCommitment)
+    ) {
+      return yield* Effect.fail(
+        new TransactionBuildError({
+          operation: "updateAccount",
+          error:
+            'profileCommitment must be 64 hex characters, "" to clear, or omitted to preserve',
+        }),
+      );
+    }
+    // Omitted = preserve the current on-chain commitment.
+    const currentDatum = yield* parseSafeDatum<AccountDatum>(
+      account_utxo.datum,
+      AccountDatum,
+    );
     const accountDatum: AccountDatum = {
-      display_name: fromText(display_name ?? address),
-      contact: fromText(contact ?? address),
+      profile_commitment:
+        profileCommitment !== undefined
+          ? profileCommitment.toLowerCase()
+          : currentDatum.profile_commitment,
     };
     const datum = Data.to(accountDatum, AccountDatum);
 

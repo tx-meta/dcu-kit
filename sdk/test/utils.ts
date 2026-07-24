@@ -93,8 +93,9 @@ export const createDefaultGroupDatum = (
   collateral_rounds: 1n,
   // Push = current direct-wallet-payout behaviour (default). Pull groups override this.
   payout_mode: "Push",
-  // 1 = at least one member must approve a recovery proposal.
-  recovery_threshold: 1n,
+  // 2 = the envelope floor (min_recovery_threshold) — one member can never
+  // satisfy a recovery quorum alone.
+  recovery_threshold: 2n,
   // 259_200_000 ms = 3 days veto window before a recovery can execute.
   recovery_timelock: 259_200_000n,
   member_slots: [],

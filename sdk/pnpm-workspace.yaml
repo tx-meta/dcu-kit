@@ -1,0 +1,13 @@
+# pnpm >= 10 reads install settings from here; the "pnpm" field in
+# package.json is ignored by pnpm 11 (it kept purging node_modules and
+# skipping native build scripts under the version-managed shim).
+allowBuilds:
+  cbor-extract: true
+  esbuild: true
+  libsodium-sumo: true
+  libsodium-wrappers: true
+  libsodium-wrappers-sumo: true
+overrides:
+  libsodium-wrappers-sumo: 0.8.2
+  libsodium-sumo: 0.8.2
+  "tsup>esbuild": "^0.28.1"

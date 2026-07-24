@@ -64,6 +64,41 @@ export type ExampleState = {
   // identity of the last escrow created by escrow-create.ts.
   escrowStateTokenName?: string;
 
+  // Escrow v2 generation (@tx-meta/dcu-kit/escrow/v2 — versioned beside v1).
+  // The 11 KB v2 script is deployed once as a reference script; pool
+  // allocations require it and every other v2 tx gets smaller by it.
+  scriptRefEscrowV2?: ScriptRefOutRef;
+  escrowV2StateTokenName?: string; // last escrow created by escrow-v2-create
+  projectTokenName?: string; // project anchor minted by project-create
+  poolTokenName?: string; // pool anchor minted by pool-create
+  poolEscrowStateTokenName?: string; // escrow seeded by pool-allocate
+
+  // Savings module (@tx-meta/dcu-kit/savings — primitives #7 + #8,
+  // standalone family). One fund at a time in the sweep; member suffixes per
+  // wallet. The ~15.6KB validator must ride as a reference script.
+  scriptRefSavings?: ScriptRefOutRef;
+  savingsFundTokenName?: string;
+  savingsLoanTokenName?: string;
+  savingsMemberSuffix?: string; // USER1
+  savingsMemberSuffixUser2?: string; // USER2
+  savingsMemberSuffixAdmin?: string; // ADMIN
+
+  // Governance module (@tx-meta/dcu-kit/governance — primitive #9, standalone
+  // family). The instance is PER-SEED: buildGovernance(governanceSeed) re-derives
+  // every hash (settings policy → dispatcher → gate, plus the voting stake
+  // validator), so the seed OutRef is the only durable identity we persist.
+  // The dispatcher (~7.5KB) and voting (~10KB) scripts no longer fit inline
+  // together in one tx — governance-init deploys them as reference scripts.
+  governanceSeed?: ScriptRefOutRef;
+  scriptRefGovernanceDispatcher?: ScriptRefOutRef;
+  scriptRefGovernanceVoting?: ScriptRefOutRef;
+  governanceProposalId?: string; // last proposal opened by governance-propose
+  // The eligibility token unit (charter member_policy + a name) the opener/voter
+  // spends to prove membership, and the governed vault's state-token unit the
+  // gate binds a decision to.
+  governanceMemberUnit?: string;
+  governanceTargetUnit?: string;
+
   // Native multisig built by create-multisig.ts. The script CBOR is the
   // spendability proof for assign-admin (destinationScript) and the witness
   // update-group / delete-group attach (adminScript) when the group admin 222
@@ -83,6 +118,18 @@ export function accountSuffixKey(activeWallet: string): AccountSuffixKey {
   if (activeWallet === "ADMIN") return "adminAccountTokenSuffix";
   if (activeWallet === "USER2") return "user2AccountTokenSuffix";
   return "accountTokenSuffix";
+}
+
+export type SavingsSuffixKey =
+  | "savingsMemberSuffix"
+  | "savingsMemberSuffixUser2"
+  | "savingsMemberSuffixAdmin";
+
+/** Maps ACTIVE_WALLET to its state.json key for the savings member suffix. */
+export function savingsSuffixKey(activeWallet: string): SavingsSuffixKey {
+  if (activeWallet === "ADMIN") return "savingsMemberSuffixAdmin";
+  if (activeWallet === "USER2") return "savingsMemberSuffixUser2";
+  return "savingsMemberSuffix";
 }
 
 /** Returns current slot index and ms until the next slot boundary. */

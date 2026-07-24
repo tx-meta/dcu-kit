@@ -35,3 +35,5 @@ tmp/
 
 # Local deployment state (per-wallet, never commit)
 sdk/examples/state.json
+sdk/examples/state.json.bak-*
+sdk/state.json

@@ -1,7 +1,7 @@
 /**
  * Update Account Example
  *
- * Updates the email/phone hashes on an existing DCU account.
+ * Rotates the salted profile commitment on an existing DCU account.
  *
  * Token suffix resolution order:
  *   1. state.json (accountTokenSuffix) — set by create-account.ts
@@ -13,7 +13,9 @@ import {
   UpdateAccountConfig,
   accountPolicyId,
   assetNameLabels,
+  computeProfileCommitment,
 } from "@tx-meta/dcu-kit";
+import { randomBytes } from "node:crypto";
 import { makeLucid, cexplorerTxUrl, logError } from "./context.js";
 import {
   loadState,
@@ -75,10 +77,17 @@ async function main() {
     saveState({ [suffixKey]: accountTokenSuffix });
   }
 
+  // Rotate the profile commitment (a fresh salt makes the new commitment
+  // unlinkable to the old one). Omit profileCommitment to preserve the current
+  // on-chain value; pass "" to clear it.
+  const salt = randomBytes(32).toString("hex");
+  console.log("New profile salt (store this with the profile):", salt);
   const config: UpdateAccountConfig = {
     accountTokenSuffix,
-    display_name: "updated_alice",
-    contact: "updated@dcu.io",
+    profileCommitment: computeProfileCommitment(
+      '{"name":"updated_alice"}',
+      salt,
+    ),
   };
 
   console.log("Building transaction...");

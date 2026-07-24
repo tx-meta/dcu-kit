@@ -524,6 +524,9 @@ Nothing
     - *`start_time`*: Must be 0 at creation — `StartGroup` sets this to the transaction's validity range lower bound.
     - *`member_token_names`*: Must be an empty list `[]` at creation.
     - *`collateral_rounds`*: Must be in `[1, max_members]` (`1` = PerRound default, `max_members` = FullUpfront, any `k` = partial).
+    - *`recovery_threshold`*: Must be in `[2, max_members]` — a single member must never satisfy a recovery quorum alone. (Consequence: `max_members = 1` groups cannot be created.)
+    - *`recovery_timelock`*: Must be ≥ 86,400,000 ms (1 day) — every group keeps a real veto window.
+    - *`recommit_window`*: Must be ≥ 86,400,000 ms (1 day) — a re-seal can never happen without an opt-out window.
     - *`admin_payment_credential`*: Must be exactly 28 bytes (a valid payment key hash).
     - The Group Reference NFT must be the only token under this policy in the script output (exact token check).
     - The Group User NFT must go to a VerificationKey address — if sent to a script, admin authority is permanently lost.
@@ -591,7 +594,15 @@ Nothing
 
 - *`payout_mode: PayoutMode`* How the pot is delivered to each round's borrower — `Push` or `Pull`. `Push` (the default) pays the borrower's wallet directly. `Pull` earmarks the pot into the borrower's own Treasury UTxO (`claimable_balance`) for later withdrawal via `ClaimPayout`, which solves the lost-wallet problem (the recipient proves control at claim time and may redirect to any address). Only the *credit* side differs; the per-round debit is identical. Fixed at creation; a critical field frozen once any member is active. See the Treasury `DistributeRound` and `ClaimPayout` validation.
 
+- *`recovery_threshold: Int`* M-of-N member approvals required to authorize a lost-member recovery (absolute count, not a fraction — membership is dynamic). Validated `2 ≤ recovery_threshold ≤ max_members` at creation and by every pre-join update; clamped at execution to `max(1, min(recovery_threshold, member_count − 1))` so a shrunken group keeps a reachable quorum.
+
+- *`recovery_timelock: Int`* Mandatory delay (POSIX ms) between proposing a recovery and being allowed to execute it — the veto window in which the real holder can `CancelRecovery`. Must be ≥ 86,400,000 (1 day). Default: 259,200,000 (3 days).
+
+- *`recommit_window: Int`* Minimum POSIX ms between `BeginRecommit` and the re-sealing `StartGroup` — the free-exit (opt-out) window. Must be ≥ 86,400,000 (1 day). Frozen once any member has joined.
+
 *Note:* All fee amounts, policy IDs, asset names, `collateral_rounds`, and `payout_mode` are *critical fields* — they cannot be changed via `UpdateGroup` while `member_count > 0`. Changing a fee's currency is as disruptive as changing its amount.
+
+*Pre-join re-validation.* While `member_count == 0`, `UpdateGroup` may change any config field, but the updated output must satisfy the SAME config envelope as creation (`is_group_config_valid`), keep CIP-68 `version == 1` and a non-empty metadata `name`, and keep every lifecycle field in its creation state (`member_count`, `active_member_count`, `num_intervals`, `start_time`, `last_distributed_round`, `member_token_names`, `member_slots`, `era_start_round`, `is_started`). An update can never publish a group state that creation would reject.
 
 \
 
@@ -791,11 +802,9 @@ Nothing
   
   - Ensure the output (at* `output_index`*) must be sent to the Account Script's address and must carry an Account datum.
   
-  - Ensure the datum includes valid account detail:
+  - Ensure the datum is valid:
 
-    - *`email_hash`:* Must be 32 bytes long, or
-
-    - *`phone_hash`:* Must be 32 bytes long.  
+    - *`profile_commitment`:* Must be exactly 0 bytes (no profile) or exactly 32 bytes (a full blake2b-256 commitment).
   
   - The User NFT must not be sent to the script.
   
@@ -818,9 +827,7 @@ Nothing
 
 ===== Datum <account-datum>
 \
-- *`email_hash: Hash<ByteArray, Sha2_256>`:* A hash (using Sha2_256) of the member's email as a ByteArray. This must be exactly 32 bytes long.
-
-- *`phone_hash: Hash<ByteArray, Sha2_256>`:* A hash (using Sha2_256) of the member's phone number as a ByteArray. This must also be exactly 32 bytes long.
+- *`profile_commitment`: ```rs ByteArray```* – Optional blake2b-256 commitment to a salted off-chain profile. Must be exactly 0 bytes (`""`, no profile — the default) or exactly 32 bytes. The chain stores only the commitment; the profile preimage and its 32-byte salt stay with the account holder / product layer. Construction: `blake2b-256(UTF8("dcu:profile:v1\0") || salt || UTF8(profile))`. No personally identifying information is ever stored on-chain.
 \
 ===== Redeemer
 \
@@ -854,7 +861,7 @@ Nothing
   
   - The output (at *`account_output_index`*) must be sent to the Account Script's address and it must carry an updated Account datum.
   
-  - The updated Account datum must satisfy metadata validation, ensuring that contact details remain correctly formatted.
+  - The updated Account datum must satisfy `profile_commitment` length 0 or 32 (`[spec AccountDatum 1]`).
   
   - The Reference NFT must be forwarded correctly to the spending endpoint. 
   
