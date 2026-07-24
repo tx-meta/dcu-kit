@@ -98,14 +98,20 @@ jobs:
             echo "already_published=false" >> $GITHUB_OUTPUT
           fi
 
+      # cdxgen reads pnpm-lock.yaml directly. @cyclonedx/cyclonedx-npm shells out
+      # to `npm ls`, which cannot read pnpm's node_modules and exits non-zero.
+      # SBOM generation is evidence, not a release gate: continue-on-error keeps a
+      # tooling failure from blocking the publish.
       - name: 🧾 Generate SBOM (CycloneDX)
         if: steps.version_check.outputs.already_published == 'false'
-        run: |
-          pnpm dlx @cyclonedx/cyclonedx-npm@6.0.0 --omit dev \
-            --output-file sbom.cdx.json
+        continue-on-error: true
+        env:
+          FETCH_LICENSE: "false"
+        run: pnpm dlx @cyclonedx/cdxgen@11.11.0 -t pnpm -o sbom.cdx.json .
 
       - name: 📤 Attach SBOM to release
         if: steps.version_check.outputs.already_published == 'false' && github.event_name == 'release'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ github.event.release.tag_name }}" sbom.cdx.json --clobber
