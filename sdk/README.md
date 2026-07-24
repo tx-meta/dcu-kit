@@ -18,12 +18,19 @@ pnpm add @tx-meta/dcu-kit
 Every endpoint returns a `ProgramRunner` with three execution methods:
 
 ```ts
-import { createAccount, CreateAccountConfig } from "@tx-meta/dcu-kit";
+import {
+  computeProfileCommitment,
+  createAccount,
+  CreateAccountConfig,
+} from "@tx-meta/dcu-kit";
 
 const config: CreateAccountConfig = {
   selected_out_ref: utxos[0],
-  email: "user@example.com",
-  phone: "555-0100",
+  // Optional: keep the profile and salt off-chain.
+  profileCommitment: computeProfileCommitment(
+    JSON.stringify({ name: "@alice" }),
+    saltHex,
+  ),
 };
 
 // Unsafe: throws on failure
@@ -64,7 +71,6 @@ const txHash = await signed.submit();
 | `updateGroup`    | Update group parameters               |
 | `deleteGroup`    | Delete an unstarted group             |
 | `terminateGroup` | Admin: terminate with penalty         |
-| `nextCycle`      | Advance to next ROSCA cycle           |
 
 ### Treasury Endpoints
 
@@ -146,4 +152,6 @@ NETWORK=Emulator pnpm test -- -t "pattern"        # Filter by name
 
 ## License
 
-MIT
+Business Source License 1.1. See the repository's
+[LICENSE](https://github.com/tx-meta/dcu-kit/blob/main/LICENSE). Each published
+version converts to Apache-2.0 on its Change Date.

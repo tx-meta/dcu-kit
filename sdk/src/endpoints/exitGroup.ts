@@ -100,6 +100,24 @@ export const unsignedExitGroupTxProgram = (
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
 
+    // The group's own reference (100) token name — used both to bind the exit to
+    // THIS group in the treasury scan below and later in the redeemers. A member's
+    // treasury (222) token name is derived from their account, so a member of
+    // several groups has identically-named treasury UTxOs; matching on the member
+    // name alone would pick an arbitrary group's treasury. The group_reference_tokenname
+    // in each TreasuryState is the only field that distinguishes them.
+    const groupRefEntry = Object.keys(groupUtxo.assets).find((k) =>
+      k.startsWith(groupPolicyId),
+    );
+    if (!groupRefEntry)
+      return yield* Effect.fail(
+        new UtxoNotFoundError({
+          tokenName: "GroupReference (100)",
+          address: groupUtxo.address,
+        }),
+      );
+    const groupRefName = groupRefEntry.slice(groupPolicyId.length);
+
     const treasuryAddress = yield* getScriptAddress(
       lucid,
       treasuryValidator.spendTreasury,
@@ -155,6 +173,7 @@ export const unsignedExitGroupTxProgram = (
         if (
           parsed &&
           "TreasuryState" in parsed &&
+          parsed.TreasuryState.group_reference_tokenname === groupRefName &&
           candidateRefNames.has(parsed.TreasuryState.member_reference_tokenname)
         ) {
           return {
@@ -190,18 +209,6 @@ export const unsignedExitGroupTxProgram = (
 
     const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
     const groupDatum = groupCip68.groupDatum;
-
-    const groupRefAssetEntry = Object.keys(groupUtxo.assets).find((k) =>
-      k.startsWith(groupPolicyId),
-    );
-    if (!groupRefAssetEntry)
-      return yield* Effect.fail(
-        new UtxoNotFoundError({
-          tokenName: "GroupReference (100)",
-          address: groupUtxo.address,
-        }),
-      );
-    const groupRefName = groupRefAssetEntry.slice(groupPolicyId.length);
 
     const memberToken = toUnit(treasuryPolicyId, memberRefName);
     // ADA-penalty groups: the PenaltyState UTxO must hold penalty_fee of *contributable*

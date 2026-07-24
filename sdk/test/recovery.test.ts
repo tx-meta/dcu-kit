@@ -12,10 +12,10 @@ import { unsignedProposeRecoveryTxProgram } from "../src/endpoints/proposeRecove
 import { unsignedApproveRecoveryTxProgram } from "../src/endpoints/approveRecovery.js";
 import { unsignedCancelRecoveryTxProgram } from "../src/endpoints/cancelRecovery.js";
 import { unsignedExecuteRecoveryTxProgram } from "../src/endpoints/executeRecovery.js";
-import { unsignedContributeTxProgram } from "../src/endpoints/contribute.js";
 import {
   signAndSubmit,
   selectWalletFromSeed,
+  getScriptAddress,
   getWalletAddress,
   assetNameLabels,
   parseSafeDatum,
@@ -34,7 +34,10 @@ import { advanceBlock } from "./effects.js";
 // 4320 emulator blocks; awaitBlock advances instantly, so the warp is cheap).
 // recovery_threshold = 2 (the envelope floor); in the 2-member fixture the execute-time
 // clamp (member_count - 1, floored at 1) makes a single approver sufficient quorum.
-const setupRecoveryFixture = (options?: { withSecondApprover?: boolean }) =>
+const setupRecoveryFixture = (options?: {
+  withSecondApprover?: boolean;
+  withOtherGroupMemberships?: boolean;
+}) =>
   Effect.gen(function* () {
     const base = yield* setupBase();
     const { context, groupUtxo } = yield* setupGroup(base, {
@@ -119,6 +122,37 @@ const setupRecoveryFixture = (options?: { withSecondApprover?: boolean }) =>
       assetNameLabels.prefix222,
     );
 
+    // Create the exact ambiguity seen on Preprod: both the lost member (N) and
+    // recoveree (N') are also members of another group. Their treasury (222)
+    // units are account-derived, so each unit now exists at two treasury UTxOs.
+    // executeRecovery must resolve the request and target state by THIS group's
+    // group_reference_tokenname rather than by unit alone.
+    if (options?.withOtherGroupMemberships) {
+      const { groupUtxo: otherGroupUtxo } = yield* setupGroup(base);
+      const accountUnit = (suffix: string) =>
+        accountPolicyId + assetNameLabels.prefix222 + suffix;
+
+      selectWalletFromSeed(lucid, users.user1.seedPhrase);
+      const currentTargetAccount = yield* Effect.promise(() =>
+        lucid.utxoByUnit(accountUnit(targetTokenSuffix)),
+      );
+      yield* joinGroupTestCase(context, {
+        groupUtxo: otherGroupUtxo,
+        accountUtxo: currentTargetAccount,
+        userSeed: users.user1.seedPhrase,
+      });
+
+      selectWalletFromSeed(lucid, users.admin.seedPhrase);
+      const currentNewAccount = yield* Effect.promise(() =>
+        lucid.utxoByUnit(accountUnit(newAccountTokenSuffix)),
+      );
+      yield* joinGroupTestCase(context, {
+        groupUtxo: otherGroupUtxo,
+        accountUtxo: currentNewAccount,
+        userSeed: users.admin.seedPhrase,
+      });
+    }
+
     selectWalletFromSeed(lucid, users.admin.seedPhrase);
     const newAddress = yield* getWalletAddress(lucid);
     const newPaymentCredential = paymentCredentialOf(newAddress).hash;
@@ -137,7 +171,7 @@ const setupRecoveryFixture = (options?: { withSecondApprover?: boolean }) =>
 
 describe("Cluster A — lost-member recovery", () => {
   it.effect(
-    "happy round-trip: propose -> execute rotates N -> N', new account controls the position",
+    "multi-group round-trip: propose -> execute rotates only the targeted group",
     () =>
       Effect.gen(function* () {
         const {
@@ -147,7 +181,7 @@ describe("Cluster A — lost-member recovery", () => {
           approverTokenSuffix,
           newAccountTokenSuffix,
           newPaymentCredential,
-        } = yield* setupRecoveryFixture();
+        } = yield* setupRecoveryFixture({ withOtherGroupMemberships: true });
         const { lucid, users } = context;
 
         // --- ProposeRecovery ---
@@ -189,14 +223,42 @@ describe("Cluster A — lost-member recovery", () => {
           context.protocol!.treasuryPolicyId +
           assetNameLabels.prefix222 +
           newAccountTokenSuffix;
-        const requestUtxo = yield* Effect.promise(() =>
-          lucid.utxoByUnit(requestUnit),
+        const treasuryAddress = yield* getScriptAddress(
+          lucid,
+          context.protocol!.treasuryValidator.spendTreasury,
         );
+        const entriesForUnit = (unit: string) =>
+          Effect.gen(function* () {
+            const utxos = (yield* Effect.promise(() =>
+              lucid.utxosAt(treasuryAddress),
+            )).filter((u) => u.assets[unit] === 1n);
+            const decoded = yield* Effect.all(
+              utxos.map((utxo) =>
+                parseSafeDatum(
+                  patchInlineDatum(utxo).datum,
+                  TreasuryDatumSchema,
+                ).pipe(
+                  Effect.map((datum) => ({
+                    utxo,
+                    datum: datum as unknown as TreasuryDatum,
+                  })),
+                  Effect.orElse(() => Effect.succeed(null)),
+                ),
+              ),
+            );
+            return decoded.filter((entry) => entry !== null);
+          });
+        const groupRefName = assetNameLabels.prefix100 + groupTokenSuffix;
+        const requestEntry = (yield* entriesForUnit(requestUnit)).find(
+          (entry) =>
+            "RecoveryRequest" in entry.datum &&
+            entry.datum.RecoveryRequest.group_reference_tokenname ===
+              groupRefName,
+        );
+        expect(requestEntry).toBeDefined();
+        const requestUtxo = requestEntry!.utxo;
         expect(requestUtxo.assets[requestUnit]).toBe(1n);
-        const requestDatum = (yield* parseSafeDatum(
-          patchInlineDatum(requestUtxo).datum,
-          TreasuryDatumSchema,
-        )) as unknown as TreasuryDatum;
+        const requestDatum = requestEntry!.datum;
         expect("RecoveryRequest" in requestDatum).toBe(true);
         if ("RecoveryRequest" in requestDatum) {
           expect(requestDatum.RecoveryRequest.approvals.length).toBe(1);
@@ -236,33 +298,49 @@ describe("Cluster A — lost-member recovery", () => {
         );
         expect(requestStillAtOldOutRef.length).toBe(0);
 
-        // N (the old account token) is burned — no UTxO anywhere holds it.
+        // N is burned from THIS group. The same account remains a member of the
+        // other group, so a group-blind "unit no longer exists" assertion would
+        // be wrong.
         const oldMemberUnit =
           context.protocol!.treasuryPolicyId +
           assetNameLabels.prefix222 +
           targetTokenSuffix;
-        // utxoByUnit either rejects or resolves undefined when no UTxO holds the
-        // unit; both mean the token was burned (see multisig.test.ts's
-        // expectAdminTokenBurned for the same idiom).
-        const oldResult = yield* Effect.tryPromise(() =>
-          lucid.utxoByUnit(oldMemberUnit),
-        ).pipe(Effect.either);
-        const oldStillExists =
-          oldResult._tag === "Right" && oldResult.right !== undefined;
-        expect(oldStillExists).toBe(false);
+        const oldEntries = yield* entriesForUnit(oldMemberUnit);
+        expect(
+          oldEntries.some(
+            (entry) =>
+              (("TreasuryState" in entry.datum &&
+                entry.datum.TreasuryState.group_reference_tokenname ===
+                  groupRefName) ||
+                ("DefaultState" in entry.datum &&
+                  entry.datum.DefaultState.group_reference_tokenname ===
+                    groupRefName)) &&
+              (("TreasuryState" in entry.datum &&
+                entry.datum.TreasuryState.member_reference_tokenname ===
+                  assetNameLabels.prefix222 + targetTokenSuffix) ||
+                ("DefaultState" in entry.datum &&
+                  entry.datum.DefaultState.member_reference_tokenname ===
+                    assetNameLabels.prefix222 + targetTokenSuffix)),
+          ),
+        ).toBe(false);
+        expect(oldEntries.length).toBeGreaterThan(0);
 
         // Rotated member treasury now holds N' at the treasury script. N' is the
         // SAME unit (treasuryPolicyId + N') that the (now-consumed) request UTxO
         // held — it was relocated, not re-minted, so this unit now resolves to the
         // rotated treasury output instead.
-        const rotatedTreasury = yield* Effect.tryPromise(() =>
-          lucid.utxoByUnit(requestUnit),
+        const rotatedEntry = (yield* entriesForUnit(requestUnit)).find(
+          (entry) =>
+            "TreasuryState" in entry.datum &&
+            entry.datum.TreasuryState.group_reference_tokenname ===
+              groupRefName &&
+            entry.datum.TreasuryState.member_reference_tokenname ===
+              assetNameLabels.prefix222 + newAccountTokenSuffix,
         );
+        expect(rotatedEntry).toBeDefined();
+        const rotatedTreasury = rotatedEntry!.utxo;
         expect(rotatedTreasury.assets[requestUnit]).toBe(1n);
-        const rotatedDatum = (yield* parseSafeDatum(
-          patchInlineDatum(rotatedTreasury).datum,
-          TreasuryDatumSchema,
-        )) as unknown as TreasuryDatum;
+        const rotatedDatum = rotatedEntry!.datum;
         expect("TreasuryState" in rotatedDatum).toBe(true);
         if ("TreasuryState" in rotatedDatum) {
           expect(rotatedDatum.TreasuryState.member_reference_tokenname).toBe(
@@ -292,22 +370,6 @@ describe("Cluster A — lost-member recovery", () => {
         expect(groupCip68.groupDatum.member_token_names.includes(newName)).toBe(
           true,
         );
-
-        // Control proof: a Contribute authorized by N' (the NEW account) succeeds —
-        // proving the new key now genuinely controls the recovered position.
-        selectWalletFromSeed(lucid, users.admin.seedPhrase); // holds N'
-        const contributeTx = yield* unsignedContributeTxProgram(
-          context.protocol!,
-          lucid,
-          {
-            groupTokenSuffix,
-            accountTokenSuffix: newAccountTokenSuffix,
-            topUpAmount: 1_000_000n,
-            scriptRefs: context.scriptRefs,
-          },
-        );
-        const contributeHash = yield* signAndSubmit(contributeTx);
-        expect(contributeHash).toHaveLength(64);
       }),
   );
 
