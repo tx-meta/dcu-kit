@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "sdkVersion": "0.5.5",
+  "sdkVersion": "0.5.6-preprod.0",
   "families": {
     "rosca": {
       "status": "launch",
@@ -99,6 +99,12 @@
     }
   },
   "history": [
+    {
+      "date": "2026-07-24",
+      "sdkVersion": "0.5.6-preprod.0",
+      "changed": [],
+      "note": "Pre-production 0.5.6 release; validator fingerprints unchanged from 0.5.5."
+    },
     {
       "date": "2026-07-17",
       "sdkVersion": "0.5.5",

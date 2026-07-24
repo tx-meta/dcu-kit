@@ -1,0 +1,86 @@
+{
+  "session": "P2 day 2 (2026-07-20)",
+  "deployment": {
+    "settingsPolicy": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d",
+    "sdkTarball": "dcu-kit-0.5.5.tgz",
+    "closingE1": "evidence/verify-protocol-deployment-2026-07-20T20-52-02-841Z.json",
+    "e1Result": "PASS — 6/6 refs CBOR+hash, settings datum consistent, 4/4 stake registered, registry fingerprints match (validators byte-identical to day 1)"
+  },
+  "rowsCompletedLive": {
+    "B14_recommit_reseal": {
+      "group": "cb57d564125ecb8e41b8da8127bbc05193ef4aaddfffee6a67234648",
+      "reseal_tx": "8ac3ead61eef7d674a756fc32b0f3262b565831e7cd1fb82a3ad159aa21e75d5",
+      "result": "re-seal after the recommit window closed; is_started=true, num_rounds=2, new start_time 2026-07-20T15:36:23Z (new era). Timelock (2026-07-18T12:21:02Z) satisfied.",
+      "note": "members 34bca0e7 + 1053643c (924fe76f had exited and been replaced during the day-1 in-window swap)"
+    },
+    "B12_update_payout_credential": {
+      "group": "cb57d564125ecb8e41b8da8127bbc05193ef4aaddfffee6a67234648",
+      "member_account": "1053643ca0010f8b45220eb77a2cc3f662b1a0aa96e78ee6c2415cdd",
+      "tx": "69dbb500d06aba0e4cdbaf9bb922f1179ef4e49e80df84ffdcf6c8ad906da6ff",
+      "result": "payout credential re-derived and verified from the ADMIN signer on the re-sealed group member"
+    },
+    "B18_assign_admin": {
+      "group": "88608c45b86239f4b423998f72531f9905d17efc227b2d03a782c693",
+      "tx": "bc94922194583b55546071b20452764c1d107a83609167a2bbb86479f3e8fdab",
+      "result": "group admin (222) token moved USER1 -> ADMIN (one-way transfer, destination verified)"
+    },
+    "B20_delete_account": {
+      "account": "e2e1808e8a02bc534cc316ba43a928a2d7b9daad37c4e0f0a51ba06c",
+      "tx": "b4520ed7e4b4588d171b14ce1e632bec1517b2bcbe3ea9ffafa52cc85f6f234b",
+      "result": "membership-free spare account (from the day-1 account-lifecycle test) burned — both 100+222 tokens"
+    },
+    "B11_pull_lifecycle": {
+      "group": "0a03ce1141771f815e70980f05e11630a06954f5ecbb39cdda97c0fb",
+      "payout_mode": "Pull",
+      "members": { "admin_slot0": "f089aa9903fe757604e51e92ca50655336543fb6656524b2f3b98363", "user2_slot1": "9015ab0f56c402d5293d57bbec74fb1478e6906c6f0b0bdc01762250" },
+      "txs": {
+        "create": "5a758a31f165163711badff05afdd09599390bd7ff2671c57ed0acd59b76098b",
+        "admin_join": "26242795ced021fe8b7edbde4cee8a25f9118c95fa6d5aa129d6d7e516485268",
+        "user2_join": "178942e89c9ae721a60abcbaa1e993cc1ed3a94f0c2a48addaadb242e1feb0b5",
+        "start": "d9c859ae963a90c963fb75c6533b2e60f87bde1ce78a2265f20e9638b737ceeb",
+        "distribute_round0_earmark": "f02139976329bce49a9116110ff9af8930f212e8c50dcfd453fa67766900b91f",
+        "claim_payout": "64b1685153b65133490169489bff17ddcce1ce4c98a1b563261fae3b82fd8277"
+      },
+      "result": "Pull mode: distribute earmarked 10 ADA into the borrower's own treasury (claimable_balance); claim-payout withdrew it, claimable_balance reset to 0"
+    },
+    "B13_default_grace_terminate": {
+      "group": "67e271ede550a9e4dbcc5bc8b83af2556f18d2eef0e7b58d01da4217",
+      "grace_period_length_ms": 90000,
+      "members": { "admin_slot0_borrower": "7485f7a3db9fd26a1f520470e3d04339f029e4cb86a98f144bd6ff77", "user2_slot1_defaulter": "86b20a8138f8e47e46bd3f52b9cf63029194c5677726c7697d9d3456" },
+      "txs": {
+        "create": "cc6c907e8f988b5a4b78dd0ca841b2d084e7e202534375fee6b8fb3f343e5bb1",
+        "admin_join": "afceb5373f34a7def53dfee26c4657d43cfa18c57f539c34683d474483385fc0",
+        "user2_join_min_deposit": "5e7e8fd33ffbb6508976984a02dc20224df4578b92140d63c67e5d91d48b8ef8",
+        "start": "246c4bf44c7397b074c5a96dbeb86de951ee4710a301e5a977aa658aff2ecc2c",
+        "distribute_round0_triggers_default": "314c5b98efc1343abae0ed4e461bcc50eb0ab3ea5b47832db531a8b4c7f387ee",
+        "extend_grace_window": "8e6bf4620896e2593bf22568dbc1986f17e8f2f15b305313100c43cbdad53781",
+        "terminate_default": "f236ffc009e863f18756a39f6bb297e0fd46b2a9d8fc06f36bcf1ee25ee40bef"
+      },
+      "result": "under-collateralized slot-1 member entered DefaultState on distribute (grace_expires set); extend-grace-window recorded grace_extensions_used=1; after grace expiry terminate-default burned the member, forfeited collateral, decremented member_count"
+    }
+  },
+  "rowsBlocked": {
+    "finding": "Offchain multi-group member resolution: CIP-68 treasury (222) token names derive from the account, not the group, so a member of several groups (or a recoveree who also holds a membership elsewhere) has identically-named treasury UTxOs. exitGroup's treasury scan matched member_reference_tokenname only (group-blind) and executeRecovery used lucid.utxoByUnit (throws on the ambiguity). Validators are NOT affected — they correctly rejected the mismatched exit ('Withdraw[0] validator crashed').",
+    "B15_execute_recovery": {
+      "group": "58aab8c8ddb493de871f2281c2552302de157e79b11fc8ff6632ae62",
+      "target_lost": "b314ee9cd6b87c8e2916768684318b38adcad80e3fd5375c829a68bb",
+      "recoveree_new": "ad864b5741b2775a94ccba936602eff06de5b20d127e50257e7d3c7f",
+      "status": "BLOCKED on frozen 0.5.5: both the request token (ad864b57) and the member-treasury token (b314ee9c) resolved ambiguously because both accounts are also members of group 88608c45 (day-1 reuse). Timelock (2026-07-18T11:37:15Z) is satisfied. USER2 exit from 88608c45 (tx 8ae9742701fba9e87bd2d64632f60108b9563ed474f2bfb63452dabb14c18030) cleared the request-side collision; the member-side needs b314ee9c's 88608c45 exit, which hits the same bug.",
+      "validatorProof": "execute-recovery happy round-trip proven on-chain in the 2026-07-05 Preprod sweep and in test/recovery.test.ts; validators byte-identical to that (E1 registry fingerprints match)."
+    },
+    "B19_delete_group_88608c45": {
+      "group": "88608c45b86239f4b423998f72531f9905d17efc227b2d03a782c693",
+      "status": "PARTIAL/BLOCKED: USER2 exited live (8ae9742701...); B18 assign-admin done live. delete-group needs member_count=0, which needs b314ee9c's exit — blocked by the same multi-group bug on frozen 0.5.5.",
+      "validatorProof": "exit-group (single-group) proven live this session (USER2 exit 8ae97427); delete-group proven in test/group.test.ts."
+    }
+  },
+  "fixPrepared": {
+    "files": ["sdk/src/endpoints/exitGroup.ts", "sdk/src/endpoints/executeRecovery.ts", "sdk/test/group.test.ts"],
+    "exitGroup": "treasury scan now also requires group_reference_tokenname === the target group's ref name",
+    "executeRecovery": "request + member-treasury UTxOs resolved by a group-scoped scan of the treasury address instead of the ambiguous utxoByUnit",
+    "test": "new test/group.test.ts case 'exitGroup: a member of two groups exits only the targeted group' — RED without the fix (reproduces the live 'Withdraw[0] validator crashed'), GREEN with it",
+    "verification": "tsc --noEmit clean; recovery.test.ts + group.test.ts = 20/20 pass",
+    "status": "UNCOMMITTED. Offchain-only, zero validator-hash change (E1 re-confirmed). B15 + B19 can be completed live only after the 0.5.5 tarball is rebuilt with this fix — that rebuild is left for your decision (see handoff)."
+  },
+  "D4_deferred": "low incremental assurance per the matrix's own analysis: emulator-tested, sibling live in D3, escrow bytecode byte-identical to the 2026-07-11 sweep where pool-allocate (both modes) was already live-proven."
+}

@@ -6,6 +6,34 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+## [0.5.6-preprod.0] - 2026-07-24
+
+Pre-production npm release for the final Preprod acceptance pass. Validator
+fingerprints are unchanged from 0.5.5.
+
+### Fixed
+
+- `exitGroup` and `executeRecovery` now resolve treasury states within the
+  selected group. Accounts that belong to multiple groups no longer produce an
+  ambiguous account-derived treasury token lookup.
+- The package export map now exposes the CommonJS files already produced by the
+  build for every public entry point.
+
+### Changed
+
+- Prerelease versions publish under their prerelease npm dist-tag (for example,
+  `0.5.6-preprod.0` publishes as `preprod`) and cannot replace `latest`.
+- Prereleases may publish only from `staging`; stable versions remain restricted
+  to `main`.
+- Dependency audit runs only after the build, registry, and test gates.
+- pnpm 11 install policy lives exclusively in `sdk/pnpm-workspace.yaml`; the
+  ignored legacy `package.json#pnpm` field was removed. The standalone examples
+  workspace now follows the same rule and has a reproducible prerelease lockfile.
+- SDK README examples now match the profile-commitment account API and the
+  BUSL-1.1 license.
+- CODEOWNERS now names the repository's actual maintainers instead of a
+  placeholder account.
+
 ## [0.5.5] - 2026-07-17
 
 The final hash-changing release on the ROSCA launch surface before audit wave 1.

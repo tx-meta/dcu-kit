@@ -29,7 +29,7 @@ import {
 import { createDefaultGroupDatum, extractTokenSuffix } from "./utils.js";
 import { toText } from "@lucid-evolution/lucid";
 import { accountPolicyId } from "../src/core/validators/constants.js";
-import { advanceBlock } from "./effects.js";
+import { advanceBlock, awaitWalletUtxo } from "./effects.js";
 
 describe("Group Endpoints", () => {
   // --- Create Group ---
@@ -617,5 +617,98 @@ describe("VK-default admin (regression)", () => {
       yield* advanceBlock(context.emulator);
       expect(txHash).toHaveLength(64);
     }),
+  );
+
+  // --- Multi-group member: exit resolves the targeted group's treasury ---
+  // A member's treasury (222) token name is derived from their account, so a member
+  // of several groups has identically-named treasury UTxOs. exitGroup must select the
+  // treasury bound to the group named in the config (by group_reference_tokenname),
+  // not the first token-name match. Exercises the auto-detect scan path (no explicit
+  // accountTokenSuffix) — the path the live-network resolution uses.
+  it.effect(
+    "exitGroup: a member of two groups exits only the targeted group",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context } = base;
+        const { lucid, users, protocol } = context;
+        const groupPolicyId = protocol!.groupPolicyId;
+
+        const fetchGroupDatum = (suffix: string) =>
+          Effect.gen(function* () {
+            const unit = groupPolicyId + assetNameLabels.prefix100 + suffix;
+            const utxo = yield* Effect.tryPromise(() => lucid.utxoByUnit(unit));
+            const cip = yield* parseGroupCip68Datum(
+              patchInlineDatum(utxo).datum,
+            );
+            return cip.groupDatum;
+          });
+
+        // Two independent groups, same admin.
+        const { groupUtxo: groupA } = yield* setupGroup(base);
+        const { groupUtxo: groupB } = yield* setupGroup(base);
+        const suffixA = extractTokenSuffix(
+          groupA,
+          groupPolicyId,
+          assetNameLabels.prefix100,
+        );
+        const suffixB = extractTokenSuffix(
+          groupB,
+          groupPolicyId,
+          assetNameLabels.prefix100,
+        );
+
+        // One account, joined to BOTH groups → two identically-named treasury UTxOs.
+        const {
+          outputs: { userUtxo: acct0 },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user1.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo: groupA,
+          accountUtxo: acct0,
+          userSeed: users.user1.seedPhrase,
+        });
+
+        // Re-fetch the account (222) token — join A moved it — before joining B.
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const acct1 = yield* awaitWalletUtxo(
+          lucid,
+          (u) =>
+            Object.keys(u.assets).some(
+              (k) =>
+                k.startsWith(accountPolicyId) &&
+                k
+                  .slice(accountPolicyId.length)
+                  .startsWith(assetNameLabels.prefix222),
+            ),
+          "Account (222) token not found in user1 wallet after joining group A",
+        );
+        yield* joinGroupTestCase(context, {
+          groupUtxo: groupB,
+          accountUtxo: acct1,
+          userSeed: users.user1.seedPhrase,
+        });
+
+        expect((yield* fetchGroupDatum(suffixA)).member_count).toBe(1n);
+        expect((yield* fetchGroupDatum(suffixB)).member_count).toBe(1n);
+
+        // Exit group B via the auto-detect scan path (no accountTokenSuffix). B was
+        // joined second, so a group-blind scan finds group A's identically-named
+        // treasury first and builds an exit whose treasury and group UTxO disagree —
+        // the validator rejects it. The group filter must select B's treasury.
+        selectWalletFromSeed(lucid, users.user1.seedPhrase);
+        const exitTx = yield* unsignedExitGroupTxProgram(protocol!, lucid, {
+          groupTokenSuffix: suffixB,
+          currentTime: BigInt(context.emulator!.now()),
+          scriptRefs: context.scriptRefs,
+        });
+        yield* signAndSubmit(exitTx);
+        yield* advanceBlock(context.emulator);
+
+        // Group B lost the member; group A's membership is untouched.
+        expect((yield* fetchGroupDatum(suffixB)).member_count).toBe(0n);
+        expect((yield* fetchGroupDatum(suffixA)).member_count).toBe(1n);
+      }),
   );
 });

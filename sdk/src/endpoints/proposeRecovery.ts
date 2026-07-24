@@ -91,10 +91,25 @@ export const unsignedProposeRecoveryTxProgram = (
       accountPolicyId + assetNameLabels.prefix222 + newAccountTokenSuffix;
 
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
-    const newAccountUtxoRaw = yield* resolveUtxoByUnit(
-      lucid,
-      newAccountUserUnit,
+    // The recoveree must hold and sign with N', so resolve it from the selected
+    // wallet first. A provider-wide unit lookup can reject otherwise valid
+    // multi-membership states; wallet custody is both narrower and the actual
+    // authorization condition. Keep the global fallback for provider/wallet
+    // implementations that omit assets from wallet.getUtxos().
+    const selectedWalletUtxos = yield* Effect.tryPromise({
+      try: () => lucid.wallet().getUtxos(),
+      catch: (e) =>
+        new TransactionBuildError({
+          operation: "queryRecovereeWallet",
+          error: String(e),
+        }),
+    });
+    const walletNewAccountUtxo = selectedWalletUtxos.find(
+      (utxo) => utxo.assets[newAccountUserUnit] === 1n,
     );
+    const newAccountUtxoRaw =
+      walletNewAccountUtxo ??
+      (yield* resolveUtxoByUnit(lucid, newAccountUserUnit));
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
     const newAccountUtxo = patchInlineDatum(newAccountUtxoRaw);

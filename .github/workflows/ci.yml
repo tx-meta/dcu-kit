@@ -133,6 +133,7 @@ jobs:
   # ------------------------------------------------------------
   deps-audit:
     name: 🧬 Dependency Audit
+    needs: [sdk-verify, aiken-verify, docs-verify, secrets-scan]
     runs-on: ubuntu-latest
     defaults:
       run:

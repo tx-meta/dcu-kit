@@ -21,6 +21,7 @@ import { Protocol } from "../core/validators/constants.js";
 import {
   parseGroupCip68Datum,
   buildGroupCip68Datum,
+  getScriptAddress,
   getWalletAddress,
   parseSafeDatum,
   patchInlineDatum,
@@ -83,21 +84,18 @@ export const unsignedExecuteRecoveryTxProgram = (
 
     const groupUnit =
       groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
-    const requestUnit =
-      treasuryPolicyId + assetNameLabels.prefix222 + newAccountTokenSuffix;
-    const memberTreasuryUnit =
-      treasuryPolicyId + assetNameLabels.prefix222 + targetTokenSuffix;
+    // The request (N') and member treasury (N) tokens are treasury (222) tokens whose
+    // names derive from the account, not the group — a member of several groups (or a
+    // recoveree who also holds a membership elsewhere) has identically-named treasury
+    // UTxOs, so utxoByUnit is ambiguous. Resolve both by scanning THIS group's treasury
+    // UTxOs (matched by group_reference_tokenname) for the RecoveryRequest and the
+    // target member state.
+    const newMemberRefName = assetNameLabels.prefix222 + newAccountTokenSuffix;
+    const targetRefName = assetNameLabels.prefix222 + targetTokenSuffix;
 
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupUnit);
-    const requestUtxoRaw = yield* resolveUtxoByUnit(lucid, requestUnit);
-    const memberTreasuryUtxoRaw = yield* resolveUtxoByUnit(
-      lucid,
-      memberTreasuryUnit,
-    );
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
-    const requestUtxo = patchInlineDatum(requestUtxoRaw);
-    const memberTreasuryUtxo = patchInlineDatum(memberTreasuryUtxoRaw);
 
     const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
     const groupDatum = groupCip68.groupDatum;
@@ -114,10 +112,69 @@ export const unsignedExecuteRecoveryTxProgram = (
       );
     const groupRefName = groupRefAssetEntry.slice(groupPolicyId.length);
 
-    const requestDatum = (yield* parseSafeDatum(
-      requestUtxo.datum,
-      TreasuryDatumSchema,
-    )) as unknown as TreasuryDatum;
+    const treasuryAddress = yield* getScriptAddress(
+      lucid,
+      treasuryValidator.spendTreasury,
+    );
+    const allTreasury = (yield* Effect.tryPromise({
+      try: () => lucid.utxosAt(treasuryAddress),
+      catch: (e) =>
+        new TransactionBuildError({
+          operation: "queryTreasury",
+          error: String(e),
+        }),
+    })).map(patchInlineDatum);
+
+    // Parse each treasury UTxO once, keeping the UTxO alongside its decoded datum.
+    const treasuryStates = yield* Effect.all(
+      allTreasury.map((u) =>
+        parseSafeDatum(u.datum, TreasuryDatumSchema).pipe(
+          Effect.map((d) => ({
+            utxo: u,
+            datum: d as unknown as TreasuryDatum,
+          })),
+          Effect.orElse(() => Effect.succeed(null)),
+        ),
+      ),
+    );
+
+    const requestEntry = treasuryStates.find(
+      (e) =>
+        e !== null &&
+        "RecoveryRequest" in e.datum &&
+        e.datum.RecoveryRequest.group_reference_tokenname === groupRefName &&
+        e.datum.RecoveryRequest.target_token === targetRefName &&
+        e.datum.RecoveryRequest.new_member_tokenname === newMemberRefName,
+    );
+    if (!requestEntry)
+      return yield* Effect.fail(
+        new UtxoNotFoundError({
+          tokenName: `RecoveryRequest(${newMemberRefName}) for group ${groupRefName}`,
+          address: treasuryAddress,
+        }),
+      );
+    const requestUtxo = requestEntry.utxo;
+
+    const memberEntry = treasuryStates.find(
+      (e) =>
+        e !== null &&
+        (("TreasuryState" in e.datum &&
+          e.datum.TreasuryState.group_reference_tokenname === groupRefName &&
+          e.datum.TreasuryState.member_reference_tokenname === targetRefName) ||
+          ("DefaultState" in e.datum &&
+            e.datum.DefaultState.group_reference_tokenname === groupRefName &&
+            e.datum.DefaultState.member_reference_tokenname === targetRefName)),
+    );
+    if (!memberEntry)
+      return yield* Effect.fail(
+        new UtxoNotFoundError({
+          tokenName: `member treasury(${targetRefName}) for group ${groupRefName}`,
+          address: treasuryAddress,
+        }),
+      );
+    const memberTreasuryUtxo = memberEntry.utxo;
+
+    const requestDatum = requestEntry.datum;
     if (!("RecoveryRequest" in requestDatum)) {
       return yield* Effect.fail(
         new InvalidDatumError({
@@ -129,10 +186,7 @@ export const unsignedExecuteRecoveryTxProgram = (
     const { target_token, new_member_tokenname, new_payment_credential } =
       requestDatum.RecoveryRequest;
 
-    const memberDatum = (yield* parseSafeDatum(
-      memberTreasuryUtxo.datum,
-      TreasuryDatumSchema,
-    )) as unknown as TreasuryDatum;
+    const memberDatum = memberEntry.datum;
     if (!("TreasuryState" in memberDatum) && !("DefaultState" in memberDatum)) {
       return yield* Effect.fail(
         new InvalidDatumError({

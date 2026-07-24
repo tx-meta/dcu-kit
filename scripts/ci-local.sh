@@ -106,6 +106,10 @@ if [ -n "$UNSTAGED" ]; then
   echo "$UNSTAGED"
 fi
 
+# Audit is deliberately the final verification gate. Everything buildable and
+# testable must pass before an advisory lookup can approve the candidate.
+run "pnpm audit --prod --audit-level high" sdk pnpm audit --prod --audit-level high
+
 step "result"
 if [ ${#FAILED[@]} -eq 0 ]; then
   echo "✓ CI-parity gate green. Protocol changes (onchain/**) additionally need a Preprod live sweep before release."
