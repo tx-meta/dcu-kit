@@ -63,14 +63,17 @@ const main = async () => {
       getTxMessage({ url, projectId }, txHash),
     );
     if (readBack !== null) break;
-    console.log(`  metadata not indexed yet (attempt ${attempt}) — waiting 10s`);
+    console.log(
+      `  metadata not indexed yet (attempt ${attempt}) — waiting 10s`,
+    );
     await new Promise((r) => setTimeout(r, 10_000));
   }
 
   console.log(`\nread back: ${readBack}`);
 
   const exact = readBack === MESSAGE;
-  const hashMatches = readBack !== null && hashContent(readBack) === hashContent(MESSAGE);
+  const hashMatches =
+    readBack !== null && hashContent(readBack) === hashContent(MESSAGE);
   console.log(`byte-exact round trip: ${exact}`);
   console.log(`hash commitment matches: ${hashMatches}`);
 
@@ -78,7 +81,9 @@ const main = async () => {
     console.error("\nROUND-TRIP FAILED");
     process.exit(1);
   }
-  console.log(`\nROUND-TRIP PASSED — https://preprod.cardanoscan.io/transaction/${txHash}`);
+  console.log(
+    `\nROUND-TRIP PASSED — https://preprod.cardanoscan.io/transaction/${txHash}`,
+  );
 };
 
 main().catch((e) => {
