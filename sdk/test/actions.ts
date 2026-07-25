@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { Script, UTxO } from "@lucid-evolution/lucid";
+import type { TxMessage } from "../src/core/utils/index.js";
 import {
   unsignedCreateAccountTxProgram,
   CreateAccountConfig,
@@ -268,13 +269,15 @@ export type CreateGroupTestParams = {
   groupDescription?: string;
   /** Proof script when the datum's creator_payment_credential is a Script credential. */
   creatorScript?: Script;
+  /** Optional CIP-20 transaction message. */
+  message?: TxMessage;
 };
 
 export const createGroupTestCase = (
   context: LucidContext,
   params: CreateGroupTestParams = {},
 ): Effect.Effect<
-  CreateGroupResult & { groupTokenSuffix: string },
+  CreateGroupResult & { groupTokenSuffix: string; txCbor: string },
   Error,
   never
 > =>
@@ -286,6 +289,7 @@ export const createGroupTestCase = (
       groupName,
       groupDescription,
       creatorScript,
+      message,
     } = params;
 
     selectWalletFromSeed(lucid, creatorSeed ?? users.admin.seedPhrase);
@@ -302,6 +306,7 @@ export const createGroupTestCase = (
       groupName: groupName ?? "Test Group",
       ...(groupDescription !== undefined ? { groupDescription } : {}),
       ...(creatorScript !== undefined ? { creatorScript } : {}),
+      ...(message !== undefined ? { message } : {}),
       groupDatum,
       utxoToSpend: selectedUTxO,
       // Creating a group invokes both minting policies (group + treasury
@@ -315,10 +320,11 @@ export const createGroupTestCase = (
         lucid,
         groupConfig,
       );
+    const txCbor = createGroupTx.toCBOR();
     const txHash = yield* signAndSubmit(createGroupTx);
     yield* advanceBlock(context.emulator);
 
-    return { txHash, groupDatum, groupTokenSuffix };
+    return { txHash, groupDatum, groupTokenSuffix, txCbor };
   });
 
 export type UpdateGroupTestParams = {

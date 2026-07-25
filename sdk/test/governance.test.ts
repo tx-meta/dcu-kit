@@ -38,6 +38,7 @@ import {
 } from "../src/governance/utils.js";
 import { GovernanceInstance } from "../src/governance/validators.js";
 import { advanceBlock } from "./effects.js";
+import { readCip20 } from "./utils.js";
 
 const TARGET = "bb".repeat(28);
 
@@ -488,6 +489,62 @@ describe("governance module (emulator, real validators)", () => {
 
         const remaining = yield* getProposalsProgram(lucid, instance);
         expect(remaining.length).toBe(0);
+      }),
+  );
+});
+
+describe("governance — CIP-20 transaction message", () => {
+  it.effect("openProposal carries the rationale members vote against", () =>
+    Effect.gen(function* () {
+      const ctx = yield* makeContext;
+      const { lucid, emulator } = ctx;
+      const { instance, scriptRefs } = yield* setupInstance(ctx, 2n);
+
+      const now = BigInt(emulator.now());
+      const rationale =
+        "Raise quorum to 3 so no two members can move funds alone.";
+      const { tx } = yield* unsignedOpenProposalTxProgram(lucid, {
+        instance,
+        targetPolicy: TARGET_POLICY,
+        targetId: TARGET,
+        action: { ParamChange: { field_tag: 0n, new_value: 100n } },
+        deadline: now + 7n * 24n * 3600_000n,
+        openerTokenUnit: MEMBER_UNIT,
+        currentTime: now,
+        scriptRefs,
+        message: rationale,
+      });
+
+      expect(readCip20(tx.toCBOR())).toContain(rationale);
+    }),
+  );
+});
+
+describe("governance — proposal rationale budget", () => {
+  it.effect(
+    "openProposal accepts a rationale beyond the 1024-byte default",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const { lucid, emulator } = ctx;
+        const { instance, scriptRefs } = yield* setupInstance(ctx, 2n);
+
+        const now = BigInt(emulator.now());
+        // 2000 bytes: rejected under the default memo budget, allowed here.
+        const rationale = "R".repeat(2000);
+        const { tx } = yield* unsignedOpenProposalTxProgram(lucid, {
+          instance,
+          targetPolicy: TARGET_POLICY,
+          targetId: TARGET,
+          action: { ParamChange: { field_tag: 0n, new_value: 100n } },
+          deadline: now + 7n * 24n * 3600_000n,
+          openerTokenUnit: MEMBER_UNIT,
+          currentTime: now,
+          scriptRefs,
+          message: rationale,
+        });
+
+        expect(readCip20(tx.toCBOR())).toContain("R".repeat(64));
       }),
   );
 });
