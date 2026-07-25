@@ -7,7 +7,12 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../../core/errors.js";
-import { makeReturn, resolveUtxoByUnit } from "../../core/utils/index.js";
+import {
+  makeReturn,
+  resolveUtxoByUnit,
+  attachTxMessage,
+  type TxMessage,
+} from "../../core/utils/index.js";
 import { GateRedeemer, GovMintRedeemer } from "../types.js";
 import { GovernanceInstance } from "../validators.js";
 import { decisionTokenName } from "../utils.js";
@@ -33,6 +38,12 @@ export type AuthorizeActionConfig = {
    *  the decision's `target_id`. The gate binds the decision to it. In production
    *  this is the vault input of the composed action transaction. */
   targetUtxo: UTxO;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedAuthorizeActionTxProgram = (
@@ -59,8 +70,7 @@ export const unsignedAuthorizeActionTxProgram = (
 
     const burnRedeemer = Data.to("BurnDecision", GovMintRedeemer);
 
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([decisionUtxo], spendRedeemer)
       .attach.SpendingValidator(instance.gateValidator)
       .collectFrom([config.targetUtxo])

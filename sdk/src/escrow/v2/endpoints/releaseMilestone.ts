@@ -10,7 +10,11 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../../core/errors.js";
-import { makeReturn } from "../../../core/utils/index.js";
+import {
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../../core/utils/index.js";
 import { EscrowV2SpendRedeemer } from "../types.js";
 import { escrowV2Validator } from "../validators.js";
 import {
@@ -42,6 +46,12 @@ export type ReleaseMilestoneV2Config = {
   verifierWitness?: PartyWitness;
   /** Clock override (POSIX ms) — pass `emulator.now()` in emulator tests. */
   currentTime?: bigint;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedReleaseMilestoneV2TxProgram = (
@@ -99,12 +109,16 @@ export const unsignedReleaseMilestoneV2TxProgram = (
       datum.dispute.milestone === datum.released_count &&
       now > datum.dispute.until;
 
-    const plan = yield* applyTrancheOutputs(
-      network,
+    const baseTx = yield* attachTxMessage(
       lucid
         .newTx()
         .attach.SpendingValidator(escrowV2Validator.spendEscrow)
         .validTo(validTo),
+      config.message,
+    );
+    const plan = yield* applyTrancheOutputs(
+      network,
+      baseTx,
       escrowUtxo,
       datum,
       stateUnit,

@@ -11,7 +11,11 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../../core/errors.js";
-import { makeReturn } from "../../../core/utils/index.js";
+import {
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../../core/utils/index.js";
 import {
   EscrowV2MintRedeemer,
   EscrowV2SpendRedeemer,
@@ -43,6 +47,12 @@ export type ReclaimEscrowV2Config = {
   funderWitness?: PartyWitness;
   /** Clock override (POSIX ms) — pass `emulator.now()` in emulator tests. */
   currentTime?: bigint;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedReclaimEscrowV2TxProgram = (
@@ -104,8 +114,7 @@ export const unsignedReclaimEscrowV2TxProgram = (
       (cure > disputeGate ? cure : disputeGate) + 1_000n,
     );
 
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([escrowUtxo], redeemer)
       .attach.SpendingValidator(escrowV2Validator.spendEscrow)
       .mintAssets(

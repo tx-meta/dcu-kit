@@ -17,6 +17,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 import {
   DcuError,
@@ -47,6 +49,13 @@ export type StartGroupConfig = {
     treasury?: UTxO; // UTxO with scriptRef for treasury validator
     group?: UTxO; // UTxO with scriptRef for group validator
   };
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 } & AdminAuthConfig;
 
 export const unsignedStartGroupTxProgram = (
@@ -134,8 +143,7 @@ export const unsignedStartGroupTxProgram = (
       ? adminUtxo.assets
       : { [groupUserUnit]: 1n };
 
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([adminUtxo])
       .collectFrom([groupUtxo], redeemer)
       .pay.ToContract(

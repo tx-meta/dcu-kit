@@ -11,7 +11,11 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../core/errors.js";
-import { makeReturn } from "../../core/utils/index.js";
+import {
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../core/utils/index.js";
 import { SavingsDatum, SavingsSpendRedeemer } from "../types.js";
 import { savingsVaultValidator } from "../validators.js";
 import {
@@ -40,6 +44,12 @@ export type WithdrawSavingsConfig = {
   memberTokenSuffix: string;
   /** Number of share units to sell back. */
   units: bigint;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedWithdrawSavingsTxProgram = (
@@ -123,8 +133,7 @@ export const unsignedWithdrawSavingsTxProgram = (
 
     const network = lucid.config().network ?? "Preprod";
     const vaultAddress = savingsVaultAddress(network);
-    return yield* lucid
-      .newTx()
+    return yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([fundUtxo, refUtxo], redeemer)
       .collectFrom([userTokenUtxo])
       .compose(

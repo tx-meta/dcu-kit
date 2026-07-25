@@ -18,6 +18,8 @@ import {
   getWalletUtxos,
   makeReturn,
   sortUtxos,
+  attachTxMessage,
+  type TxMessage,
 } from "../../core/utils/index.js";
 import {
   GovernanceDatum,
@@ -70,6 +72,12 @@ export type InitGovernanceConfig = {
   timelock?: bigint;
   /** The charter amender / CreatorOnly authority. Defaults to the wallet. */
   creator?: PartyRef;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 const DEFAULT_OPENER_POLICY: [bigint, OpenerPolicy][] = [
@@ -177,8 +185,7 @@ export const unsignedInitGovernanceTxProgram = (
     const rosterDatum: GovernanceDatum = { Roster: { members: [] } };
 
     const network = lucid.config().network ?? "Preprod";
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([seed])
       .mintAssets(
         { [instance.anchorUnit]: 1n, [instance.rosterUnit]: 1n },

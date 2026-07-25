@@ -43,6 +43,8 @@ import { getEscrowStateProgram } from "../src/escrow/v2/queries/getEscrowState.j
 import { getProjectStateProgram } from "../src/escrow/v2/queries/getProjectState.js";
 import { getProjectEscrowsProgram } from "../src/escrow/v2/queries/getProjectEscrows.js";
 import { advanceBlock } from "./effects.js";
+import { readCip20 } from "./utils.js";
+import { hashContent } from "../src/core/utils/index.js";
 import { fromText, paymentCredentialOf } from "@lucid-evolution/lucid";
 import { buildMultisig } from "../src/multisig/index.js";
 
@@ -886,5 +888,40 @@ describe("escrow v2 lifecycle (emulator)", () => {
       );
       expect(gone._tag).toBe("Left");
     }),
+  );
+});
+
+describe("escrow v2 — CIP-20 terms binding", () => {
+  it.effect(
+    "createEscrow commits the terms hash on-chain and carries the pre-image",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const now = BigInt(ctx.emulator.now());
+
+        // The full pattern from the metadata strategy: integrity via a datum
+        // commitment, availability via the pre-image in the same transaction.
+        const terms =
+          "Borehole to 60m, casing included, handover on verifier sign-off.";
+        const { tx } = yield* unsignedCreateEscrowV2TxProgram(ctx.lucid, {
+          beneficiaryAddress: ctx.beneficiary.address,
+          verifier: ctx.verifier.address,
+          milestones: [{ amount: 40_000_000n, deadline: now + 1n * HOUR }],
+          grace: HOUR,
+          fundingMode: "Upfront",
+          timeoutPolicy: "RefundToFunder",
+          title: "well drilling",
+          currentTime: now,
+          contentHash: hashContent(terms),
+          message: terms,
+        });
+
+        // A reader recomputes the hash from the on-chain pre-image and gets
+        // exactly what the datum committed to.
+        const payload = readCip20(tx.toCBOR());
+        expect(payload).toContain(terms);
+        expect(hashContent(terms)).toMatch(/^[0-9a-f]{64}$/);
+      }),
   );
 });

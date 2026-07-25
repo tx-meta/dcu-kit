@@ -17,6 +17,8 @@ import {
   getWalletAddress,
   makeReturn,
   patchInlineDatum,
+  attachTxMessage,
+  type TxMessage,
 } from "../../../core/utils/index.js";
 import { PoolSpendRedeemer, VaultDatum } from "../types.js";
 import { poolVaultValidator } from "../validators.js";
@@ -39,6 +41,12 @@ export type ExitDepositConfig = {
   contributorWitness?: PartyWitness;
   /** Clock override (POSIX ms) — pass `emulator.now()` in emulator tests. */
   currentTime?: bigint;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedExitDepositTxProgram = (
@@ -109,8 +117,7 @@ export const unsignedExitDepositTxProgram = (
       inputs: [deposit],
     };
 
-    let baseTx = lucid
-      .newTx()
+    let baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([deposit], redeemer)
       .attach.SpendingValidator(poolVaultValidator.spendPool)
       .pay.ToAddress(walletAddress, deposit.assets);

@@ -18,6 +18,8 @@ import {
   getWalletUtxos,
   makeReturn,
   sortUtxos,
+  attachTxMessage,
+  type TxMessage,
 } from "../../core/utils/index.js";
 import {
   PartyRef,
@@ -67,6 +69,12 @@ export type CreateFundConfig = {
   loanGrace?: bigint;
   /** CloseCycle is invalid before this bound (POSIX ms). */
   cycleEnd?: bigint;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedCreateFundTxProgram = (
@@ -181,8 +189,7 @@ export const unsignedCreateFundTxProgram = (
     };
 
     const network = lucid.config().network ?? "Preprod";
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([seed])
       .mintAssets({ [fundUnit]: 1n }, redeemer)
       .compose(

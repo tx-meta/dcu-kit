@@ -38,6 +38,8 @@ import {
   MIN_ADA_RESERVE,
   reserveTokenName,
   removeRegistryEntry,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 
 /**
@@ -76,6 +78,13 @@ export type ExitGroupConfig = {
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO, keeping the tx under 16KB.
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedExitGroupTxProgram = (
@@ -313,8 +322,7 @@ export const unsignedExitGroupTxProgram = (
       },
     };
 
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom([accountUtxo])
       .collectFrom([treasuryUtxo], exitSpendRedeemer)

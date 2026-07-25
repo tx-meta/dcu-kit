@@ -23,6 +23,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 import { Protocol } from "../core/validators/constants.js";
 
@@ -50,6 +52,13 @@ import { Protocol } from "../core/validators/constants.js";
 export type UpdateGroupConfig = {
   groupTokenSuffix: string;
   updatedDatum: GroupDatum;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 } & AdminAuthConfig;
 
 export const unsignedUpdateGroupTxProgram = (
@@ -110,8 +119,7 @@ export const unsignedUpdateGroupTxProgram = (
       inputs: [adminUtxo, groupUtxo],
     };
 
-    const baseTx0 = lucid
-      .newTx()
+    const baseTx0 = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([adminUtxo])
       .collectFrom([groupUtxo], redeemer)
       .pay.ToContract(

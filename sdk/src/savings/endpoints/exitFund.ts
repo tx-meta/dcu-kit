@@ -11,7 +11,11 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../core/errors.js";
-import { makeReturn } from "../../core/utils/index.js";
+import {
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../core/utils/index.js";
 import { SavingsMintRedeemer, SavingsSpendRedeemer } from "../types.js";
 import { savingsVaultValidator } from "../validators.js";
 import {
@@ -36,6 +40,12 @@ export type ExitFundConfig = {
    *  the ~15.5KB validator cannot ride inline within the tx limit. */
   scriptRef?: UTxO;
   memberTokenSuffix: string;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedExitFundTxProgram = (
@@ -69,8 +79,7 @@ export const unsignedExitFundTxProgram = (
       inputs: [refUtxo],
     };
 
-    return yield* lucid
-      .newTx()
+    return yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([refUtxo], spendRedeemer)
       .collectFrom([userTokenUtxo])
       .compose(

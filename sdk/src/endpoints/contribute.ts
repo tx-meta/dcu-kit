@@ -33,6 +33,8 @@ import {
   referenceInputIndex,
   contributableBalance,
   buildGroupCip68Datum,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 
 /**
@@ -59,6 +61,13 @@ export type ContributeConfig = {
   // DefaultState recovery path spends the group validator; the plain top-up path
   // only ever needs `treasury`.
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedContributeTxProgram = (
@@ -215,8 +224,7 @@ export const unsignedContributeTxProgram = (
         inputs: [groupUtxo, treasuryUtxo],
       };
 
-      const baseTx = lucid
-        .newTx()
+      const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
         .collectFrom([accountUtxo])
         .collectFrom([treasuryUtxo], Data.to("Contribute", TreasuryRedeemer))
         .collectFrom([groupUtxo], recoverRedeemer)
@@ -311,8 +319,7 @@ export const unsignedContributeTxProgram = (
       inputs: [accountUtxo, treasuryUtxo],
     };
 
-    const baseTopUpTx = lucid
-      .newTx()
+    const baseTopUpTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([accountUtxo])
       .collectFrom([treasuryUtxo], Data.to("Contribute", TreasuryRedeemer))
       .readFrom([groupUtxo])

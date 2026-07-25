@@ -29,6 +29,8 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
   referenceInputIndex,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 
 /**
@@ -52,6 +54,13 @@ export type ClaimPayoutConfig = {
   destinationAddress?: string;
   // Reference script UTxOs (from deploy-scripts) to keep the tx under the size limit.
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedClaimPayoutTxProgram = (
@@ -177,8 +186,7 @@ export const unsignedClaimPayoutTxProgram = (
       inputs: [accountUtxo, treasuryUtxo],
     };
 
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([accountUtxo])
       .collectFrom([treasuryUtxo], Data.to("ClaimPayout", TreasuryRedeemer))
       .readFrom([groupUtxo])

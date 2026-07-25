@@ -11,7 +11,11 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../../core/errors.js";
-import { makeReturn } from "../../../core/utils/index.js";
+import {
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../../core/utils/index.js";
 import {
   PartyRef,
   partyToCredential,
@@ -40,6 +44,12 @@ export type UpdateProjectConfig = {
   newOwner?: PartyRef;
   /** Required when the owner credential is a script hash. */
   ownerWitness?: PartyWitness;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedUpdateProjectTxProgram = (
@@ -95,8 +105,7 @@ export const unsignedUpdateProjectTxProgram = (
       inputs: [projectUtxo],
     };
 
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([projectUtxo], redeemer)
       .attach.SpendingValidator(projectValidator.spendProject)
       .pay.ToContract(

@@ -36,6 +36,7 @@ import { FUND_TAG_SOCIAL, FUND_TAG_TOPUP } from "../src/savings/types.js";
 import { resolveMemberAccount } from "../src/savings/utils.js";
 import { savingsVaultValidator } from "../src/savings/validators.js";
 import { advanceBlock } from "./effects.js";
+import { readCip20 } from "./utils.js";
 
 // ---------------------------------------------------------------------------
 // Standalone context: a treasurer (fund creator = default quorum) and two
@@ -649,5 +650,36 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
         const loans = yield* getFundLoansProgram(lucid, fundTokenName);
         expect(loans.length).toBe(0);
       }),
+  );
+});
+
+describe("savings — CIP-20 transaction message", () => {
+  it.effect("createFund carries a rules note beyond the 64-byte title", () =>
+    Effect.gen(function* () {
+      const ctx = yield* makeContext;
+      const { lucid } = ctx;
+      selectWalletFromSeed(lucid, ctx.treasurer.seedPhrase);
+
+      const { tx } = yield* unsignedCreateFundTxProgram(lucid, {
+        scriptRef: ctx.scriptRef,
+        title: "Test VSLA",
+        shareValue: 1_000_000n,
+        minSharesPerDeposit: 1n,
+        maxSharesPerDeposit: 100n,
+        withdrawalPolicy: 0n,
+        message: "Weekly shares, share-out every December.",
+      });
+
+      expect(JSON.parse(readCip20(tx.toCBOR())!)).toEqual({
+        map: [
+          {
+            k: { string: "msg" },
+            v: {
+              list: [{ string: "Weekly shares, share-out every December." }],
+            },
+          },
+        ],
+      });
+    }),
   );
 });
