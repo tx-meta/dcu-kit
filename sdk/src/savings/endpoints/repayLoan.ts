@@ -11,7 +11,11 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../core/errors.js";
-import { makeReturn } from "../../core/utils/index.js";
+import {
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../core/utils/index.js";
 import {
   SavingsDatum,
   SavingsMintRedeemer,
@@ -50,6 +54,12 @@ export type RepayLoanConfig = {
   principal?: bigint;
   /** Partial: charge portion (base units). Omit both to close. */
   charge?: bigint;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedRepayLoanTxProgram = (
@@ -147,8 +157,7 @@ export const unsignedRepayLoanTxProgram = (
     };
 
     const vaultAddress = fundUtxo.address;
-    let tx = lucid
-      .newTx()
+    let tx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([fundUtxo, refUtxo, loanUtxo], redeemer)
       .collectFrom([userTokenUtxo])
       .compose(

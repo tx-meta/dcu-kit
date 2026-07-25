@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "check": "CIP-20 transaction message — live Preprod write/read round trip",
+  "date": "2026-07-25",
+  "network": "Preprod",
+  "provider": "Blockfrost",
+  "txHash": "af28a7b6b19ec5fc76786dca3a5ea2d1158ab03321dbcaf438d66ef83b12572b",
+  "explorer": "https://preprod.cardanoscan.io/transaction/af28a7b6b19ec5fc76786dca3a5ea2d1158ab03321dbcaf438d66ef83b12572b",
+  "rationale": [
+    "The emulator suite and the getTxMessage unit tests stub fetch, so two things stayed unproven:",
+    "whether the real ledger accepts our byte-chunked label-674 metadata, and whether getTxMessage",
+    "parses Blockfrost's actual response shape rather than an assumed one."
+  ],
+  "message": "Kiambu land-buying chama — mchango wa mwezi wa tatu, 🌍 pamoja tunaweza kujenga.",
+  "messageBytes": 84,
+  "metadatumChunks": 2,
+  "contentHash": "dc477cb6d1510597586bf5ac4d1fb8e3337781c67c60bdf05acab8e02966596a",
+  "coverage": {
+    "multiChunk": "84 bytes > the 64-byte metadatum string cap, so chunking was exercised",
+    "nonAscii": "em dash (3 bytes) and 🌍 (4 bytes) straddle chunk boundaries — a character-based split would corrupt them",
+    "noProtocolState": "self-payment: mints nothing and leaves no orphaned tokens, only a fee"
+  },
+  "results": {
+    "ledgerAccepted": true,
+    "byteExactRoundTrip": true,
+    "hashCommitmentMatches": true
+  },
+  "script": "sdk/scripts/live-cip20-roundtrip.ts"
+}

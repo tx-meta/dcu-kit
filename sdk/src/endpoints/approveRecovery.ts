@@ -21,6 +21,8 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
   referenceInputIndex,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 import {
   DcuError,
@@ -53,6 +55,13 @@ export type ApproveRecoveryConfig = {
   newAccountTokenSuffix: string; // N' — the pending request's authenticating token
   approverTokenSuffix: string;
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedApproveRecoveryTxProgram = (
@@ -138,8 +147,7 @@ export const unsignedApproveRecoveryTxProgram = (
       inputs: [requestUtxo, approverUtxo],
     };
 
-    const baseTx0 = lucid
-      .newTx()
+    const baseTx0 = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([requestUtxo], Data.to("ApproveRecovery", TreasuryRedeemer))
       .collectFrom([approverUtxo])
       .readFrom([groupUtxo])

@@ -11,7 +11,11 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../core/errors.js";
-import { makeReturn } from "../../core/utils/index.js";
+import {
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../core/utils/index.js";
 import { SavingsDatum, SavingsSpendRedeemer } from "../types.js";
 import { savingsVaultValidator } from "../validators.js";
 import { resolveLoan } from "../utils.js";
@@ -33,6 +37,12 @@ export type MarkArrearsConfig = {
   loanTokenName: string;
   /** Override the wall clock (emulator tests pass emulator.now()). */
   currentTime?: bigint;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedMarkArrearsTxProgram = (
@@ -95,8 +105,7 @@ export const unsignedMarkArrearsTxProgram = (
       inputs: [loanUtxo],
     };
 
-    return yield* lucid
-      .newTx()
+    return yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([loanUtxo], redeemer)
       .compose(
         config.scriptRef

@@ -11,7 +11,11 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../../core/errors.js";
-import { makeReturn } from "../../../core/utils/index.js";
+import {
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../../core/utils/index.js";
 import {
   PartyRef,
   partyToCredential,
@@ -41,6 +45,12 @@ export type UpdatePoolConfig = {
   newQuorum?: PartyRef;
   /** Required when the quorum credential is a script hash. */
   quorumWitness?: PartyWitness;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedUpdatePoolTxProgram = (
@@ -101,8 +111,7 @@ export const unsignedUpdatePoolTxProgram = (
       inputs: [poolUtxo],
     };
 
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([poolUtxo], redeemer)
       .attach.SpendingValidator(poolVaultValidator.spendPool)
       .pay.ToContract(

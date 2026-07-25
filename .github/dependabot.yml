@@ -30,6 +30,11 @@ updates:
             "version-update:semver-minor",
             "version-update:semver-major",
           ]
+      # Must track the runtime major (workflows run node-version: 24), not
+      # latest — types for a newer Node describe APIs that do not exist at
+      # runtime, so they type-check code that then fails.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
       # Major compiler/test-runner upgrades need a dedicated migration PR.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
@@ -47,3 +52,9 @@ updates:
       github-actions:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      # `update-types` under `groups` only decides what gets GROUPED — ungrouped
+      # majors still open their own PR (this is how setup-node v7 reached us).
+      # Action majors are deliberate migrations, not bot PRs.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

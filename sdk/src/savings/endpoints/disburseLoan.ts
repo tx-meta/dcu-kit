@@ -11,7 +11,12 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../core/errors.js";
-import { assetNameLabels, makeReturn } from "../../core/utils/index.js";
+import {
+  assetNameLabels,
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../core/utils/index.js";
 import {
   SavingsDatum,
   SavingsMintRedeemer,
@@ -62,6 +67,12 @@ export type DisburseLoanConfig = {
   quorumWitness?: PartyWitness;
   /** Override the wall clock (emulator tests pass emulator.now()). */
   currentTime?: bigint;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedDisburseLoanTxProgram = (
@@ -198,8 +209,7 @@ export const unsignedDisburseLoanTxProgram = (
     };
 
     const vaultAddress = fundUtxo.address;
-    const txDraft = lucid
-      .newTx()
+    const txDraft = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([fundUtxo, refUtxo], spendRedeemer)
       .collectFrom([userTokenUtxo])
       .compose(

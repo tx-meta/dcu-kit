@@ -17,6 +17,8 @@ import {
   getWalletUtxos,
   makeReturn,
   sortUtxos,
+  attachTxMessage,
+  type TxMessage,
 } from "../../../core/utils/index.js";
 import {
   PartyRef,
@@ -56,6 +58,12 @@ export type CreatePoolConfig = {
   assetName?: string;
   /** Allocations close after this (POSIX ms); exits never close. */
   fundingDeadline?: bigint;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedCreatePoolTxProgram = (
@@ -126,8 +134,7 @@ export const unsignedCreatePoolTxProgram = (
     };
 
     const network = lucid.config().network ?? "Preprod";
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([seed])
       .mintAssets({ [poolUnit]: 1n }, redeemer)
       .attach.MintingPolicy(poolVaultValidator.mintPool)

@@ -31,6 +31,8 @@ import {
   resolveUtxoByUnit,
   reserveTokenName,
   MIN_ADA_RESERVE,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 import {
   DcuError,
@@ -73,6 +75,13 @@ export type JoinGroupConfig = {
   // script bytes are resolved from the on-chain UTxO rather than included inline,
   // keeping the transaction well under the 16KB Cardano size limit.
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedJoinGroupTxProgram = (
@@ -319,8 +328,7 @@ export const unsignedJoinGroupTxProgram = (
       };
     }
 
-    const baseTx0 = lucid
-      .newTx()
+    const baseTx0 = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom([accountUtxo])
       .mintAssets(mintingAssets, treasuryMintRedeemer)

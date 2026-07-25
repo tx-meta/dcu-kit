@@ -7,7 +7,12 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { DcuError, TransactionBuildError } from "../../core/errors.js";
-import { getWalletAddress, makeReturn } from "../../core/utils/index.js";
+import {
+  getWalletAddress,
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../core/utils/index.js";
 import {
   GovernanceDatum,
   GovSpendRedeemer,
@@ -37,6 +42,12 @@ export type UpdateCharterConfig = {
   /** [state-NFT policy (hex), state-NFT name (hex)] pairs. */
   governedTargets?: [string, string][];
   openerPolicy?: [bigint, OpenerPolicy][];
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedUpdateCharterTxProgram = (
@@ -84,8 +95,7 @@ export const unsignedUpdateCharterTxProgram = (
       inputs: [anchorUtxo],
     };
 
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([anchorUtxo], spendRedeemer)
       .attach.SpendingValidator(instance.dispatcherValidator.spend)
       .pay.ToContract(

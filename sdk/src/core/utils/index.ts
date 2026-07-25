@@ -7,3 +7,4 @@ export * from "./wallet.js";
 export * from "./resolve.js";
 export * from "./multisig.js";
 export * from "./profileCommitment.js";
+export * from "./txMetadata.js";

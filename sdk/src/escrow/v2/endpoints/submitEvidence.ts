@@ -10,7 +10,11 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../../core/errors.js";
-import { makeReturn } from "../../../core/utils/index.js";
+import {
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../../core/utils/index.js";
 import { EscrowDatumV2, EscrowV2SpendRedeemer } from "../types.js";
 import { escrowV2Validator } from "../validators.js";
 import { applyPartyWitness, PartyWitness, resolveEscrowV2 } from "../utils.js";
@@ -35,6 +39,12 @@ export type SubmitEvidenceConfig = {
   evidenceHash: string;
   /** Required when the beneficiary credential is a script hash. */
   beneficiaryWitness?: PartyWitness;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedSubmitEvidenceTxProgram = (
@@ -80,8 +90,7 @@ export const unsignedSubmitEvidenceTxProgram = (
       inputs: [escrowUtxo],
     };
 
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([escrowUtxo], redeemer)
       .attach.SpendingValidator(escrowV2Validator.spendEscrow)
       .pay.ToContract(

@@ -16,6 +16,8 @@ import {
   getWalletAddress,
   resolveUtxoByOutRef,
   assetNameLabels,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 import {
   accountValidator,
@@ -30,6 +32,13 @@ export type CreateAccountConfig = {
    *  `computeProfileCommitment`. Omitted = no profile (`""`). The chain never
    *  stores raw identity data; the profile and salt stay with the caller. */
   profileCommitment?: string;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 // --- Endpoint ---
@@ -132,8 +141,7 @@ export const unsignedCreateAccountTxProgram = (
       inputs: [selectedUtxo],
     };
 
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([selectedUtxo])
       .mintAssets(mintingAssets, redeemer)
       .pay.ToAddressWithData(

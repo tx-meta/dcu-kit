@@ -42,6 +42,8 @@ import {
   resolveUtxoByUnit,
   removeRegistryEntry,
   reserveTokenName,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 
 // --- Configuration ---
@@ -54,6 +56,13 @@ export type TerminateDefaultConfig = {
   // Reference script UTxOs (from deploy-scripts). When provided, the validator
   // script bytes are resolved from the on-chain UTxO, keeping the tx under 16KB.
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 } & AdminAuthConfig;
 
 // --- Endpoint ---
@@ -301,8 +310,7 @@ export const unsignedTerminateDefaultTxProgram = (
       currentTime !== undefined ? currentTime : BigInt(Date.now()) - 120_000n;
     const now = currentTime !== undefined ? rawNow : rawNow - (rawNow % 1000n);
 
-    const baseTx0 = lucid
-      .newTx()
+    const baseTx0 = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom([adminUtxo])
       .collectFrom([treasuryUtxo], terminateSpendRedeemer)

@@ -5,7 +5,7 @@
  * Eliminates boilerplate and ensures consistency across tests.
  */
 
-import { UTxO } from "@lucid-evolution/lucid";
+import { CML, UTxO } from "@lucid-evolution/lucid";
 import { GroupDatum } from "../src/core/types.js";
 
 /**
@@ -105,3 +105,15 @@ export const createDefaultGroupDatum = (
   reserve_round_levy: 0n,
   ...overrides,
 });
+
+/**
+ * Reads the CIP-20 payload (label 674) back out of a built transaction via CML,
+ * as canonical metadatum JSON. `undefined` when the tx carries no auxiliary
+ * metadata at all.
+ */
+export const readCip20 = (txCbor: string): string | undefined =>
+  CML.Transaction.from_cbor_hex(txCbor)
+    .auxiliary_data()
+    ?.metadata()
+    ?.get(674n)
+    ?.to_json();

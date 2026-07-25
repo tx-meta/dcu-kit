@@ -19,6 +19,8 @@ import {
   getWalletUtxos,
   makeReturn,
   sortUtxos,
+  attachTxMessage,
+  type TxMessage,
 } from "../../core/utils/index.js";
 import { SavingsDatum, SavingsMintRedeemer } from "../types.js";
 import { savingsPolicyId, savingsVaultValidator } from "../validators.js";
@@ -47,6 +49,12 @@ export type JoinFundConfig = {
   fundTokenName: string;
   /** Standing-layer event-capture consent (default false). */
   consent?: boolean;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedJoinFundTxProgram = (
@@ -127,8 +135,7 @@ export const unsignedJoinFundTxProgram = (
       inputs: [seed],
     };
 
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .readFrom([fundUtxo])
       .collectFrom([seed])
       .mintAssets({ [refUnit]: 1n, [userUnit]: 1n }, redeemer)

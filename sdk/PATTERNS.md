@@ -445,6 +445,62 @@ const { refUtxo, userUtxo } = yield* findCip68TokenPair(lucid, policyId, tokenBa
 
 ---
 
+## CIP-20 transaction messages (`message` config field)
+
+Every endpoint config carries an optional `message?: TxMessage` — human-readable
+text attached to the transaction as CIP-20 metadata (label 674). Distinct from
+CIP-68 datum metadata: CIP-20 rides in auxiliary data, **no validator reads it**,
+it costs no min-ADA, and attaching it never affects a script hash.
+
+```typescript
+import { attachTxMessage, type TxMessage } from "../core/utils/index.js";
+
+export type MyEndpointConfig = {
+  // ...
+  message?: TxMessage;   // string | readonly string[]
+};
+
+// Route the builder head through the helper — it is a no-op when message is undefined.
+const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
+  .collectFrom(...)
+  // ...
+  .completeProgram();
+```
+
+**Rules:**
+
+1. **Attach before `completeProgram()`.** Metadata is part of the tx body, so it
+   changes size and fee. `TxSignBuilder` has no `attachMetadata` — a completed
+   transaction can no longer be annotated, so callers cannot add this themselves.
+2. **Attach at the builder head, exactly once per transaction.** Endpoints with
+   two alternative branches (`contribute`, `allocateToEscrow`) attach in each
+   branch; never attach twice to one builder.
+3. **Never `compose()` a metadata-only builder in.** `attachMetadata` closes over
+   its _source_ builder's config, so a composed program writes the auxiliary data
+   to the wrong transaction and the message is silently dropped.
+4. **Validate here, not in Lucid.** Lucid caps strings at 64 _characters_ while
+   the ledger caps 64 _bytes_, and it enforces this with a synchronous throw that
+   surfaces as an Effect **defect**, bypassing `DcuError`. `buildCip20Payload`
+   chunks byte-wise and fails with `ConfigurationError` instead.
+5. **Budget is `MAX_TX_MESSAGE_BYTES` (1024)** by default — a cost and discipline
+   guardrail, not a technical ceiling (measured headroom is ~14×). Pass a larger
+   explicit budget only where the action is rare and high-stakes:
+   `openProposal` uses `MAX_PROPOSAL_MESSAGE_BYTES` (4096) because members vote
+   against the rationale. Routine per-action memos keep the default, where extra
+   bytes are a recurring fee on every contribution.
+6. **Never PII.** Public and permanent, with no way to edit or retract.
+
+**Hash binding** — where a datum commits to text (escrow `content_hash`,
+`evidence`), use `hashContent(text)` for the commitment and put the pre-image in
+the same tx's `message`. `hashContent` is plain BLAKE2b-256 over raw UTF-8 —
+no salt, no domain tag — so any third party can verify with `b2sum -l 256`. This
+is deliberately unlike `computeProfileCommitment`, which _must_ be salted because
+a profile is low-entropy PII. Read it back with `getTxMessage(bfConfig, txHash)`
+and recompute with the same `hashContent`; one implementation on both sides is
+what stops app- and validator-side hashes from drifting.
+
+---
+
 ## Test setup chain
 
 Build composable setup functions that extend a base result. Each level calls the one above:

@@ -22,6 +22,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 import {
   DcuError,
@@ -52,6 +54,13 @@ export type CancelRecoveryConfig = {
   targetTokenSuffix: string; // N — the lost member's account token suffix
   newAccountTokenSuffix: string; // N' — the pending request's authenticating token
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedCancelRecoveryTxProgram = (
@@ -114,8 +123,7 @@ export const unsignedCancelRecoveryTxProgram = (
       inputs: [requestUtxo],
     };
 
-    const baseTx0 = lucid
-      .newTx()
+    const baseTx0 = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([requestUtxo], cancelSpendRedeemer)
       .collectFrom([targetAccountUtxo])
       .mintAssets(burnAssets, cancelSpendRedeemer)

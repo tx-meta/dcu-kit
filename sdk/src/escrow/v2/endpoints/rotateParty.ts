@@ -11,7 +11,11 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../../core/errors.js";
-import { makeReturn } from "../../../core/utils/index.js";
+import {
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../../core/utils/index.js";
 import {
   EscrowDatumV2,
   EscrowV2SpendRedeemer,
@@ -48,6 +52,12 @@ export type RotatePartyConfig = {
   newParty: PartyRef;
   /** Required when the CURRENT credential of the party is a script hash. */
   partyWitness?: PartyWitness;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 const credKey = (c: EscrowDatumV2["verifier"]) =>
@@ -84,6 +94,7 @@ const buildRotation = (
   party: PartyD,
   currentCredential: EscrowDatumV2["verifier"],
   witness: PartyWitness | undefined,
+  message: TxMessage | undefined,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
     // Mirror the on-chain guardrails so failures are typed before submission.
@@ -108,8 +119,7 @@ const buildRotation = (
         ),
       inputs: [escrowUtxo],
     };
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), message))
       .collectFrom([escrowUtxo], redeemer)
       .attach.SpendingValidator(escrowV2Validator.spendEscrow)
       .pay.ToContract(
@@ -179,6 +189,7 @@ export const unsignedRotatePartyTxProgram = (
         { CoBeneficiaryParty: { index: BigInt(ix) } },
         current.address.payment_credential,
         config.partyWitness,
+        config.message,
       );
     }
 
@@ -201,6 +212,7 @@ export const unsignedRotatePartyTxProgram = (
           "FunderParty",
           datum.funder.payment_credential,
           config.partyWitness,
+          config.message,
         );
       }
       case "beneficiary": {
@@ -221,6 +233,7 @@ export const unsignedRotatePartyTxProgram = (
           "BeneficiaryParty",
           datum.beneficiary.payment_credential,
           config.partyWitness,
+          config.message,
         );
       }
       case "verifier": {
@@ -232,6 +245,7 @@ export const unsignedRotatePartyTxProgram = (
           "VerifierParty",
           datum.verifier,
           config.partyWitness,
+          config.message,
         );
       }
       case "arbiter": {
@@ -252,6 +266,7 @@ export const unsignedRotatePartyTxProgram = (
           "ArbiterParty",
           datum.arbiter,
           config.partyWitness,
+          config.message,
         );
       }
     }
