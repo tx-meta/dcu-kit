@@ -1,4 +1,7 @@
-import { Effect, Schedule } from "effect";
+import { Effect } from "effect";
+import { bfGet, type BlockfrostConfig } from "./blockfrost.js";
+
+export type { BlockfrostConfig };
 import { GroupDatum } from "../core/types.js";
 import { DcuError, SetupError } from "../core/errors.js";
 import { assetNameLabels } from "../core/utils/assets.js";
@@ -7,23 +10,6 @@ import {
   decodeGroupMetadata,
 } from "../core/utils/datum.js";
 import { makeReturn } from "../core/utils/index.js";
-
-/**
- * Minimal Blockfrost connection details for historical (read-only) queries.
- *
- * Unlike the tx-building endpoints, group history cannot be answered from the
- * current UTxO set — a closed group has been burned and is no longer present at
- * any address. The only source of truth is transaction history, which Lucid's
- * provider abstraction does not expose. This reader therefore talks to the
- * Blockfrost API directly. (A Maestro variant could be added later behind the
- * same `GroupHistory` shape.)
- */
-export type BlockfrostConfig = {
-  /** Base URL including `/api/v0`, e.g. `https://cardano-preprod.blockfrost.io/api/v0`. */
-  url: string;
-  /** Blockfrost `project_id`. */
-  projectId: string;
-};
 
 /** Lifecycle phase of a group at a given transaction. */
 export type GroupAction = "created" | "updated" | "closed";
@@ -79,38 +65,8 @@ type BfTxUtxos = { outputs: BfTxOutput[] };
 type BfTx = { block_height: number; block_time: number; index: number };
 
 const PAGE_SIZE = 100;
-/** Per-request timeout; a stalled connection aborts rather than hanging the query. */
-const REQUEST_TIMEOUT_MS = 10_000;
 /** Max concurrent Blockfrost requests when fanning out over a group's transactions. */
 const FETCH_CONCURRENCY = 8;
-/** Bounded backoff for transient (network / 5xx) failures. */
-const retrySchedule = Schedule.spaced("500 millis").pipe(
-  Schedule.upTo("5 seconds"),
-);
-
-/** Issues a GET against Blockfrost; 404 → `null`, other non-2xx → `SetupError`. */
-const bfGet = (
-  config: BlockfrostConfig,
-  path: string,
-): Effect.Effect<unknown, SetupError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const res = await fetch(`${config.url}${path}`, {
-        headers: { project_id: config.projectId },
-        // Aborts the fetch (and frees the socket) if Blockfrost stalls.
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-      if (res.status === 404) return null;
-      if (!res.ok) {
-        throw new Error(
-          `Blockfrost ${res.status} for ${path}: ${await res.text()}`,
-        );
-      }
-      return res.json();
-    },
-    catch: (e) =>
-      new SetupError({ message: `Blockfrost query failed: ${e}`, cause: e }),
-  }).pipe(Effect.retry(retrySchedule));
 
 /** Walks the paginated asset-transactions endpoint (ascending) to completion. */
 const fetchAllTxs = (
