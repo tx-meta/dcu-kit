@@ -14,7 +14,12 @@ import {
   LucidError,
   TransactionBuildError,
 } from "../../../core/errors.js";
-import { makeReturn, patchInlineDatum } from "../../../core/utils/index.js";
+import {
+  makeReturn,
+  patchInlineDatum,
+  attachTxMessage,
+  type TxMessage,
+} from "../../../core/utils/index.js";
 import {
   EscrowDatumV2,
   EscrowV2MintRedeemer,
@@ -78,6 +83,12 @@ export type AllocateToEscrowConfig = {
   escrowScriptRef?: UTxO;
   /** Clock override (POSIX ms) — pass `emulator.now()` in emulator tests. */
   currentTime?: bigint;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 const findDeposit = (
@@ -250,8 +261,7 @@ export const unsignedAllocateToEscrowTxProgram = (
         now + 1_200_000n < deadline ? now + 1_200_000n : deadline,
       );
 
-      let tx = lucid
-        .newTx()
+      let tx = (yield* attachTxMessage(lucid.newTx(), config.message))
         .readFrom(
           config.escrowScriptRef
             ? [poolUtxo, config.escrowScriptRef]
@@ -352,8 +362,7 @@ export const unsignedAllocateToEscrowTxProgram = (
         ),
       inputs: [deposit.utxo, escrowUtxo],
     };
-    let baseTx = lucid
-      .newTx()
+    let baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .readFrom(
         config.escrowScriptRef
           ? [poolUtxo, config.escrowScriptRef]

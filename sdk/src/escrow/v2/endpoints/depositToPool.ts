@@ -10,7 +10,12 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../../core/errors.js";
-import { getWalletAddress, makeReturn } from "../../../core/utils/index.js";
+import {
+  getWalletAddress,
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../../core/utils/index.js";
 import { toOnchainAddress, VaultDatum } from "../types.js";
 import { MIN_ADA_BUFFER, resolvePool } from "../utils.js";
 
@@ -33,6 +38,12 @@ export type DepositToPoolConfig = {
   lockedUntil?: bigint;
   /** Refund identity. Defaults to the wallet address. */
   contributorAddress?: string;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedDepositToPoolTxProgram = (
@@ -79,9 +90,8 @@ export const unsignedDepositToPoolTxProgram = (
           [pool.asset_policy + pool.asset_name]: config.amount,
         };
 
-    return yield* lucid
-      .newTx()
-      .pay.ToContract(
+    return yield* (yield* attachTxMessage(lucid.newTx(), config.message)).pay
+      .ToContract(
         poolUtxo.address,
         { kind: "inline", value: Data.to(datum, VaultDatum) },
         assets,

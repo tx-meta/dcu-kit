@@ -30,6 +30,8 @@ import {
   resolveUtxoByUnit,
   contributableBalance,
   reserveTokenName,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 import { DcuError, TransactionBuildError } from "../core/errors.js";
 
@@ -54,6 +56,13 @@ export type DistributePayoutConfig = {
   // script bytes are resolved from the on-chain UTxO rather than included inline,
   // keeping the transaction well under the 16KB Cardano size limit.
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedDistributePayoutTxProgram = (
@@ -419,8 +428,10 @@ export const unsignedDistributePayoutTxProgram = (
     );
 
     // Build the transaction: group output first, then the indexer legs, then borrower
-    const baseTxNoValidators = lucid
-      .newTx()
+    const baseTxNoValidators = (yield* attachTxMessage(
+      lucid.newTx(),
+      config.message,
+    ))
       .collectFrom([groupUtxo], groupRedeemer)
       .collectFrom(
         legs.map((s) => s.utxo),

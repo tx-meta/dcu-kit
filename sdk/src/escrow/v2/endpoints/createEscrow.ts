@@ -19,6 +19,8 @@ import {
   getWalletUtxos,
   makeReturn,
   sortUtxos,
+  attachTxMessage,
+  type TxMessage,
 } from "../../../core/utils/index.js";
 import {
   EscrowDatumV2,
@@ -89,6 +91,12 @@ export type CreateEscrowV2Config = {
   funderAddress?: string;
   /** Clock override (POSIX ms) — pass `emulator.now()` in emulator tests. */
   currentTime?: bigint;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 /**
@@ -327,8 +335,7 @@ export const unsignedCreateEscrowV2TxProgram = (
       now + 1_200_000n < firstCure ? now + 1_200_000n : firstCure - 1_000n,
     );
 
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([seed])
       .mintAssets({ [stateUnit]: 1n }, redeemer)
       .attach.MintingPolicy(escrowV2Validator.mintEscrow)

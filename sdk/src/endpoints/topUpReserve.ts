@@ -18,6 +18,8 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
   reserveTokenName,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 import {
   ConfigurationError,
@@ -46,6 +48,13 @@ export type TopUpReserveConfig = {
   amount: bigint;
   /** Deployed treasury reference script — the treasury no longer fits inline. */
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedTopUpReserveTxProgram = (
@@ -112,8 +121,7 @@ export const unsignedTopUpReserveTxProgram = (
 
     const address = yield* getWalletAddress(lucid);
 
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([reserveUtxo], Data.to("ReserveTopUp", TreasuryRedeemer))
       .pay.ToContract(
         reserveUtxo.address,

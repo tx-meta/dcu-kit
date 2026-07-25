@@ -11,7 +11,12 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../core/errors.js";
-import { getWalletAddress, makeReturn } from "../../core/utils/index.js";
+import {
+  getWalletAddress,
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../core/utils/index.js";
 import { SavingsMintRedeemer, SavingsSpendRedeemer } from "../types.js";
 import { savingsPolicyId, savingsVaultValidator } from "../validators.js";
 import { applyQuorumWitness, PartyWitness, resolveFund } from "../utils.js";
@@ -35,6 +40,12 @@ export type CloseFundConfig = {
   destination?: string;
   /** Required when the quorum is a script credential. */
   quorumWitness?: PartyWitness;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedCloseFundTxProgram = (
@@ -79,8 +90,7 @@ export const unsignedCloseFundTxProgram = (
       inputs: [fundUtxo],
     };
 
-    const txDraft = lucid
-      .newTx()
+    const txDraft = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([fundUtxo], redeemer)
       .compose(
         config.scriptRef

@@ -17,6 +17,8 @@ import {
   getWalletUtxos,
   makeReturn,
   sortUtxos,
+  attachTxMessage,
+  type TxMessage,
 } from "../../../core/utils/index.js";
 import {
   PartyRef,
@@ -45,6 +47,12 @@ export type CreateProjectConfig = {
   contentHash?: string;
   /** Owner: an address, or `{ type, hash }` (e.g. a committee multisig). Defaults to the wallet. */
   owner?: PartyRef;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedCreateProjectTxProgram = (
@@ -107,8 +115,7 @@ export const unsignedCreateProjectTxProgram = (
     };
 
     const network = lucid.config().network ?? "Preprod";
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([seed])
       .mintAssets({ [projectUnit]: 1n }, redeemer)
       .attach.MintingPolicy(projectValidator.mintProject)

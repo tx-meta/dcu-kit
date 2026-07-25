@@ -11,7 +11,11 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../../core/errors.js";
-import { makeReturn } from "../../../core/utils/index.js";
+import {
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../../core/utils/index.js";
 import {
   EscrowV2MintRedeemer,
   EscrowV2SpendRedeemer,
@@ -40,6 +44,12 @@ export type ResolveDisputeConfig = {
   beneficiaryAmount: bigint;
   /** Required when the arbiter credential is a script hash. */
   arbiterWitness?: PartyWitness;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedResolveDisputeTxProgram = (
@@ -120,8 +130,7 @@ export const unsignedResolveDisputeTxProgram = (
       inputs: [escrowUtxo],
     };
 
-    let tx = lucid
-      .newTx()
+    let tx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([escrowUtxo], redeemer)
       .attach.SpendingValidator(escrowV2Validator.spendEscrow)
       .mintAssets(

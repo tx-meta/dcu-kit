@@ -32,6 +32,8 @@ import {
   MIN_RECOVERY_THRESHOLD,
   MIN_RECOVERY_TIMELOCK_MS,
   MIN_RECOMMIT_WINDOW_MS,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 import {
   ConfigurationError,
@@ -77,6 +79,14 @@ export type CreateGroupConfig = {
    * limit — pass refs (or register a session) for real deployments.
    */
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674) — e.g. the group's purpose or founding rules. Unlike
+   * `groupName`/`groupDescription` this is transaction-scoped, not part of any
+   * datum: no validator reads it, it costs no min-ADA, and it can never be
+   * edited. Public and permanent — group-level context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedCreateGroupTxProgram = (
@@ -256,8 +266,7 @@ export const unsignedCreateGroupTxProgram = (
       inputs: [utxo],
     };
 
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([utxo])
       .mintAssets(mintingAssets, redeemer)
       .mintAssets({ [reserveToken]: 1n }, createReserveMintRedeemer)

@@ -16,6 +16,9 @@ import {
   getWalletUtxos,
   makeReturn,
   sortUtxos,
+  attachTxMessage,
+  MAX_PROPOSAL_MESSAGE_BYTES,
+  type TxMessage,
 } from "../../core/utils/index.js";
 import {
   GovAction,
@@ -72,6 +75,17 @@ export type OpenProposalConfig = {
   /** Reference-script UTxOs — required in practice: dispatcher + voting no
    *  longer fit inline together under the 16,384-byte tx limit. */
   scriptRefs?: GovScriptRefs;
+  /**
+   * The proposal's rationale — why members should vote for this action —
+   * attached as CIP-20 metadata (label 674). Budgeted at
+   * `MAX_PROPOSAL_MESSAGE_BYTES` (4096) rather than the 1024 default, since a
+   * proposal is rare and members vote against this text.
+   *
+   * NOTE: not yet consensus-bound. The proposal datum has no rationale
+   * commitment, so a reader binds this to the proposal via the creating
+   * transaction, not via the validator. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedOpenProposalTxProgram = (
@@ -183,8 +197,11 @@ export const unsignedOpenProposalTxProgram = (
       inputs: [seed],
     };
 
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(
+      lucid.newTx(),
+      config.message,
+      MAX_PROPOSAL_MESSAGE_BYTES,
+    ))
       .collectFrom([seed])
       .readFrom([anchorUtxo])
       .mintAssets({ [proposalUnit]: 1n }, mintRedeemer)

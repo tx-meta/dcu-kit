@@ -27,6 +27,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 import {
   DcuError,
@@ -64,6 +66,13 @@ export type ExecuteRecoveryConfig = {
   newAccountTokenSuffix: string; // N' — the recovered member's new account token suffix
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, Date.now() for live
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedExecuteRecoveryTxProgram = (
@@ -289,8 +298,7 @@ export const unsignedExecuteRecoveryTxProgram = (
       inputs: [groupUtxo, memberTreasuryUtxo],
     };
 
-    const baseTx0 = lucid
-      .newTx()
+    const baseTx0 = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([requestUtxo], executeSpendRedeemer)
       .collectFrom([memberTreasuryUtxo], executeSpendRedeemer)
       .collectFrom([groupUtxo], recoverMemberRedeemer)

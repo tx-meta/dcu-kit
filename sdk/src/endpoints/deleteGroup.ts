@@ -21,6 +21,8 @@ import {
   assetNameLabels,
   resolveUtxoByUnit,
   reserveTokenName,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 import { TreasuryRedeemer, ReserveAction } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
@@ -52,6 +54,13 @@ export type DeleteGroupConfig = {
    * (ReserveClose); the two attached inline exceed the tx size limit.
    */
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 } & AdminAuthConfig;
 
 export const unsignedDeleteGroupTxProgram = (
@@ -139,8 +148,7 @@ export const unsignedDeleteGroupTxProgram = (
       [reserveUnit]: -1n,
     };
 
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([adminUtxo])
       .collectFrom([groupUtxo], spendRedeemer)
       .collectFrom([reserveUtxo], reserveCloseRedeemer)

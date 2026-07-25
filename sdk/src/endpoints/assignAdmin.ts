@@ -11,7 +11,12 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../core/errors.js";
-import { assetNameLabels, resolveUtxoByUnit } from "../core/utils/index.js";
+import {
+  assetNameLabels,
+  resolveUtxoByUnit,
+  attachTxMessage,
+  type TxMessage,
+} from "../core/utils/index.js";
 import { Protocol } from "../core/validators/constants.js";
 
 /**
@@ -33,6 +38,13 @@ export type AssignAdminConfig = {
   /** Skips destination verification. The transfer is a one-way door; only use
    *  this when the destination script is intentionally not at hand. */
   force?: boolean;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 /**
@@ -107,8 +119,7 @@ export const unsignedAssignAdminTxProgram = (
 
     const adminUtxo = yield* resolveUtxoByUnit(lucid, adminUnit);
 
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([adminUtxo])
       .pay.ToAddress(destinationAddress, { [adminUnit]: 1n })
       .completeProgram()

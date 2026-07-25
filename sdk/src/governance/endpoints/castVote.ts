@@ -10,7 +10,12 @@ import {
   DcuError,
   TransactionBuildError,
 } from "../../core/errors.js";
-import { getWalletUtxos, makeReturn } from "../../core/utils/index.js";
+import {
+  getWalletUtxos,
+  makeReturn,
+  attachTxMessage,
+  type TxMessage,
+} from "../../core/utils/index.js";
 import {
   GovernanceDatum,
   GovSpendRedeemer,
@@ -58,6 +63,12 @@ export type CastVoteConfig = {
   /** Reference-script UTxOs — required in practice: dispatcher + voting no
    *  longer fit inline together under the 16,384-byte tx limit. */
   scriptRefs?: GovScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedCastVoteTxProgram = (
@@ -201,8 +212,7 @@ export const unsignedCastVoteTxProgram = (
       inputs: votingInputs,
     };
 
-    const tx = yield* lucid
-      .newTx()
+    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([proposalUtxo], spendRedeemer)
       .collectFrom([recordUtxo], recordRedeemer)
       .compose(

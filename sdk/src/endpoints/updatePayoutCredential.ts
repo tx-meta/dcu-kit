@@ -27,6 +27,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  attachTxMessage,
+  type TxMessage,
 } from "../core/utils/index.js";
 
 /**
@@ -47,6 +49,13 @@ export type UpdatePayoutCredentialConfig = {
   accountTokenSuffix: string;
   /** Deployed treasury reference scripts — the treasury no longer fits inline. */
   scriptRefs?: ScriptRefs;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — group-level
+   * context only, never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedUpdatePayoutCredentialTxProgram = (
@@ -117,8 +126,7 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
       inputs: [accountUtxo, treasuryUtxo],
     };
 
-    const baseTx = lucid
-      .newTx()
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([accountUtxo])
       .collectFrom([treasuryUtxo], Data.to("UpdatePayout", TreasuryRedeemer))
       .addSigner(address)

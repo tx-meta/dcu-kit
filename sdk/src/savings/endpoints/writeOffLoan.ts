@@ -17,6 +17,8 @@ import {
   getWalletUtxos,
   makeReturn,
   sortUtxos,
+  attachTxMessage,
+  type TxMessage,
 } from "../../core/utils/index.js";
 import {
   SavingsDatum,
@@ -52,6 +54,12 @@ export type WriteOffLoanConfig = {
   loanTokenName: string;
   /** Required when the quorum is a script credential. */
   quorumWitness?: PartyWitness;
+  /**
+   * Optional human-readable note attached to this transaction as CIP-20
+   * metadata (label 674). Transaction-scoped: no validator reads it, it costs
+   * no min-ADA, and it can never be edited. Public and permanent — never PII.
+   */
+  message?: TxMessage;
 };
 
 export const unsignedWriteOffLoanTxProgram = (
@@ -133,8 +141,7 @@ export const unsignedWriteOffLoanTxProgram = (
     }
 
     const vaultAddress = fundUtxo.address;
-    const txDraft = lucid
-      .newTx()
+    const txDraft = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([fundUtxo, refUtxo, loanUtxo], redeemer)
       .collectFrom([feeInput])
       .compose(
