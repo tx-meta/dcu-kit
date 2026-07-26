@@ -19,6 +19,7 @@ import {
 import { unsignedInitGovernanceTxProgram } from "../src/governance/endpoints/initGovernance.js";
 import { unsignedRegisterVotingStakeTxProgram } from "../src/governance/endpoints/registerVotingStake.js";
 import { unsignedRegisterVoterTxProgram } from "../src/governance/endpoints/registerVoter.js";
+import { splitEligibility } from "../src/governance/endpoints/splitEligibility.js";
 import { unsignedOpenProposalTxProgram } from "../src/governance/endpoints/openProposal.js";
 import { unsignedCastVoteTxProgram } from "../src/governance/endpoints/castVote.js";
 import { unsignedFinalizeProposalTxProgram } from "../src/governance/endpoints/finalizeProposal.js";
@@ -530,6 +531,73 @@ describe("governance module (emulator, real validators)", () => {
           }),
         );
         expect(String(err)).toContain("exactly one token name");
+      }),
+  );
+
+  it.effect(
+    "splitEligibility separates a merged UTxO so registerVoter succeeds afterward",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const { lucid, emulator } = ctx;
+        const { instance, scriptRefs } = yield* setupInstance(ctx, 2n);
+
+        // Same merged shape as the sibling rejection test: a second member's
+        // eligibility token lands in a UTxO that also carries a decoy name
+        // under member_policy.
+        selectWalletFromSeed(lucid, ctx.creator.seedPhrase);
+        const member2Unit = MEMBER_POLICY + fromText("member2");
+        const decoyUnit = MEMBER_POLICY + fromText("decoy");
+        const mergeTx = yield* Effect.promise(() =>
+          lucid
+            .newTx()
+            .mintAssets({ [member2Unit]: 1n, [decoyUnit]: 1n })
+            .attach.MintingPolicy(membershipScript)
+            .pay.ToAddress(ctx.creator.address, {
+              [member2Unit]: 1n,
+              [decoyUnit]: 1n,
+            })
+            .complete(),
+        );
+        yield* signAndSubmit(mergeTx);
+        yield* advanceBlock(emulator, 2);
+
+        // Confirms the precondition: registration is blocked before the split.
+        const rejected = yield* Effect.flip(
+          unsignedRegisterVoterTxProgram(lucid, {
+            instance,
+            voterTokenUnit: member2Unit,
+            scriptRefs,
+          }),
+        );
+        expect(String(rejected)).toContain("exactly one token name");
+
+        // Split the merged tokens apart via the SDK endpoint.
+        const splitTx = yield* splitEligibility(lucid, {
+          tokenUnits: [member2Unit, decoyUnit],
+        }).program();
+        yield* signAndSubmit(splitTx);
+        yield* advanceBlock(emulator, 2);
+
+        const utxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
+        const holder = utxos.find((u) => (u.assets[member2Unit] ?? 0n) > 0n)!;
+        expect(
+          Object.keys(holder.assets).filter((k) =>
+            k.startsWith(MEMBER_POLICY),
+          ).length,
+        ).toBe(1);
+
+        // registerVoter, which failed before the split, now succeeds.
+        const { tx: voterTx } = yield* unsignedRegisterVoterTxProgram(lucid, {
+          instance,
+          voterTokenUnit: member2Unit,
+          scriptRefs,
+        });
+        yield* signAndSubmit(voterTx);
+        yield* advanceBlock(emulator, 2);
+
+        const { roster } = yield* resolveRoster(lucid, instance);
+        expect(roster.members).toContain(fromText("member2"));
       }),
   );
 
