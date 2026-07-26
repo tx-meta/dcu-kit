@@ -17,6 +17,14 @@
  * is recorded, that is reported as an explicit issue rather than silently
  * skipped or crashed on.
  *
+ * Note: this stays hand-rolled rather than delegating to the SDK's now-wider
+ * `verifyProtocolDeployment(config)` (which also covers all ten keys, see
+ * `sdk/src/admin/verifyProtocolDeployment.ts`) because this example package
+ * depends on a packed tarball snapshot of the SDK
+ * (`file:../dcu-kit-*.tgz`, not a live workspace link) — delegating would
+ * only pick up the widened config/behavior after a full SDK rebuild +
+ * repack + reinstall here, which is out of scope for this change.
+ *
  * Usage:
  *   npx tsx verify-protocol-deployment.ts
  *
