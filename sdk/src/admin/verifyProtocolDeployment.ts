@@ -347,27 +347,23 @@ export const verifyProtocolDeployment = (
     // callers who never check those keys — so load each one lazily, only
     // when its key was actually requested for this call.
     const savingsVaultValidator = requestedKeys.includes("savings")
-      ? (
-          yield* Effect.tryPromise({
-            try: () => import("../savings/validators.js"),
-            catch: (e) =>
-              new SetupError({
-                message: `verifyProtocolDeployment: failed to load the savings module: ${e}`,
-              }),
-          })
-        ).savingsVaultValidator
+      ? (yield* Effect.tryPromise({
+          try: () => import("../savings/validators.js"),
+          catch: (e) =>
+            new SetupError({
+              message: `verifyProtocolDeployment: failed to load the savings module: ${e}`,
+            }),
+        })).savingsVaultValidator
       : null;
 
     const escrowV2Validator = requestedKeys.includes("escrowV2")
-      ? (
-          yield* Effect.tryPromise({
-            try: () => import("../escrow/v2/validators.js"),
-            catch: (e) =>
-              new SetupError({
-                message: `verifyProtocolDeployment: failed to load the escrow v2 module: ${e}`,
-              }),
-          })
-        ).escrowV2Validator
+      ? (yield* Effect.tryPromise({
+          try: () => import("../escrow/v2/validators.js"),
+          catch: (e) =>
+            new SetupError({
+              message: `verifyProtocolDeployment: failed to load the escrow v2 module: ${e}`,
+            }),
+        })).escrowV2Validator
       : null;
 
     // Governance's dispatcher/voting scripts are parameterised by the seed —
@@ -378,15 +374,13 @@ export const verifyProtocolDeployment = (
       requestedKeys.includes("governanceVoting");
     const governanceInstance: GovernanceInstance | null =
       needsGovernance && governanceSeed
-        ? (
-            yield* Effect.tryPromise({
-              try: () => import("../governance/validators.js"),
-              catch: (e) =>
-                new SetupError({
-                  message: `verifyProtocolDeployment: failed to load the governance module: ${e}`,
-                }),
-            })
-          ).buildGovernance(governanceSeed)
+        ? (yield* Effect.tryPromise({
+            try: () => import("../governance/validators.js"),
+            catch: (e) =>
+              new SetupError({
+                message: `verifyProtocolDeployment: failed to load the governance module: ${e}`,
+              }),
+          })).buildGovernance(governanceSeed)
         : null;
 
     const expectedScriptFor = (key: VerifiableScriptKey): Script | null => {

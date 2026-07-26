@@ -67,7 +67,9 @@ describe("deployment manifest", () => {
     const d = loadDeployment("Preprod");
     const instance = buildGovernance(d.governance.seed);
 
-    expect(d.refScripts.governanceDispatcher.scriptHash).toBe(instance.govPolicy);
+    expect(d.refScripts.governanceDispatcher.scriptHash).toBe(
+      instance.govPolicy,
+    );
     expect(d.refScripts.governanceVoting.scriptHash).toBe(
       instance.votingStakeHash,
     );
