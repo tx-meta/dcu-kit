@@ -164,4 +164,62 @@ describe("verifyProtocolDeployment (emulator)", () => {
       expect(result.registry.fingerprintsMatch).toBe(true);
     }),
   );
+
+  it.effect("reports a missing module ref as an issue, not silence", () =>
+    Effect.gen(function* () {
+      const { context } = yield* setupBase();
+
+      const result = yield* verifyProtocolDeployment(context.lucid, {
+        settingsPolicy: context.protocol!.settingsPolicy,
+        refs: {
+          ...refsFromContext(context.scriptRefs!),
+          // Present in the config (so it's in scope) but no value recorded —
+          // this must not pass silently as `ok`.
+          savings: undefined,
+        },
+        expected: {
+          settingsUnit: context.settingsUnit!,
+          network: "Custom",
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.issues.some((i) => i.includes("savings"))).toBe(true);
+      expect(result.refs.savings.found).toBe(false);
+      // The six ROSCA refs are unaffected by the unrelated missing module ref.
+      expect(result.refs.treasury.scriptMatches).toBe(true);
+    }),
+  );
+
+  it.effect(
+    "reports the governance refs as unverifiable when no governanceSeed is given",
+    () =>
+      Effect.gen(function* () {
+        const { context } = yield* setupBase();
+
+        const result = yield* verifyProtocolDeployment(context.lucid, {
+          settingsPolicy: context.protocol!.settingsPolicy,
+          refs: {
+            ...refsFromContext(context.scriptRefs!),
+            // A ref is recorded, but governanceDispatcher/Voting are
+            // seed-parameterised — with no governanceSeed given, the
+            // expected script can never be derived to hash-check against.
+            governanceDispatcher: { txHash: "0".repeat(64), outputIndex: 0 },
+          },
+          // no governanceSeed
+        });
+
+        expect(result.ok).toBe(false);
+        expect(
+          result.issues.some(
+            (i) =>
+              i.includes("governanceDispatcher") &&
+              i.includes("governanceSeed"),
+          ),
+        ).toBe(true);
+        expect(result.refs.governanceDispatcher.expectedScriptHash).toBeNull();
+        // Never crashes, and the six ROSCA refs are unaffected.
+        expect(result.refs.treasury.scriptMatches).toBe(true);
+      }),
+  );
 });

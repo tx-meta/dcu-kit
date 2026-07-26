@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "sdkVersion": "0.5.6-preprod.1",
+  "sdkVersion": "0.5.6-preprod.2",
   "families": {
     "rosca": {
       "status": "launch",
@@ -99,6 +99,12 @@
     }
   },
   "history": [
+    {
+      "date": "2026-07-26",
+      "sdkVersion": "0.5.6-preprod.2",
+      "changed": [],
+      "note": "0.5.6-preprod.2: governance eligibility-UTxO selection, splitEligibility, gate-witness composition, and the deployment manifest (all offchain) — validator fingerprints unchanged from 0.5.6-preprod.1"
+    },
     {
       "date": "2026-07-25",
       "sdkVersion": "0.5.6-preprod.1",

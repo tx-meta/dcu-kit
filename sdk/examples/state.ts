@@ -19,11 +19,12 @@
 
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// State lives in examples/ not dist/ — dist/ is wiped on every build.
-const STATE_FILE = path.join(__dirname, "..", "state.json");
+// Examples always run from sdk/examples (package.json scripts use `node dist/x.js`),
+// so anchor to cwd, not __dirname — __dirname is dist/ after a build and ".." then
+// silently resolves to a DIFFERENT file than a tsx run would use.
+const STATE_FILE = path.resolve(process.cwd(), "state.json");
+const LEGACY_STATE_FILE = path.resolve(process.cwd(), "..", "state.json");
 
 export type ScriptRefOutRef = { txHash: string; outputIndex: number };
 
@@ -229,7 +230,35 @@ export function checkValidatorStaleness(current: {
   }
 }
 
+/**
+ * A previous layout wrote to sdk/state.json. If that file exists and the
+ * canonical one does not, adopt it rather than starting empty — starting empty
+ * silently detaches every example from its on-chain identity.
+ */
+function migrateLegacyState(): void {
+  if (fs.existsSync(STATE_FILE) || !fs.existsSync(LEGACY_STATE_FILE)) return;
+  fs.copyFileSync(LEGACY_STATE_FILE, STATE_FILE);
+  console.warn(
+    `[state] adopted legacy state from ${LEGACY_STATE_FILE} -> ${STATE_FILE}`,
+  );
+}
+
+// `saveState` calls `loadState` internally (read-modify-write), so without
+// this guard every save would print the resolved path twice and re-run the
+// migration check twice — once for the caller's own `loadState`, once for
+// `saveState`'s internal one. Both only need to happen once per process.
+let didLogPath = false;
+let didMigrate = false;
+
 export function loadState(): ExampleState {
+  if (!didMigrate) {
+    migrateLegacyState();
+    didMigrate = true;
+  }
+  if (!didLogPath && !process.env.DCU_STATE_QUIET) {
+    console.log(`[state] ${STATE_FILE}`);
+    didLogPath = true;
+  }
   try {
     return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
   } catch {
