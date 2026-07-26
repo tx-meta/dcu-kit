@@ -37,10 +37,7 @@ import { buildGovernance } from "../governance/validators.js";
  * verification covers a strictly wider set than deployment does.
  */
 export type ModuleScriptKey =
-  | "savings"
-  | "escrowV2"
-  | "governanceDispatcher"
-  | "governanceVoting";
+  "savings" | "escrowV2" | "governanceDispatcher" | "governanceVoting";
 
 /** Every reference script this verifier can check: the six ROSCA refs plus the four standalone modules. */
 export type VerifiableScriptKey = DeployedScriptKey | ModuleScriptKey;
@@ -302,7 +299,9 @@ export const verifyProtocolDeployment = (
     // type intentionally mandates the six ROSCA keys and leaves the four
     // module keys optional; this cast lets one loop over `ALL_KEYS` handle
     // both uniformly without fighting the intersection type at every index.
-    const allRefs = refs as Partial<Record<VerifiableScriptKey, ScriptRefOutRef>>;
+    const allRefs = refs as Partial<
+      Record<VerifiableScriptKey, ScriptRefOutRef>
+    >;
 
     const network = lucid.config().network!;
     const protocol = buildProtocol(settingsPolicy);
@@ -445,7 +444,9 @@ export const verifyProtocolDeployment = (
       // the four module refs are deployer-owned by design (recoverable) —
       // no fixed address applies, so this check is skipped for them.
       const checkAddress = ALWAYS_FAILS_KEYS.has(key);
-      const atDeployAddress = checkAddress ? utxo.address === deployAddress : true;
+      const atDeployAddress = checkAddress
+        ? utxo.address === deployAddress
+        : true;
       if (checkAddress && !atDeployAddress)
         issues.push(`${key} ref UTxO is at wrong address: ${utxo.address}`);
 
@@ -480,7 +481,8 @@ export const verifyProtocolDeployment = (
         scriptMatches,
         onChainScriptHash,
         expectedScriptHash,
-        hashMatches: expectedScript != null && onChainScriptHash === expectedScriptHash,
+        hashMatches:
+          expectedScript != null && onChainScriptHash === expectedScriptHash,
       };
     }
 
