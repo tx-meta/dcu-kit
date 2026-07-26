@@ -491,6 +491,105 @@ describe("governance module (emulator, real validators)", () => {
         expect(remaining.length).toBe(0);
       }),
   );
+
+  it.effect(
+    "registerVoter rejects an eligibility UTxO holding two names under member_policy",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const { lucid, emulator } = ctx;
+        const { instance, scriptRefs } = yield* setupInstance(ctx, 2n);
+
+        // A distinct member (different token name, same member_policy) whose
+        // eligibility token lands in a UTxO that also carries a second name
+        // under member_policy — the exact shape ordinary change handling
+        // produces once a member also holds e.g. a savings-module token
+        // minted under the same policy.
+        selectWalletFromSeed(lucid, ctx.creator.seedPhrase);
+        const member2Unit = MEMBER_POLICY + fromText("member2");
+        const decoyUnit = MEMBER_POLICY + fromText("decoy");
+        const mergeTx = yield* Effect.promise(() =>
+          lucid
+            .newTx()
+            .mintAssets({ [member2Unit]: 1n, [decoyUnit]: 1n })
+            .attach.MintingPolicy(membershipScript)
+            .pay.ToAddress(ctx.creator.address, {
+              [member2Unit]: 1n,
+              [decoyUnit]: 1n,
+            })
+            .complete(),
+        );
+        yield* signAndSubmit(mergeTx);
+        yield* advanceBlock(emulator, 2);
+
+        const err = yield* Effect.flip(
+          unsignedRegisterVoterTxProgram(lucid, {
+            instance,
+            voterTokenUnit: member2Unit,
+            scriptRefs,
+          }),
+        );
+        expect(String(err)).toContain("exactly one token name");
+      }),
+  );
+
+  it.effect(
+    "castVote rejects an eligibility UTxO holding two names under member_policy",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const { lucid, emulator } = ctx;
+        const { instance, scriptRefs } = yield* setupInstance(ctx, 2n);
+
+        const now = BigInt(emulator.now());
+        const { tx: openTx, proposalId } = yield* unsignedOpenProposalTxProgram(
+          lucid,
+          {
+            instance,
+            targetPolicy: TARGET_POLICY,
+            targetId: TARGET,
+            action: { ParamChange: { field_tag: 0n, new_value: 100n } },
+            deadline: now + 7n * 24n * 3600_000n,
+            openerTokenUnit: MEMBER_UNIT,
+            currentTime: now,
+            scriptRefs,
+          },
+        );
+        yield* signAndSubmit(openTx);
+        yield* advanceBlock(emulator, 2);
+
+        // Merge a second token name under member_policy into the UTxO holding
+        // the registered member's eligibility token — again the shape
+        // ordinary change handling produces.
+        selectWalletFromSeed(lucid, ctx.creator.seedPhrase);
+        const decoyUnit = MEMBER_POLICY + fromText("decoy");
+        const mergeTx = yield* Effect.promise(() =>
+          lucid
+            .newTx()
+            .mintAssets({ [decoyUnit]: 1n })
+            .attach.MintingPolicy(membershipScript)
+            .pay.ToAddress(ctx.creator.address, {
+              [MEMBER_UNIT]: 1n,
+              [decoyUnit]: 1n,
+            })
+            .complete(),
+        );
+        yield* signAndSubmit(mergeTx);
+        yield* advanceBlock(emulator, 2);
+
+        const err = yield* Effect.flip(
+          unsignedCastVoteTxProgram(lucid, {
+            instance,
+            proposalId,
+            approve: true,
+            voterTokenUnit: MEMBER_UNIT,
+            currentTime: BigInt(emulator.now()),
+            scriptRefs,
+          }),
+        );
+        expect(String(err)).toContain("exactly one token name");
+      }),
+  );
 });
 
 describe("governance — CIP-20 transaction message", () => {
