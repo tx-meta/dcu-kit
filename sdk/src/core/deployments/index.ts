@@ -1,4 +1,7 @@
 import preprod from "./preprod.json" with { type: "json" };
+import { ConfigurationError } from "../errors.js";
+
+export type DeploymentNetwork = "Preprod" | "Mainnet";
 
 export type RefScriptEntry = {
   txHash: string;
@@ -22,7 +25,7 @@ export type DeploymentManifest = {
   };
 };
 
-const MANIFESTS: Record<string, DeploymentManifest> = {
+const MANIFESTS: Partial<Record<DeploymentNetwork, DeploymentManifest>> = {
   Preprod: preprod as DeploymentManifest,
 };
 
@@ -30,8 +33,14 @@ const MANIFESTS: Record<string, DeploymentManifest> = {
  * The published deployment coordinates for a network. Consumers (Kyama) read
  * ref-script outrefs from here instead of hardcoding them.
  */
-export const loadDeployment = (network: string): DeploymentManifest => {
+export const loadDeployment = (
+  network: DeploymentNetwork,
+): DeploymentManifest => {
   const m = MANIFESTS[network];
-  if (!m) throw new Error(`no deployment manifest for network ${network}`);
+  if (!m)
+    throw new ConfigurationError({
+      configKey: "network",
+      message: `no deployment manifest for network ${network}`,
+    });
   return m;
 };

@@ -23,9 +23,7 @@ import {
   unsignedVerifySettingsProgram,
   VerifySettingsResult,
 } from "./verifySettings.js";
-import { savingsVaultValidator } from "../savings/validators.js";
-import { escrowV2Validator } from "../escrow/v2/validators.js";
-import { buildGovernance } from "../governance/validators.js";
+import type { GovernanceInstance } from "../governance/validators.js";
 
 /**
  * The four standalone-module reference scripts that ship alongside a full
@@ -73,6 +71,14 @@ export type VerifyProtocolDeploymentConfig = {
 };
 
 export type RefVerification = {
+  /**
+   * False when the caller never mentioned this key in `config.refs` at all —
+   * i.e. it was out of scope for this call. `found`/`hashMatches` are always
+   * `false` on an unrequested row, so callers scanning `Object.values(refs)`
+   * for failures must check `requested` first to avoid mistaking "not asked
+   * about" for "asked about and failed".
+   */
+  requested: boolean;
   /** Null when the ref was never provided (key omitted, or present with no value). */
   outRef: ScriptRefOutRef | null;
   found: boolean;
@@ -328,12 +334,60 @@ export const verifyProtocolDeployment = (
         `validator registry fingerprints disagree with the bundled blueprint: ${registry.mismatches.join("; ")}`,
       );
 
+    // A key participates in this call only if the caller mentioned it at all
+    // (`in`, not truthiness) — an omitted module key is out of scope and
+    // silently skipped; a key that IS present with no value is an issue.
+    const requestedKeys = ALL_KEYS.filter((key) => key in allRefs);
+
     // --- Reference scripts: six ROSCA (mandatory) + four modules (opt-in) --
-    // Governance's dispatcher/voting scripts are parameterised by the seed —
-    // derive the instance once, up front, if a seed was given.
-    const governanceInstance = governanceSeed
-      ? buildGovernance(governanceSeed)
+    // The savings/escrowV2/governance modules each embed their own full
+    // compiled Aiken blueprint and are otherwise unreachable from the root
+    // package entry. Importing them statically here would drag all three
+    // into every consumer's bundle (measured +~360kb minified) even for
+    // callers who never check those keys — so load each one lazily, only
+    // when its key was actually requested for this call.
+    const savingsVaultValidator = requestedKeys.includes("savings")
+      ? (
+          yield* Effect.tryPromise({
+            try: () => import("../savings/validators.js"),
+            catch: (e) =>
+              new SetupError({
+                message: `verifyProtocolDeployment: failed to load the savings module: ${e}`,
+              }),
+          })
+        ).savingsVaultValidator
       : null;
+
+    const escrowV2Validator = requestedKeys.includes("escrowV2")
+      ? (
+          yield* Effect.tryPromise({
+            try: () => import("../escrow/v2/validators.js"),
+            catch: (e) =>
+              new SetupError({
+                message: `verifyProtocolDeployment: failed to load the escrow v2 module: ${e}`,
+              }),
+          })
+        ).escrowV2Validator
+      : null;
+
+    // Governance's dispatcher/voting scripts are parameterised by the seed —
+    // derive the instance once, up front, if a seed was given AND actually
+    // requested (loading `buildGovernance` also lazily, for the same reason).
+    const needsGovernance =
+      requestedKeys.includes("governanceDispatcher") ||
+      requestedKeys.includes("governanceVoting");
+    const governanceInstance: GovernanceInstance | null =
+      needsGovernance && governanceSeed
+        ? (
+            yield* Effect.tryPromise({
+              try: () => import("../governance/validators.js"),
+              catch: (e) =>
+                new SetupError({
+                  message: `verifyProtocolDeployment: failed to load the governance module: ${e}`,
+                }),
+            })
+          ).buildGovernance(governanceSeed)
+        : null;
 
     const expectedScriptFor = (key: VerifiableScriptKey): Script | null => {
       switch (key) {
@@ -350,20 +404,15 @@ export const verifyProtocolDeployment = (
         case "treasuryReserve":
           return protocol.treasuryStakeValidators.reserve;
         case "savings":
-          return savingsVaultValidator.spendVault;
+          return savingsVaultValidator?.spendVault ?? null;
         case "escrowV2":
-          return escrowV2Validator.spendEscrow;
+          return escrowV2Validator?.spendEscrow ?? null;
         case "governanceDispatcher":
           return governanceInstance?.dispatcherValidator.spend ?? null;
         case "governanceVoting":
           return governanceInstance?.votingValidator ?? null;
       }
     };
-
-    // A key participates in this call only if the caller mentioned it at all
-    // (`in`, not truthiness) — an omitted module key is out of scope and
-    // silently skipped; a key that IS present with no value is an issue.
-    const requestedKeys = ALL_KEYS.filter((key) => key in allRefs);
 
     for (const key of requestedKeys) {
       if (!allRefs[key]) {
@@ -397,12 +446,14 @@ export const verifyProtocolDeployment = (
 
     const refResults = {} as Record<VerifiableScriptKey, RefVerification>;
     for (const key of ALL_KEYS) {
+      const requested = requestedKeys.includes(key);
       const outRef = allRefs[key] ?? null;
       if (!outRef) {
         // Either never requested (out of scope for this call) or requested
         // with no value (issue already pushed above) — either way, nothing
         // more to check.
         refResults[key] = {
+          requested,
           outRef: null,
           found: false,
           atDeployAddress: false,
@@ -429,6 +480,7 @@ export const verifyProtocolDeployment = (
           `${key} ref UTxO not found: ${outRef.txHash}#${outRef.outputIndex}`,
         );
         refResults[key] = {
+          requested,
           outRef,
           found: false,
           atDeployAddress: false,
@@ -475,6 +527,7 @@ export const verifyProtocolDeployment = (
       }
 
       refResults[key] = {
+        requested,
         outRef,
         found: true,
         atDeployAddress,

@@ -158,7 +158,6 @@ async function main() {
   for (const [name, outRef] of Object.entries(refs)) {
     if (!outRef) {
       issues.push(`${name}: not recorded in state.json`);
-      continue;
     }
   }
 

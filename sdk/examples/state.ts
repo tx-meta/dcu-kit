@@ -243,10 +243,21 @@ function migrateLegacyState(): void {
   );
 }
 
+// `saveState` calls `loadState` internally (read-modify-write), so without
+// this guard every save would print the resolved path twice and re-run the
+// migration check twice — once for the caller's own `loadState`, once for
+// `saveState`'s internal one. Both only need to happen once per process.
+let didLogPath = false;
+let didMigrate = false;
+
 export function loadState(): ExampleState {
-  migrateLegacyState();
-  if (!process.env.DCU_STATE_QUIET) {
+  if (!didMigrate) {
+    migrateLegacyState();
+    didMigrate = true;
+  }
+  if (!didLogPath && !process.env.DCU_STATE_QUIET) {
     console.log(`[state] ${STATE_FILE}`);
+    didLogPath = true;
   }
   try {
     return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
