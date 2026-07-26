@@ -226,15 +226,33 @@ export type PartyWitness = {
   script?: Script;
   /** Key hashes that will sign (native `atLeast` members, or extra signers). */
   signerKeyHashes?: string[];
+  /**
+   * Extends the endpoint's transaction with a spend at the quorum's script
+   * credential — for script quorums whose spend needs a redeemer of its own,
+   * which the dust path cannot express.
+   *
+   * It must ADD to the given builder rather than build a separate one: a
+   * fragment composed in afterwards contributes its mint to the balance
+   * without its input being counted, so the burn cannot balance.
+   *
+   * The governance gate is exactly this case — `gateWitnessProgram` returns an
+   * extension that spends the decision UTxO with its binding redeemer and
+   * burns the one-shot decision token. The caller is responsible for the
+   * extension matching the datum's script hash: the SDK cannot inspect a
+   * builder, so a mismatch surfaces as a validator failure at completion
+   * rather than a configuration error.
+   */
+  extend?: (_tx: TxBuilder) => TxBuilder;
 };
 
 /**
  * Satisfies `credential_authorized` for the fund quorum.
  *
  * VK credential: adds the datum's key hash as a required signer.
- * Script credential: spends a dust UTxO at the script address and pays it
- * back (the on-chain rule is "some spent input sits at that script"),
- * attaches the provided script, and adds the quorum's signer keys.
+ * Script credential: applies the caller's witness extension when given, else
+ * spends a dust UTxO at the script address and pays it back (the on-chain rule
+ * is "some spent input sits at that script"), attaching the provided script.
+ * Either way the quorum's signer keys are added.
  */
 export const applyQuorumWitness = (
   lucid: LucidEvolution,
@@ -246,6 +264,14 @@ export const applyQuorumWitness = (
     if ("VerificationKey" in credential) {
       return tx.addSignerKey(credential.VerificationKey[0]);
     }
+    const addSigners = (t: TxBuilder) =>
+      (witness?.signerKeyHashes ?? []).reduce(
+        (acc, kh) => acc.addSignerKey(kh),
+        t,
+      );
+    // The extension carries its own spend at the script address, with the
+    // redeemer (and any mint) that spend requires.
+    if (witness?.extend) return addSigners(witness.extend(tx));
     const scriptHash = credential.Script[0];
     if (!witness?.script) {
       return yield* Effect.fail(
@@ -275,12 +301,10 @@ export const applyQuorumWitness = (
         }),
       );
     }
-    const withDust = tx
-      .collectFrom([dust])
-      .attach.SpendingValidator(witness.script)
-      .pay.ToAddress(dust.address, dust.assets);
-    return (witness.signerKeyHashes ?? []).reduce(
-      (t, kh) => t.addSignerKey(kh),
-      withDust,
+    return addSigners(
+      tx
+        .collectFrom([dust])
+        .attach.SpendingValidator(witness.script)
+        .pay.ToAddress(dust.address, dust.assets),
     );
   });
