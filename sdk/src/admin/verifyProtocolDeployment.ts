@@ -23,12 +23,34 @@ import {
   unsignedVerifySettingsProgram,
   VerifySettingsResult,
 } from "./verifySettings.js";
+import type { GovernanceInstance } from "../governance/validators.js";
+
+/**
+ * The four standalone-module reference scripts that ship alongside a full
+ * deployment but are NOT part of what `deployScripts()` deploys — each has
+ * its own `*-deploy.ts` example (savings-deploy, escrow-v2-deploy,
+ * governance-init) and is parked at the deployer's OWN address, not the
+ * ROSCA always-fails address. Kept separate from `DeployedScriptKey` (which
+ * must stay exactly the six refs `deployScripts()` actually returns) —
+ * verification covers a strictly wider set than deployment does.
+ */
+export type ModuleScriptKey =
+  "savings" | "escrowV2" | "governanceDispatcher" | "governanceVoting";
+
+/** Every reference script this verifier can check: the six ROSCA refs plus the four standalone modules. */
+export type VerifiableScriptKey = DeployedScriptKey | ModuleScriptKey;
 
 export type VerifyProtocolDeploymentConfig = {
-  /** The deployment's settings policy — everything else derives from it. */
+  /** The deployment's settings policy — the six ROSCA refs derive from it. */
   settingsPolicy: string;
-  /** The six reference-script out-refs, as recorded in the deployment manifest. */
-  refs: Record<DeployedScriptKey, ScriptRefOutRef>;
+  /**
+   * Reference-script out-refs to verify. The six ROSCA refs are mandatory
+   * (as before); the four module refs are opt-in — omit a key entirely to
+   * skip checking it, or include it (even as `undefined`) to have its
+   * absence reported as an issue rather than silently ignored.
+   */
+  refs: Record<DeployedScriptKey, ScriptRefOutRef> &
+    Partial<Record<ModuleScriptKey, ScriptRefOutRef>>;
   /**
    * Manifest fields to cross-check against the derived/queried values, so a
    * manifest that drifted from the settings policy or network is caught here.
@@ -37,18 +59,36 @@ export type VerifyProtocolDeploymentConfig = {
     settingsUnit?: string;
     network?: string;
   };
+  /**
+   * The governance instance's seed out-ref. `governanceDispatcher` and
+   * `governanceVoting` are parameterised by `buildGovernance(seed)` — their
+   * expected script cannot be derived from `settingsPolicy` alone. When one
+   * of those two keys is present in `refs` but no seed is given here, that
+   * ref is reported as an explicit issue (never silently skipped, never a
+   * crash).
+   */
+  governanceSeed?: { txHash: string; outputIndex: number };
 };
 
 export type RefVerification = {
-  outRef: ScriptRefOutRef;
+  /**
+   * False when the caller never mentioned this key in `config.refs` at all —
+   * i.e. it was out of scope for this call. `found`/`hashMatches` are always
+   * `false` on an unrequested row, so callers scanning `Object.values(refs)`
+   * for failures must check `requested` first to avoid mistaking "not asked
+   * about" for "asked about and failed".
+   */
+  requested: boolean;
+  /** Null when the ref was never provided (key omitted, or present with no value). */
+  outRef: ScriptRefOutRef | null;
   found: boolean;
   atDeployAddress: boolean;
   /** Exact CBOR equality between the on-chain scriptRef and the locally applied script. */
   scriptMatches: boolean;
   /** Ledger hash of the script the chain actually holds (null when not found / no scriptRef). */
   onChainScriptHash: string | null;
-  /** Hash of the locally derived (blueprint + applied params) script. */
-  expectedScriptHash: string;
+  /** Hash of the locally derived (blueprint + applied params) script; null when it could not be derived (governance ref with no seed). */
+  expectedScriptHash: string | null;
   hashMatches: boolean;
 };
 
@@ -74,14 +114,14 @@ export type VerifyProtocolDeploymentResult = {
   issues: string[];
   deployAddress: string;
   settingsUnit: string;
-  refs: Record<DeployedScriptKey, RefVerification>;
+  refs: Record<VerifiableScriptKey, RefVerification>;
   settings: VerifySettingsResult;
   settingsAtDeployAddress: boolean;
   stakeRegistrations: Record<TreasuryFamily, StakeRegistrationCheck>;
   registry: RegistryVerification;
 };
 
-const REF_KEYS: DeployedScriptKey[] = [
+const ROSCA_KEYS: DeployedScriptKey[] = [
   "treasury",
   "group",
   "treasuryRounds",
@@ -89,6 +129,20 @@ const REF_KEYS: DeployedScriptKey[] = [
   "treasuryRecovery",
   "treasuryReserve",
 ];
+
+const MODULE_KEYS: ModuleScriptKey[] = [
+  "savings",
+  "escrowV2",
+  "governanceDispatcher",
+  "governanceVoting",
+];
+
+const ALL_KEYS: VerifiableScriptKey[] = [...ROSCA_KEYS, ...MODULE_KEYS];
+
+/** Only the six ROSCA refs are expected at the permanent always-fails
+ *  deployment address; the four module refs sit at the deployer's own
+ *  (recoverable) address by design, so no fixed address applies to them. */
+const ALWAYS_FAILS_KEYS = new Set<VerifiableScriptKey>(ROSCA_KEYS);
 
 const FAMILIES: TreasuryFamily[] = [
   "rounds",
@@ -205,14 +259,26 @@ const stakeRegistrationStatus = (
  * Verify a full protocol deployment end-to-end, read-only — the E1 identity
  * chain: registry fingerprint → bundled blueprint → applied script bytes →
  * ledger hash → settings datum → on-chain reference-script CBOR for all six
- * reference UTxOs, plus the four family stake registrations.
+ * ROSCA reference UTxOs (plus the four family stake registrations), and the
+ * four standalone-module reference scripts (savings, escrow v2, and the two
+ * seed-parameterised governance refs) that ship alongside a deployment.
  *
  * Checks performed:
  * - Registry: bundled `validator-registry.json` fingerprints match the bundled
  *   rosca blueprint (sha256 of each validator's compiledCode).
- * - All six reference UTxOs exist at the given out-refs, sit at the always-fails
- *   deployment address, and hold the exact applied-script CBOR the SDK derives
- *   from `settingsPolicy`; on-chain script hashes match locally derived hashes.
+ * - Every ref present in `config.refs` (the six ROSCA refs are mandatory; the
+ *   four module refs are opt-in) exists at its out-ref and holds the exact
+ *   applied-script CBOR the SDK derives locally; on-chain script hashes match.
+ *   Only the six ROSCA refs are checked against the always-fails deployment
+ *   address — the four module refs are deployer-owned by design, so no fixed
+ *   address is enforced for them.
+ * - `governanceDispatcher` / `governanceVoting` are parameterised by
+ *   `buildGovernance(config.governanceSeed)`; if that key is present in
+ *   `refs` but no seed is given, it's reported as an explicit issue rather
+ *   than silently skipped or crashed on.
+ * - A ref key entirely absent from `config.refs` is not checked at all (it's
+ *   out of scope for this call); a key that IS present with no value is an
+ *   explicit issue.
  * - The settings NFT exists at the always-fails address and its ProtocolSettings
  *   datum matches the derived account/group/treasury policies and the four
  *   treasury family stake hashes (via `verifySettings`).
@@ -233,8 +299,15 @@ export const verifyProtocolDeployment = (
   config: VerifyProtocolDeploymentConfig,
 ): Effect.Effect<VerifyProtocolDeploymentResult, DcuError, never> =>
   Effect.gen(function* () {
-    const { settingsPolicy, refs, expected } = config;
+    const { settingsPolicy, refs, expected, governanceSeed } = config;
     const issues: string[] = [];
+    // Untyped, permissive view of `refs` for internal use — the public config
+    // type intentionally mandates the six ROSCA keys and leaves the four
+    // module keys optional; this cast lets one loop over `ALL_KEYS` handle
+    // both uniformly without fighting the intersection type at every index.
+    const allRefs = refs as Partial<
+      Record<VerifiableScriptKey, ScriptRefOutRef>
+    >;
 
     const network = lucid.config().network!;
     const protocol = buildProtocol(settingsPolicy);
@@ -261,22 +334,102 @@ export const verifyProtocolDeployment = (
         `validator registry fingerprints disagree with the bundled blueprint: ${registry.mismatches.join("; ")}`,
       );
 
-    // --- The six reference scripts ------------------------------------------
-    const expectedScripts: Record<DeployedScriptKey, Script> = {
-      treasury: protocol.treasuryValidator.mintTreasury,
-      group: protocol.groupValidator.spendGroup,
-      treasuryRounds: protocol.treasuryStakeValidators.rounds,
-      treasuryLifecycle: protocol.treasuryStakeValidators.lifecycle,
-      treasuryRecovery: protocol.treasuryStakeValidators.recovery,
-      treasuryReserve: protocol.treasuryStakeValidators.reserve,
+    // A key participates in this call only if the caller mentioned it at all
+    // (`in`, not truthiness) — an omitted module key is out of scope and
+    // silently skipped; a key that IS present with no value is an issue.
+    const requestedKeys = ALL_KEYS.filter((key) => key in allRefs);
+
+    // --- Reference scripts: six ROSCA (mandatory) + four modules (opt-in) --
+    // The savings/escrowV2/governance modules each embed their own full
+    // compiled Aiken blueprint and are otherwise unreachable from the root
+    // package entry. Importing them statically here would drag all three
+    // into every consumer's bundle (measured +~360kb minified) even for
+    // callers who never check those keys — so load each one lazily, only
+    // when its key was actually requested for this call.
+    const savingsVaultValidator = requestedKeys.includes("savings")
+      ? (yield* Effect.tryPromise({
+          try: () => import("../savings/validators.js"),
+          catch: (e) =>
+            new SetupError({
+              message: `verifyProtocolDeployment: failed to load the savings module: ${e}`,
+            }),
+        })).savingsVaultValidator
+      : null;
+
+    const escrowV2Validator = requestedKeys.includes("escrowV2")
+      ? (yield* Effect.tryPromise({
+          try: () => import("../escrow/v2/validators.js"),
+          catch: (e) =>
+            new SetupError({
+              message: `verifyProtocolDeployment: failed to load the escrow v2 module: ${e}`,
+            }),
+        })).escrowV2Validator
+      : null;
+
+    // Governance's dispatcher/voting scripts are parameterised by the seed —
+    // derive the instance once, up front, if a seed was given AND actually
+    // requested (loading `buildGovernance` also lazily, for the same reason).
+    const needsGovernance =
+      requestedKeys.includes("governanceDispatcher") ||
+      requestedKeys.includes("governanceVoting");
+    const governanceInstance: GovernanceInstance | null =
+      needsGovernance && governanceSeed
+        ? (yield* Effect.tryPromise({
+            try: () => import("../governance/validators.js"),
+            catch: (e) =>
+              new SetupError({
+                message: `verifyProtocolDeployment: failed to load the governance module: ${e}`,
+              }),
+          })).buildGovernance(governanceSeed)
+        : null;
+
+    const expectedScriptFor = (key: VerifiableScriptKey): Script | null => {
+      switch (key) {
+        case "treasury":
+          return protocol.treasuryValidator.mintTreasury;
+        case "group":
+          return protocol.groupValidator.spendGroup;
+        case "treasuryRounds":
+          return protocol.treasuryStakeValidators.rounds;
+        case "treasuryLifecycle":
+          return protocol.treasuryStakeValidators.lifecycle;
+        case "treasuryRecovery":
+          return protocol.treasuryStakeValidators.recovery;
+        case "treasuryReserve":
+          return protocol.treasuryStakeValidators.reserve;
+        case "savings":
+          return savingsVaultValidator?.spendVault ?? null;
+        case "escrowV2":
+          return escrowV2Validator?.spendEscrow ?? null;
+        case "governanceDispatcher":
+          return governanceInstance?.dispatcherValidator.spend ?? null;
+        case "governanceVoting":
+          return governanceInstance?.votingValidator ?? null;
+      }
     };
 
+    for (const key of requestedKeys) {
+      if (!allRefs[key]) {
+        issues.push(`${key}: ref not provided`);
+        continue;
+      }
+      if (
+        (key === "governanceDispatcher" || key === "governanceVoting") &&
+        !governanceInstance
+      ) {
+        issues.push(
+          `${key}: no governanceSeed provided — cannot derive the expected script to hash-check against`,
+        );
+      }
+    }
+
+    const queryableKeys = requestedKeys.filter((key) => allRefs[key]);
     const utxos = yield* Effect.tryPromise({
       try: () =>
         lucid.utxosByOutRef(
-          REF_KEYS.map((key) => ({
-            txHash: refs[key].txHash,
-            outputIndex: refs[key].outputIndex,
+          queryableKeys.map((key) => ({
+            txHash: allRefs[key]!.txHash,
+            outputIndex: allRefs[key]!.outputIndex,
           })),
         ),
       catch: (e) =>
@@ -285,21 +438,43 @@ export const verifyProtocolDeployment = (
         }),
     });
 
-    const refResults = {} as Record<DeployedScriptKey, RefVerification>;
-    for (const key of REF_KEYS) {
-      const outRef = refs[key];
+    const refResults = {} as Record<VerifiableScriptKey, RefVerification>;
+    for (const key of ALL_KEYS) {
+      const requested = requestedKeys.includes(key);
+      const outRef = allRefs[key] ?? null;
+      if (!outRef) {
+        // Either never requested (out of scope for this call) or requested
+        // with no value (issue already pushed above) — either way, nothing
+        // more to check.
+        refResults[key] = {
+          requested,
+          outRef: null,
+          found: false,
+          atDeployAddress: false,
+          scriptMatches: false,
+          onChainScriptHash: null,
+          expectedScriptHash: null,
+          hashMatches: false,
+        };
+        continue;
+      }
+
+      const expectedScript = expectedScriptFor(key);
+      const expectedScriptHash = expectedScript
+        ? validatorToScriptHash(expectedScript)
+        : null;
+
       const utxo = utxos.find(
         (u) =>
           u.txHash === outRef.txHash && u.outputIndex === outRef.outputIndex,
       );
-      const expectedScript = expectedScripts[key];
-      const expectedScriptHash = validatorToScriptHash(expectedScript);
 
       if (!utxo) {
         issues.push(
           `${key} ref UTxO not found: ${outRef.txHash}#${outRef.outputIndex}`,
         );
         refResults[key] = {
+          requested,
           outRef,
           found: false,
           atDeployAddress: false,
@@ -311,8 +486,14 @@ export const verifyProtocolDeployment = (
         continue;
       }
 
-      const atDeployAddress = utxo.address === deployAddress;
-      if (!atDeployAddress)
+      // Only the six ROSCA refs live at the permanent always-fails address;
+      // the four module refs are deployer-owned by design (recoverable) —
+      // no fixed address applies, so this check is skipped for them.
+      const checkAddress = ALWAYS_FAILS_KEYS.has(key);
+      const atDeployAddress = checkAddress
+        ? utxo.address === deployAddress
+        : true;
+      if (checkAddress && !atDeployAddress)
         issues.push(`${key} ref UTxO is at wrong address: ${utxo.address}`);
 
       let scriptMatches = false;
@@ -320,28 +501,35 @@ export const verifyProtocolDeployment = (
       if (!utxo.scriptRef) {
         issues.push(`${key} ref UTxO has no scriptRef`);
       } else {
-        scriptMatches =
-          applyDoubleCborEncoding(utxo.scriptRef.script) ===
-          applyDoubleCborEncoding(expectedScript.script);
         onChainScriptHash = validatorToScriptHash(utxo.scriptRef);
-        if (!scriptMatches)
-          issues.push(
-            `${key} scriptRef CBOR does not match the locally derived validator`,
-          );
-        if (onChainScriptHash !== expectedScriptHash)
-          issues.push(
-            `${key} on-chain script hash ${onChainScriptHash} != derived ${expectedScriptHash}`,
-          );
+        if (expectedScript) {
+          scriptMatches =
+            applyDoubleCborEncoding(utxo.scriptRef.script) ===
+            applyDoubleCborEncoding(expectedScript.script);
+          if (!scriptMatches)
+            issues.push(
+              `${key} scriptRef CBOR does not match the locally derived validator`,
+            );
+          if (onChainScriptHash !== expectedScriptHash)
+            issues.push(
+              `${key} on-chain script hash ${onChainScriptHash} != derived ${expectedScriptHash}`,
+            );
+        }
+        // expectedScript === null only for governanceDispatcher/Voting with
+        // no seed — the "no governanceSeed provided" issue above already
+        // covers that case, so no additional mismatch noise here.
       }
 
       refResults[key] = {
+        requested,
         outRef,
         found: true,
         atDeployAddress,
         scriptMatches,
         onChainScriptHash,
         expectedScriptHash,
-        hashMatches: onChainScriptHash === expectedScriptHash,
+        hashMatches:
+          expectedScript != null && onChainScriptHash === expectedScriptHash,
       };
     }
 

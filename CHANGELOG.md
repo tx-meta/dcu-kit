@@ -6,6 +6,61 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+## [0.5.6-preprod.2] - 2026-07-26
+
+Pre-production release carrying the governance fixes needed by downstream consumers.
+Validator fingerprints are unchanged from 0.5.6-preprod.1, so no redeployment is required.
+
+### Added
+
+- `splitEligibility` (governance) — pays supplied tokens into one-name-per-UTxO
+  outputs. Required because the on-chain member-id derivation expects the voter
+  input to hold exactly one token name under `member_policy`, and ordinary
+  change handling merges tokens back together. It must be a separate, earlier
+  transaction: the input has to already be clean when register or vote runs.
+- `gateWitnessProgram` (governance) — the gate half of a governed action,
+  returned as a `TxBuilder => TxBuilder` extension so it can be applied inside
+  the governed primitive's own transaction. `authorizeAction` is unchanged and
+  still exported.
+- `PartyWitness.extend` (savings) — optional hook that lets a caller supply the
+  spend which satisfies a script quorum, for script quorums needing a redeemer
+  of their own.
+- `loadDeployment(network)` and a committed Preprod deployment manifest, so
+  consumers read reference-script coordinates from the package instead of
+  hardcoding them.
+
+### Fixed
+
+- `registerVoter` and `castVote` now select an eligibility UTxO holding exactly
+  one token name under `member_policy`, and fail with an actionable
+  `ConfigurationError` when none exists. Previously they picked the first UTxO
+  holding the token and the transaction failed on-chain with the opaque
+  `Withdraw[0] the validator crashed / exited prematurely`. This is reachable
+  in normal use: savings derives a fresh member token name per join, so a
+  member of two funds holds two names under one policy.
+- `applyQuorumWitness` (savings) no longer silently ignores `extend` when the
+  quorum is a key credential — it would have degraded a governed action into a
+  plain signature while leaving the decision live at the gate. Supplying both
+  `script` and `extend` is now an explicit error.
+- The example `state.json` path now resolves from the working directory, so
+  running compiled examples and source examples no longer read two different
+  files.
+
+### Changed
+
+- The deployment verifier covers all ten module reference scripts (previously
+  six), and records an unresolvable reference as an issue rather than passing
+  silently. Governance dispatcher and voting hashes are seed-derived, so an
+  absent governance seed is reported explicitly.
+
+### Known limitations
+
+- Governance decisions bind to a target fund, not to a specific action. A
+  passed `ParamChange` decision can authorise any quorum-gated action on that
+  same fund (for example `socialPayout` or `closeFund`). This is the
+  documented design position of the semantics-free gate, not a regression —
+  but integrators must not treat a decision as action-scoped.
+
 ## [0.5.6-preprod.0] - 2026-07-24
 
 Pre-production npm release for the final Preprod acceptance pass. Validator

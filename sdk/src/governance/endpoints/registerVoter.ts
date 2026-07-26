@@ -84,14 +84,23 @@ export const unsignedRegisterVoterTxProgram = (
       );
     }
 
+    // member_id_of expects EXACTLY one token name under member_policy in this
+    // input; a UTxO carrying two crashes the validator rather than failing
+    // cleanly, so select a clean one here.
+    const memberPolicy = config.voterTokenUnit.slice(0, 56);
     const voterUtxo = (yield* getWalletUtxos(lucid)).find(
-      (u) => (u.assets[config.voterTokenUnit] ?? 0n) > 0n,
+      (u) =>
+        (u.assets[config.voterTokenUnit] ?? 0n) > 0n &&
+        Object.keys(u.assets).filter((k) => k.startsWith(memberPolicy))
+          .length === 1,
     );
     if (!voterUtxo) {
       return yield* Effect.fail(
         new ConfigurationError({
           configKey: "voterTokenUnit",
-          message: "the wallet holds no UTxO with the eligibility token",
+          message:
+            "no wallet UTxO holds the eligibility token with exactly one token name " +
+            "under member_policy — split it into its own output first (see splitEligibility)",
         }),
       );
     }

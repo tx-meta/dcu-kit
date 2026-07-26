@@ -1,0 +1,67 @@
+{
+  "claim": "Live Preprod governance lifecycle proven end to end: init -> register x2 -> propose -> vote x2 -> finalize (Passed) -> execute (one-shot decision emitted at the gate). finalize and execute had never been run live before this.",
+  "capturedAt": "2026-07-26T20:15:34.365Z",
+  "network": "Preprod",
+  "instance": {
+    "seed": {
+      "txHash": "0ca091d4f4a20d75f069fe00fc97bfc7bfe61e9d70401d78a7b0e9b39848f1eb",
+      "outputIndex": 0
+    },
+    "settingsPolicy": "810d188c8a7f11870d19ee51ad554ea7c92c415b6e7ee7b3e2074268",
+    "govPolicy": "1461174ad1702e11983ddc0f5dd82bfc29eb518ea700f180fc43f879",
+    "gateHash": "9ac0ad14556756c71616129ceaff9f093faed9cf5d7c1eab7b59a7ee",
+    "votingStakeHash": "ed48dbbe96ed01af22b676b1baad2a58f3dbbcffb6aa38a3bf903adf"
+  },
+  "charter": {
+    "quorum": 2,
+    "threshold_bp": 5000,
+    "votingMode": "OneMemberOneVote"
+  },
+  "roster": [
+    "6d656d62657232",
+    "6d656d626572"
+  ],
+  "proposalId": "0ebd88b35a2f8d6e2075e3187daee37c69c11ca35ee44607c2d512347a64f4f9",
+  "action": {
+    "kind": "ParamChange",
+    "field_tag": 0,
+    "new_value": 250
+  },
+  "txs": {
+    "expireStaleProposal": "cfff13837326c8a94e0e95f136e484167c1e3f281fc8cf932a6fa0ce0a99359c",
+    "mintMember2ToUser2": "386fb33acdec134e80ce57dbd5c026e92f99fc27e6b803fd4f32508d2c8ba6d6",
+    "registerVoterUser2": "07c08fb9b181a76ae87f5792bcd7eb6c6532810335a27aa06486ee1abc532028",
+    "openProposal": "7f5463d7dfff3ef0bcc2cb1c68f107374a1a88c122b420611e65a5ae3e568327",
+    "voteUser1": "d5b3c90fad7231b533c97a41e661dd77ce53056588198f3af2cd1bc3d5ccf2f8",
+    "voteUser2": "bb3c3bb420970b7793b4f0b489c3ff5f985cd9c3e138f87d8e742ddc6403b10e",
+    "finalize": "18f82033eb22ccdc0f670332c555c00149b42bbeb65f43ac03959da619a70723",
+    "execute": "df58edbd3af78b0b404fd6f79700fc61e9b7dbfea938dde070f2e4ae00820d66"
+  },
+  "decisionAtGate": {
+    "unit": "1461174ad1702e11983ddc0f5dd82bfc29eb518ea700f180fc43f87946c74429312131381f3b87078983b18cc78e20217aa231ff9288651ae5f53b61",
+    "outRef": "df58edbd3af78b0b404fd6f79700fc61e9b7dbfea938dde070f2e4ae00820d66#1",
+    "address": "addr_test1wzdvptg524n4d3ckzcffe6hlnuynltkeeawhc84t0dv60msqwyxxx",
+    "gateAddressExpected": "addr_test1wzdvptg524n4d3ckzcffe6hlnuynltkeeawhc84t0dv60msqwyxxx",
+    "addressMatchesGate": true,
+    "lovelace": "2000000",
+    "datumCborHex": "d8799f581cd441227553a0f1a965fee7d60a0f724b368dd1bddbc208730fccebcf457661756c74d8799f0018faffd87a80ff"
+  },
+  "proposalsRemaining": [
+    {
+      "id": "522646459e339271b1b42eec60271fb1f8935881230440ac670e60b1ebfbeea3",
+      "status": "Open",
+      "tally_yes": "0",
+      "votes_cast": "0"
+    },
+    {
+      "id": "0ebd88b35a2f8d6e2075e3187daee37c69c11ca35ee44607c2d512347a64f4f9",
+      "status": "Executed",
+      "tally_yes": "2",
+      "votes_cast": "2"
+    }
+  ],
+  "notes": [
+    "Proposal 522646459e was opened with a 90-minute window before we established that finalize requires after(deadline) (onchain/governance/lib/governance/voting.ak:424). It is left Open for later expiry and forms no part of this proof.",
+    "The decision datum is not a GovernanceDatum variant; its raw CBOR is recorded rather than decoded with a guessed schema."
+  ]
+}
