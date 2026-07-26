@@ -261,7 +261,29 @@ export const applyQuorumWitness = (
   witness: PartyWitness | undefined,
 ): Effect.Effect<TxBuilder, ConfigurationError | LucidError, never> =>
   Effect.gen(function* () {
+    // Both paths satisfy the SAME credential; supplying both hides which one
+    // ran, and silently skips `script`'s hash-equality guard.
+    if (witness?.extend && witness?.script) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "quorumWitness",
+          message:
+            "pass either quorumWitness.script (the dust path) or quorumWitness.extend (a custom spend), not both",
+        }),
+      );
+    }
     if ("VerificationKey" in credential) {
+      // Dropping `extend` here would silently degrade a governed action into a
+      // plain signature: the caller believes a decision was consumed, but it
+      // stays live at the gate and is spendable again later.
+      if (witness?.extend) {
+        return yield* Effect.fail(
+          new ConfigurationError({
+            configKey: "quorumWitness.extend",
+            message: `quorum is a key credential (${credential.VerificationKey[0]}), so quorumWitness.extend cannot authorize it — its spend would be built but prove nothing, and any one-shot token it consumes would be spent for no reason`,
+          }),
+        );
+      }
       return tx.addSignerKey(credential.VerificationKey[0]);
     }
     const addSigners = (t: TxBuilder) =>

@@ -3,10 +3,30 @@
  *
  * Factory functions for creating test datums with sensible defaults.
  * Eliminates boilerplate and ensures consistency across tests.
+ *
+ * Also hosts the emulator scaffolding shared by the governance-coupled suites
+ * (`governance.test.ts`, `governanceSavingsGate.test.ts`) — one copy, so the
+ * membership policy and the reference-script deploys cannot drift apart.
  */
 
-import { CML, UTxO } from "@lucid-evolution/lucid";
+import {
+  CML,
+  Emulator,
+  fromText,
+  generateEmulatorAccount,
+  Lucid,
+  LucidEvolution,
+  mintingPolicyToId,
+  PROTOCOL_PARAMETERS_DEFAULT,
+  Script,
+  scriptFromNative,
+  UTxO,
+} from "@lucid-evolution/lucid";
+import { Effect } from "effect";
 import { GroupDatum } from "../src/core/types.js";
+import { signAndSubmit } from "../src/core/utils/index.js";
+import type { GovScriptRefs } from "../src/governance/utils.js";
+import type { GovernanceInstance } from "../src/governance/validators.js";
 
 /**
  * Extracts the shared 28-byte suffix from a CIP-68 token in a UTxO.
@@ -117,3 +137,113 @@ export const readCip20 = (txCbor: string): string | undefined =>
     ?.metadata()
     ?.get(674n)
     ?.to_json();
+
+// ---------------------------------------------------------------------------
+// Shared governance-suite scaffolding
+// ---------------------------------------------------------------------------
+
+/**
+ * Advance the emulator clock past a POSIX-ms deadline (slots are 1s).
+ * Validity bounds are checked against the slot, so overshoot by a margin.
+ */
+export const advancePast = (emulator: Emulator, deadlineMs: bigint) =>
+  Effect.sync(() => {
+    while (BigInt(emulator.now()) <= deadlineMs + 2_000n) {
+      emulator.awaitBlock(10);
+    }
+  });
+
+/**
+ * A permissionless "membership" policy: eligibility = holding a token of it.
+ * Stands in for the savings user-token policy in cross-module production use.
+ */
+export const membershipScript = scriptFromNative({ type: "all", scripts: [] });
+export const MEMBER_POLICY = mintingPolicyToId(membershipScript);
+export const MEMBER_NAME = fromText("member");
+export const MEMBER_UNIT = MEMBER_POLICY + MEMBER_NAME;
+
+/** Mint one membership token to the connected wallet. */
+export const mintMembership = (
+  lucid: LucidEvolution,
+  unit: string = MEMBER_UNIT,
+) =>
+  Effect.gen(function* () {
+    const tx = yield* Effect.promise(() =>
+      lucid
+        .newTx()
+        .mintAssets({ [unit]: 1n })
+        .attach.MintingPolicy(membershipScript)
+        .complete(),
+    );
+    yield* signAndSubmit(tx);
+  });
+
+/** A creator plus two members, all seed wallets so each can pay fees and sign. */
+export type GovTestContext = {
+  lucid: LucidEvolution;
+  emulator: Emulator;
+  creator: { seedPhrase: string; address: string };
+  member1: { seedPhrase: string; address: string };
+  member2: { seedPhrase: string; address: string };
+};
+
+export const makeGovContext = Effect.gen(function* () {
+  const creator = generateEmulatorAccount({ lovelace: 2_000_000_000n });
+  const member1 = generateEmulatorAccount({ lovelace: 500_000_000n });
+  const member2 = generateEmulatorAccount({ lovelace: 500_000_000n });
+  const emulator = new Emulator(
+    [creator, member1, member2],
+    PROTOCOL_PARAMETERS_DEFAULT,
+  );
+  const lucid = yield* Effect.promise(() => Lucid(emulator, "Custom"));
+  return { lucid, emulator, creator, member1, member2 } as GovTestContext;
+});
+
+/** The minimum a context needs to host a reference-script deploy. */
+type DeployContext = {
+  lucid: LucidEvolution;
+  emulator: Emulator;
+  creator: { address: string };
+};
+
+/** Publish `script` as a reference script at the creator's address. */
+export const deployScriptRef = (
+  ctx: DeployContext,
+  script: Script,
+  lovelace = 20_000_000n,
+): Effect.Effect<UTxO> =>
+  Effect.gen(function* () {
+    const { lucid, emulator } = ctx;
+    const address = ctx.creator.address;
+    const tx = yield* Effect.promise(() =>
+      lucid
+        .newTx()
+        .pay.ToAddressWithData(address, undefined, { lovelace }, script)
+        .complete(),
+    );
+    const signed = yield* Effect.promise(() => tx.sign.withWallet().complete());
+    const txHash = yield* Effect.promise(() => signed.submit());
+    emulator.awaitBlock(2);
+    const utxo = (yield* Effect.promise(() => lucid.utxosAt(address))).find(
+      (u) => u.txHash === txHash && u.scriptRef,
+    );
+    if (!utxo) throw new Error("reference-script UTxO not found after deploy");
+    return utxo;
+  });
+
+/**
+ * Deploy the instance's two large validators as reference scripts — the
+ * dispatcher (~7.5KB) and voting (~10KB) no longer fit inline together.
+ */
+export const deployGovRefs = (
+  ctx: DeployContext,
+  instance: GovernanceInstance,
+): Effect.Effect<GovScriptRefs> =>
+  Effect.gen(function* () {
+    const dispatcher = yield* deployScriptRef(
+      ctx,
+      instance.dispatcherValidator.spend,
+    );
+    const voting = yield* deployScriptRef(ctx, instance.votingValidator);
+    return { dispatcher, voting };
+  });

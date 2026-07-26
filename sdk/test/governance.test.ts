@@ -1,17 +1,7 @@
 import { describe, expect } from "vitest";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import {
-  Emulator,
-  fromText,
-  generateEmulatorAccount,
-  Lucid,
-  LucidEvolution,
-  mintingPolicyToId,
-  PROTOCOL_PARAMETERS_DEFAULT,
-  scriptFromNative,
-  UTxO,
-} from "@lucid-evolution/lucid";
+import { fromText, LucidEvolution } from "@lucid-evolution/lucid";
 import {
   selectWalletFromSeed,
   signAndSubmit,
@@ -31,42 +21,31 @@ import { getProposalsProgram } from "../src/governance/queries/getProposals.js";
 import {
   decisionTokenName,
   gateAddress,
-  GovScriptRefs,
   resolveAnchor,
   resolveProposal,
   resolveRoster,
   resolveVoterRecord,
 } from "../src/governance/utils.js";
-import { GovernanceInstance } from "../src/governance/validators.js";
 import { advanceBlock } from "./effects.js";
-import { readCip20 } from "./utils.js";
+import {
+  advancePast,
+  deployGovRefs,
+  GovTestContext,
+  makeGovContext,
+  membershipScript,
+  MEMBER_NAME,
+  MEMBER_POLICY,
+  MEMBER_UNIT,
+  mintMembership,
+  readCip20,
+} from "./utils.js";
 
 const TARGET = "bb".repeat(28);
-
-// A permissionless "membership" policy: eligibility = holding a token of it.
-// Stands in for the savings user-token policy in cross-module production use.
-const membershipScript = scriptFromNative({ type: "all", scripts: [] });
-const MEMBER_POLICY = mintingPolicyToId(membershipScript);
-const MEMBER_NAME = fromText("member");
-const MEMBER_UNIT = MEMBER_POLICY + MEMBER_NAME;
 
 // The governed vault's state token: the gate binds a decision to the input that
 // carries the exact (policy, name) of the vault's state NFT.
 const TARGET_POLICY = MEMBER_POLICY;
 const TARGET_UNIT = TARGET_POLICY + TARGET;
-
-// Mint one membership token to the connected wallet (idempotent per test wallet).
-const mintMembership = (lucid: LucidEvolution) =>
-  Effect.gen(function* () {
-    const tx = yield* Effect.promise(() =>
-      lucid
-        .newTx()
-        .mintAssets({ [MEMBER_UNIT]: 1n })
-        .attach.MintingPolicy(membershipScript)
-        .complete(),
-    );
-    yield* signAndSubmit(tx);
-  });
 
 // Mint the target vault's state token and return the UTxO holding it.
 const mintTargetVault = (lucid: LucidEvolution) =>
@@ -89,70 +68,8 @@ const findTargetUtxo = (lucid: LucidEvolution) =>
     return found;
   });
 
-// Advance the emulator clock past a POSIX-ms deadline (slots are 1s).
-const advancePast = (emulator: Emulator, deadlineMs: bigint) =>
-  Effect.sync(() => {
-    while (BigInt(emulator.now()) <= deadlineMs + 2_000n) {
-      emulator.awaitBlock(10);
-    }
-  });
-
-// A creator plus two members, all seed wallets so each can pay fees and sign.
-type GovContext = {
-  lucid: LucidEvolution;
-  emulator: Emulator;
-  creator: { seedPhrase: string; address: string };
-  member1: { seedPhrase: string; address: string };
-  member2: { seedPhrase: string; address: string };
-};
-
-const makeContext = Effect.gen(function* () {
-  const creator = generateEmulatorAccount({ lovelace: 2_000_000_000n });
-  const member1 = generateEmulatorAccount({ lovelace: 500_000_000n });
-  const member2 = generateEmulatorAccount({ lovelace: 500_000_000n });
-  const emulator = new Emulator(
-    [creator, member1, member2],
-    PROTOCOL_PARAMETERS_DEFAULT,
-  );
-  const lucid = yield* Effect.promise(() => Lucid(emulator, "Custom"));
-  return { lucid, emulator, creator, member1, member2 } as GovContext;
-});
-
-// Deploy the instance's two large validators as reference scripts (the
-// dispatcher + voting no longer fit inline together in one tx).
-const deployGovRefs = (ctx: GovContext, instance: GovernanceInstance) =>
-  Effect.gen(function* () {
-    const { lucid, emulator } = ctx;
-    const address = ctx.creator.address;
-    const refs: { dispatcher?: UTxO; voting?: UTxO } = {};
-    for (const [key, script] of [
-      ["dispatcher", instance.dispatcherValidator.spend],
-      ["voting", instance.votingValidator],
-    ] as const) {
-      const tx = yield* Effect.promise(() =>
-        lucid
-          .newTx()
-          .pay.ToAddressWithData(
-            address,
-            undefined,
-            { lovelace: 20_000_000n },
-            script,
-          )
-          .complete(),
-      );
-      const signed = yield* Effect.promise(() =>
-        tx.sign.withWallet().complete(),
-      );
-      const txHash = yield* Effect.promise(() => signed.submit());
-      emulator.awaitBlock(2);
-      const utxo = (yield* Effect.promise(() => lucid.utxosAt(address))).find(
-        (u) => u.txHash === txHash && u.scriptRef,
-      );
-      if (!utxo) throw new Error(`ref-script UTxO for ${key} not found`);
-      refs[key] = utxo;
-    }
-    return refs as GovScriptRefs;
-  });
+type GovContext = GovTestContext;
+const makeContext = makeGovContext;
 
 // init + ref-script deploy + stake registration + membership mint + voter
 // registration — the prelude every lifecycle needs.
@@ -582,9 +499,8 @@ describe("governance module (emulator, real validators)", () => {
         const utxos = yield* Effect.promise(() => lucid.wallet().getUtxos());
         const holder = utxos.find((u) => (u.assets[member2Unit] ?? 0n) > 0n)!;
         expect(
-          Object.keys(holder.assets).filter((k) =>
-            k.startsWith(MEMBER_POLICY),
-          ).length,
+          Object.keys(holder.assets).filter((k) => k.startsWith(MEMBER_POLICY))
+            .length,
         ).toBe(1);
 
         // registerVoter, which failed before the split, now succeeds.

@@ -1,17 +1,7 @@
 import { describe, expect } from "vitest";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import {
-  Emulator,
-  fromText,
-  generateEmulatorAccount,
-  Lucid,
-  LucidEvolution,
-  mintingPolicyToId,
-  PROTOCOL_PARAMETERS_DEFAULT,
-  scriptFromNative,
-  UTxO,
-} from "@lucid-evolution/lucid";
+import { TxBuilder, UTxO } from "@lucid-evolution/lucid";
 import {
   selectWalletFromSeed,
   signAndSubmit,
@@ -39,93 +29,33 @@ import {
 } from "../src/savings/validators.js";
 import { resolveFund } from "../src/savings/utils.js";
 import { advanceBlock } from "./effects.js";
+import {
+  advancePast,
+  deployGovRefs,
+  deployScriptRef,
+  GovTestContext,
+  makeGovContext,
+  MEMBER_UNIT,
+  MEMBER_POLICY,
+  mintMembership,
+} from "./utils.js";
 
-// A permissionless "membership" policy: eligibility = holding a token of it.
-const membershipScript = scriptFromNative({ type: "all", scripts: [] });
-const MEMBER_POLICY = mintingPolicyToId(membershipScript);
-const MEMBER_NAME = fromText("member");
-const MEMBER_UNIT = MEMBER_POLICY + MEMBER_NAME;
-
-type Ctx = {
-  lucid: LucidEvolution;
-  emulator: Emulator;
-  creator: { seedPhrase: string; address: string };
-  member1: { seedPhrase: string; address: string };
+/** The governance context plus the savings validator's reference script. */
+type Ctx = GovTestContext & {
   /** The ~15.5KB savings validator deployed once as a reference script. */
   savingsRef: UTxO;
 };
 
-const advancePast = (emulator: Emulator, deadlineMs: bigint) =>
-  Effect.sync(() => {
-    while (BigInt(emulator.now()) <= deadlineMs + 2_000n) {
-      emulator.awaitBlock(10);
-    }
-  });
-
 const makeContext = Effect.gen(function* () {
-  const creator = generateEmulatorAccount({ lovelace: 2_000_000_000n });
-  const member1 = generateEmulatorAccount({ lovelace: 500_000_000n });
-  const emulator = new Emulator(
-    [creator, member1],
-    PROTOCOL_PARAMETERS_DEFAULT,
+  const base = yield* makeGovContext;
+  selectWalletFromSeed(base.lucid, base.creator.seedPhrase);
+  const savingsRef = yield* deployScriptRef(
+    base,
+    savingsVaultValidator.spendVault,
+    25_000_000n,
   );
-  const lucid = yield* Effect.promise(() => Lucid(emulator, "Custom"));
-
-  selectWalletFromSeed(lucid, creator.seedPhrase);
-  const deploy = yield* Effect.promise(() =>
-    lucid
-      .newTx()
-      .pay.ToAddressWithData(
-        creator.address,
-        undefined,
-        { lovelace: 25_000_000n },
-        savingsVaultValidator.spendVault,
-      )
-      .complete(),
-  );
-  yield* signAndSubmit(deploy);
-  yield* advanceBlock(emulator, 2);
-  const savingsRef = (yield* Effect.promise(() =>
-    lucid.utxosAt(creator.address),
-  )).find((u) => u.scriptRef);
-  if (!savingsRef) throw new Error("savings script ref deploy failed");
-  return { lucid, emulator, creator, member1, savingsRef } as Ctx;
+  return { ...base, savingsRef } as Ctx;
 });
-
-// Deploy the instance's two large governance validators as reference scripts.
-const deployGovRefs = (ctx: Ctx, instance: GovernanceInstance) =>
-  Effect.gen(function* () {
-    const { lucid, emulator } = ctx;
-    const address = ctx.creator.address;
-    const refs: { dispatcher?: UTxO; voting?: UTxO } = {};
-    for (const [key, script] of [
-      ["dispatcher", instance.dispatcherValidator.spend],
-      ["voting", instance.votingValidator],
-    ] as const) {
-      const tx = yield* Effect.promise(() =>
-        lucid
-          .newTx()
-          .pay.ToAddressWithData(
-            address,
-            undefined,
-            { lovelace: 20_000_000n },
-            script,
-          )
-          .complete(),
-      );
-      const signed = yield* Effect.promise(() =>
-        tx.sign.withWallet().complete(),
-      );
-      const txHash = yield* Effect.promise(() => signed.submit());
-      emulator.awaitBlock(2);
-      const utxo = (yield* Effect.promise(() => lucid.utxosAt(address))).find(
-        (u) => u.txHash === txHash && u.scriptRef,
-      );
-      if (!utxo) throw new Error(`ref-script UTxO for ${key} not found`);
-      refs[key] = utxo;
-    }
-    return refs as GovScriptRefs;
-  });
 
 /**
  * The full cross-module prelude:
@@ -175,14 +105,7 @@ const setupGovernedFund = (ctx: Ctx) =>
     yield* signAndSubmit(regTx);
     yield* advanceBlock(emulator, 2);
 
-    const mintTx = yield* Effect.promise(() =>
-      lucid
-        .newTx()
-        .mintAssets({ [MEMBER_UNIT]: 1n })
-        .attach.MintingPolicy(membershipScript)
-        .complete(),
-    );
-    yield* signAndSubmit(mintTx);
+    yield* mintMembership(lucid);
     yield* advanceBlock(emulator, 2);
 
     const { tx: voterTx } = yield* unsignedRegisterVoterTxProgram(lucid, {
@@ -340,8 +263,109 @@ describe("governance gate governs a real savings fund", () => {
         expect(
           gateAfter.find((u) => (u.assets[decisionUnit] ?? 0n) > 0n),
         ).toBeUndefined();
-        expect(proposalId).toBeDefined();
       }),
     { timeout: 120_000 },
+  );
+
+  // Necessity, not just sufficiency. Without these the gate spend could become
+  // decorative — a refactor that stopped requiring it would still go green.
+  it.effect(
+    "the same mutation is REJECTED without the decision spent at the gate",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const { lucid } = ctx;
+        const { instance, scriptRefs, fundTokenName } =
+          yield* setupGovernedFund(ctx);
+        yield* runProposalToExecuted(ctx, instance, scriptRefs, fundTokenName);
+
+        // (a) No witness at all: the SDK refuses up front, because a script
+        //     quorum cannot be satisfied by the wallet's signature.
+        const noWitness = yield* Effect.flip(
+          unsignedUpdateFundTxProgram(lucid, {
+            scriptRef: ctx.savingsRef,
+            fundTokenName,
+            maxSharesPerDeposit: 250n,
+          }),
+        );
+        expect(String(noWitness)).toContain("script credential");
+
+        // (b) A no-op extension: the SDK is satisfied and builds the very same
+        //     UpdateFund transaction, minus the decision input. Nothing then
+        //     sits at the gate credential, so `credential_authorized` fails and
+        //     the savings validator rejects it under real UPLC evaluation.
+        const noopExtend = yield* Effect.flip(
+          unsignedUpdateFundTxProgram(lucid, {
+            scriptRef: ctx.savingsRef,
+            fundTokenName,
+            maxSharesPerDeposit: 250n,
+            quorumWitness: { extend: (tx: TxBuilder) => tx },
+          }),
+        );
+        // `TransactionBuildError` carries its cause in `error`, not `message`,
+        // so stringify the whole failure rather than String()-ing it.
+        const detail = JSON.stringify(noopExtend);
+        expect(noopExtend._tag).toBe("TransactionBuildError");
+        expect(detail).toContain('"operation":"updateFund"');
+        // The savings vault itself refused it — not a build or balance error.
+        expect(detail).toContain("failed script execution");
+
+        // The charter is untouched and the decision is still live at the gate.
+        const after = yield* getFundStateProgram(lucid, fundTokenName);
+        expect(after.fund.max_shares_per_deposit).toBe(100n);
+        const network = lucid.config().network!;
+        const gateUtxos = yield* Effect.promise(() =>
+          lucid.utxosAt(gateAddress(network, instance)),
+        );
+        expect(gateUtxos.length).toBe(1);
+      }),
+    { timeout: 120_000 },
+  );
+
+  // Finding 1: `extend` must never be silently dropped or silently preferred.
+  it.effect("rejects a witness that cannot mean what the caller intends", () =>
+    Effect.gen(function* () {
+      const ctx = yield* makeContext;
+      const { lucid, emulator } = ctx;
+      selectWalletFromSeed(lucid, ctx.creator.seedPhrase);
+
+      // A fund left under the creator's KEY quorum.
+      const { tx: createTx, fundTokenName } =
+        yield* unsignedCreateFundTxProgram(lucid, {
+          scriptRef: ctx.savingsRef,
+          title: "key-quorum fund",
+          shareValue: 1_000_000n,
+          withdrawalPolicy: 1n,
+        });
+      yield* signAndSubmit(createTx);
+      yield* advanceBlock(emulator, 2);
+
+      // `extend` against a key quorum would build the spend and prove nothing —
+      // a decision consumed for a signature that authorized it anyway.
+      const keyQuorum = yield* Effect.flip(
+        unsignedUpdateFundTxProgram(lucid, {
+          scriptRef: ctx.savingsRef,
+          fundTokenName,
+          maxSharesPerDeposit: 250n,
+          quorumWitness: { extend: (tx: TxBuilder) => tx },
+        }),
+      );
+      expect(String(keyQuorum)).toContain("cannot authorize it");
+
+      // Both witness forms at once hides which one ran and skips the
+      // hash-equality guard on `script`.
+      const both = yield* Effect.flip(
+        unsignedUpdateFundTxProgram(lucid, {
+          scriptRef: ctx.savingsRef,
+          fundTokenName,
+          maxSharesPerDeposit: 250n,
+          quorumWitness: {
+            script: savingsVaultValidator.spendVault,
+            extend: (tx: TxBuilder) => tx,
+          },
+        }),
+      );
+      expect(String(both)).toContain("not both");
+    }),
   );
 });
