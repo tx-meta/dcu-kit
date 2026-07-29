@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import {
   ConfigurationError,
   LucidError,
+  AmbiguousUtxoError,
   UtxoNotFoundError,
 } from "../../core/errors.js";
 import { SavingsFundFields } from "../types.js";
@@ -22,7 +23,7 @@ export const getFundStateProgram = (
   fundTokenName: string,
 ): Effect.Effect<
   FundState,
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {

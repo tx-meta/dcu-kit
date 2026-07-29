@@ -15,6 +15,7 @@ import { Effect } from "effect";
 import {
   ConfigurationError,
   LucidError,
+  AmbiguousUtxoError,
   UtxoNotFoundError,
 } from "../core/errors.js";
 import {
@@ -52,7 +53,7 @@ export const resolveEscrow = (
   stateTokenName: string,
 ): Effect.Effect<
   { utxo: UTxO; datum: EscrowDatum },
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {

@@ -28,6 +28,24 @@ export class UtxoNotFoundError extends Data.TaggedError("UtxoNotFoundError")<{
   readonly cause?: unknown;
 }> {}
 
+/**
+ * A unit resolved to more than one live UTxO, so no single UTxO is implied.
+ *
+ * Reachable in normal use: a member's treasury token name is their account (222)
+ * token name, which the validator requires (dcu/treasury_validation
+ * `member_has_user_token`). One identity in N groups therefore has N live UTxOs
+ * under one unit. Unlike `UtxoNotFoundError` this is permanent, so callers must
+ * not retry it. Supply the owning group to disambiguate.
+ */
+export class AmbiguousUtxoError extends Data.TaggedError("AmbiguousUtxoError")<{
+  readonly unit: string;
+  readonly candidates: number;
+  /** `group_reference_tokenname` of each candidate, when the datums were decoded. */
+  readonly groups?: readonly string[];
+  readonly message?: string;
+  readonly cause?: unknown;
+}> {}
+
 export class InsufficientUtxosError extends Data.TaggedError(
   "InsufficientUtxosError",
 )<{
@@ -133,6 +151,7 @@ export class ReferenceScriptMismatchError extends Data.TaggedError(
 
 export type DcuError =
   | UtxoNotFoundError
+  | AmbiguousUtxoError
   | InsufficientUtxosError
   | InvalidDatumError
   | DatumDecodingError
