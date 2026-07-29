@@ -1,18 +1,48 @@
 import { LucidEvolution, UTxO, OutRef } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { UtxoNotFoundError } from "../errors.js";
+import { AmbiguousUtxoError, UtxoNotFoundError } from "../errors.js";
+
+/**
+ * Matches the Lucid Evolution failure raised when a unit is held by more than one
+ * UTxO or address. String matching is a heuristic: it is the only signal Lucid gives
+ * for this case. Structural detection lives in `resolveTreasuryUtxoForGroup`, which
+ * counts candidates directly.
+ */
+const isMultiMatchMessage = (reason: string): boolean =>
+  /needs to be an NFT|only held by one address/i.test(reason);
 
 export const resolveUtxoByUnit = (
   lucid: LucidEvolution,
   unit: string,
-): Effect.Effect<UTxO, UtxoNotFoundError> =>
+): Effect.Effect<UTxO, UtxoNotFoundError | AmbiguousUtxoError> =>
   Effect.tryPromise({
     try: () => lucid.utxoByUnit(unit),
-    catch: () => new UtxoNotFoundError({ tokenName: unit, address: "chain" }),
+    catch: (e) => {
+      const reason = String(e);
+      return isMultiMatchMessage(reason)
+        ? new AmbiguousUtxoError({
+            unit,
+            // A floor, not a count: Lucid rejects without reporting how many it saw.
+            candidates: 2,
+            message: `${unit} is held by more than one UTxO: ${reason}`,
+            cause: e,
+          })
+        : new UtxoNotFoundError({
+            tokenName: unit,
+            address: "chain",
+            message: reason,
+            cause: e,
+          });
+    },
   }).pipe(
     Effect.filterOrFail(
       (utxo): utxo is UTxO => utxo != null,
-      () => new UtxoNotFoundError({ tokenName: unit, address: "chain" }),
+      () =>
+        new UtxoNotFoundError({
+          tokenName: unit,
+          address: "chain",
+          message: `no UTxO on chain holds ${unit}`,
+        }),
     ),
   );
 

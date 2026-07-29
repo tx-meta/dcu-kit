@@ -15,6 +15,7 @@ import { Effect } from "effect";
 import {
   ConfigurationError,
   LucidError,
+  AmbiguousUtxoError,
   UtxoNotFoundError,
 } from "../core/errors.js";
 import {
@@ -100,7 +101,7 @@ export const resolveFund = (
   fundTokenName: string,
 ): Effect.Effect<
   { utxo: UTxO; fund: SavingsFundFields },
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {
@@ -133,7 +134,7 @@ export const resolveMemberAccount = (
   memberTokenSuffix: string,
 ): Effect.Effect<
   { refUtxo: UTxO; account: MemberAccountFields; userUnit: string },
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {
@@ -169,7 +170,7 @@ export const resolveLoan = (
   loanTokenName: string,
 ): Effect.Effect<
   { utxo: UTxO; loan: LoanAccountFields },
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {
