@@ -538,14 +538,18 @@ describe("VK-default admin (regression)", () => {
         );
         // Either succeeds (member IS in DefaultState) or fails with a known error.
         // The critical assertion is that no "wrong signer" / authN error leaks through.
+        // InvalidDatumError is the reachable one here: the member has a treasury UTxO
+        // in this group, it is just in TreasuryState rather than DefaultState.
         if (result._tag === "Right") {
           const txHash = yield* signAndSubmit(result.right);
           yield* advanceBlock(context.emulator);
           expect(txHash).toHaveLength(64);
         } else {
-          expect(["UtxoNotFoundError", "TransactionBuildError"]).toContain(
-            result.left._tag,
-          );
+          expect([
+            "UtxoNotFoundError",
+            "InvalidDatumError",
+            "TransactionBuildError",
+          ]).toContain(result.left._tag);
         }
       }),
   );

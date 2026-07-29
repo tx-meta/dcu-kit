@@ -14,6 +14,7 @@ import { Effect } from "effect";
 import {
   ConfigurationError,
   LucidError,
+  AmbiguousUtxoError,
   UtxoNotFoundError,
 } from "../core/errors.js";
 import { parseSafeDatum, resolveUtxoByUnit } from "../core/utils/index.js";
@@ -111,7 +112,7 @@ export const resolveAnchor = (
   instance: GovernanceInstance,
 ): Effect.Effect<
   { utxo: UTxO; anchor: GovernanceAnchorFields },
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {
@@ -146,7 +147,7 @@ export const resolveRoster = (
   instance: GovernanceInstance,
 ): Effect.Effect<
   { utxo: UTxO; roster: RosterFields },
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {
@@ -182,7 +183,7 @@ export const resolveVoterRecord = (
   memberId: string,
 ): Effect.Effect<
   { utxo: UTxO; record: VoterRecordFields },
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {
@@ -219,7 +220,7 @@ export const resolveProposal = (
   proposalId: string,
 ): Effect.Effect<
   { utxo: UTxO; proposal: ProposalFields },
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {

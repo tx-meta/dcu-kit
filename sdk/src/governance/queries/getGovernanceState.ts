@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import {
   ConfigurationError,
   LucidError,
+  AmbiguousUtxoError,
   UtxoNotFoundError,
 } from "../../core/errors.js";
 import { GovernanceAnchorFields } from "../types.js";
@@ -15,7 +16,7 @@ export const getGovernanceStateProgram = (
   instance: GovernanceInstance,
 ): Effect.Effect<
   GovernanceAnchorFields,
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {

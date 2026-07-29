@@ -6,6 +6,47 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+## [0.5.7-preprod.0] - 2026-07-29
+
+Validator fingerprints are unchanged, so no redeployment is required. This completes
+the multi-group treasury resolution started in 0.5.6-preprod.0, which covered only
+`exitGroup` and `executeRecovery`.
+
+### Added
+
+- `AmbiguousUtxoError`: raised when a unit resolves to more than one live UTxO.
+  Separate from `UtxoNotFoundError` because it is permanent: consumer retry loops
+  that poll on a missing UTxO must not retry it.
+- `resolveTreasuryUtxoForGroup` and `treasuryGroupRefName` (core utils): resolve a
+  member's treasury UTxO by (member token, group) using `utxosAtWithUnit`, rather
+  than by unit alone.
+- `groupTokenSuffix` (optional) on `ClaimPayoutConfig` and
+  `UpdatePayoutCredentialConfig`, to name the group when an account is a live
+  member of more than one. Existing single-group callers are unaffected.
+
+### Fixed
+
+- `contribute`, `extendGraceWindow`, `claimPayout` and `updatePayoutCredential`
+  resolved the member treasury UTxO by unit alone. A member's treasury token name
+  is their account (222) token name, which the validator requires, so one identity
+  in two groups has two live UTxOs under one unit and `utxoByUnit` rejects with
+  "Unit needs to be an NFT or only held by one address". Every member who joined a
+  second group hit this.
+- `terminateGroup` and `terminateDefault` scanned the treasury address filtering on
+  the member token only, and returned the first match regardless of group. They now
+  filter on `group_reference_tokenname`, matching `exitGroup`.
+- `approveRecovery` and `cancelRecovery` resolved the RecoveryRequest token by unit,
+  which collides when the same fresh account backs a pending request in two groups.
+- `resolveUtxoByUnit` discarded the underlying provider reason, so a permanent
+  ambiguity surfaced as a transient "not found". The reason and cause are preserved.
+
+### Changed
+
+- `terminateDefault` and `terminateGroup` now report `InvalidDatumError` when the
+  member has a treasury UTxO in the named group but it is not in the expected state.
+  They previously reported `UtxoNotFoundError`, because a group-blind scan for the
+  state simply found nothing.
+
 ## [0.5.6-preprod.2] - 2026-07-26
 
 Pre-production release carrying the governance fixes needed by downstream consumers.

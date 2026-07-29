@@ -8,6 +8,7 @@ import { Effect } from "effect";
 import {
   ConfigurationError,
   LucidError,
+  AmbiguousUtxoError,
   UtxoNotFoundError,
 } from "../../core/errors.js";
 import {
@@ -61,7 +62,7 @@ export const resolveEscrowV2 = (
   stateTokenName: string,
 ): Effect.Effect<
   { utxo: UTxO; datum: EscrowDatumV2 },
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {
@@ -86,7 +87,7 @@ export const resolveProject = (
   projectTokenName: string,
 ): Effect.Effect<
   { utxo: UTxO; datum: ProjectDatum },
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {
@@ -115,7 +116,7 @@ export const resolvePool = (
   poolTokenName: string,
 ): Effect.Effect<
   { utxo: UTxO; pool: PoolDatum },
-  UtxoNotFoundError | LucidError | ConfigurationError,
+  UtxoNotFoundError | AmbiguousUtxoError | LucidError | ConfigurationError,
   never
 > =>
   Effect.gen(function* () {

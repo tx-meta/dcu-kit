@@ -25,11 +25,13 @@ import {
 } from "../core/errors.js";
 import {
   getWalletAddress,
+  getScriptAddress,
   parseSafeDatum,
   parseGroupCip68Datum,
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  resolveTreasuryUtxoForGroup,
   referenceInputIndex,
   contributableBalance,
   buildGroupCip68Datum,
@@ -91,11 +93,22 @@ export const unsignedContributeTxProgram = (
     const accountUnit = accountPolicyId + memberRefName;
     const treasuryUnit = treasuryPolicyId + memberRefName;
     // Group reference token (read-only) — supplies the contribution asset + fee.
-    const groupRefUnit =
-      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
+    const groupRefName = assetNameLabels.prefix100 + groupTokenSuffix;
+    const groupRefUnit = groupPolicyId + groupRefName;
+    const treasuryAddress = yield* getScriptAddress(
+      lucid,
+      treasuryValidator.spendTreasury,
+    );
 
     const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUnit);
-    const treasuryUtxoRaw = yield* resolveUtxoByUnit(lucid, treasuryUnit);
+    // Scoped to this group: the treasury token name is the account (222) token name,
+    // so a member of several groups has one live UTxO per group under this unit.
+    const treasuryUtxoRaw = yield* resolveTreasuryUtxoForGroup(
+      lucid,
+      treasuryAddress,
+      treasuryUnit,
+      groupRefName,
+    );
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const accountUtxo = patchInlineDatum(accountUtxoRaw);
     const treasuryUtxo = patchInlineDatum(treasuryUtxoRaw);
@@ -172,8 +185,6 @@ export const unsignedContributeTxProgram = (
         },
       };
     }
-
-    const groupRefName = assetNameLabels.prefix100 + groupTokenSuffix;
 
     if ("DefaultState" in treasuryDatum) {
       // RECOVERY (DefaultState → TreasuryState): the group is SPENT with the Recover redeemer so

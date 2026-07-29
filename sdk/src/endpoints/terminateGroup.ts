@@ -25,7 +25,6 @@ import {
   DcuError,
   InvalidDatumError,
   TransactionBuildError,
-  UtxoNotFoundError,
 } from "../core/errors.js";
 import {
   getScriptAddress,
@@ -34,6 +33,7 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  resolveTreasuryUtxoForGroup,
   attachTxMessage,
   type TxMessage,
 } from "../core/utils/index.js";
@@ -81,8 +81,8 @@ export const unsignedTerminateGroupTxProgram = (
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
     const { groupTokenSuffix, memberAccountTokenSuffix } = config;
 
-    const groupRefUnit =
-      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
+    const groupRefName = assetNameLabels.prefix100 + groupTokenSuffix;
+    const groupRefUnit = groupPolicyId + groupRefName;
     const adminUnit =
       groupPolicyId + assetNameLabels.prefix222 + groupTokenSuffix;
 
@@ -92,42 +92,19 @@ export const unsignedTerminateGroupTxProgram = (
 
     const adminUtxo = yield* resolveUtxoByUnit(lucid, adminUnit);
 
-    // Find the PenaltyState treasury UTxO for this member
+    // The member's treasury UTxO IN THIS GROUP. The treasury token name is the account
+    // (222) token name, so matching on it alone would return whichever group came first.
     const memberRefName = assetNameLabels.prefix222 + memberAccountTokenSuffix;
     const treasuryAddress = yield* getScriptAddress(
       lucid,
       treasuryValidator.spendTreasury,
     );
-    const allTreasury = yield* Effect.tryPromise({
-      try: () => lucid.utxosAt(treasuryAddress),
-      catch: (e) =>
-        new TransactionBuildError({
-          operation: "queryTreasury",
-          error: String(e),
-        }),
-    });
-
-    const treasuryUtxoRaw = yield* Effect.gen(function* () {
-      for (const u of allTreasury) {
-        const parsed = yield* parseSafeDatum(u.datum, TreasuryDatumSchema).pipe(
-          Effect.map((d) => d as unknown as TreasuryDatum),
-          Effect.orElse(() => Effect.succeed(null)),
-        );
-        if (
-          parsed &&
-          "PenaltyState" in parsed &&
-          parsed.PenaltyState.member_reference_tokenname === memberRefName
-        ) {
-          return u;
-        }
-      }
-      return yield* Effect.fail(
-        new UtxoNotFoundError({
-          tokenName: memberRefName,
-          address: treasuryAddress,
-        }),
-      );
-    });
+    const treasuryUtxoRaw = yield* resolveTreasuryUtxoForGroup(
+      lucid,
+      treasuryAddress,
+      treasuryPolicyId + memberRefName,
+      groupRefName,
+    );
     const treasuryUtxo = patchInlineDatum(treasuryUtxoRaw);
 
     const treasuryDatum = (yield* parseSafeDatum(
