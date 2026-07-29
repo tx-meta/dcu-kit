@@ -22,6 +22,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  resolveTreasuryUtxoForGroup,
+  getScriptAddress,
   attachTxMessage,
   type TxMessage,
 } from "../core/utils/index.js";
@@ -79,10 +81,21 @@ export const unsignedCancelRecoveryTxProgram = (
 
     const requestUnit =
       treasuryPolicyId + assetNameLabels.prefix222 + newAccountTokenSuffix;
+    // Account-policy unit: globally unique, so a plain unit lookup is exact.
     const targetAccountUnit =
       accountPolicyId + assetNameLabels.prefix222 + targetTokenSuffix;
+    const treasuryAddress = yield* getScriptAddress(
+      lucid,
+      treasuryValidator.spendTreasury,
+    );
 
-    const requestUtxoRaw = yield* resolveUtxoByUnit(lucid, requestUnit);
+    // No group filter: the veto carries no group, so a request backed by the same
+    // fresh N' in two groups surfaces as AmbiguousUtxoError naming both candidates.
+    const requestUtxoRaw = yield* resolveTreasuryUtxoForGroup(
+      lucid,
+      treasuryAddress,
+      requestUnit,
+    );
     const targetAccountUtxoRaw = yield* resolveUtxoByUnit(
       lucid,
       targetAccountUnit,

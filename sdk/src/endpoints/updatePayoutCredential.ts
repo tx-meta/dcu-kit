@@ -27,6 +27,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  resolveTreasuryUtxoForGroup,
+  getScriptAddress,
   attachTxMessage,
   type TxMessage,
 } from "../core/utils/index.js";
@@ -47,6 +49,13 @@ import {
  */
 export type UpdatePayoutCredentialConfig = {
   accountTokenSuffix: string;
+  /**
+   * The group whose treasury records the credential. Optional: needed only when this
+   * account is a live member of more than one group, where the treasury unit alone is
+   * ambiguous. When omitted and the account is in exactly one group, resolution is
+   * unchanged.
+   */
+  groupTokenSuffix?: string;
   /** Deployed treasury reference scripts — the treasury no longer fits inline. */
   scriptRefs?: ScriptRefs;
   /**
@@ -71,14 +80,28 @@ export const unsignedUpdatePayoutCredentialTxProgram = (
       settingsUnit,
     } = protocol;
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
-    const { accountTokenSuffix } = config;
+    const { accountTokenSuffix, groupTokenSuffix } = config;
 
     const memberRefName = assetNameLabels.prefix222 + accountTokenSuffix;
     const accountUnit = accountPolicyId + memberRefName;
     const treasuryUnit = treasuryPolicyId + memberRefName;
+    const treasuryAddress = yield* getScriptAddress(
+      lucid,
+      treasuryValidator.spendTreasury,
+    );
 
     const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUnit);
-    const treasuryUtxoRaw = yield* resolveUtxoByUnit(lucid, treasuryUnit);
+    // Scoped to this group when the caller named one: the treasury token name is the
+    // account (222) token name, so a member of several groups has one live UTxO per
+    // group under this unit.
+    const treasuryUtxoRaw = yield* resolveTreasuryUtxoForGroup(
+      lucid,
+      treasuryAddress,
+      treasuryUnit,
+      groupTokenSuffix
+        ? assetNameLabels.prefix100 + groupTokenSuffix
+        : undefined,
+    );
     const accountUtxo = patchInlineDatum(accountUtxoRaw);
     const treasuryUtxo = patchInlineDatum(treasuryUtxoRaw);
 

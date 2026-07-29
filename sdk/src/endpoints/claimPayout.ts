@@ -28,6 +28,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  resolveTreasuryUtxoForGroup,
+  getScriptAddress,
   referenceInputIndex,
   attachTxMessage,
   type TxMessage,
@@ -49,6 +51,12 @@ import {
  */
 export type ClaimPayoutConfig = {
   accountTokenSuffix: string;
+  /**
+   * The group being claimed from. Optional: needed only when this account is a live
+   * member of more than one group, where the treasury unit alone is ambiguous. When
+   * omitted and the account is in exactly one group, resolution is unchanged.
+   */
+  groupTokenSuffix?: string;
   // Where the claimed funds go. Defaults to the signing wallet's address — set this to
   // claim to a fresh address (the lost-wallet recovery path).
   destinationAddress?: string;
@@ -77,14 +85,29 @@ export const unsignedClaimPayoutTxProgram = (
       settingsUnit,
     } = protocol;
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
-    const { accountTokenSuffix, destinationAddress } = config;
+    const { accountTokenSuffix, groupTokenSuffix, destinationAddress } = config;
 
     const memberRefName = assetNameLabels.prefix222 + accountTokenSuffix;
     const accountUnit = accountPolicyId + memberRefName;
     const treasuryUnit = treasuryPolicyId + memberRefName;
+    const treasuryAddress = yield* getScriptAddress(
+      lucid,
+      treasuryValidator.spendTreasury,
+    );
 
     const accountUtxoRaw = yield* resolveUtxoByUnit(lucid, accountUnit);
-    const treasuryUtxoRaw = yield* resolveUtxoByUnit(lucid, treasuryUnit);
+    // Scoped to this group when the caller named one: the treasury token name is the
+    // account (222) token name, so a member of several groups has one live UTxO per
+    // group under this unit. The group the tx is built against still comes from the
+    // resolved datum below, never from this suffix.
+    const treasuryUtxoRaw = yield* resolveTreasuryUtxoForGroup(
+      lucid,
+      treasuryAddress,
+      treasuryUnit,
+      groupTokenSuffix
+        ? assetNameLabels.prefix100 + groupTokenSuffix
+        : undefined,
+    );
     const accountUtxo = patchInlineDatum(accountUtxoRaw);
     const treasuryUtxo = patchInlineDatum(treasuryUtxoRaw);
 

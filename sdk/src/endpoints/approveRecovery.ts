@@ -20,6 +20,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  resolveTreasuryUtxoForGroup,
+  getScriptAddress,
   referenceInputIndex,
   attachTxMessage,
   type TxMessage,
@@ -80,15 +82,27 @@ export const unsignedApproveRecoveryTxProgram = (
     const { groupTokenSuffix, newAccountTokenSuffix, approverTokenSuffix } =
       config;
 
-    const groupRefUnit =
-      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
+    const groupRefName = assetNameLabels.prefix100 + groupTokenSuffix;
+    const groupRefUnit = groupPolicyId + groupRefName;
     const requestUnit =
       treasuryPolicyId + assetNameLabels.prefix222 + newAccountTokenSuffix;
+    // Account-policy unit: globally unique, so a plain unit lookup is exact.
     const approverUnit =
       accountPolicyId + assetNameLabels.prefix222 + approverTokenSuffix;
+    const treasuryAddress = yield* getScriptAddress(
+      lucid,
+      treasuryValidator.spendTreasury,
+    );
 
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
-    const requestUtxoRaw = yield* resolveUtxoByUnit(lucid, requestUnit);
+    // Scoped to this group: the same fresh N' account can back a pending request in
+    // more than one group, and both requests live at the treasury under one unit.
+    const requestUtxoRaw = yield* resolveTreasuryUtxoForGroup(
+      lucid,
+      treasuryAddress,
+      requestUnit,
+      groupRefName,
+    );
     const approverUtxoRaw = yield* resolveUtxoByUnit(lucid, approverUnit);
     const settingsUtxo = yield* resolveUtxoByUnit(lucid, settingsUnit);
 

@@ -32,6 +32,8 @@ import {
   patchInlineDatum,
   assetNameLabels,
   resolveUtxoByUnit,
+  resolveTreasuryUtxoForGroup,
+  getScriptAddress,
   referenceInputIndex,
   attachTxMessage,
   type TxMessage,
@@ -77,18 +79,29 @@ export const unsignedExtendGraceWindowTxProgram = (
     const { groupTokenSuffix, memberAccountTokenSuffix } = config;
 
     // Group reference token (read-only, not spent)
-    const groupRefUnit =
-      groupPolicyId + assetNameLabels.prefix100 + groupTokenSuffix;
+    const groupRefName = assetNameLabels.prefix100 + groupTokenSuffix;
+    const groupRefUnit = groupPolicyId + groupRefName;
     // Admin holds the group (222) user token — proves admin identity
     const adminUnit =
       groupPolicyId + assetNameLabels.prefix222 + groupTokenSuffix;
     // Member's treasury UTxO (must be DefaultState)
     const memberRefName = assetNameLabels.prefix222 + memberAccountTokenSuffix;
     const treasuryUnit = treasuryPolicyId + memberRefName;
+    const treasuryAddress = yield* getScriptAddress(
+      lucid,
+      treasuryValidator.spendTreasury,
+    );
 
     const groupUtxoRaw = yield* resolveUtxoByUnit(lucid, groupRefUnit);
     const adminUtxoRaw = yield* resolveUtxoByUnit(lucid, adminUnit);
-    const treasuryUtxoRaw = yield* resolveUtxoByUnit(lucid, treasuryUnit);
+    // Scoped to this group: the treasury token name is the account (222) token name,
+    // so a member of several groups has one live UTxO per group under this unit.
+    const treasuryUtxoRaw = yield* resolveTreasuryUtxoForGroup(
+      lucid,
+      treasuryAddress,
+      treasuryUnit,
+      groupRefName,
+    );
 
     const groupUtxo = patchInlineDatum(groupUtxoRaw);
     const adminUtxo = patchInlineDatum(adminUtxoRaw);
