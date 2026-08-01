@@ -4,6 +4,7 @@ import { Effect } from "effect";
 import { ConfigurationError } from "../../../core/errors.js";
 import { EscrowDatumV2, fromOnchainAddress } from "../types.js";
 import { escrowV2PolicyId, escrowV2Validator } from "../validators.js";
+import { EscrowV2ScriptRefs } from "../scriptRefs.js";
 import { escrowV2AssetUnit, MIN_ADA_BUFFER } from "../utils.js";
 import { EscrowV2MintRedeemer } from "../types.js";
 
@@ -18,6 +19,7 @@ export const applyTrancheOutputs = (
   escrowUtxo: UTxO,
   datum: EscrowDatumV2,
   stateUnit: string,
+  scriptRefs: EscrowV2ScriptRefs,
 ): Effect.Effect<
   {
     tx: TxBuilder;
@@ -91,14 +93,21 @@ export const applyTrancheOutputs = (
       for (const [unit, amount] of Object.entries(funderRemainder)) {
         if (amount <= 0n) delete funderRemainder[unit];
       }
+      // The caller already witnessed the spend purpose. Mint and spend share
+      // one compiled script, so re-attaching it inline while a reference input
+      // is in play would make the witness extraneous and fail the ledger.
+      const burnBase = baseTx.mintAssets(
+        { [stateUnit]: -1n },
+        Data.to("BurnEscrowV2", EscrowV2MintRedeemer),
+      );
+      // Mint and spend share one compiled script. When the caller witnessed it
+      // from a reference input, that covers the burn too; attaching it inline
+      // as well would make the witness extraneous and fail the ledger.
       const burnTx = paySplit(
-        baseTx
-          .mintAssets(
-            { [stateUnit]: -1n },
-            Data.to("BurnEscrowV2", EscrowV2MintRedeemer),
-          )
-          .attach.MintingPolicy(escrowV2Validator.mintEscrow)
-          .pay.ToAddress(beneficiaryAddress, payoutAssets),
+        (scriptRefs.escrow
+          ? burnBase
+          : burnBase.attach.MintingPolicy(escrowV2Validator.mintEscrow)
+        ).pay.ToAddress(beneficiaryAddress, payoutAssets),
       );
       const withRemainder =
         Object.keys(funderRemainder).length > 0

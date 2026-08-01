@@ -33,6 +33,12 @@ import {
   poolVaultValidator,
 } from "../validators.js";
 import {
+  effectiveEscrowV2ScriptRefs,
+  EscrowV2ScriptRefs,
+  verifyEscrowV2ScriptRefs,
+  witnessEscrowV2Script,
+} from "../scriptRefs.js";
+import {
   applyPartyWitness,
   escrowV2Address,
   PartyWitness,
@@ -75,10 +81,16 @@ export type AllocateToEscrowConfig = {
   /** Required when the quorum credential is a script hash (multisig). */
   quorumWitness?: PartyWitness;
   /**
-   * A UTxO carrying the escrow v2 script as a reference script. STRONGLY
-   * recommended: the allocation tx must witness both the vault and the escrow
-   * scripts, and attaching the 11 KB escrow script inline exceeds the 16 KB
-   * transaction ceiling for most schedules.
+   * Reference-script UTxOs for the escrow v2 validators. STRONGLY recommended
+   * here: this transaction witnesses both the pool vault and the escrow
+   * scripts, and inlining the 11.4 KB escrow script exceeds the 16 KB
+   * transaction ceiling for most schedules. Falls back to the session default
+   * set by `configureEscrowV2ReferenceScripts`.
+   */
+  scriptRefs?: EscrowV2ScriptRefs;
+  /**
+   * @deprecated Use `scriptRefs: { escrow }`. Still honoured, and it wins over
+   * `scriptRefs.escrow` when both are supplied.
    */
   escrowScriptRef?: UTxO;
   /** Clock override (POSIX ms) — pass `emulator.now()` in emulator tests. */
@@ -149,6 +161,11 @@ export const unsignedAllocateToEscrowTxProgram = (
   never
 > =>
   Effect.gen(function* () {
+    const resolved = effectiveEscrowV2ScriptRefs(config.scriptRefs);
+    const scriptRefs: EscrowV2ScriptRefs = config.escrowScriptRef
+      ? { ...resolved, escrow: config.escrowScriptRef }
+      : resolved;
+    yield* verifyEscrowV2ScriptRefs(scriptRefs);
     const network = lucid.config().network ?? "Preprod";
     const { utxo: poolUtxo, pool } = yield* resolvePool(
       lucid,
@@ -186,10 +203,15 @@ export const unsignedAllocateToEscrowTxProgram = (
       config.poolTokenName,
       poolVaultAddress(network),
     );
-    const poolRefIndex = sortedRefIndexOf(
+    // The ledger presents reference inputs to scripts as a SORTED set, so the
+    // pool's index must be computed against EVERY ref this tx reads, not just
+    // the pool state UTxO.
+    const refInputs = [
       poolUtxo,
-      config.escrowScriptRef ? [poolUtxo, config.escrowScriptRef] : [poolUtxo],
-    );
+      ...(scriptRefs.pool ? [scriptRefs.pool] : []),
+      ...(scriptRefs.escrow ? [scriptRefs.escrow] : []),
+    ];
+    const poolRefIndex = sortedRefIndexOf(poolUtxo, refInputs);
     const quorumAddress =
       "VerificationKey" in pool.quorum
         ? credentialToAddress(network, {
@@ -261,18 +283,15 @@ export const unsignedAllocateToEscrowTxProgram = (
         now + 1_200_000n < deadline ? now + 1_200_000n : deadline,
       );
 
-      let tx = (yield* attachTxMessage(lucid.newTx(), config.message))
-        .readFrom(
-          config.escrowScriptRef
-            ? [poolUtxo, config.escrowScriptRef]
-            : [poolUtxo],
-        )
-        .collectFrom([deposit.utxo], spendRedeemer)
-        .attach.SpendingValidator(poolVaultValidator.spendPool)
-        .mintAssets({ [stateUnit]: 1n }, mintRedeemer);
-      if (!config.escrowScriptRef) {
-        tx = tx.attach.MintingPolicy(escrowV2Validator.mintEscrow);
-      }
+      let tx = witnessEscrowV2Script(
+        (yield* attachTxMessage(lucid.newTx(), config.message))
+          .readFrom([poolUtxo])
+          .collectFrom([deposit.utxo], spendRedeemer),
+        "pool",
+        scriptRefs,
+        ["spend"],
+      ).mintAssets({ [stateUnit]: 1n }, mintRedeemer);
+      tx = witnessEscrowV2Script(tx, "escrow", scriptRefs, ["mint"]);
       tx = tx.pay
         .ToContract(
           escrowV2Address(network),
@@ -362,18 +381,16 @@ export const unsignedAllocateToEscrowTxProgram = (
         ),
       inputs: [deposit.utxo, escrowUtxo],
     };
-    let baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
-      .readFrom(
-        config.escrowScriptRef
-          ? [poolUtxo, config.escrowScriptRef]
-          : [poolUtxo],
-      )
-      .collectFrom([deposit.utxo], spendRedeemer)
-      .collectFrom([escrowUtxo], contributeRedeemer)
-      .attach.SpendingValidator(poolVaultValidator.spendPool);
-    if (!config.escrowScriptRef) {
-      baseTx = baseTx.attach.SpendingValidator(escrowV2Validator.spendEscrow);
-    }
+    let baseTx = witnessEscrowV2Script(
+      (yield* attachTxMessage(lucid.newTx(), config.message))
+        .readFrom([poolUtxo])
+        .collectFrom([deposit.utxo], spendRedeemer)
+        .collectFrom([escrowUtxo], contributeRedeemer),
+      "pool",
+      scriptRefs,
+      ["spend"],
+    );
+    baseTx = witnessEscrowV2Script(baseTx, "escrow", scriptRefs, ["spend"]);
     baseTx = baseTx.pay
       .ToContract(
         escrowUtxo.address,

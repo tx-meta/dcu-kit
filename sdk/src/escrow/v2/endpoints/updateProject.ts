@@ -23,6 +23,12 @@ import {
   ProjectSpendRedeemer,
 } from "../types.js";
 import { projectValidator } from "../validators.js";
+import {
+  effectiveEscrowV2ScriptRefs,
+  EscrowV2ScriptRefs,
+  verifyEscrowV2ScriptRefs,
+  witnessEscrowV2Script,
+} from "../scriptRefs.js";
 import { applyPartyWitness, PartyWitness, resolveProject } from "../utils.js";
 
 /**
@@ -35,6 +41,13 @@ import { applyPartyWitness, PartyWitness, resolveProject } from "../utils.js";
  * @returns Effect yielding TxSignBuilder.
  */
 export type UpdateProjectConfig = {
+  /**
+   * Reference-script UTxOs for the escrow v2 validators. Supplying the
+   * escrow ref keeps its 11.4 KB out of the transaction body. Falls back
+   * to the session default set by `configureEscrowV2ReferenceScripts`,
+   * then to inlining the script.
+   */
+  scriptRefs?: EscrowV2ScriptRefs;
   /** The project's permanent identity (returned by createProject). */
   projectTokenName: string;
   title?: string;
@@ -57,6 +70,8 @@ export const unsignedUpdateProjectTxProgram = (
   config: UpdateProjectConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const scriptRefs = effectiveEscrowV2ScriptRefs(config.scriptRefs);
+    yield* verifyEscrowV2ScriptRefs(scriptRefs);
     const { utxo: projectUtxo, datum } = yield* resolveProject(
       lucid,
       config.projectTokenName,
@@ -105,9 +120,13 @@ export const unsignedUpdateProjectTxProgram = (
       inputs: [projectUtxo],
     };
 
-    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
+    const baseTx = witnessEscrowV2Script(
+      yield* attachTxMessage(lucid.newTx(), config.message),
+      "project",
+      scriptRefs,
+      ["spend"],
+    )
       .collectFrom([projectUtxo], redeemer)
-      .attach.SpendingValidator(projectValidator.spendProject)
       .pay.ToContract(
         projectUtxo.address,
         { kind: "inline", value: Data.to(updatedDatum, ProjectDatum) },

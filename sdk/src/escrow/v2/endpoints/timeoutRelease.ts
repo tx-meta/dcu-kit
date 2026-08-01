@@ -17,6 +17,12 @@ import {
 } from "../../../core/utils/index.js";
 import { EscrowV2SpendRedeemer } from "../types.js";
 import { escrowV2Validator } from "../validators.js";
+import {
+  effectiveEscrowV2ScriptRefs,
+  EscrowV2ScriptRefs,
+  verifyEscrowV2ScriptRefs,
+  witnessEscrowV2Script,
+} from "../scriptRefs.js";
 import { cureBoundary, resolveEscrowV2 } from "../utils.js";
 import { applyTrancheOutputs, stateUnitOf } from "./tranche.js";
 
@@ -32,6 +38,13 @@ import { applyTrancheOutputs, stateUnitOf } from "./tranche.js";
  * @returns Effect yielding TxSignBuilder.
  */
 export type TimeoutReleaseConfig = {
+  /**
+   * Reference-script UTxOs for the escrow v2 validators. Supplying the
+   * escrow ref keeps its 11.4 KB out of the transaction body. Falls back
+   * to the session default set by `configureEscrowV2ReferenceScripts`,
+   * then to inlining the script.
+   */
+  scriptRefs?: EscrowV2ScriptRefs;
   /** The escrow's permanent identity (returned by createEscrow). */
   stateTokenName: string;
   /** Clock override (POSIX ms) — pass `emulator.now()` in emulator tests. */
@@ -49,6 +62,8 @@ export const unsignedTimeoutReleaseTxProgram = (
   config: TimeoutReleaseConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const scriptRefs = effectiveEscrowV2ScriptRefs(config.scriptRefs);
+    yield* verifyEscrowV2ScriptRefs(scriptRefs);
     const { utxo: escrowUtxo, datum } = yield* resolveEscrowV2(
       lucid,
       config.stateTokenName,
@@ -105,10 +120,9 @@ export const unsignedTimeoutReleaseTxProgram = (
     );
 
     const baseTx = yield* attachTxMessage(
-      lucid
-        .newTx()
-        .attach.SpendingValidator(escrowV2Validator.spendEscrow)
-        .validFrom(validFrom),
+      witnessEscrowV2Script(lucid.newTx(), "escrow", scriptRefs, [
+        "spend",
+      ]).validFrom(validFrom),
       config.message,
     );
     const plan = yield* applyTrancheOutputs(
@@ -117,6 +131,7 @@ export const unsignedTimeoutReleaseTxProgram = (
       escrowUtxo,
       datum,
       stateUnit,
+      scriptRefs,
     );
     const collected = plan.tx.collectFrom([escrowUtxo], redeemer(plan.indices));
 
