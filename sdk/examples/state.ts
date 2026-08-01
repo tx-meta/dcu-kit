@@ -19,6 +19,7 @@
 
 import fs from "fs";
 import path from "path";
+import { loadDeployment } from "@tx-meta/dcu-kit";
 
 // Examples always run from sdk/examples (package.json scripts use `node dist/x.js`),
 // so anchor to cwd, not __dirname — __dirname is dist/ after a build and ".." then
@@ -277,4 +278,44 @@ export function clearState(keys: (keyof ExampleState)[]): void {
   for (const k of keys) delete current[k];
   fs.writeFileSync(STATE_FILE, JSON.stringify(current, null, 2));
   console.log("State cleared:", keys.join(", "));
+}
+
+/**
+ * The reference script recorded for `key`, from state.json when this machine
+ * deployed it, otherwise from the SDK's bundled deployment manifest.
+ *
+ * The manifest fallback is what stops a fresh or reset state.json from
+ * redeploying a reference that already exists: that is how the deployer wallet
+ * accumulated five orphaned reference scripts before 2026-08-01. A deploy is
+ * skipped only when the recorded UTxO is still on-chain, carries the same
+ * hash, AND sits at the always-fails address, so a stale manifest entry is
+ * republished rather than trusted.
+ */
+export function recordedModuleRef(
+  key:
+    | "scriptRefSavings"
+    | "scriptRefEscrowV2"
+    | "scriptRefGovernanceDispatcher"
+    | "scriptRefGovernanceVoting",
+): ScriptRefOutRef | undefined {
+  const fromState = loadState()[key];
+  if (fromState) return fromState;
+
+  const network = process.env.NETWORK;
+  if (network !== "Preprod" && network !== "Mainnet") return undefined;
+
+  const manifestKey = {
+    scriptRefSavings: "savings",
+    scriptRefEscrowV2: "escrowV2",
+    scriptRefGovernanceDispatcher: "governanceDispatcher",
+    scriptRefGovernanceVoting: "governanceVoting",
+  }[key];
+  try {
+    const entry = loadDeployment(network).refScripts[manifestKey];
+    return entry
+      ? { txHash: entry.txHash, outputIndex: entry.outputIndex }
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }

@@ -1,6 +1,6 @@
 {
   "network": "Preprod",
-  "verifiedAt": "2026-07-26",
+  "verifiedAt": "2026-08-01",
   "sdkVersion": "0.5.7-preprod.0",
   "settingsPolicy": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d",
   "deployAddress": "addr_test1wq3vnggra5ljl2tunqkhd4hz4agvt422cvrfswcedj8um2cwsu3l3",
@@ -11,10 +11,10 @@
     "treasuryLifecycle": { "txHash": "fae7e405eafb985e887ad6711fa898eecf59e76335db3d850c33e4ee129c663a", "outputIndex": 0, "scriptHash": "89aeb986765a0b61d0231b96313c4bf72d7ff23d0376e1149bcb386a" },
     "treasuryRecovery": { "txHash": "76c7e8126185494235bf8dbea90ad1d55ddefe893f89ff5951a47af5a75f0471", "outputIndex": 0, "scriptHash": "891e8c8cc613967dd4c0155f5db321ba51db97d741fca2ee7a16c550" },
     "treasuryReserve": { "txHash": "39ea5fb76144d894509e5dd6ebf01e23c3c1e8c6dad52a3bf0f4705f7e210e79", "outputIndex": 0, "scriptHash": "46ce037514b1e7e69b78681100560ba568c75d1f076870ca8d5c2bf8" },
-    "savings": { "txHash": "e4f6a1a29690da98fb7c9dcbda9574d4d41ba908ca0f7d43d979ebbe4cced370", "outputIndex": 0, "scriptHash": "04ec9b8f1425e576fc3b8469bd32f268c2901736a6263149e8511e15" },
-    "escrowV2": { "txHash": "83ef75ce2b9711c95dba523bb990c01c256e971dbceb9c05d1c133205eea016b", "outputIndex": 0, "scriptHash": "3623c729aae8b1cb32889d27c60c5cfb2a33f59e3074db0f5d208310" },
-    "governanceDispatcher": { "txHash": "46098be0493cbd04f462b1e3fa9dfcd62f72a033614cf0907f149137704c372b", "outputIndex": 0, "scriptHash": "1461174ad1702e11983ddc0f5dd82bfc29eb518ea700f180fc43f879" },
-    "governanceVoting": { "txHash": "54755310c78a6e41041e99d0fd3236360beb9522512e48ce36a327d6b6be1d96", "outputIndex": 0, "scriptHash": "ed48dbbe96ed01af22b676b1baad2a58f3dbbcffb6aa38a3bf903adf" }
+    "savings": { "txHash": "240d4f39ea1c1d20cc86ec7f223561baa3f14ac25942a0aaab1cd404f3f112cd", "outputIndex": 0, "scriptHash": "04ec9b8f1425e576fc3b8469bd32f268c2901736a6263149e8511e15" },
+    "escrowV2": { "txHash": "fa2a6cb592286000088bc41267a2bbd860e16c8f0ceefce8a0b09f470f8a7ce5", "outputIndex": 0, "scriptHash": "3623c729aae8b1cb32889d27c60c5cfb2a33f59e3074db0f5d208310" },
+    "governanceDispatcher": { "txHash": "70b854e2b2fad6f6ccc2f79b1ea202a84c6116af38b26d84f5cf0cfdf094d770", "outputIndex": 0, "scriptHash": "1461174ad1702e11983ddc0f5dd82bfc29eb518ea700f180fc43f879" },
+    "governanceVoting": { "txHash": "170ee5310c313c3c6a9c58f68c0e382086b5454e223af20901dd83a77f9e58a4", "outputIndex": 0, "scriptHash": "ed48dbbe96ed01af22b676b1baad2a58f3dbbcffb6aa38a3bf903adf" }
   },
   "governance": {
     "seed": { "txHash": "0ca091d4f4a20d75f069fe00fc97bfc7bfe61e9d70401d78a7b0e9b39848f1eb", "outputIndex": 0 },

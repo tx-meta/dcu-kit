@@ -6,6 +6,49 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+Validator fingerprints are unchanged, so no redeployment is required. The Preprod
+reference scripts WERE republished on 2026-08-01, so consumers must pick up the new
+out-refs from `src/core/deployments/preprod.json`.
+
+### Added
+
+- `deployModuleScripts` (admin): publishes the standalone-module validators
+  (`savings`, `escrowV2`, `pool`, `project`, `governanceDispatcher`,
+  `governanceVoting`) as reference scripts at the permanent always-fails address,
+  with the size ceiling, launch-surface freeze and indexing poll `deployScripts`
+  already applied to the six ROSCA refs. Idempotent via `options.existing`, and a
+  recorded reference that carries a different hash is republished alongside the old
+  one rather than replacing it, so positions bound to the old hash stay spendable.
+- `refScripts` (admin): the shared reference-script deploy layer behind both deploy
+  functions. `spendableWalletUtxos` filters reference-script UTxOs out of the input
+  set a deploy may spend, passed to Lucid as `presetWalletInputs`.
+- `EscrowV2ScriptRefs` and `scriptRefs` on every escrow v2 endpoint that witnesses a
+  validator (20 endpoints; previously only `allocateToEscrow`, under the name
+  `escrowScriptRef`). Session defaults via `configureEscrowV2ReferenceScripts`,
+  mirroring the ROSCA convention.
+- `getPoolEscrows` (escrow v2 query): lists the live escrows a pool has funded, so a
+  fundraiser can offer a list where `allocateToEscrow`'s `existingStateTokenName`
+  previously required a token name supplied from memory.
+- `GroupFullError` and `InsufficientFundsError`: `joinGroup` now names a full group
+  and an unfundable deposit before signing, rather than surfacing them as a validator
+  crash and a coin-selection failure.
+- `groupTokenSuffix` (optional) on `CancelRecoveryConfig`, to pick which group's
+  recovery request is being vetoed when the same fresh account token backs a request
+  in more than one. SDK-side selection only: the veto carries no group on-chain.
+
+### Changed
+
+- `verifyProtocolDeployment` asserts the always-fails address for all ten reference
+  scripts. The module refs were previously exempt as "deployer-owned by design"; a
+  reference at a spendable address is one coin selection away from being destroyed,
+  which is how the savings reference was lost on Preprod.
+- `ReferenceScriptMismatchError.validator` accepts the module validator names.
+
+### Deprecated
+
+- `AllocateToEscrowConfig.escrowScriptRef`, in favour of `scriptRefs: { escrow }`.
+  Still honoured, and it wins when both are supplied.
+
 ## [0.5.7-preprod.0] - 2026-07-29
 
 Validator fingerprints are unchanged, so no redeployment is required. This completes
