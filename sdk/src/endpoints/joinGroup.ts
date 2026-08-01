@@ -32,13 +32,23 @@ import {
   reserveTokenName,
   MIN_ADA_RESERVE,
   attachTxMessage,
+  getWalletUtxos,
   type TxMessage,
 } from "../core/utils/index.js";
 import {
   DcuError,
   UtxoNotFoundError,
   TransactionBuildError,
+  GroupFullError,
+  InsufficientFundsError,
 } from "../core/errors.js";
+
+/**
+ * Headroom over a join's known deposit for fees and the change output's
+ * min-ADA. An operational approximation, deliberately generous: its only job is
+ * to stop the preflight from passing a wallet that would fail during balancing.
+ */
+const TX_FEE_ALLOWANCE = 3_000_000n;
 
 /**
  * Creates an unsigned transaction for joining a Group.
@@ -121,6 +131,19 @@ export const unsignedJoinGroupTxProgram = (
     const groupCip68 = yield* parseGroupCip68Datum(groupUtxo.datum);
     const groupDatum = groupCip68.groupDatum;
 
+    // Capacity is enforced on-chain, so losing the race for the last seat is a
+    // validator crash at submission. A shared invite link makes that race
+    // ordinary rather than exotic, so name it here instead.
+    if (groupDatum.member_count >= groupDatum.max_members) {
+      return yield* Effect.fail(
+        new GroupFullError({
+          groupTokenSuffix,
+          maxMembers: Number(groupDatum.max_members),
+          memberCount: Number(groupDatum.member_count),
+        }),
+      );
+    }
+
     const groupRefAssetEntry = Object.keys(groupUtxo.assets).find((k) =>
       k.startsWith(groupPolicyId),
     );
@@ -191,6 +214,36 @@ export const unsignedJoinGroupTxProgram = (
 
     const address = yield* getWalletAddress(lucid);
     const memberPaymentCredential = paymentCredentialOf(address).hash;
+
+    // The deposit is known exactly, and a joiner who cannot cover it otherwise
+    // learns so only as a coin-selection failure. TX_FEE_ALLOWANCE is a working
+    // approximation of fees plus the change output's min-ADA, not a protocol
+    // guarantee: it is deliberately generous so the check never passes a wallet
+    // that would then fail during balancing.
+    const spendable = (yield* getWalletUtxos(lucid)).filter(
+      (u) => !u.scriptRef,
+    );
+    for (const [unit, required] of Object.entries(treasuryAssets)) {
+      if (unit === treasuryMemberToken) continue; // minted by this tx
+      const needed =
+        unit === "lovelace"
+          ? (required as bigint) + TX_FEE_ALLOWANCE
+          : (required as bigint);
+      const available = spendable.reduce(
+        (sum, u) => sum + (u.assets[unit] ?? 0n),
+        0n,
+      );
+      if (available < needed) {
+        return yield* Effect.fail(
+          new InsufficientFundsError({
+            operation: "joinGroup",
+            unit,
+            required: needed,
+            available,
+          }),
+        );
+      }
+    }
 
     const rawNow =
       currentTime !== undefined ? currentTime : BigInt(Date.now()) - 120_000n;

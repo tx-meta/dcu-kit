@@ -757,8 +757,10 @@ describe("Treasury Endpoints", () => {
 
   // --- Negative: joinGroup when group is at max capacity ---
   // Group capped at 2 members (the envelope floor implies max_members >= 2);
-  // setupMembership's join plus user2 fill it. A third join attempt is rejected
-  // by the on-chain validator: member_count < max_members → 2 < 2 → False.
+  // setupMembership's join plus user2 fill it. Capacity is enforced on-chain
+  // (member_count < max_members → 2 < 2 → False), and the endpoint now names it
+  // before signing so a shared invite link that loses the race for the last seat
+  // fails readably instead of as a validator crash.
   it.effect("should reject joining a group when at max capacity", () =>
     Effect.gen(function* () {
       const base = yield* setupBase();
@@ -806,8 +808,77 @@ describe("Treasury Endpoints", () => {
         }),
       );
 
-      expect(err._tag).toBe("TransactionBuildError");
+      expect(err._tag).toBe("GroupFullError");
+      if (err._tag === "GroupFullError") {
+        expect(err.maxMembers).toBe(2);
+        expect(err.memberCount).toBe(2);
+        expect(err.groupTokenSuffix).toBe(groupTokenSuffix);
+      }
     }),
+  );
+
+  // --- Negative: joinGroup when the wallet cannot cover the deposit ---
+  it.effect(
+    "should reject joining when the wallet cannot fund the deposit",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context, groupUtxo } = yield* setupGroup(base);
+        const { lucid, users } = context;
+
+        const {
+          outputs: { userUtxo: account },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user2.seedPhrase,
+        });
+
+        // Drain user2 to below the deposit (contribution_fee × collateral_rounds
+        // + MIN_ADA_RESERVE = 4 ADA) plus the endpoint's fee allowance.
+        selectWalletFromSeed(lucid, users.user2.seedPhrase);
+        const balance = yield* Effect.promise(() =>
+          lucid
+            .wallet()
+            .getUtxos()
+            .then((us) =>
+              us.reduce((a, u) => a + (u.assets.lovelace ?? 0n), 0n),
+            ),
+        );
+        const drained = yield* Effect.promise(() =>
+          lucid
+            .newTx()
+            .pay.ToAddress(users.admin.address!, {
+              lovelace: balance - 5_000_000n,
+            })
+            .complete(),
+        );
+        yield* signAndSubmit(drained);
+        yield* advanceBlock(context.emulator);
+
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix100,
+        );
+        const accountTokenSuffix = extractTokenSuffix(
+          account,
+          accountPolicyId,
+          assetNameLabels.prefix222,
+        );
+
+        const err = yield* Effect.flip(
+          unsignedJoinGroupTxProgram(context.protocol!, lucid, {
+            groupTokenSuffix,
+            accountTokenSuffix,
+          }),
+        );
+
+        expect(err._tag).toBe("InsufficientFundsError");
+        if (err._tag === "InsufficientFundsError") {
+          expect(err.operation).toBe("joinGroup");
+          expect(err.unit).toBe("lovelace");
+          expect(err.available < err.required).toBe(true);
+        }
+      }),
   );
 
   // --- Positive: exit when group is deactivated (is_active=false) ---
