@@ -1,29 +1,24 @@
-import {
-  Data,
-  LucidEvolution,
-  Script,
-  validatorToAddress,
-} from "@lucid-evolution/lucid";
-import { Effect, Schedule } from "effect";
-import {
-  alwaysFailsValidator,
-  Protocol,
-} from "../core/validators/constants.js";
-import { DcuError, TransactionBuildError, SetupError } from "../core/errors.js";
+import { LucidEvolution, Script } from "@lucid-evolution/lucid";
+import { Effect } from "effect";
+import { Protocol } from "../core/validators/constants.js";
+import { DcuError, SetupError } from "../core/errors.js";
 import { isDeployAllowed } from "../core/validators/registry.js";
 import { getWalletAddress } from "../core/utils/index.js";
+import {
+  assertDeployableSizes,
+  MAX_REF_SCRIPT_BYTES,
+  publishRefScript,
+  refScriptDeployAddress,
+  ScriptRefOutRef,
+  spendableWalletUtxos,
+} from "./refScripts.js";
 import {
   registerTreasuryStake,
   RegisterTreasuryStakeResult,
 } from "./registerTreasuryStake.js";
 
-/**
- * The hard ceiling for a deployable reference script: a deployment tx must carry
- * the full script, so it can never exceed maxTxSize (16,384) minus the measured
- * ~256-byte deploy-tx envelope. Scripts above this line can NEVER go on-chain —
- * the treasury split (spec 2026-07-04) exists because the monolith crossed it.
- */
-export const MAX_REF_SCRIPT_BYTES = 16_128;
+export { MAX_REF_SCRIPT_BYTES };
+export type { ScriptRefOutRef };
 
 /**
  * Legacy per-script deposit floors (kept for the emulator context). The live
@@ -31,8 +26,6 @@ export const MAX_REF_SCRIPT_BYTES = 16_128;
  */
 export const TREASURY_REF_LOVELACE = 30_000_000n; // 30 ADA
 export const GROUP_REF_LOVELACE = 26_000_000n; // 26 ADA
-
-export type ScriptRefOutRef = { txHash: string; outputIndex: number };
 
 /** The six rosca reference scripts a deployment publishes. */
 export type DeployedScriptKey =
@@ -59,48 +52,6 @@ export type DeployScriptsResult = {
    */
   stakeRegistrations: RegisterTreasuryStakeResult;
 };
-
-/** Compiled size of a validator in bytes (script hex is CBOR-wrapped bytes). */
-const scriptBytes = (script: Script): number => script.script.length / 2;
-
-/**
- * Min-UTxO deposit for a reference-script UTxO, from the actual script size:
- * coinsPerUTxOByte (4,310) × (160-byte ledger overhead + output serialization
- * ≈ script + 300 B for address/value/datum), plus a 2-ADA cushion. The deposit
- * is locked permanently at the alwaysFails address, so it is computed tight
- * rather than over-provisioned.
- */
-const refDepositLovelace = (script: Script): bigint =>
-  BigInt((scriptBytes(script) + 460) * 4_310) + 2_000_000n;
-
-/**
- * Polls the wallet address until the given txHash appears in the UTxO set.
- *
- * Blockfrost's wallet UTxO endpoint can lag behind chain state even after
- * awaitTx returns. Once this poll succeeds, completeProgram() for the next tx
- * will also see fresh UTxOs because both hit the same Blockfrost endpoint.
- *
- * Retries every 3 seconds for up to 30 seconds before failing.
- */
-const awaitWalletIndexed = (
-  lucid: LucidEvolution,
-  address: string,
-  txHash: string,
-): Effect.Effect<void, SetupError, never> =>
-  Effect.retry(
-    Effect.tryPromise({
-      try: async () => {
-        const utxos = await lucid.utxosAt(address);
-        if (!utxos.some((u) => u.txHash === txHash))
-          throw new Error("not indexed yet");
-      },
-      catch: () =>
-        new SetupError({
-          message: `Timed out waiting for tx ${txHash.slice(0, 8)}... to appear in wallet UTxOs`,
-        }),
-    }),
-    Schedule.spaced(3_000).pipe(Schedule.upTo(30_000)),
-  );
 
 /**
  * Deploys the six rosca validators as reference scripts at a permanent
@@ -152,10 +103,7 @@ export const deployScripts = (
       );
     }
 
-    const deployAddress = validatorToAddress(
-      network,
-      alwaysFailsValidator.elseAlwaysFails,
-    );
+    const deployAddress = refScriptDeployAddress(lucid);
 
     const deployments: Array<[DeployedScriptKey, Script]> = [
       ["treasury", protocol.treasuryValidator.mintTreasury],
@@ -167,69 +115,22 @@ export const deployScripts = (
     ];
 
     // Ceiling guard BEFORE any funds move: every script must be deployable.
-    for (const [key, script] of deployments) {
-      const bytes = scriptBytes(script);
-      if (bytes > MAX_REF_SCRIPT_BYTES) {
-        return yield* Effect.fail(
-          new SetupError({
-            message: `${key} validator is ${bytes} bytes — exceeds the ${MAX_REF_SCRIPT_BYTES}-byte deployable-reference-script ceiling and can never go on-chain`,
-          }),
-        );
-      }
-    }
+    yield* assertDeployableSizes(deployments);
 
     const refs = {} as Record<DeployedScriptKey, ScriptRefOutRef>;
 
     for (const [key, script] of deployments) {
-      const txBuilder = yield* lucid
-        .newTx()
-        .pay.ToAddressWithData(
-          deployAddress,
-          { kind: "inline", value: Data.void() },
-          { lovelace: refDepositLovelace(script) },
-          { type: "PlutusV3", script: script.script },
-        )
-        .addSigner(address)
-        .completeProgram()
-        .pipe(
-          Effect.mapError(
-            (e) =>
-              new TransactionBuildError({
-                operation: `deployScripts:${key}:build`,
-                error: String(e),
-              }),
-          ),
-        );
-
-      const signed = yield* Effect.tryPromise({
-        try: () => txBuilder.sign.withWallet().complete(),
-        catch: (e) =>
-          new TransactionBuildError({
-            operation: `deployScripts:${key}:sign`,
-            error: String(e),
-          }),
+      // Re-read per iteration: the previous deploy consumed inputs and made a
+      // new change UTxO, and reference-script UTxOs are never spendable here.
+      const presetWalletInputs = yield* spendableWalletUtxos(lucid);
+      refs[key] = yield* publishRefScript(lucid, {
+        key,
+        script,
+        deployAddress,
+        walletAddress: address,
+        presetWalletInputs,
+        operation: "deployScripts",
       });
-      const txHash = yield* Effect.tryPromise({
-        try: () => signed.submit(),
-        catch: (e) =>
-          new TransactionBuildError({
-            operation: `deployScripts:${key}:submit`,
-            error: String(e),
-          }),
-      });
-      yield* Effect.tryPromise({
-        try: () => lucid.awaitTx(txHash),
-        catch: (e) =>
-          new TransactionBuildError({
-            operation: `deployScripts:${key}:confirm`,
-            error: String(e),
-          }),
-      });
-
-      // Guarantees the next completeProgram() sees fresh wallet UTxOs.
-      yield* awaitWalletIndexed(lucid, address, txHash);
-
-      refs[key] = { txHash, outputIndex: 0 };
     }
 
     // Register the four family stake credentials (withdraw-zero prerequisite for
