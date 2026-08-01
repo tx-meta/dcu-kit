@@ -55,6 +55,13 @@ import {
 export type CancelRecoveryConfig = {
   targetTokenSuffix: string; // N — the lost member's account token suffix
   newAccountTokenSuffix: string; // N' — the pending request's authenticating token
+  /**
+   * The group whose recovery request is being vetoed. Only needed when the same
+   * fresh account token backs a request in more than one group: the veto carries
+   * no group on-chain, so without this the lookup reports `AmbiguousUtxoError`
+   * naming every candidate. Single-group targets need not pass it.
+   */
+  groupTokenSuffix?: string;
   scriptRefs?: ScriptRefs;
   /**
    * Optional human-readable note attached to this transaction as CIP-20
@@ -77,7 +84,8 @@ export const unsignedCancelRecoveryTxProgram = (
       treasuryPolicyId,
       settingsUnit,
     } = protocol;
-    const { targetTokenSuffix, newAccountTokenSuffix } = config;
+    const { targetTokenSuffix, newAccountTokenSuffix, groupTokenSuffix } =
+      config;
 
     const requestUnit =
       treasuryPolicyId + assetNameLabels.prefix222 + newAccountTokenSuffix;
@@ -89,12 +97,18 @@ export const unsignedCancelRecoveryTxProgram = (
       treasuryValidator.spendTreasury,
     );
 
-    // No group filter: the veto carries no group, so a request backed by the same
-    // fresh N' in two groups surfaces as AmbiguousUtxoError naming both candidates.
+    // The veto carries no group on-chain, so this filter is SDK-side only: it
+    // picks which candidate to spend. Without it, the same fresh N' backing a
+    // request in two groups reports AmbiguousUtxoError naming both.
+    const groupRefName =
+      groupTokenSuffix === undefined
+        ? undefined
+        : assetNameLabels.prefix100 + groupTokenSuffix;
     const requestUtxoRaw = yield* resolveTreasuryUtxoForGroup(
       lucid,
       treasuryAddress,
       requestUnit,
+      groupRefName,
     );
     const targetAccountUtxoRaw = yield* resolveUtxoByUnit(
       lucid,
