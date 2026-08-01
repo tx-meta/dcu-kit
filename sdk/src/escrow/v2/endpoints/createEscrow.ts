@@ -31,6 +31,12 @@ import {
 } from "../types.js";
 import { escrowV2PolicyId, escrowV2Validator } from "../validators.js";
 import {
+  effectiveEscrowV2ScriptRefs,
+  EscrowV2ScriptRefs,
+  verifyEscrowV2ScriptRefs,
+  witnessEscrowV2Script,
+} from "../scriptRefs.js";
+import {
   DEFAULT_DISPUTE_WINDOW_MS,
   DEFAULT_GRACE_MS,
   escrowStateTokenName,
@@ -61,6 +67,13 @@ import {
  * @returns Effect yielding `{ tx, stateTokenName }` — persist `stateTokenName`.
  */
 export type CreateEscrowV2Config = {
+  /**
+   * Reference-script UTxOs for the escrow v2 validators. Supplying the
+   * escrow ref keeps its 11.4 KB out of the transaction body. Falls back
+   * to the session default set by `configureEscrowV2ReferenceScripts`,
+   * then to inlining the script.
+   */
+  scriptRefs?: EscrowV2ScriptRefs;
   /** PRIMARY tranche destination + consent authority (full address). */
   beneficiaryAddress: string;
   /** Payout-only split recipients (≤10; basis-point shares summing < 10000). */
@@ -294,6 +307,8 @@ export const unsignedCreateEscrowV2TxProgram = (
   never
 > =>
   Effect.gen(function* () {
+    const scriptRefs = effectiveEscrowV2ScriptRefs(config.scriptRefs);
+    yield* verifyEscrowV2ScriptRefs(scriptRefs);
     const walletAddress = yield* getWalletAddress(lucid);
     // Reference-script UTxOs are never seeds — spending one as the one-shot
     // seed input destroys the deployed script for every future transaction.
@@ -335,10 +350,14 @@ export const unsignedCreateEscrowV2TxProgram = (
       now + 1_200_000n < firstCure ? now + 1_200_000n : firstCure - 1_000n,
     );
 
-    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
+    const tx = yield* witnessEscrowV2Script(
+      yield* attachTxMessage(lucid.newTx(), config.message),
+      "escrow",
+      scriptRefs,
+      ["mint"],
+    )
       .collectFrom([seed])
       .mintAssets({ [stateUnit]: 1n }, redeemer)
-      .attach.MintingPolicy(escrowV2Validator.mintEscrow)
       .pay.ToContract(
         escrowV2Address(network),
         { kind: "inline", value: Data.to(datum, EscrowDatumV2) },

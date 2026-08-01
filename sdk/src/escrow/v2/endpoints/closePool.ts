@@ -13,6 +13,12 @@ import {
 } from "../../../core/utils/index.js";
 import { PoolMintRedeemer, PoolSpendRedeemer } from "../types.js";
 import { poolPolicyId, poolVaultValidator } from "../validators.js";
+import {
+  effectiveEscrowV2ScriptRefs,
+  EscrowV2ScriptRefs,
+  verifyEscrowV2ScriptRefs,
+  witnessEscrowV2Script,
+} from "../scriptRefs.js";
 import { applyPartyWitness, PartyWitness, resolvePool } from "../utils.js";
 
 /**
@@ -26,6 +32,13 @@ import { applyPartyWitness, PartyWitness, resolvePool } from "../utils.js";
  * @returns Effect yielding TxSignBuilder.
  */
 export type ClosePoolConfig = {
+  /**
+   * Reference-script UTxOs for the escrow v2 validators. Supplying the
+   * escrow ref keeps its 11.4 KB out of the transaction body. Falls back
+   * to the session default set by `configureEscrowV2ReferenceScripts`,
+   * then to inlining the script.
+   */
+  scriptRefs?: EscrowV2ScriptRefs;
   /** The pool's permanent identity (returned by createPool). */
   poolTokenName: string;
   /** Required when the quorum credential is a script hash. */
@@ -43,6 +56,8 @@ export const unsignedClosePoolTxProgram = (
   config: ClosePoolConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const scriptRefs = effectiveEscrowV2ScriptRefs(config.scriptRefs);
+    yield* verifyEscrowV2ScriptRefs(scriptRefs);
     const { utxo: poolUtxo, pool } = yield* resolvePool(
       lucid,
       config.poolTokenName,
@@ -59,11 +74,14 @@ export const unsignedClosePoolTxProgram = (
       inputs: [poolUtxo],
     };
 
-    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
+    const baseTx = witnessEscrowV2Script(
+      yield* attachTxMessage(lucid.newTx(), config.message),
+      "pool",
+      scriptRefs,
+      ["spend", "mint"],
+    )
       .collectFrom([poolUtxo], redeemer)
-      .attach.SpendingValidator(poolVaultValidator.spendPool)
-      .mintAssets({ [poolUnit]: -1n }, Data.to("BurnPool", PoolMintRedeemer))
-      .attach.MintingPolicy(poolVaultValidator.mintPool);
+      .mintAssets({ [poolUnit]: -1n }, Data.to("BurnPool", PoolMintRedeemer));
 
     const withWitness = yield* applyPartyWitness(
       lucid,

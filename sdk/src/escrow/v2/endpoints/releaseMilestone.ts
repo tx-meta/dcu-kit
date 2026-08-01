@@ -18,6 +18,12 @@ import {
 import { EscrowV2SpendRedeemer } from "../types.js";
 import { escrowV2Validator } from "../validators.js";
 import {
+  effectiveEscrowV2ScriptRefs,
+  EscrowV2ScriptRefs,
+  verifyEscrowV2ScriptRefs,
+  witnessEscrowV2Script,
+} from "../scriptRefs.js";
+import {
   applyPartyWitness,
   cureBoundary,
   disputeFrozen,
@@ -40,6 +46,13 @@ import { applyTrancheOutputs, stateUnitOf } from "./tranche.js";
  * @returns Effect yielding TxSignBuilder.
  */
 export type ReleaseMilestoneV2Config = {
+  /**
+   * Reference-script UTxOs for the escrow v2 validators. Supplying the
+   * escrow ref keeps its 11.4 KB out of the transaction body. Falls back
+   * to the session default set by `configureEscrowV2ReferenceScripts`,
+   * then to inlining the script.
+   */
+  scriptRefs?: EscrowV2ScriptRefs;
   /** The escrow's permanent identity (returned by createEscrow). */
   stateTokenName: string;
   /** Required when the verifier credential is a script hash. */
@@ -59,6 +72,8 @@ export const unsignedReleaseMilestoneV2TxProgram = (
   config: ReleaseMilestoneV2Config,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const scriptRefs = effectiveEscrowV2ScriptRefs(config.scriptRefs);
+    yield* verifyEscrowV2ScriptRefs(scriptRefs);
     const { utxo: escrowUtxo, datum } = yield* resolveEscrowV2(
       lucid,
       config.stateTokenName,
@@ -110,10 +125,9 @@ export const unsignedReleaseMilestoneV2TxProgram = (
       now > datum.dispute.until;
 
     const baseTx = yield* attachTxMessage(
-      lucid
-        .newTx()
-        .attach.SpendingValidator(escrowV2Validator.spendEscrow)
-        .validTo(validTo),
+      witnessEscrowV2Script(lucid.newTx(), "escrow", scriptRefs, [
+        "spend",
+      ]).validTo(validTo),
       config.message,
     );
     const plan = yield* applyTrancheOutputs(
@@ -122,6 +136,7 @@ export const unsignedReleaseMilestoneV2TxProgram = (
       escrowUtxo,
       datum,
       stateUnit,
+      scriptRefs,
     );
     const collected = plan.tx.collectFrom([escrowUtxo], redeemer(plan.indices));
     const timed = lapsedDispute

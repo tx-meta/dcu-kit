@@ -141,7 +141,12 @@ export class ReferenceScriptMismatchError extends Data.TaggedError(
     | "treasuryRounds"
     | "treasuryLifecycle"
     | "treasuryRecovery"
-    | "treasuryReserve";
+    | "treasuryReserve"
+    // Standalone modules, deployed by `deployModuleScripts`.
+    | "savings"
+    | "escrowV2"
+    | "pool"
+    | "project";
   readonly expectedHash: string;
   readonly actualHash: string;
   readonly reason: string;

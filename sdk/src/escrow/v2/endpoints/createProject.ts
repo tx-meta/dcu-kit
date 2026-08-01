@@ -27,6 +27,12 @@ import {
   ProjectMintRedeemer,
 } from "../types.js";
 import { projectPolicyId, projectValidator } from "../validators.js";
+import {
+  effectiveEscrowV2ScriptRefs,
+  EscrowV2ScriptRefs,
+  verifyEscrowV2ScriptRefs,
+  witnessEscrowV2Script,
+} from "../scriptRefs.js";
 import { escrowStateTokenName, projectAddress } from "../utils.js";
 
 /**
@@ -41,6 +47,13 @@ import { escrowStateTokenName, projectAddress } from "../utils.js";
  *          is the `projectId` escrows cite.
  */
 export type CreateProjectConfig = {
+  /**
+   * Reference-script UTxOs for the escrow v2 validators. Supplying the
+   * escrow ref keeps its 11.4 KB out of the transaction body. Falls back
+   * to the session default set by `configureEscrowV2ReferenceScripts`,
+   * then to inlining the script.
+   */
+  scriptRefs?: EscrowV2ScriptRefs;
   /** Short human-readable label, max 64 UTF-8 bytes. */
   title: string;
   /** Hex hash of the off-chain project document. */
@@ -64,6 +77,8 @@ export const unsignedCreateProjectTxProgram = (
   never
 > =>
   Effect.gen(function* () {
+    const scriptRefs = effectiveEscrowV2ScriptRefs(config.scriptRefs);
+    yield* verifyEscrowV2ScriptRefs(scriptRefs);
     const titleHex = fromText(config.title);
     if (titleHex.length > 128) {
       return yield* Effect.fail(
@@ -115,10 +130,14 @@ export const unsignedCreateProjectTxProgram = (
     };
 
     const network = lucid.config().network ?? "Preprod";
-    const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
+    const tx = yield* witnessEscrowV2Script(
+      yield* attachTxMessage(lucid.newTx(), config.message),
+      "project",
+      scriptRefs,
+      ["mint"],
+    )
       .collectFrom([seed])
       .mintAssets({ [projectUnit]: 1n }, redeemer)
-      .attach.MintingPolicy(projectValidator.mintProject)
       .pay.ToContract(
         projectAddress(network),
         { kind: "inline", value: Data.to(datum, ProjectDatum) },

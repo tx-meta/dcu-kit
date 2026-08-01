@@ -23,6 +23,12 @@ import {
   VaultDatum,
 } from "../types.js";
 import { poolVaultValidator } from "../validators.js";
+import {
+  effectiveEscrowV2ScriptRefs,
+  EscrowV2ScriptRefs,
+  verifyEscrowV2ScriptRefs,
+  witnessEscrowV2Script,
+} from "../scriptRefs.js";
 import { applyPartyWitness, PartyWitness, resolvePool } from "../utils.js";
 
 /**
@@ -36,6 +42,13 @@ import { applyPartyWitness, PartyWitness, resolvePool } from "../utils.js";
  * @returns Effect yielding TxSignBuilder.
  */
 export type UpdatePoolConfig = {
+  /**
+   * Reference-script UTxOs for the escrow v2 validators. Supplying the
+   * escrow ref keeps its 11.4 KB out of the transaction body. Falls back
+   * to the session default set by `configureEscrowV2ReferenceScripts`,
+   * then to inlining the script.
+   */
+  scriptRefs?: EscrowV2ScriptRefs;
   /** The pool's permanent identity (returned by createPool). */
   poolTokenName: string;
   title?: string;
@@ -58,6 +71,8 @@ export const unsignedUpdatePoolTxProgram = (
   config: UpdatePoolConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const scriptRefs = effectiveEscrowV2ScriptRefs(config.scriptRefs);
+    yield* verifyEscrowV2ScriptRefs(scriptRefs);
     const { utxo: poolUtxo, pool } = yield* resolvePool(
       lucid,
       config.poolTokenName,
@@ -111,9 +126,13 @@ export const unsignedUpdatePoolTxProgram = (
       inputs: [poolUtxo],
     };
 
-    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
+    const baseTx = witnessEscrowV2Script(
+      yield* attachTxMessage(lucid.newTx(), config.message),
+      "pool",
+      scriptRefs,
+      ["spend"],
+    )
       .collectFrom([poolUtxo], redeemer)
-      .attach.SpendingValidator(poolVaultValidator.spendPool)
       .pay.ToContract(
         poolUtxo.address,
         { kind: "inline", value: Data.to(updated, VaultDatum) },

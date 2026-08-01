@@ -4,6 +4,7 @@
 
 export * from "./types.js";
 export * from "./validators.js";
+export * from "./scriptRefs.js";
 export * from "./utils.js";
 
 export * from "./endpoints/createEscrow.js";
@@ -33,3 +34,4 @@ export * from "./queries/getProjectState.js";
 export * from "./queries/getProjectEscrows.js";
 export * from "./queries/getPoolState.js";
 export * from "./queries/getPoolDeposits.js";
+export * from "./queries/getPoolEscrows.js";
