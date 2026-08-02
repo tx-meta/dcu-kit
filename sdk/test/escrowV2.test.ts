@@ -211,7 +211,12 @@ describe("escrow v2 lifecycle (emulator)", () => {
         expect(state.lockedBalance < 40_000_000n).toBe(true);
         expect(state.nextTrancheFunded).toBe(false);
 
-        // Real UPLC: the validator rejects the underfunded tranche.
+        // The SDK refuses before building, naming the milestone and the
+        // shortfall. The validator still rejects this independently — that is
+        // the security boundary — but a caller who hits it on a live network
+        // gets a bare "failed script execution Spend[0]" and no way to tell an
+        // underfunded tranche from any other rejection, so the check is
+        // duplicated here where it can produce a real message.
         ctx.lucid.selectWallet.fromPrivateKey(ctx.verifier.privateKey);
         const underfunded = yield* Effect.either(
           unsignedReleaseMilestoneV2TxProgram(ctx.lucid, {
@@ -220,6 +225,12 @@ describe("escrow v2 lifecycle (emulator)", () => {
           }),
         );
         expect(underfunded._tag).toBe("Left");
+        if (underfunded._tag === "Left") {
+          expect(underfunded.left._tag).toBe("ConfigurationError");
+          expect(String(underfunded.left.message)).toContain(
+            "fund the tranche first",
+          );
+        }
 
         selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
         const topUp = yield* unsignedContributeTxProgram(ctx.lucid, {

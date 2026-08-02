@@ -44,6 +44,26 @@ export const applyTrancheOutputs = (
       );
     }
     const tranche = milestone.amount;
+
+    // PerMilestone escrows are funded one tranche at a time, and
+    // `allocateToEscrow { newEscrow }` locks only MIN_ADA_BUFFER — the tranche
+    // itself arrives in a SECOND allocation against `existingStateTokenName`.
+    // Releasing before that money lands crashes the validator with a bare
+    // "failed script execution Spend[0]" that names neither the milestone nor
+    // the shortfall, so the caller is told here instead, before paying a fee.
+    const lockedBalance = escrowUtxo.assets[escrowV2AssetUnit(datum)] ?? 0n;
+    if (lockedBalance < tranche) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "stateTokenName",
+          message:
+            `milestone ${releasedCount + 1} of ${datum.milestones.length} needs ${tranche} ` +
+            `but only ${lockedBalance} is locked — fund the tranche first ` +
+            `(allocateToEscrow with existingStateTokenName), then release`,
+        }),
+      );
+    }
+
     const isFinal = releasedCount + 1 === datum.milestones.length;
     const beneficiaryAddress = yield* fromOnchainAddress(
       network,
