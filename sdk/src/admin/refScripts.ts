@@ -12,9 +12,16 @@ import { getWalletUtxos } from "../core/utils/index.js";
 
 /**
  * The hard ceiling for a deployable reference script: a deployment tx must carry
- * the full script, so it can never exceed maxTxSize (16,384) minus the measured
- * ~256-byte deploy-tx envelope. Scripts above this line can NEVER go on-chain —
- * the treasury split (spec 2026-07-04) exists because the monolith crossed it.
+ * the full script, so it can never exceed maxTxSize (16,384) minus the deploy-tx
+ * envelope. Scripts above this line can NEVER go on-chain — the treasury split
+ * (spec 2026-07-04) exists because the monolith crossed it.
+ *
+ * The envelope is only small because {@link inputsCovering} keeps it small: one
+ * ADA-only input and a bare change output measured ~178 bytes on Preprod for a
+ * 15.8 KB script. An unbounded wallet selection measured ~822 bytes for the same
+ * script, which is enough to push a validator under this ceiling over the ledger
+ * limit — so this constant is a statement about the script AND about how the
+ * deploy transaction is built.
  */
 export const MAX_REF_SCRIPT_BYTES = 16_128;
 
