@@ -689,6 +689,13 @@ unregistered account, so a fresh instance is **inert** until `registerVotingStak
 ConwayWithdrawalsMissingAccounts (Withdrawals {... ScriptHashObj "<votingStakeHash>" ...})
 ```
 
+`splitEligibility` is a **prerequisite transaction before every voter-token call**, not a
+one-time setup: ordinary change handling merges the member tokens back into a single UTxO after
+each transaction. A two-voter, two-proposal cycle is therefore nine submissions, which on Preprod
+is roughly 100 seconds each. A 15-minute voting deadline expires before the last vote lands, so
+proposal deadlines must budget for the split overhead, and fee estimates shown to members should
+include one extra transaction per vote.
+
 Budget per governance instance, all one-time and non-recoverable:
 
 | Cost                                  | Amount  |

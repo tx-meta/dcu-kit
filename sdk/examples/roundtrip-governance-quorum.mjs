@@ -74,9 +74,10 @@ const retry = async (label, fn, attempts = 4) => {
     try {
       return await fn();
     } catch (e) {
-      const transient = /fetch failed|socket|ECONN|timeout|502|503|504|OutsideValidityInterval/i.test(
-        String(e?.message ?? e),
-      );
+      const transient =
+        /fetch failed|socket|ECONN|timeout|502|503|504|OutsideValidityInterval/i.test(
+          String(e?.message ?? e),
+        );
       if (!transient || i === attempts) throw e;
       console.log(`  (${label} attempt ${i} failed, retrying: ${e.message})`);
       await new Promise((r) => setTimeout(r, 15_000));
@@ -218,7 +219,11 @@ if (reg._tag === "Right") {
 }
 
 // 4. Two proposals, one shared deadline.
-const deadline = now() + 900_000n;
+// 45 minutes, not 15. Every voter-token call needs its own splitEligibility
+// transaction first, so this leg is nine submissions at roughly 100s each; a
+// 15-minute deadline expires between the last two votes. The final wait shrinks
+// by however long the voting takes, so a generous deadline costs nothing.
+const deadline = now() + 2_700_000n;
 asUser1();
 await splitFor(unitOf(s1), "USER1");
 const { tx: openA, proposalId: idA } = await run(
