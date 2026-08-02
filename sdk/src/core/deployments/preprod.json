@@ -1,7 +1,7 @@
 {
   "network": "Preprod",
   "verifiedAt": "2026-08-02",
-  "sdkVersion": "0.5.7-preprod.0",
+  "sdkVersion": "0.6.0-preprod.0",
   "settingsPolicy": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d",
   "deployAddress": "addr_test1wq3vnggra5ljl2tunqkhd4hz4agvt422cvrfswcedj8um2cwsu3l3",
   "refScripts": {
