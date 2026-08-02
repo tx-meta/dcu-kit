@@ -273,6 +273,7 @@ The address holds one datum type with two variants.
   SavingsFund
   ```* — the fund anchor:
   - *`title`: ```rs ByteArray```* – Human-readable fund name (not PII; group-level only).
+  - *`group_type`: ```rs Int```* – Fund taxonomy, fixed at creation: `0` ASCA, `1` VSLA, `2` Welfare, `3` Pool. Only these four values validate at mint, and `UpdateFund` carries the field through from the input datum, so a fund cannot change what kind of fund it is — the audited configuration a member joined under governs it for life. It is also what lets an indexer group funds by kind without inferring it from a combination of charter fields.
   - *`quorum`: ```rs Credential```* – Ratification authority (multisig script or key). Rotatable via `UpdateFund`.
   - *`asset_policy`: ```rs PolicyId```* / *`asset_name`: ```rs AssetName```* – The fund's asset; empty policy = ADA. Set at creation, immutable (USDCx-ready).
   - *`share_value`: ```rs Int```* – Price of one share unit, in base units of the fund asset. Immutable for the fund's lifetime — the unit that keeps share math exact.
@@ -456,6 +457,7 @@ Common checks on every spend (stated once, applied everywhere):
 
   - `credential_authorized(quorum, tx)`; `status == Active`; if `cycle_end` is `Some(t)`, the transaction validity range starts at or after `t`.
   - *Loans clear first (VSLA rule):* `loans_outstanding == 0` — every loan is repaid or written off before the share-out snapshot freezes.
+  - *A pot to freeze, or a welfare fund with none:* either `shares_total > 0` and `pot > 0` (a share-bearing fund), or `shares_total == 0` and `pot == 0` and `social_total == 0`. A welfare-only fund never sells shares, so without the second branch it could never reach `SharingOut`, `CloseFund` (which requires that status) would be unreachable, and its min-ADA would be locked forever. Requiring `social_total == 0` on that branch forces the welfare pot to be paid out through `SocialPayout` first, rather than stranding it with no path out.
   - Let `vault` = the anchor's fund-asset value, and `buffer` = `2_000_000` when the fund asset is ADA, else `0` (the anchor's protocol min-ADA buffer is not a deposit — excluding it keeps the last claims from breaking on min-ADA). New status, EXACT: `SharingOut { pot: vault - social_total - buffer, shares: shares_total, shares_remaining: shares_total }` — everything else is distributable, including untagged top-ups. Exactness keeps the quorum honest: it cannot understate the pot to enlarge the closure residual.
   - Anchor continuation: `shares_total = 0`, `savings_total = 0` (superseded by the frozen snapshot); `social_total` and charter unchanged; value unchanged (freezing moves no money).
 
