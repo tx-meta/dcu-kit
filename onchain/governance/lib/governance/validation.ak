@@ -1,14 +1,17 @@
+use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
+use aiken/collection/pairs
 use aiken/crypto.{blake2b_256}
 use aiken/primitive/bytearray
 use cardano/address.{Credential, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{
-  InlineDatum, Input, Output, OutputReference, Transaction,
+  InlineDatum, Input, Output, OutputReference, Spend, Transaction,
 }
 use governance/types.{
-  GovernanceAnchor, GovernanceDatum, Proposal, Roster, VoterRecord,
+  Generic, GovAction, GovernanceAnchor, GovernanceDatum, Proposal, Roster,
+  VoterRecord,
 }
 
 // A UTxO at a governance script address: its payment credential IS that script's
@@ -261,12 +264,13 @@ pub fn validate_authorize(
   gov_policy: PolicyId,
   target_policy: PolicyId,
   target_id: AssetName,
+  action: GovAction,
   decision_input_index: Int,
   target_input_index: Int,
   own_ref: OutputReference,
   self: Transaction,
 ) -> Bool {
-  let Transaction { inputs, mint, .. } = self
+  let Transaction { inputs, mint, redeemers, .. } = self
   // [security]: self-reference — the indexed input is the decision UTxO spent.
   expect Some(dec_in) = list.at(inputs, decision_input_index)
   let is_own = dec_in.output_reference == own_ref
@@ -287,9 +291,48 @@ pub fn validate_authorize(
     target_policy,
     target_id,
   ) >= 1
+  // [spec 3.3.5 action binding]: a decision names ONE action, and without this
+  //   a decision authorizing one operation on a vault authorizes ANY operation
+  //   on it. The gate cannot decode every governed family's redeemer, so it
+  //   binds on what it can read from any of them:
+  //
+  //   - `Generic { tag, payload: "" }` — the target must be spent with redeemer
+  //     CONSTRUCTOR `tag`. This is the general form: a family's redeemer usually
+  //     carries input indices resolved at build time, so its exact bytes are not
+  //     knowable when the proposal is opened, but which operation it is always
+  //     is. It binds the operation, not its parameters.
+  //   - `Generic { tag, payload }` with a payload — the redeemer must serialise
+  //     to exactly those bytes. Strictest, and available to a family whose
+  //     redeemer is index-free.
+  //   - a typed arm — the redeemer must BE the action, for a family that adopts
+  //     GovAction as its own redeemer type.
+  //
+  //   A target spent with no redeemer cannot be bound to any action, so it is
+  //   rejected rather than crashing: authorizing an action means one is performed.
+  let action_bound = when
+    pairs.get_first(redeemers, Spend(target_in.output_reference))
+  is {
+    Some(target_redeemer) ->
+      when action is {
+        Generic { tag, payload } ->
+          if payload == "" {
+            let constructor = builtin.un_constr_data(target_redeemer)
+              |> builtin.fst_pair
+            constructor == tag
+          } else {
+            payload == builtin.serialise_data(target_redeemer)
+          }
+        _ ->
+          builtin.serialise_data(action) == builtin.serialise_data(
+            target_redeemer,
+          )
+      }
+    None -> False
+  }
   and {
     is_own?,
     burned?,
     target_ok?,
+    action_bound?,
   }
 }

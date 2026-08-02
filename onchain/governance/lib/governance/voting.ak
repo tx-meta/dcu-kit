@@ -1,6 +1,8 @@
+use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
 use aiken/interval.{Finite}
+use aiken/primitive/bytearray
 use cardano/address.{Script}
 use cardano/assets
 use cardano/transaction.{InlineDatum, Input, Transaction}
@@ -8,7 +10,7 @@ use governance/types.{
   AnyMember, CreatorOnly, Executed, Generic, GovAction, GovernanceAnchor,
   GovernanceDatum, MembershipChange, OneMemberOneVote, Open, ParamChange, Passed,
   Proposal, Rejected, Roster, ShareWeighted, SocialPayout, TreasuryMove,
-  VoterRecord, WriteOff,
+  VoterRecord, VotingMode, WriteOff,
 }
 use governance/validation.{
   credential_authorized, decision_token_name, holds_policy, is_voter_record,
@@ -61,6 +63,49 @@ fn member_id_of(voter_in: Input, member_policy: ByteArray) -> ByteArray {
     assets.tokens(voter_in.output.value, member_policy),
   )
   member_id
+}
+
+// The CIP-68 (100) reference twin of a (222) user token name: same 28-byte
+// unique suffix, reference prefix. Savings mints the pair together, so the twin
+// name is what proves a member account UTxO belongs to the presented token.
+fn ref_twin(user_name: ByteArray) -> ByteArray {
+  bytearray.concat(#"000643b0", bytearray.drop(user_name, 4))
+}
+
+// The (fund_id, share_units) of a member's savings account, read from a
+// reference input.
+//
+// Governance does not depend on the savings package, so three facts about
+// `SavingsDatum` are transcribed rather than imported: MemberAccount is
+// constructor index 1, its first field is `fund_id`, its second is
+// `share_units`. Reading positionally (rather than mirroring the whole datum)
+// means a field appended to MemberAccount later does not break governance.
+//
+// The token check is what makes the read trustworthy: the referenced UTxO must
+// hold the (100) twin of the eligibility token the voter presented, so a voter
+// cannot point at somebody else's account to claim their fund or their shares.
+fn member_account_fields(
+  reference_inputs: List<Input>,
+  member_policy: ByteArray,
+  member_id: ByteArray,
+) -> (ByteArray, Int) {
+  // Found by token rather than by index: the account is identified by the twin
+  // it holds, so no redeemer index can point at somebody else's UTxO and no
+  // reference-input ordering can shift it. (The ledger presents reference
+  // inputs as a SORTED set, which makes any index brittle.)
+  let expected_twin = ref_twin(member_id)
+  expect Some(account_ref) = list.find(
+    reference_inputs,
+    fn(i) {
+      assets.quantity_of(i.output.value, member_policy, expected_twin) == 1
+    },
+  )
+  expect InlineDatum(d) = account_ref.output.datum
+  let decoded = builtin.un_constr_data(d)
+  expect builtin.fst_pair(decoded) == 1
+  let fields = builtin.snd_pair(decoded)
+  expect [fund_id_data, share_units_data, ..] = fields
+  (builtin.un_b_data(fund_id_data), builtin.un_i_data(share_units_data))
 }
 
 // validate_open — OpenAction
@@ -157,16 +202,27 @@ pub fn validate_open(
   }
 }
 
-// vote_weight — 1 for one-member-one-vote. Share-weighted on-chain enforcement
-// is a documented follow-up: it needs a stable cross-family decode of the
-// savings account datum (the reference-read composition contract), which no
-// test yet exercises — shipping it untested would be a security risk. A charter
-// may still be set to ShareWeighted, but a cast under it fails until implemented.
-fn vote_weight(voting_mode) -> Int {
+// vote_weight — the weight one cast carries.
+//
+// One-member-one-vote is a flat 1. ShareWeighted reads the voter's share units
+// from their member account reference input, which is the same reference the
+// fund binding uses. The charter's `share_source_policy` must be the eligibility
+// policy itself: share units live in the member account that the eligibility
+// token authenticates, and no other policy's account can be tied to this voter.
+fn vote_weight(
+  voting_mode: VotingMode,
+  member_policy: ByteArray,
+  share_units: Int,
+) -> Int {
   when voting_mode is {
     OneMemberOneVote -> 1
-    ShareWeighted { .. } ->
-      fail @"share-weighted voting on-chain enforcement is deferred; use one-member-one-vote"
+    ShareWeighted { share_source_policy } -> {
+      expect share_source_policy == member_policy
+      // A member holding no shares carries no weight; letting them cast would
+      // raise votes_cast toward quorum while adding nothing to either tally.
+      expect share_units > 0
+      share_units
+    }
   }
 }
 
@@ -185,7 +241,7 @@ pub fn validate_register(
   member_index: Int,
   self: Transaction,
 ) -> Bool {
-  expect GovernanceAnchor { member_policy, .. } = anchor
+  expect GovernanceAnchor { member_policy, governed_targets, .. } = anchor
   let Transaction { inputs, outputs, mint, .. } = self
 
   // [spec 3.3.4 RegisterAction]: the spent roster is the genuine one — it holds
@@ -205,6 +261,26 @@ pub fn validate_register(
   //   token; its name is the member identity being registered.
   expect Some(member_in) = list.at(inputs, member_index)
   let member_id = member_id_of(member_in, member_policy)
+
+  // [spec 3.3.4 RegisterAction isolation]: same collision as CastAction. When
+  //   the anchor governs any vault under the eligibility policy, the registrant
+  //   must belong to one of those vaults — otherwise a member of any fund under
+  //   that policy could register into this instance's roster.
+  let bound_targets = list.filter(
+    governed_targets,
+    fn(t) { t.1st == member_policy },
+  )
+  let fund_ok = when bound_targets is {
+    [] -> True
+    _ -> {
+      let (voter_fund, _shares) = member_account_fields(
+        self.reference_inputs,
+        member_policy,
+        member_id,
+      )
+      list.any(bound_targets, fn(t) { t.2nd == voter_fund })
+    }
+  }
 
   // [spec 3.3.4 RegisterAction]: one registration per member, ever — the
   //   double-vote nullifier's uniqueness root.
@@ -240,6 +316,7 @@ pub fn validate_register(
 
   and {
     roster_genuine?,
+    fund_ok?,
     not_registered?,
     roster_ok?,
     minted?,
@@ -256,7 +333,6 @@ pub fn validate_cast(
   voter_index: Int,
   record_input_index: Int,
   record_output_index: Int,
-  _share_ref_index: Int,
   approve: Bool,
   self: Transaction,
 ) -> Bool {
@@ -296,8 +372,30 @@ pub fn validate_cast(
   expect Some(voter_in) = list.at(inputs, voter_index)
   let voter_ok = holds_policy(voter_in.output.value, member_policy)
   let member_id = member_id_of(voter_in, member_policy)
-  // [spec 3.3.4 CastAction]: weight = 1 (1m1v); share-weighted is deferred.
-  let weight = vote_weight(voting_mode)
+
+  // [spec 3.3.4 CastAction isolation]: when eligibility is granted by the SAME
+  //   policy that identifies the governed vault, one policy covers every vault
+  //   under it, so holding a token proves nothing about WHICH vault. The voter's
+  //   member account names their fund, and it must be this proposal's target.
+  //   When the policies differ there is no such collision: the charter's
+  //   eligibility policy is simply the electorate, and no account read applies.
+  let fund_bound = target_policy == member_policy
+  let share_weighted = when voting_mode is {
+    ShareWeighted { .. } -> True
+    OneMemberOneVote -> False
+  }
+  let (voter_fund, share_units) = if or {
+    fund_bound,
+    share_weighted,
+  } {
+    member_account_fields(self.reference_inputs, member_policy, member_id)
+  } else {
+    (target_id, 0)
+  }
+  let fund_ok = !fund_bound || voter_fund == target_id
+  // [spec 3.3.4 CastAction]: weight is 1 under one-member-one-vote, or the
+  //   voter's share units under ShareWeighted.
+  let weight = vote_weight(voting_mode, member_policy, share_units)
 
   // [spec 3.3.4 CastAction nullifier]: the member's voter record is SPENT. The
   //   record token name is derived from the member id (one record per member,
@@ -374,6 +472,7 @@ pub fn validate_cast(
     is_open?,
     in_window?,
     voter_ok?,
+    fund_ok?,
     record_in_ok?,
     record_out_ok?,
     single_record?,

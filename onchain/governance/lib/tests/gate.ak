@@ -1,5 +1,8 @@
+use aiken/builtin
+use aiken/collection/list
 use cardano/assets.{Value}
-use cardano/transaction.{Input, NoDatum, Output, Transaction}
+use cardano/transaction.{Input, NoDatum, Output, Spend, Transaction}
+use governance/types.{Generic, GovAction, ParamChange}
 use governance/validation.{validate_authorize}
 use tests/common.{
   dispatcher_address, empty_tx, gate_address, gov_policy, member_policy, ref_at,
@@ -68,20 +71,53 @@ fn burn_decision() -> Value {
   assets.from_asset(gov_policy(), decision_name(), -1)
 }
 
-fn gate_tx(inputs: List<Input>, mint: Value) -> Transaction {
-  Transaction { ..empty_tx(), inputs, mint }
+// The redeemer the governed vault runs. The decision commits to these exact
+// bytes, so the tx must carry it against the target input.
+fn target_redeemer() -> Data {
+  builtin.i_data(42)
 }
 
-fn authorize(inputs: List<Input>, mint: Value, dec_ix: Int) -> Bool {
+// The action a decision carries by default: Generic wrapping the target
+// redeemer's CBOR verbatim, which is how a family keeps its own redeemer type.
+fn bound_action() -> GovAction {
+  Generic { tag: 0, payload: builtin.serialise_data(target_redeemer()) }
+}
+
+// Every input carries the same redeemer, so a test that swaps the target input
+// still has one for it and fails on the check it names rather than on a missing
+// redeemer lookup.
+fn gate_tx(inputs: List<Input>, mint: Value) -> Transaction {
+  Transaction {
+    ..empty_tx(),
+    inputs,
+    mint,
+    redeemers: list.map(
+      inputs,
+      fn(i) { Pair(Spend(i.output_reference), target_redeemer()) },
+    ),
+  }
+}
+
+fn authorize_action(
+  inputs: List<Input>,
+  mint: Value,
+  dec_ix: Int,
+  action: GovAction,
+) -> Bool {
   validate_authorize(
     gov_policy(),
     target_policy(),
     target_id(),
+    action,
     dec_ix,
     1,
     ref_at(0),
     gate_tx(inputs, mint),
   )
+}
+
+fn authorize(inputs: List<Input>, mint: Value, dec_ix: Int) -> Bool {
+  authorize_action(inputs, mint, dec_ix, bound_action())
 }
 
 test gate__accepts_bound_and_burned() {
@@ -110,9 +146,136 @@ test gate__rejects_self_reference_mismatch() {
     gov_policy(),
     target_policy(),
     target_id(),
+    bound_action(),
     0,
     1,
     ref_at(9),
     tx,
+  )
+}
+
+test gate__rejects_action_the_decision_did_not_authorize() {
+  // The decision authorizes one operation; the target input runs a different
+  // redeemer. Without the binding, one passed proposal authorizes ANY operation
+  // on that vault.
+  let other = Generic {
+    tag: 0,
+    payload: builtin.serialise_data(builtin.i_data(7)),
+  }
+  !authorize_action(
+    [decision_input(), target_input()],
+    burn_decision(),
+    0,
+    other,
+  )
+}
+
+test gate__accepts_a_typed_action_used_as_the_redeemer() {
+  // A family that adopts GovAction as its own redeemer binds on the action's
+  // own serialisation rather than on a Generic payload.
+  let action = ParamChange { field_tag: 1, new_value: 9 }
+  let as_redeemer: Data = action
+  let tx = Transaction {
+    ..empty_tx(),
+    inputs: [decision_input(), target_input()],
+    mint: burn_decision(),
+    redeemers: [Pair(Spend(ref_at(2)), as_redeemer)],
+  }
+  validate_authorize(
+    gov_policy(),
+    target_policy(),
+    target_id(),
+    action,
+    0,
+    1,
+    ref_at(0),
+    tx,
+  )
+}
+
+test gate__rejects_target_without_a_redeemer() {
+  // A target spent with no redeemer (a wallet or native-script UTxO) cannot
+  // carry an action, so nothing can be bound to it.
+  let tx = Transaction {
+    ..empty_tx(),
+    inputs: [decision_input(), target_input()],
+    mint: burn_decision(),
+    redeemers: [],
+  }
+  !validate_authorize(
+    gov_policy(),
+    target_policy(),
+    target_id(),
+    bound_action(),
+    0,
+    1,
+    ref_at(0),
+    tx,
+  )
+}
+
+// A vault redeemer that carries input indices resolved at build time — the
+// ordinary shape. Its exact bytes are unknowable when a proposal is opened, so
+// a decision binds the OPERATION (constructor 3) rather than the bytes.
+fn indexed_redeemer(constructor: Int, index: Int) -> Data {
+  builtin.constr_data(constructor, [builtin.i_data(index)])
+}
+
+fn gate_tx_with(target_redeemer: Data, mint: Value) -> Transaction {
+  let inputs = [decision_input(), target_input()]
+  Transaction {
+    ..empty_tx(),
+    inputs,
+    mint,
+    redeemers: list.map(
+      inputs,
+      fn(i) { Pair(Spend(i.output_reference), target_redeemer) },
+    ),
+  }
+}
+
+test gate__accepts_the_operation_the_decision_named() {
+  // Generic with an EMPTY payload binds the redeemer's constructor only.
+  let action = Generic { tag: 3, payload: "" }
+  validate_authorize(
+    gov_policy(),
+    target_policy(),
+    target_id(),
+    action,
+    0,
+    1,
+    ref_at(0),
+    gate_tx_with(indexed_redeemer(3, 7), burn_decision()),
+  )
+}
+
+test gate__rejects_a_different_operation_on_the_same_vault() {
+  // The decision named operation 3; the vault runs operation 4.
+  let action = Generic { tag: 3, payload: "" }
+  !validate_authorize(
+    gov_policy(),
+    target_policy(),
+    target_id(),
+    action,
+    0,
+    1,
+    ref_at(0),
+    gate_tx_with(indexed_redeemer(4, 7), burn_decision()),
+  )
+}
+
+test gate__operation_binding_ignores_the_resolved_indices() {
+  // The same operation with a different input index still satisfies the
+  // decision: indices are transaction layout, not intent.
+  let action = Generic { tag: 3, payload: "" }
+  validate_authorize(
+    gov_policy(),
+    target_policy(),
+    target_id(),
+    action,
+    0,
+    1,
+    ref_at(0),
+    gate_tx_with(indexed_redeemer(3, 99), burn_decision()),
   )
 }

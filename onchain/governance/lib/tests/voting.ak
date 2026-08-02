@@ -1,24 +1,25 @@
 use aiken/interval
+use cardano/address.{VerificationKey}
 use cardano/assets.{Value}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, Transaction, ValidityRange,
 }
 use governance/types.{
-  AnyMember, Decision, Executed, GateDatum, Generic, GovAction, GovernanceDatum,
-  OneMemberOneVote, Open, ParamChange, Passed, Proposal, Rejected, Roster,
-  VoterRecord,
+  AnyMember, Decision, Executed, GateDatum, Generic, GovAction, GovernanceAnchor,
+  GovernanceDatum, OneMemberOneVote, Open, ParamChange, Passed, Proposal,
+  Rejected, Roster, ShareWeighted, VoterRecord,
 }
-use governance/validation.{decision_token_name}
+use governance/validation.{decision_token_name, voter_record_name}
 use governance/voting.{
   validate_cast, validate_execute, validate_expire, validate_finalize,
   validate_open, validate_register,
 }
 use tests/common.{
-  charter_openers, default_charter, dispatcher_address, empty_tx, gate_address,
-  gov_policy, member_id, member_input, member_policy, mk_proposal, proposal_id,
-  proposal_input, proposal_output, record_name, ref_at, roster_input,
-  roster_output, settings_policy, target_id, target_policy, voter_record_input,
-  voter_record_output, with_ada,
+  charter_openers, creator_pkh, default_charter, dispatcher_address, empty_tx,
+  gate_address, gate_hash, gov_policy, member_id, member_input, member_policy,
+  mk_proposal, proposal_id, proposal_input, proposal_output, record_name, ref_at,
+  roster_input, roster_output, settings_policy, target_id, target_policy,
+  voter_record_input, voter_record_output, voting_hash, with_ada,
 }
 
 fn action() -> GovAction {
@@ -315,7 +316,7 @@ test cast__accepts_valid_yes() {
   let old = mk_proposal(action(), Open, 0, 0, 0, None, None)
   let new = mk_proposal(action(), Open, 1, 0, 1, None, None)
   let tx = cast_tx([], [proposal_id()], old, new, during_vote())
-  validate_cast(default_charter(), 0, 0, 1, 2, 1, 99, True, tx)
+  validate_cast(default_charter(), 0, 0, 1, 2, 1, True, tx)
 }
 
 test cast__rejects_repeat_vote() {
@@ -329,7 +330,7 @@ test cast__rejects_repeat_vote() {
     new,
     during_vote(),
   )
-  !validate_cast(default_charter(), 0, 0, 1, 2, 1, 99, True, tx)
+  !validate_cast(default_charter(), 0, 0, 1, 2, 1, True, tx)
 }
 
 test cast__rejects_record_not_appended() {
@@ -337,7 +338,7 @@ test cast__rejects_record_not_appended() {
   let old = mk_proposal(action(), Open, 0, 0, 0, None, None)
   let new = mk_proposal(action(), Open, 1, 0, 1, None, None)
   let tx = cast_tx([], [], old, new, during_vote())
-  !validate_cast(default_charter(), 0, 0, 1, 2, 1, 99, True, tx)
+  !validate_cast(default_charter(), 0, 0, 1, 2, 1, True, tx)
 }
 
 test cast__rejects_tally_inflation() {
@@ -345,7 +346,7 @@ test cast__rejects_tally_inflation() {
   let old = mk_proposal(action(), Open, 0, 0, 0, None, None)
   let new = mk_proposal(action(), Open, 2, 0, 1, None, None)
   let tx = cast_tx([], [proposal_id()], old, new, during_vote())
-  !validate_cast(default_charter(), 0, 0, 1, 2, 1, 99, True, tx)
+  !validate_cast(default_charter(), 0, 0, 1, 2, 1, True, tx)
 }
 
 test cast__rejects_non_member_voter() fail {
@@ -357,14 +358,14 @@ test cast__rejects_non_member_voter() fail {
     assets.zero,
     during_vote(),
   )
-  validate_cast(default_charter(), 0, 0, 1, 2, 1, 99, True, tx)
+  validate_cast(default_charter(), 0, 0, 1, 2, 1, True, tx)
 }
 
 test cast__rejects_after_deadline() {
   let old = mk_proposal(action(), Open, 0, 0, 0, None, None)
   let new = mk_proposal(action(), Open, 1, 0, 1, None, None)
   let tx = cast_tx([], [proposal_id()], old, new, after_vote())
-  !validate_cast(default_charter(), 0, 0, 1, 2, 1, 99, True, tx)
+  !validate_cast(default_charter(), 0, 0, 1, 2, 1, True, tx)
 }
 
 test cast__rejects_foreign_member_record() {
@@ -388,7 +389,7 @@ test cast__rejects_foreign_member_record() {
     assets.zero,
     during_vote(),
   )
-  !validate_cast(default_charter(), 0, 0, 1, 2, 1, 99, True, tx)
+  !validate_cast(default_charter(), 0, 0, 1, 2, 1, True, tx)
 }
 
 test cast__rejects_batched_records() {
@@ -406,7 +407,7 @@ test cast__rejects_batched_records() {
     assets.zero,
     during_vote(),
   )
-  !validate_cast(default_charter(), 0, 0, 1, 2, 1, 99, True, tx)
+  !validate_cast(default_charter(), 0, 0, 1, 2, 1, True, tx)
 }
 
 test cast__rejects_relocated_proposal() {
@@ -421,7 +422,7 @@ test cast__rejects_relocated_proposal() {
     assets.zero,
     during_vote(),
   )
-  !validate_cast(default_charter(), 0, 0, 1, 2, 1, 99, True, tx)
+  !validate_cast(default_charter(), 0, 0, 1, 2, 1, True, tx)
 }
 
 // ── FinalizeAction ───────────────────────────────────────────────────────────
@@ -653,4 +654,290 @@ test expire__rejects_no_burn() {
   let old = mk_proposal(action(), Open, 0, 0, 0, None, None)
   let tx = tx4([proposal_input(old)], [], assets.zero, interval.after(1001))
   !validate_expire(0, tx)
+}
+
+// ── Fund-bound electorate ────────────────────────────────────────────────────
+// When the eligibility policy IS the governed vault's policy, one policy mints
+// member tokens for every vault under it, so holding a token proves membership
+// of SOME fund, not of the fund being voted on. These tests cover the binding
+// that closes that, and the share weighting that reads the same reference.
+
+// Structural stand-in for the savings SavingsDatum: MemberAccount must stay
+// constructor index 1 with fund_id first and share_units second, which is what
+// voting.ak decodes positionally.
+type MockSavingsDatum {
+  // Stands in for savings' SavingsFund so MemberAccount keeps index 1. Never
+  // constructed; the `mock_fund` helper below exists to silence the unused
+  // constructor warning without weakening the shape.
+  MockFund
+  MockMemberAccount {
+    fund_id: ByteArray,
+    share_units: Int,
+    social_paid: Int,
+    borrowed: Int,
+    consent: Bool,
+    joined_at: Int,
+  }
+}
+
+fn mock_fund() -> MockSavingsDatum {
+  MockFund
+}
+
+fn fund_b() -> ByteArray {
+  #"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}
+
+fn user_token() -> ByteArray {
+  #"000de140aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+
+fn ref_token() -> ByteArray {
+  #"000643b0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+
+// A charter whose electorate policy is the same policy that identifies the
+// governed vault — the configuration the binding exists for.
+fn bound_charter() -> GovernanceDatum {
+  GovernanceAnchor {
+    title: "Chama",
+    member_policy: member_policy(),
+    governed_targets: [Pair(member_policy(), target_id())],
+    voting_mode: OneMemberOneVote,
+    default_quorum: 1,
+    default_threshold: 5000,
+    opener_policy: [],
+    timelock: 0,
+    creator: VerificationKey(creator_pkh()),
+    voting_stake_hash: voting_hash(),
+    gate_hash: gate_hash(),
+  }
+}
+
+fn share_charter() -> GovernanceDatum {
+  expect GovernanceAnchor { .. } = bound_charter()
+  when bound_charter() is {
+    GovernanceAnchor {
+      title,
+      member_policy: mp,
+      governed_targets,
+      default_quorum,
+      default_threshold,
+      opener_policy,
+      timelock,
+      creator,
+      voting_stake_hash,
+      gate_hash,
+      ..
+    } ->
+      GovernanceAnchor {
+        title,
+        member_policy: mp,
+        governed_targets,
+        voting_mode: ShareWeighted { share_source_policy: member_policy() },
+        default_quorum,
+        default_threshold,
+        opener_policy,
+        timelock,
+        creator,
+        voting_stake_hash,
+        gate_hash,
+      }
+    _ -> fail @"unreachable"
+  }
+}
+
+// A proposal whose target is the fund identified under the electorate policy.
+fn bound_proposal(yes: Int, no: Int, cast: Int) -> GovernanceDatum {
+  Proposal {
+    proposal_id: proposal_id(),
+    target_policy: member_policy(),
+    target_id: target_id(),
+    action: action(),
+    voting_mode: OneMemberOneVote,
+    quorum: 1,
+    threshold: 5000,
+    deadline: 1000,
+    exec_deadline: None,
+    timelock_until: None,
+    tally_yes: yes,
+    tally_no: no,
+    votes_cast: cast,
+    status: Open,
+  }
+}
+
+fn bound_voter_input() -> Input {
+  Input {
+    output_reference: ref_at(1),
+    output: Output {
+      address: dispatcher_address(),
+      value: with_ada(assets.from_asset(member_policy(), user_token(), 1)),
+      datum: NoDatum,
+      reference_script: None,
+    },
+  }
+}
+
+fn bound_record_output(voted: List<ByteArray>) -> Output {
+  let d: GovernanceDatum = VoterRecord { member_id: user_token(), voted }
+  Output {
+    address: dispatcher_address(),
+    value: with_ada(
+      assets.from_asset(gov_policy(), voter_record_name(user_token()), 1),
+    ),
+    datum: InlineDatum(d),
+    reference_script: None,
+  }
+}
+
+fn bound_record_input(voted: List<ByteArray>) -> Input {
+  Input { output_reference: ref_at(2), output: bound_record_output(voted) }
+}
+
+// The member's savings account, held as a reference input. `holds_twin` False
+// models an attacker pointing at a datum UTxO they do not own.
+fn account_ref(fund: ByteArray, shares: Int, holds_twin: Bool) -> Input {
+  let d: MockSavingsDatum = MockMemberAccount {
+    fund_id: fund,
+    share_units: shares,
+    social_paid: 0,
+    borrowed: 0,
+    consent: True,
+    joined_at: 0,
+  }
+  Input {
+    output_reference: ref_at(7),
+    output: Output {
+      address: dispatcher_address(),
+      value: if holds_twin {
+        with_ada(assets.from_asset(member_policy(), ref_token(), 1))
+      } else {
+        with_ada(assets.zero)
+      },
+      datum: InlineDatum(d),
+      reference_script: None,
+    },
+  }
+}
+
+fn bound_cast_tx(
+  old_prop: GovernanceDatum,
+  new_prop: GovernanceDatum,
+  refs: List<Input>,
+) -> Transaction {
+  Transaction {
+    ..empty_tx(),
+    inputs: [
+      proposal_input(old_prop),
+      bound_voter_input(),
+      bound_record_input([]),
+    ],
+    outputs: [proposal_output(new_prop), bound_record_output([proposal_id()])],
+    reference_inputs: refs,
+    validity_range: during_vote(),
+  }
+}
+
+test cast__accepts_member_of_the_governed_fund() {
+  let tx = bound_cast_tx(
+    bound_proposal(0, 0, 0),
+    bound_proposal(1, 0, 1),
+    [account_ref(target_id(), 3, True)],
+  )
+  validate_cast(bound_charter(), 0, 0, 1, 2, 1, True, tx)
+}
+
+test cast__rejects_member_of_another_fund() {
+  // Same electorate policy, but the voter's account belongs to fund B while the
+  // proposal governs fund A.
+  let tx = bound_cast_tx(
+    bound_proposal(0, 0, 0),
+    bound_proposal(1, 0, 1),
+    [account_ref(fund_b(), 3, True)],
+  )
+  !validate_cast(bound_charter(), 0, 0, 1, 2, 1, True, tx)
+}
+
+test cast__rejects_account_ref_without_the_member_twin() fail {
+  // The referenced UTxO carries a MemberAccount datum naming the right fund but
+  // does not hold the voter's (100) twin — anyone could park such a UTxO.
+  let tx = bound_cast_tx(
+    bound_proposal(0, 0, 0),
+    bound_proposal(1, 0, 1),
+    [account_ref(target_id(), 3, False)],
+  )
+  validate_cast(bound_charter(), 0, 0, 1, 2, 1, True, tx)
+}
+
+test cast__share_weighted_tallies_share_units() {
+  // Weight is the voter's share units, not 1.
+  let tx = bound_cast_tx(
+    bound_proposal(0, 0, 0),
+    bound_proposal(7, 0, 1),
+    [account_ref(target_id(), 7, True)],
+  )
+  validate_cast(share_charter(), 0, 0, 1, 2, 1, True, tx)
+}
+
+test cast__share_weighted_rejects_flat_weight() {
+  // A share-weighted cast that tallies 1 instead of the member's 7 shares.
+  let tx = bound_cast_tx(
+    bound_proposal(0, 0, 0),
+    bound_proposal(1, 0, 1),
+    [account_ref(target_id(), 7, True)],
+  )
+  !validate_cast(share_charter(), 0, 0, 1, 2, 1, True, tx)
+}
+
+test cast__share_weighted_rejects_zero_shares() fail {
+  let tx = bound_cast_tx(
+    bound_proposal(0, 0, 0),
+    bound_proposal(0, 0, 1),
+    [account_ref(target_id(), 0, True)],
+  )
+  validate_cast(share_charter(), 0, 0, 1, 2, 1, True, tx)
+}
+
+fn bound_roster_output(members: List<ByteArray>) -> Output {
+  let d: GovernanceDatum = Roster { members }
+  Output {
+    address: dispatcher_address(),
+    value: with_ada(assets.from_asset(settings_policy(), "roster", 1)),
+    datum: InlineDatum(d),
+    reference_script: None,
+  }
+}
+
+fn bound_roster_input(members: List<ByteArray>) -> Input {
+  Input { output_reference: ref_at(0), output: bound_roster_output(members) }
+}
+
+fn bound_register_tx(refs: List<Input>) -> Transaction {
+  Transaction {
+    ..empty_tx(),
+    inputs: [bound_roster_input([]), bound_voter_input()],
+    outputs: [bound_roster_output([user_token()]), bound_record_output([])],
+    mint: assets.from_asset(gov_policy(), voter_record_name(user_token()), 1),
+    reference_inputs: refs,
+    validity_range: during_vote(),
+  }
+}
+
+test mock_savings_fund_is_constructor_zero() {
+  // Guards the positional decode in voting.ak: MemberAccount must stay at
+  // constructor index 1, which only holds while SavingsFund occupies 0.
+  mock_fund() == MockFund
+}
+
+test register__accepts_member_of_a_governed_fund() {
+  let tx = bound_register_tx([account_ref(target_id(), 1, True)])
+  validate_register(bound_charter(), settings_policy(), 0, 0, 1, 1, tx)
+}
+
+test register__rejects_member_of_another_fund() {
+  // The registrant holds an eligibility token under the governed policy but
+  // their account belongs to a fund this instance does not govern.
+  let tx = bound_register_tx([account_ref(fund_b(), 1, True)])
+  !validate_register(bound_charter(), settings_policy(), 0, 0, 1, 1, tx)
 }
