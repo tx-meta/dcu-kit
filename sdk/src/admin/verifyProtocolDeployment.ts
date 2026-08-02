@@ -117,6 +117,11 @@ export type VerifyProtocolDeploymentResult = {
   settings: VerifySettingsResult;
   settingsAtDeployAddress: boolean;
   stakeRegistrations: Record<TreasuryFamily, StakeRegistrationCheck>;
+  /**
+   * The governance instance's voting stake credential, when a `governanceSeed`
+   * was supplied. Null when no seed was given (nothing to derive it from).
+   */
+  governanceVotingStake: StakeRegistrationCheck | null;
   registry: RegistryVerification;
 };
 
@@ -280,6 +285,10 @@ const stakeRegistrationStatus = (
  *   treasury family stake hashes (via `verifySettings`).
  * - The four family stake credentials are registered (read-only provider query;
  *   see `stakeRegistrationStatus`).
+ * - When a `governanceSeed` is given, the instance's voting stake credential is
+ *   registered. Without it the instance is inert: every governance endpoint
+ *   withdraws 0 ADA from the voting validator, which the ledger rejects for an
+ *   unregistered account.
  * - The manifest's `settingsUnit` / `network` agree with the derived/connected
  *   values when `expected` is given.
  *
@@ -577,6 +586,29 @@ export const verifyProtocolDeployment = (
       stakeRegistrations[family] = { rewardAddress, status };
     }
 
+    // The governance instance's voting stake credential. Every governance
+    // endpoint carries a 0-ADA withdrawal from the voting validator, and the
+    // ledger rejects a withdrawal from an unregistered account — so an instance
+    // whose stake was never registered is inert, and fails only at submit time
+    // with ConwayWithdrawalsMissingAccounts. Checked whenever a seed is given.
+    let governanceVotingStake: StakeRegistrationCheck | null = null;
+    if (governanceInstance !== null) {
+      const rewardAddress = validatorToRewardAddress(
+        network,
+        governanceInstance.votingValidator,
+      );
+      const status = yield* stakeRegistrationStatus(lucid, rewardAddress);
+      if (status === "not-registered")
+        issues.push(
+          "governance voting stake credential is not registered — every propose/vote/finalize/execute call will be rejected until registerVotingStake runs",
+        );
+      if (status === "unknown")
+        issues.push(
+          "governance voting stake registration state is not readable through this provider — verify with Blockfrost or the emulator",
+        );
+      governanceVotingStake = { rewardAddress, status };
+    }
+
     return {
       ok: issues.length === 0,
       issues,
@@ -586,6 +618,7 @@ export const verifyProtocolDeployment = (
       settings,
       settingsAtDeployAddress,
       stakeRegistrations,
+      governanceVotingStake,
       registry,
     };
   });
