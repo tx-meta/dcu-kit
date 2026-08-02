@@ -56,7 +56,7 @@ export type UpdateFundConfig = {
    * pushed out or newly imposed: cycle_end gates CloseCycle, so extending it
    * would let the quorum defer every member's share-out indefinitely.
    *
-   * `withdrawalPolicy` is deliberately absent — it is frozen for the life of
+   * `withdrawalPolicy` is deliberately absent: it is frozen for the life of
    * the fund, because it is what a member relied on when they deposited.
    */
   cycleEnd?: bigint | null;
@@ -122,7 +122,7 @@ export const unsignedUpdateFundTxProgram = (
           new ConfigurationError({
             configKey: "cycleEnd",
             message:
-              "a cycle end cannot be imposed on a fund that has none — it would defer every share-out",
+              "a cycle end cannot be imposed on a fund that has none, because it would defer every share-out",
           }),
         );
       }
@@ -142,7 +142,7 @@ export const unsignedUpdateFundTxProgram = (
       quorum: newQuorum,
       min_shares_per_deposit: minShares,
       max_shares_per_deposit: maxShares,
-      // withdrawal_policy is carried through from `fund` by the spread — the
+      // withdrawal_policy is carried through from `fund` by the spread. The
       // validator freezes it, so there is nothing to set here.
       cycle_end: cycleEnd,
     };

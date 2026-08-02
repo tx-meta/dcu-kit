@@ -229,7 +229,7 @@ describe("escrow v2 lifecycle (emulator)", () => {
         if (underfunded._tag === "Left") {
           expect(underfunded.left._tag).toBe("ConfigurationError");
           expect(String(underfunded.left.message)).toContain(
-            "fund the tranche first",
+            "Fund the tranche first",
           );
         }
 
