@@ -22,6 +22,7 @@ import {
 } from "../src/escrow/v2/endpoints/createEscrow.js";
 import { unsignedReleaseMilestoneV2TxProgram } from "../src/escrow/v2/endpoints/releaseMilestone.js";
 import { unsignedTimeoutReleaseTxProgram } from "../src/escrow/v2/endpoints/timeoutRelease.js";
+import { unsignedAbortEscrowV2TxProgram } from "../src/escrow/v2/endpoints/abortEscrow.js";
 import { unsignedReclaimEscrowV2TxProgram } from "../src/escrow/v2/endpoints/reclaimEscrow.js";
 import { unsignedContributeTxProgram } from "../src/escrow/v2/endpoints/contribute.js";
 import { unsignedSubmitEvidenceTxProgram } from "../src/escrow/v2/endpoints/submitEvidence.js";
@@ -971,6 +972,104 @@ describe("escrow v2 lifecycle (emulator)", () => {
           getPoolStateProgram(ctx.lucid, { poolTokenName }),
         );
         expect(gone._tag).toBe("UtxoNotFoundError");
+      }),
+  );
+
+  it.effect(
+    "abort: both parties co-sign a split, the escrow burns, nobody is stranded",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const stateTokenName = yield* createDefault(ctx);
+
+        const before = yield* getEscrowStateProgram(ctx.lucid, {
+          stateTokenName,
+          currentTime: BigInt(ctx.emulator.now()),
+        });
+        expect(before.lockedBalance).toBe(102_000_000n);
+
+        // The read model names the release authority as a credential, so a
+        // caller can tell whether the connected wallet holds it before
+        // offering the action rather than letting the build fail.
+        expect(before.verifier).toEqual(
+          paymentCredentialOf(ctx.verifier.address),
+        );
+        expect(before.arbiter).toBeNull();
+
+        // Mutual consent: the work stopped half-done and the parties agree to
+        // split what is locked. Neither side can do this alone.
+        const funderCut = 60_000_000n;
+        const beneficiaryCut = before.lockedBalance - funderCut;
+        const funderBefore = yield* lovelaceAt(ctx, ctx.funder.address);
+        const beneficiaryBefore = yield* lovelaceAt(
+          ctx,
+          ctx.beneficiary.address,
+        );
+
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const abortTx = yield* unsignedAbortEscrowV2TxProgram(ctx.lucid, {
+          stateTokenName,
+          payouts: [
+            { address: ctx.funder.address, assets: { lovelace: funderCut } },
+            {
+              address: ctx.beneficiary.address,
+              assets: { lovelace: beneficiaryCut },
+            },
+          ],
+        });
+        yield* coSignAndSubmit(ctx, abortTx, [ctx.beneficiary.privateKey]);
+
+        const beneficiaryAfter = yield* lovelaceAt(
+          ctx,
+          ctx.beneficiary.address,
+        );
+        expect(beneficiaryAfter - beneficiaryBefore).toBe(beneficiaryCut);
+        // The funder pays the fee, so assert they are strictly better off by
+        // roughly their cut rather than pinning an exact fee.
+        const funderAfter = yield* lovelaceAt(ctx, ctx.funder.address);
+        expect(funderAfter - funderBefore).toBeGreaterThan(
+          funderCut - 2_000_000n,
+        );
+
+        // The state token is burned: no dust escrow left behind to confuse a
+        // wind-down, and no way to release against it afterwards.
+        const gone = yield* Effect.either(
+          getEscrowStateProgram(ctx.lucid, { stateTokenName }),
+        );
+        expect(gone._tag).toBe("Left");
+      }),
+  );
+
+  it.effect(
+    "abort: the funder alone cannot walk away with the locked funds",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const stateTokenName = yield* createDefault(ctx);
+
+        // Same abort, but paying everything to the funder and signing only as
+        // the funder. Consent is what makes abort safe; without the
+        // beneficiary's signature this must not go through.
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const grab = yield* unsignedAbortEscrowV2TxProgram(ctx.lucid, {
+          stateTokenName,
+          payouts: [
+            {
+              address: ctx.funder.address,
+              assets: { lovelace: 102_000_000n },
+            },
+          ],
+        });
+        const solo = yield* Effect.either(signAndSubmit(grab));
+        expect(solo._tag).toBe("Left");
+
+        // The escrow is untouched and still releasable.
+        const after = yield* getEscrowStateProgram(ctx.lucid, {
+          stateTokenName,
+          currentTime: BigInt(ctx.emulator.now()),
+        });
+        expect(after.lockedBalance).toBe(102_000_000n);
+        expect(after.releasedCount).toBe(0);
       }),
   );
 
