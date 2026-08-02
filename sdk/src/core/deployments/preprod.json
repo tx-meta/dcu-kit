@@ -36,9 +36,9 @@
       "scriptHash": "46ce037514b1e7e69b78681100560ba568c75d1f076870ca8d5c2bf8"
     },
     "savings": {
-      "txHash": "b581ce04626aaefb45ab8bc67002939ffe70e4e5d8261245ce827e8aa6fe3015",
+      "txHash": "a0cb3114b7944372a613e12dd763a22d191f0151e4cd0cebbfe9bae519bffaf7",
       "outputIndex": 0,
-      "scriptHash": "e1051b5ac5893d21340cd00eb392086bbb51ea8a8970b9a8c966c35c"
+      "scriptHash": "a61214861092a20f87f2e11d493b73fb592c8955c1118c57ec0de4f1"
     },
     "escrowV2": {
       "txHash": "fa2a6cb592286000088bc41267a2bbd860e16c8f0ceefce8a0b09f470f8a7ce5",
