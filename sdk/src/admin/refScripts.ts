@@ -18,6 +18,12 @@ import { getWalletUtxos } from "../core/utils/index.js";
  */
 export const MAX_REF_SCRIPT_BYTES = 16_128;
 
+/**
+ * Headroom over a reference deposit for fees and the change output's min-ADA.
+ * An operational approximation, not a protocol guarantee.
+ */
+const FEE_HEADROOM = 5_000_000n;
+
 /** A reference-script UTxO's permanent on-chain location. */
 export type ScriptRefOutRef = { txHash: string; outputIndex: number };
 
@@ -97,20 +103,68 @@ export const awaitWalletIndexed = (
   );
 
 /**
- * The wallet's spendable UTxOs, with every reference-script UTxO removed.
+ * The wallet's spendable UTxOs, with every reference-script UTxO removed, and
+ * ordered so a deploy needs as few of them as possible.
+ *
+ * Two separate concerns:
  *
  * Lucid excludes a reference-script UTxO from coin selection only when it was
  * passed via `readFrom`; one sitting in the wallet is an ordinary spendable
  * input and can be selected to fund an unrelated transaction, which destroys
  * the deployed script. Passing this set as `presetWalletInputs` bounds coin
  * selection to inputs that are safe to spend.
+ *
+ * A deploy transaction is also size-critical: it carries the whole script, so
+ * the remaining room for inputs and change is small. A token-carrying input
+ * costs twice, because the change output has to carry those tokens back. So
+ * ADA-only UTxOs come first, largest first — the transaction then needs one
+ * input and a bare change output. Without this a wallet whose largest balance
+ * happens to sit in a multi-asset UTxO can push an otherwise deployable script
+ * over the 16,384-byte limit.
  */
 export const spendableWalletUtxos = (
   lucid: LucidEvolution,
 ): Effect.Effect<UTxO[], DcuError, never> =>
   getWalletUtxos(lucid).pipe(
-    Effect.map((utxos) => utxos.filter((u) => !u.scriptRef)),
+    Effect.map((utxos) =>
+      utxos
+        .filter((u) => !u.scriptRef)
+        .sort((a, b) => {
+          const assetCount = (u: UTxO) => Object.keys(u.assets).length;
+          const aPure = assetCount(a) === 1;
+          const bPure = assetCount(b) === 1;
+          if (aPure !== bPure) return aPure ? -1 : 1;
+          const diff = (b.assets.lovelace ?? 0n) - (a.assets.lovelace ?? 0n);
+          return diff > 0n ? 1 : diff < 0n ? -1 : 0;
+        }),
+    ),
   );
+
+/**
+ * The fewest spendable inputs that cover `needed`, preferring ADA-only ones.
+ *
+ * A deploy transaction carries the whole script, so what is left for inputs and
+ * change is measured in hundreds of bytes. Handing Lucid the entire wallet lets
+ * it select more inputs than the deploy needs, and each extra input plus the
+ * tokens it forces back into the change output can push an otherwise deployable
+ * script past 16,384 bytes. Measured on Preprod: the same 15.8 KB script built a
+ * 16,645-byte transaction from an unbounded wallet and a 16,001-byte one from a
+ * single ADA-only input.
+ *
+ * Falls back to the full set when the ADA-only UTxOs cannot cover the deposit —
+ * a larger transaction beats a build that cannot balance at all.
+ */
+const inputsCovering = (utxos: UTxO[], needed: bigint): UTxO[] => {
+  const picked: UTxO[] = [];
+  let total = 0n;
+  for (const u of utxos) {
+    if (Object.keys(u.assets).length !== 1) continue;
+    picked.push(u);
+    total += u.assets.lovelace ?? 0n;
+    if (total >= needed) return picked;
+  }
+  return utxos;
+};
 
 /**
  * Publishes one script as a reference-script UTxO at the alwaysFails address,
@@ -156,7 +210,12 @@ export const publishRefScript = (
         { type: "PlutusV3", script: script.script },
       )
       .addSigner(walletAddress)
-      .completeProgram({ presetWalletInputs: params.presetWalletInputs })
+      .completeProgram({
+        presetWalletInputs: inputsCovering(
+          params.presetWalletInputs,
+          refDepositLovelace(script) + FEE_HEADROOM,
+        ),
+      })
       .pipe(
         Effect.mapError(
           (e) =>

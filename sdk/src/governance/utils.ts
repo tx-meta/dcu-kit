@@ -26,6 +26,7 @@ import {
   ProposalFields,
   RosterFields,
   VoterRecordFields,
+  GovAction,
 } from "./types.js";
 import { GovernanceInstance } from "./validators.js";
 
@@ -249,3 +250,57 @@ export const resolveProposal = (
     }
     return { utxo, proposal: datum.Proposal };
   });
+
+/**
+ * The savings operations a governance decision can authorize, by their spend
+ * redeemer's constructor index.
+ *
+ * A vault redeemer carries input indices that Lucid resolves at build time, so
+ * its exact bytes are unknowable when a proposal is opened. The constructor is
+ * knowable, and it is what distinguishes one operation from another — so this
+ * is what a decision commits to.
+ */
+export const SavingsOperation = {
+  Deposit: 0n,
+  Withdraw: 1n,
+  SocialPayout: 2n,
+  UpdateFund: 3n,
+  CloseCycle: 4n,
+  ClaimShareOut: 5n,
+  DisburseLoan: 6n,
+  RepayLoan: 7n,
+  MarkArrears: 8n,
+  WriteOffLoan: 9n,
+  RemoveAccount: 10n,
+  CloseFund: 11n,
+} as const;
+
+export type SavingsOperationValue =
+  (typeof SavingsOperation)[keyof typeof SavingsOperation];
+
+/**
+ * A `GovAction` that authorizes exactly ONE operation on the governed vault.
+ *
+ * The gate binds a decision to the target input's redeemer constructor, so a
+ * passed proposal to update a fund cannot later be spent to write off a loan.
+ * It binds the operation, not its parameters: an `UpdateFund` decision does not
+ * pin which fields change. Use {@link govActionForRedeemer} when the family's
+ * redeemer is index-free and the exact bytes can be committed instead.
+ *
+ * @param operation - The redeemer constructor index, e.g. `SavingsOperation.UpdateFund`.
+ */
+export const govActionForOperation = (operation: bigint): GovAction => ({
+  Generic: { tag: operation, payload: "" },
+});
+
+/**
+ * A `GovAction` that authorizes exactly one redeemer, byte for byte. Only
+ * usable when the target's redeemer carries no build-time-resolved indices.
+ *
+ * @param operation - The redeemer constructor index, kept for readability.
+ * @param redeemerCbor - The hex CBOR the target input must be spent with.
+ */
+export const govActionForRedeemer = (
+  operation: bigint,
+  redeemerCbor: string,
+): GovAction => ({ Generic: { tag: operation, payload: redeemerCbor } });

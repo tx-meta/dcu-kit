@@ -3,6 +3,7 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -11,17 +12,16 @@ import {
   TransactionBuildError,
 } from "../../core/errors.js";
 import {
+  assetNameLabels,
   getWalletUtxos,
   makeReturn,
   attachTxMessage,
+  parseSafeDatum,
+  resolveUtxoByUnit,
   type TxMessage,
 } from "../../core/utils/index.js";
-import {
-  GovernanceDatum,
-  GovSpendRedeemer,
-  NO_SHARE_REF,
-  VotingAction,
-} from "../types.js";
+import { SavingsDatumSchema } from "../../savings/types.js";
+import { GovernanceDatum, GovSpendRedeemer, VotingAction } from "../types.js";
 import { GovernanceInstance } from "../validators.js";
 import {
   dispatcherAddress,
@@ -79,7 +79,7 @@ export const unsignedCastVoteTxProgram = (
     const { instance } = config;
     const network = lucid.config().network ?? "Preprod";
 
-    const { utxo: anchorUtxo } = yield* resolveAnchor(lucid, instance);
+    const { utxo: anchorUtxo, anchor } = yield* resolveAnchor(lucid, instance);
     const { utxo: proposalUtxo, proposal } = yield* resolveProposal(
       lucid,
       instance,
@@ -143,9 +143,52 @@ export const unsignedCastVoteTxProgram = (
 
     const recordName = voterRecordTokenName(memberId);
 
+    // The voter's member account is needed when eligibility is granted by the
+    // same policy that identifies the governed vault (it names their fund), and
+    // under ShareWeighted (it carries their share units). The validator finds it
+    // among the reference inputs by the (100) twin it holds, so only its
+    // presence matters here, not its position.
+    const shareWeighted =
+      typeof anchor.voting_mode !== "string" &&
+      "ShareWeighted" in anchor.voting_mode;
+    const fundBound = proposal.target_policy === memberPolicy;
+    const accountRefs: UTxO[] = [];
+    let weight = 1n;
+    if (fundBound || shareWeighted) {
+      const twin =
+        memberPolicy +
+        assetNameLabels.prefix100 +
+        memberId.slice(assetNameLabels.prefix222.length);
+      const accountUtxo = yield* resolveUtxoByUnit(lucid, twin);
+      accountRefs.push(accountUtxo);
+      if (shareWeighted) {
+        const account = yield* parseSafeDatum(
+          accountUtxo.datum,
+          SavingsDatumSchema,
+        );
+        if (!("MemberAccount" in account)) {
+          return yield* Effect.fail(
+            new ConfigurationError({
+              configKey: "voterTokenUnit",
+              message: `the member account UTxO for ${memberId} is not a MemberAccount datum`,
+            }),
+          );
+        }
+        weight = account.MemberAccount.share_units;
+        if (weight <= 0n) {
+          return yield* Effect.fail(
+            new ConfigurationError({
+              configKey: "voterTokenUnit",
+              message:
+                "share-weighted voting needs a positive share balance; this member holds none",
+            }),
+          );
+        }
+      }
+    }
+
     // Tracked spending inputs: proposal (0), voter token (1), record (2).
     const votingInputs = [proposalUtxo, voterUtxo, recordUtxo];
-    const weight = 1n; // one-member-one-vote (share-weighted is deferred)
 
     // Continuation: increment the cached tally by weight; count one more voter.
     const updated: GovernanceDatum = {
@@ -184,7 +227,6 @@ export const unsignedCastVoteTxProgram = (
               voter_index: idx[1],
               record_input_index: idx[2],
               record_output_index: 1n,
-              share_ref_index: NO_SHARE_REF,
               approve: config.approve,
               withdrawal_index: 0n,
             },
@@ -212,7 +254,6 @@ export const unsignedCastVoteTxProgram = (
               voter_index: idx[1],
               record_input_index: idx[2],
               record_output_index: 1n,
-              share_ref_index: NO_SHARE_REF,
               approve: config.approve,
             },
           },
@@ -232,7 +273,7 @@ export const unsignedCastVoteTxProgram = (
               .attach.SpendingValidator(instance.dispatcherValidator.spend),
       )
       .collectFrom([voterUtxo])
-      .readFrom([anchorUtxo])
+      .readFrom([anchorUtxo, ...accountRefs])
       .withdraw(votingRewardAddress(network, instance), 0n, votingRedeemer)
       .compose(
         config.scriptRefs?.voting

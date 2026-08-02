@@ -91,11 +91,21 @@ export const unsignedCloseCycleTxProgram = (
     const buffer = unit === "lovelace" ? MIN_ADA_BUFFER : 0n;
     const vaultValue = fundUtxo.assets[unit] ?? 0n;
     const pot = vaultValue - fund.social_total - buffer;
-    if (pot <= 0n || fund.shares_total <= 0n) {
+    // A share-bearing fund freezes a non-empty pot. A welfare-only fund never
+    // sold shares, so it closes with an empty pot instead — that is its only
+    // route to a terminal state, and without it the fund could never dissolve.
+    // Its welfare must be fully disbursed first, or social_total strands with
+    // no path out.
+    const welfareClose =
+      fund.shares_total === 0n && pot === 0n && fund.social_total === 0n;
+    if (!welfareClose && (pot <= 0n || fund.shares_total <= 0n)) {
       return yield* Effect.fail(
         new ConfigurationError({
           configKey: "fundTokenName",
-          message: "nothing to share out — the fund has no distributable pot",
+          message:
+            fund.shares_total === 0n
+              ? "a fund with no shares can only close once its welfare pot is fully disbursed"
+              : "nothing to share out — the fund has no distributable pot",
         }),
       );
     }
