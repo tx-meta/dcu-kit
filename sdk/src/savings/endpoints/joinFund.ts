@@ -50,6 +50,14 @@ export type JoinFundConfig = {
   /** Standing-layer event-capture consent (default false). */
   consent?: boolean;
   /**
+   * Clock override (POSIX ms). Pass `emulator.now()` in emulator tests, and on
+   * a live network pass an older time when the chain tip is lagging: the
+   * default 60s drift buffer is occasionally not enough, and the ledger then
+   * rejects the transaction with `OutsideValidityIntervalUTxO` because its
+   * lower bound sits a few slots ahead of the tip.
+   */
+  currentTime?: bigint;
+  /**
    * Optional human-readable note attached to this transaction as CIP-20
    * metadata (label 674). Transaction-scoped: no validator reads it, it costs
    * no min-ADA, and it can never be edited. Public and permanent — never PII.
@@ -97,7 +105,7 @@ export const unsignedJoinFundTxProgram = (
     const userUnit = savingsPolicyId + userTokenName;
 
     const network = lucid.config().network ?? "Preprod";
-    const now = BigInt(Date.now());
+    const now = config.currentTime ?? BigInt(Date.now());
     // Clock-drift buffer on live networks (pattern #10); exact on emulator.
     const validFrom = Number(now - (network === "Custom" ? 0n : 60_000n));
 

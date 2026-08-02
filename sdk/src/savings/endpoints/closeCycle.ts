@@ -45,6 +45,14 @@ export type CloseCycleConfig = {
   /** Required when the quorum is a script credential. */
   quorumWitness?: PartyWitness;
   /**
+   * Clock override (POSIX ms). Pass `emulator.now()` in emulator tests, and on
+   * a live network pass an older time when the chain tip is lagging: the
+   * default 60s drift buffer is occasionally not enough, and the ledger then
+   * rejects the transaction with `OutsideValidityIntervalUTxO` because its
+   * lower bound sits a few slots ahead of the tip.
+   */
+  currentTime?: bigint;
+  /**
    * Optional human-readable note attached to this transaction as CIP-20
    * metadata (label 674). Transaction-scoped: no validator reads it, it costs
    * no min-ADA, and it can never be edited. Public and permanent — never PII.
@@ -71,7 +79,7 @@ export const unsignedCloseCycleTxProgram = (
     }
 
     const network = lucid.config().network ?? "Preprod";
-    const now = BigInt(Date.now());
+    const now = config.currentTime ?? BigInt(Date.now());
     // The validator compares the transaction's LOWER BOUND against cycle_end
     // (lo >= cycle_end), and that bound is `now` minus the clock-drift buffer,
     // carried as a 1-second slot the ledger floors. Preflighting `now` instead
