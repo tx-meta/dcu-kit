@@ -1,11 +1,11 @@
 /**
- * Live Preprod loan round trip — the savings credit book, never run on a real
+ * Live Preprod loan round trip: the savings credit book, never run on a real
  * network on any hash. This is the code that moves OTHER members' money, so it
  * is the highest-value thing to prove live.
  *
  * Two borrowers, two endings:
  *   USER1 borrows against their shares, repays partially, then closes.
- *   USER2 borrows and defaults — marked in arrears, then written off, which
+ *   USER2 borrows and defaults, marked in arrears, then written off, which
  *   seizes their shares and socialises whatever the seizure does not cover.
  *
  * Multi-party on purpose: a single wallet cannot show that one member's
@@ -186,7 +186,7 @@ const loans = await Effect.runPromise(
 );
 console.log("  live loans:", loans.length);
 
-// markArrears is permissionless — anyone may advance an overdue loan ONE
+// markArrears is permissionless: anyone may advance an overdue loan ONE
 // status step. USER1 (not the borrower) drives both, which is the point.
 const waitMs = 180_000 + 120_000;
 console.log(`waiting ${waitMs / 1000}s for loan B to fall overdue...`);
@@ -226,6 +226,6 @@ if (after.fund.shares_total >= before.fund.shares_total) {
   throw new Error("write-off did not seize the defaulter's shares");
 }
 console.log(
-  `\nLOAN ROUND TRIP COMPLETE — shares ${before.fund.shares_total} → ${after.fund.shares_total}` +
+  `\nLOAN ROUND TRIP COMPLETE: shares ${before.fund.shares_total} → ${after.fund.shares_total}` +
     ` (defaulter's stake seized), loans_outstanding 0.`,
 );

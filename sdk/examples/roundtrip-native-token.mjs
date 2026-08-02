@@ -5,7 +5,7 @@
  * `fundAssetUnit` split: in an ADA fund the members' savings and the UTxO's
  * min-ADA are the same `lovelace` key, so a bug that conflates "the fund's
  * asset" with "the lovelace on the UTxO" is invisible. A token fund separates
- * them — the vault holds min-ADA AND the token, and every deposit, share-out
+ * them: the vault holds min-ADA AND the token, and every deposit, share-out
  * and close must move the token while leaving the min-ADA untouched.
  *
  * This is the USDCx shape from Track A: a 6-decimal stablecoin-like unit where
@@ -65,7 +65,7 @@ const retry = async (label, fn, attempts = 4) => {
     try {
       return await fn();
     } catch (e) {
-      const transient = /fetch failed|socket|ECONN|timeout|502|503|504/i.test(
+      const transient = /fetch failed|socket|ECONN|timeout|502|503|504|OutsideValidityInterval/i.test(
         String(e?.message ?? e),
       );
       if (!transient || i === attempts) throw e;
@@ -108,7 +108,7 @@ const assetName = fromText("USDCx");
 const tokenUnit = policyId + assetName;
 console.log("USDCx unit:", tokenUnit);
 
-// 30.0 USDCx — two members' shares plus headroom. Skipped if a previous run
+// 30.0 USDCx, two members' shares plus headroom. Skipped if a previous run
 // already minted (the policy is deterministic, so the tokens are still here).
 const held = await balanceOf(tokenUnit);
 if (held < 20_000_000n) {
@@ -269,7 +269,7 @@ const claim2Tx = await run(
     memberTokenSuffix: member2,
   }),
 );
-await submit(claim2Tx, "claimShareOut (USER2, 3/9 — non-creator)");
+await submit(claim2Tx, "claimShareOut (USER2, 3/9, non-creator)");
 const after2 = await balanceOf(tokenUnit);
 console.log(`  USER2 USDCx: ${before2} → ${after2} (+${after2 - before2})`);
 if (after2 - before2 !== 3_000_000n) {
@@ -292,6 +292,6 @@ const closeFundTx = await run(
 );
 await submit(closeFundTx, "closeFund");
 console.log(
-  "\nNATIVE-TOKEN ROUND TRIP COMPLETE — a USDCx-denominated fund funded," +
+  "\nNATIVE-TOKEN ROUND TRIP COMPLETE: a USDCx-denominated fund funded," +
     " shared out to two members in tokens, and dissolved.",
 );

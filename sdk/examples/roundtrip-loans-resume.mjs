@@ -52,7 +52,7 @@ const retry = async (label, fn, attempts = 4) => {
     try {
       return await fn();
     } catch (e) {
-      const transient = /fetch failed|socket|ECONN|timeout|502|503|504/i.test(
+      const transient = /fetch failed|socket|ECONN|timeout|502|503|504|OutsideValidityInterval/i.test(
         String(e?.message ?? e),
       );
       if (!transient || i === attempts) throw e;
@@ -79,7 +79,7 @@ const submit = async (tx, label) => {
 const submitCoSigned = async (tx, label, coSignerSeeds) => {
   const hash = await retry(label, async () => {
     // Chaining sign.withWallet() after switching wallets does NOT add a second
-    // witness — the builder resolves the wallet once. Co-signers must be
+    // witness. The builder resolves the wallet once. Co-signers must be
     // supplied as explicit keys, exactly as the emulator suite does.
     const signed = await coSignerSeeds
       .map((seed) => walletFromSeed(seed, { network: "Preprod" }).paymentKey)
@@ -117,7 +117,7 @@ const members = await run(
 );
 const owns = async (suffix) => {
   const unit = savingsPolicyId + assetNameLabels.prefix222 + suffix;
-  // wallet().address() is async — passing the Promise makes every lookup miss.
+  // wallet().address() is async, so passing the Promise makes every lookup miss.
   const address = await lucid.wallet().address();
   const utxos = await retry("utxosAtWithUnit", () =>
     lucid.utxosAtWithUnit(address, unit),
@@ -191,7 +191,7 @@ if (existingB) {
     }),
   );
   loanB = disbursed.loanTokenName;
-  // Borrower is USER2, quorum is USER1 — two distinct signatures required.
+  // Borrower is USER2, quorum is USER1, so two distinct signatures required.
   await submitCoSigned(disbursed.tx, "disburseLoan (USER2, USER1 quorum)", [
     env.USER1_SEED,
   ]);
@@ -244,6 +244,6 @@ if (after.fund.shares_total >= before.fund.shares_total) {
   throw new Error("write-off did not seize the defaulter's shares");
 }
 console.log(
-  `\nLOAN ROUND TRIP COMPLETE — shares ${before.fund.shares_total} → ${after.fund.shares_total}` +
+  `\nLOAN ROUND TRIP COMPLETE: shares ${before.fund.shares_total} → ${after.fund.shares_total}` +
     ` (defaulter's stake seized), loans_outstanding 0.`,
 );
