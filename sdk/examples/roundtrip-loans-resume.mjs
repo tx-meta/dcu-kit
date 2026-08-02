@@ -11,7 +11,7 @@
  * Usage: from sdk/, `npx tsx examples/roundtrip-loans-resume.mjs <fundTokenName>`
  */
 import { readFileSync } from "node:fs";
-import { Lucid, Blockfrost } from "@lucid-evolution/lucid";
+import { Lucid, Blockfrost, walletFromSeed } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { unsignedDisburseLoanTxProgram } from "../src/savings/endpoints/disburseLoan.js";
 import { unsignedRepayLoanTxProgram } from "../src/savings/endpoints/repayLoan.js";
@@ -66,6 +66,25 @@ const settle = () => new Promise((r) => setTimeout(r, 75_000));
 const submit = async (tx, label) => {
   const hash = await retry(label, async () => {
     const signed = await tx.sign.withWallet().complete();
+    return signed.submit();
+  });
+  console.log(`${label}: ${hash}`);
+  await retry(`${label} confirm`, () => lucid.awaitTx(hash));
+  await settle();
+  return hash;
+};
+/** disburseLoan needs BOTH the borrower's and the quorum's signature. When one
+ *  wallet is both (as in loan A) a single signature satisfies both roles, which
+ *  is exactly why a single-wallet test cannot see this requirement. */
+const submitCoSigned = async (tx, label, coSignerSeeds) => {
+  const hash = await retry(label, async () => {
+    // Chaining sign.withWallet() after switching wallets does NOT add a second
+    // witness — the builder resolves the wallet once. Co-signers must be
+    // supplied as explicit keys, exactly as the emulator suite does.
+    const signed = await coSignerSeeds
+      .map((seed) => walletFromSeed(seed, { network: "Preprod" }).paymentKey)
+      .reduce((b, key) => b.sign.withPrivateKey(key), tx.sign.withWallet())
+      .complete();
     return signed.submit();
   });
   console.log(`${label}: ${hash}`);
@@ -146,29 +165,48 @@ if (loanA) {
   console.log("  loan A already closed");
 }
 
-// USER2 borrows and defaults.
+// USER2 borrows and defaults. Only one active loan per member is allowed, so
+// reuse USER2's existing loan when a previous run already disbursed it.
 asUser2();
-const dueB = now() + 180_000n;
-const { tx: loanBTx, loanTokenName: loanB } = await run(
-  "disburseLoan B",
-  unsignedDisburseLoanTxProgram(lucid, {
-    scriptRef,
-    fundTokenName,
-    memberTokenSuffix: m2,
-    principal: 8_000_000n,
-    serviceCharge: 800_000n,
-    due: dueB,
-    currentTime: now(),
-  }),
-);
-await submit(loanBTx, "disburseLoan (USER2, 8 ADA, will default)");
-console.log("  loanB:", loanB);
+const existingB = loans.find((l) => l.loan.borrower_ref === refNameOf(m2));
+let loanB, dueB;
+if (existingB) {
+  loanB = existingB.loanTokenName;
+  dueB = existingB.loan.due;
+  console.log("  reusing loan B:", loanB, "due", dueB);
+} else {
+  // disburseLoan sets validTo = now + 15 min and requires due > validTo, so the
+  // soonest a loan can legitimately fall overdue is just past that window.
+  dueB = now() + 960_000n;
+  const disbursed = await run(
+    "disburseLoan B",
+    unsignedDisburseLoanTxProgram(lucid, {
+      scriptRef,
+      fundTokenName,
+      memberTokenSuffix: m2,
+      principal: 8_000_000n,
+      serviceCharge: 800_000n,
+      due: dueB,
+      currentTime: now(),
+    }),
+  );
+  loanB = disbursed.loanTokenName;
+  // Borrower is USER2, quorum is USER1 — two distinct signatures required.
+  await submitCoSigned(disbursed.tx, "disburseLoan (USER2, USER1 quorum)", [
+    env.USER1_SEED,
+  ]);
+  console.log("  loanB:", loanB);
+}
 
-const waitMs = Number(dueB - BigInt(Date.now())) + 120_000;
-console.log(
-  `waiting ${Math.ceil(waitMs / 1000)}s for loan B to fall overdue...`,
-);
-await new Promise((res) => setTimeout(res, waitMs));
+// markArrears needs the SLOT-floored lower bound strictly past `due`, so leave
+// margin beyond the 60s drift buffer rather than racing the boundary.
+const waitMs = Number(dueB - BigInt(Date.now())) + 180_000;
+if (waitMs > 0) {
+  console.log(
+    `waiting ${Math.ceil(waitMs / 1000)}s for loan B to fall overdue...`,
+  );
+  await new Promise((res) => setTimeout(res, waitMs));
+}
 
 // markArrears is permissionless: USER1, not the borrower, drives both steps.
 asUser1();
