@@ -884,6 +884,17 @@ pub fn validate_social_payout(
 
 /// [spec 3.3 UpdateFund]: quorum amends mutable charter fields / rotates the
 /// quorum. Asset, share_value, totals, and status are immutable.
+/// A quorum may bring the cycle end forward or drop it, never push it out.
+/// Extending it (or imposing one where there was none) would let the quorum
+/// defer CloseCycle forever and strand every member's savings in the vault.
+fn cycle_end_not_extended(current: Option<Int>, next: Option<Int>) -> Bool {
+  when (current, next) is {
+    (_, None) -> True
+    (None, Some(_)) -> False
+    (Some(old), Some(new)) -> new <= old
+  }
+}
+
 pub fn validate_update_fund(
   policy_id: PolicyId,
   datum: SavingsDatum,
@@ -900,6 +911,8 @@ pub fn validate_update_fund(
         asset_policy,
         asset_name,
         share_value,
+        withdrawal_policy,
+        cycle_end,
         shares_total,
         savings_total,
         social_total,
@@ -924,7 +937,7 @@ pub fn validate_update_fund(
         withdrawal_policy: new_wp,
         max_loan_multiple: new_multiple,
         loan_grace: new_grace,
-        cycle_end: _new_cycle_end,
+        cycle_end: new_cycle_end,
         shares_total: out_shares_total,
         savings_total: out_savings_total,
         social_total: out_social_total,
@@ -953,7 +966,15 @@ pub fn validate_update_fund(
     (bytearray.length(new_title) <= 64)?,
     (new_min > 0)?,
     (new_min <= new_max)?,
-    (new_wp == 0 || new_wp == 1)?,
+    // [spec 3.3 UpdateFund]: the withdrawal policy is what a member relied on
+    // when they deposited. Flipping flexible (1) → locked (0) afterwards traps
+    // savings the member was promised they could take out, so it is frozen for
+    // the life of the fund rather than merely range-checked.
+    (new_wp == withdrawal_policy)?,
+    // [spec 3.3 UpdateFund]: cycle_end gates CloseCycle, so pushing it out
+    // postpones every member's share-out indefinitely. It may be brought
+    // forward or removed, never extended or newly imposed.
+    cycle_end_not_extended(cycle_end, new_cycle_end)?,
     (new_multiple >= 0)?,
     (new_grace >= 0)?,
     // [spec 3.3 UpdateFund]: amending moves no money
