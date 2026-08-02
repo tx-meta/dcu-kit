@@ -22,6 +22,10 @@ export type DeploymentManifest = {
     govPolicy: string;
     gateHash: string;
     votingStakeHash: string;
+    /** The eligibility policy: holding a token of it makes a voter. */
+    memberPolicy: string;
+    /** The savings fund this instance governs (its state NFT name). */
+    governedFund: string;
   };
 };
 

@@ -55,6 +55,32 @@ export class InsufficientUtxosError extends Data.TaggedError(
   readonly cause?: unknown;
 }> {}
 
+/**
+ * A group cannot admit another member. Raised before signing so a shared invite
+ * link that loses the race for the last seat fails with a readable reason
+ * instead of a validator crash at submission.
+ */
+export class GroupFullError extends Data.TaggedError("GroupFullError")<{
+  readonly groupTokenSuffix: string;
+  readonly maxMembers: number;
+  readonly memberCount: number;
+}> {}
+
+/**
+ * The wallet cannot cover a transaction's known up-front cost. Raised before
+ * signing, from the amount the endpoint is about to lock plus a fee allowance,
+ * so the failure names the shortfall instead of surfacing as coin-selection
+ * noise.
+ */
+export class InsufficientFundsError extends Data.TaggedError(
+  "InsufficientFundsError",
+)<{
+  readonly operation: string;
+  readonly unit: string;
+  readonly required: bigint;
+  readonly available: bigint;
+}> {}
+
 // --- Datum Errors ---
 
 export class InvalidDatumError extends Data.TaggedError("InvalidDatumError")<{
@@ -141,7 +167,12 @@ export class ReferenceScriptMismatchError extends Data.TaggedError(
     | "treasuryRounds"
     | "treasuryLifecycle"
     | "treasuryRecovery"
-    | "treasuryReserve";
+    | "treasuryReserve"
+    // Standalone modules, deployed by `deployModuleScripts`.
+    | "savings"
+    | "escrowV2"
+    | "pool"
+    | "project";
   readonly expectedHash: string;
   readonly actualHash: string;
   readonly reason: string;
@@ -153,6 +184,8 @@ export type DcuError =
   | UtxoNotFoundError
   | AmbiguousUtxoError
   | InsufficientUtxosError
+  | GroupFullError
+  | InsufficientFundsError
   | InvalidDatumError
   | DatumDecodingError
   | TransactionBuildError

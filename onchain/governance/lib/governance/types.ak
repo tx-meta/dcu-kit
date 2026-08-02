@@ -176,8 +176,6 @@ pub type GovSpendRedeemer {
     voter_index: Int,
     record_input_index: Int,
     record_output_index: Int,
-    // 99 under OneMemberOneVote (no share reference input read).
-    share_ref_index: Int,
     approve: Bool,
     withdrawal_index: Int,
   }
@@ -210,7 +208,6 @@ pub type VotingAction {
     voter_index: Int,
     record_input_index: Int,
     record_output_index: Int,
-    share_ref_index: Int,
     approve: Bool,
   }
   FinalizeAction { proposal_input_index: Int, proposal_output_index: Int }

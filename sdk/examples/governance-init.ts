@@ -31,6 +31,8 @@
  *   pnpm run governance-init
  */
 
+import { Effect } from "effect";
+import { deployModuleScripts } from "@tx-meta/dcu-kit";
 import {
   initGovernance,
   registerVotingStake,
@@ -41,7 +43,7 @@ import {
   logError,
   selectEnvWallet,
 } from "./context.js";
-import { saveState } from "./state.js";
+import { recordedModuleRef, saveState } from "./state.js";
 
 async function main() {
   const { lucid, isEmulator } = await makeLucid();
@@ -125,36 +127,37 @@ async function main() {
 
   // Deploy the two large validators as reference scripts — the dispatcher and
   // voting scripts no longer fit inline together within the 16KB tx limit.
-  const address = await lucid.wallet().address();
-  const deployments: Array<
-    ["scriptRefGovernanceDispatcher" | "scriptRefGovernanceVoting", string]
-  > = [
-    [
-      "scriptRefGovernanceDispatcher",
-      instance.dispatcherValidator.spend.script,
-    ],
-    ["scriptRefGovernanceVoting", instance.votingValidator.script],
-  ];
-  for (const [key, script] of deployments) {
-    console.log(
-      `\nWaiting 60s, then deploying ${key} as a reference script...`,
-    );
-    await settle();
-    const refTx = await lucid
-      .newTx()
-      .pay.ToAddressWithData(
-        address,
-        undefined,
-        { lovelace: 20_000_000n },
-        { type: "PlutusV3", script },
-      )
-      .complete();
-    const refSigned = await refTx.sign.withWallet().complete();
-    const refHash = await refSigned.submit();
-    console.log("Submitted. Hash:", refHash);
-    await lucid.awaitTx(refHash);
-    saveState({ [key]: { txHash: refHash, outputIndex: 0 } });
+  // They go to the permanent alwaysFails address: a wallet-held reference UTxO
+  // is an ordinary spendable input that coin selection can consume, which takes
+  // governance down for every voter at once.
+  console.log("\nWaiting 60s, then deploying the two governance refs...");
+  await settle();
+  const refs = await Effect.runPromise(
+    deployModuleScripts(
+      {
+        governanceDispatcher: instance.dispatcherValidator.spend,
+        governanceVoting: instance.votingValidator,
+      },
+      lucid,
+      {
+        existing: {
+          governanceDispatcher: recordedModuleRef(
+            "scriptRefGovernanceDispatcher",
+          ),
+          governanceVoting: recordedModuleRef("scriptRefGovernanceVoting"),
+        },
+      },
+    ),
+  );
+  saveState({
+    scriptRefGovernanceDispatcher: refs.refs.governanceDispatcher,
+    scriptRefGovernanceVoting: refs.refs.governanceVoting,
+  });
+  for (const [key, status] of Object.entries(refs.status)) {
+    const ref = refs.refs[key as keyof typeof refs.refs]!;
+    console.log(`  ${key}: ${status} at ${ref.txHash}#${ref.outputIndex}`);
   }
+  console.log(`  address: ${refs.deployAddress} (alwaysFails)`);
 
   console.log("\nVoting stake registered and reference scripts deployed.");
   console.log(

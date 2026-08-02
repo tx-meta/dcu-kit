@@ -169,6 +169,7 @@ test deposit__rejects_datum_drift() {
   let m = member_in(10, 3_000_000)
   let drifted = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -551,6 +552,7 @@ test update_fund__accepts_band_widen_and_rotation() {
   let a = anchor_in(f0(), 22_000_000)
   let updated = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.key_credential(
       #"deaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddead",
     ),
@@ -559,10 +561,12 @@ test update_fund__accepts_band_widen_and_rotation() {
     share_value: 1_000_000,
     min_shares_per_deposit: 1,
     max_shares_per_deposit: 200,
-    withdrawal_policy: 1,
+    // withdrawal_policy and cycle_end are frozen; this test amends only what
+    // the charter still allows (the deposit band) and rotates the quorum.
+    withdrawal_policy: 0,
     max_loan_multiple: 1,
     loan_grace: 604_800_000,
-    cycle_end: Some(1_800_000_000_000),
+    cycle_end: None,
     shares_total: 15,
     savings_total: 15_000_000,
     social_total: 3_000_000,
@@ -573,10 +577,84 @@ test update_fund__accepts_band_widen_and_rotation() {
   validate_update_fund(policy(), f0(), a, 0, [fund_out], no_mint(), quorum_tx())
 }
 
+/// f0's charter with the two frozen fields overridable, everything else verbatim.
+fn charter_with(wp: Int, ce: Option<Int>) -> SavingsDatum {
+  SavingsFund {
+    title: #"546573742046756e64",
+    group_type: 0,
+    quorum: common.quorum_credential(),
+    asset_policy: "",
+    asset_name: "",
+    share_value: 1_000_000,
+    min_shares_per_deposit: 1,
+    max_shares_per_deposit: 100,
+    withdrawal_policy: wp,
+    max_loan_multiple: 1,
+    loan_grace: 604_800_000,
+    cycle_end: ce,
+    shares_total: 15,
+    savings_total: 15_000_000,
+    social_total: 3_000_000,
+    loans_outstanding: 0,
+    status: Active,
+  }
+}
+
+fn update_from(current: SavingsDatum, updated: SavingsDatum) -> Bool {
+  let a = anchor_in(current, 22_000_000)
+  let fund_out = vault_output(updated, anchor_value(22_000_000))
+  validate_update_fund(
+    policy(),
+    current,
+    a,
+    0,
+    [fund_out],
+    no_mint(),
+    quorum_tx(),
+  )
+}
+
+test update_fund__rejects_withdrawal_policy_flip_to_locked() {
+  // A member deposited under a flexible policy; locking it afterwards traps
+  // savings they were promised they could withdraw.
+  !update_from(charter_with(1, None), charter_with(0, None))
+}
+
+test update_fund__rejects_withdrawal_policy_flip_to_flexible() {
+  // Frozen in BOTH directions — a locked fund is a commitment the quorum
+  // cannot unilaterally relax either.
+  !update_from(charter_with(0, None), charter_with(1, None))
+}
+
+test update_fund__rejects_imposing_a_cycle_end() {
+  // None → Some newly gates CloseCycle, deferring every share-out.
+  !update_from(charter_with(0, None), charter_with(0, Some(1_800_000_000_000)))
+}
+
+test update_fund__rejects_pushing_the_cycle_end_out() {
+  !update_from(
+    charter_with(0, Some(1_700_000_000_000)),
+    charter_with(0, Some(1_800_000_000_000)),
+  )
+}
+
+test update_fund__accepts_bringing_the_cycle_end_forward() {
+  update_from(
+    charter_with(0, Some(1_800_000_000_000)),
+    charter_with(0, Some(1_700_000_000_000)),
+  )
+}
+
+test update_fund__accepts_dropping_the_cycle_end() {
+  // Removing the gate can only ever bring share-out closer.
+  update_from(charter_with(0, Some(1_800_000_000_000)), charter_with(0, None))
+}
+
 test update_fund__rejects_share_value_change() {
   let a = anchor_in(f0(), 22_000_000)
   let bad = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -720,6 +798,7 @@ test close_cycle__rejects_unsigned() {
 test close_cycle__rejects_before_cycle_end() {
   let bounded = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -739,6 +818,7 @@ test close_cycle__rejects_before_cycle_end() {
   let a = anchor_in(bounded, 22_000_000)
   let out_datum = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -1040,4 +1120,121 @@ test close_fund__rejects_while_active() fail {
       assets.from_asset(policy(), fund_name(), -1),
       quorum_tx(),
     )
+}
+
+// ── Fund taxonomy + welfare terminal state ───────────────────────────────────
+
+// A welfare-only fund: members contributed to the social pot, never bought
+// shares. Under the old guards it could never reach SharingOut, so it could
+// never be dissolved and its min-ADA was locked forever.
+fn welfare_fund(social: Int) -> SavingsDatum {
+  SavingsFund {
+    title: #"546573742046756e64",
+    group_type: 2,
+    quorum: common.quorum_credential(),
+    asset_policy: "",
+    asset_name: "",
+    share_value: 1_000_000,
+    min_shares_per_deposit: 1,
+    max_shares_per_deposit: 100,
+    withdrawal_policy: 0,
+    max_loan_multiple: 0,
+    loan_grace: 604_800_000,
+    cycle_end: None,
+    shares_total: 0,
+    savings_total: 0,
+    social_total: social,
+    loans_outstanding: 0,
+    status: Active,
+  }
+}
+
+fn welfare_closed(social: Int) -> SavingsDatum {
+  SavingsFund {
+    title: #"546573742046756e64",
+    group_type: 2,
+    quorum: common.quorum_credential(),
+    asset_policy: "",
+    asset_name: "",
+    share_value: 1_000_000,
+    min_shares_per_deposit: 1,
+    max_shares_per_deposit: 100,
+    withdrawal_policy: 0,
+    max_loan_multiple: 0,
+    loan_grace: 604_800_000,
+    cycle_end: None,
+    shares_total: 0,
+    savings_total: 0,
+    social_total: social,
+    loans_outstanding: 0,
+    status: SharingOut { pot: 0, shares: 0, shares_remaining: 0 },
+  }
+}
+
+test close_cycle__accepts_zero_share_welfare_fund() {
+  // vault 2 - social 0 - ADA buffer 2 = pot 0
+  let a = anchor_in(welfare_fund(0), 2_000_000)
+  let fund_out = vault_output(welfare_closed(0), anchor_value(2_000_000))
+  validate_close_cycle(
+    policy(),
+    welfare_fund(0),
+    a,
+    0,
+    [fund_out],
+    no_mint(),
+    quorum_tx(),
+  )
+}
+
+test close_cycle__rejects_zero_share_with_undisbursed_welfare() {
+  // 5 ADA of welfare is still owed to members; closing here would strand it.
+  let a = anchor_in(welfare_fund(5_000_000), 7_000_000)
+  let fund_out = vault_output(
+    welfare_closed(5_000_000),
+    anchor_value(7_000_000),
+  )
+  !validate_close_cycle(
+    policy(),
+    welfare_fund(5_000_000),
+    a,
+    0,
+    [fund_out],
+    no_mint(),
+    quorum_tx(),
+  )
+}
+
+test update_fund__rejects_group_type_change() {
+  // A fund cannot become a different kind of fund.
+  let a = anchor_in(f0(), 22_000_000)
+  // f0's charter, verbatim, with only the taxonomy changed.
+  let retyped = SavingsFund {
+    title: #"546573742046756e64",
+    group_type: 2,
+    quorum: common.quorum_credential(),
+    asset_policy: "",
+    asset_name: "",
+    share_value: 1_000_000,
+    min_shares_per_deposit: 1,
+    max_shares_per_deposit: 100,
+    withdrawal_policy: 0,
+    max_loan_multiple: 1,
+    loan_grace: 604_800_000,
+    cycle_end: None,
+    shares_total: 15,
+    savings_total: 15_000_000,
+    social_total: 3_000_000,
+    loans_outstanding: 0,
+    status: Active,
+  }
+  let fund_out = vault_output(retyped, anchor_value(22_000_000))
+  !validate_update_fund(
+    policy(),
+    f0(),
+    a,
+    0,
+    [fund_out],
+    no_mint(),
+    quorum_tx(),
+  )
 }

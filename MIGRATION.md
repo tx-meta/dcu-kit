@@ -8,6 +8,66 @@ cryptic script errors. Validator hashes for each release are tabled at the botto
 
 ---
 
+## `0.5.7` → next (governance + savings hash wave)
+
+Governance and savings validators change hash together; ROSCA and escrow are
+byte-identical, so groups, accounts, treasuries and escrows are untouched. Both
+families were redeployed on Preprod on 2026-08-02 and
+`sdk/src/core/deployments/preprod.json` carries the new references — read them
+from there rather than pinning out-refs.
+
+**Existing savings funds and governance instances do not migrate.** A fund
+created under the old savings hash lives at a different script address and its
+datum has one field fewer, so this SDK cannot decode it. Close such funds with
+the old SDK version, or leave them on the old deployment.
+
+### `SavingsFund` gains `group_type`
+
+An immutable taxonomy, fixed at creation and frozen by `updateFund`.
+
+```ts
+// before
+createFund(lucid, { title, shareValue, ... });
+
+// after — defaults to Asca, so this is only needed for the other three
+import { GroupType } from "@tx-meta/dcu-kit/savings";
+createFund(lucid, { title, shareValue, groupType: GroupType.Vsla, ... });
+```
+
+### Registering and voting need the voter's member account
+
+Only when the charter's `member_policy` is the same policy that identifies the
+governed vault — the savings-governed case. `registerVoter` and `castVote`
+resolve and attach the reference themselves, so no call site changes; the
+requirement is that the voter actually holds an account in the governed fund.
+A member of another fund under the same policy is now rejected.
+
+### A decision authorizes one operation, not the vault
+
+`openProposal`'s `action` used to be advisory: the gate discarded it. It is now
+binding, so a decision must name the operation its target will run.
+
+```ts
+// before — authorized any operation on the fund
+action: { ParamChange: { field_tag: 0n, new_value: 250n } }
+
+// after — authorizes exactly an updateFund on it
+import { govActionForOperation, SavingsOperation } from "@tx-meta/dcu-kit/governance";
+action: govActionForOperation(SavingsOperation.UpdateFund)
+```
+
+The typed arms still work and bind to their own serialisation, for a family that
+adopts `GovAction` as its redeemer type. A target spent with no redeemer at all
+is rejected: authorizing an action means an action is performed.
+
+### Share-weighted voting is live
+
+A charter set to `ShareWeighted` previously failed every cast. It now weighs the
+voter's share units. `share_source_policy` must be the eligibility policy, and a
+voter holding no shares is rejected rather than casting a weightless vote.
+
+---
+
 ## `0.5.0` → `0.5.5` (P1 launch-surface last call)
 
 The group and account validators change hash; treasury, settings, and escrow are

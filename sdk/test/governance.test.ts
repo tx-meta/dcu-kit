@@ -36,11 +36,20 @@ import {
   MEMBER_NAME,
   MEMBER_POLICY,
   MEMBER_UNIT,
+  mintMemberAccount,
   mintMembership,
   readCip20,
 } from "./utils.js";
+import { assetNameLabels } from "../src/core/utils/index.js";
 
 const TARGET = "bb".repeat(28);
+
+// A second CIP-68 member, with the same (100)/(222) pairing the savings policy
+// this fixture stands in for produces.
+const MEMBER2_SUFFIX = "22".repeat(28);
+const MEMBER2_NAME = assetNameLabels.prefix222 + MEMBER2_SUFFIX;
+const MEMBER2_REF_UNIT =
+  MEMBER_POLICY + assetNameLabels.prefix100 + MEMBER2_SUFFIX;
 
 // The governed vault's state token: the gate binds a decision to the input that
 // carries the exact (policy, name) of the vault's state NFT.
@@ -97,6 +106,10 @@ const setupInstance = (ctx: GovContext, quorum: bigint) =>
     yield* advanceBlock(emulator, 2);
 
     yield* mintMembership(lucid);
+    yield* advanceBlock(emulator, 2);
+    // The eligibility policy IS the governed vault's policy here, so the voter
+    // must prove which vault they belong to.
+    yield* mintMemberAccount(lucid, TARGET);
     yield* advanceBlock(emulator, 2);
 
     const { tx: voterTx, recordName } = yield* unsignedRegisterVoterTxProgram(
@@ -335,26 +348,33 @@ describe("governance module (emulator, real validators)", () => {
         );
         expect(decision).toBeDefined();
 
-        // Authorize: the gate binds the decision to the target vault input,
-        // then burns it (one-shot). In production the vault action composes here.
+        // Authorize: the gate binds the decision to the target vault input.
+        // A target spent with NO redeemer performs no action, so nothing can be
+        // bound to it and the gate rejects the spend. The positive path lives in
+        // governanceSavingsGate.test.ts, where a real fund is spent with its own
+        // UpdateFund redeemer and the decision names that operation.
         yield* mintTargetVault(lucid);
         yield* advanceBlock(emulator, 2);
         const targetUtxo = yield* findTargetUtxo(lucid);
-        const authTx = yield* unsignedAuthorizeActionTxProgram(lucid, {
-          instance,
-          proposalId,
-          targetUtxo,
-        });
-        yield* signAndSubmit(authTx);
+        // Local UPLC evaluation runs during build, so the gate's rejection
+        // surfaces before anything is submitted.
+        const unbound = yield* Effect.flip(
+          unsignedAuthorizeActionTxProgram(lucid, {
+            instance,
+            proposalId,
+            targetUtxo,
+          }),
+        );
+        expect(unbound._tag).toBe("TransactionBuildError");
         yield* advanceBlock(emulator, 2);
 
+        // The one-shot decision is therefore still at the gate, unspent.
         const gateAfter = yield* Effect.promise(() =>
           lucid.utxosAt(gateAddress(network, instance)),
         );
-        const stillThere = gateAfter.find(
-          (u) => (u.assets[decisionUnit] ?? 0n) > 0n,
-        );
-        expect(stillThere).toBeUndefined();
+        expect(
+          gateAfter.find((u) => (u.assets[decisionUnit] ?? 0n) > 0n),
+        ).toBeDefined();
       }),
   );
 
@@ -424,7 +444,7 @@ describe("governance module (emulator, real validators)", () => {
         // produces once a member also holds e.g. a savings-module token
         // minted under the same policy.
         selectWalletFromSeed(lucid, ctx.creator.seedPhrase);
-        const member2Unit = MEMBER_POLICY + fromText("member2");
+        const member2Unit = MEMBER_POLICY + MEMBER2_NAME;
         const decoyUnit = MEMBER_POLICY + fromText("decoy");
         const mergeTx = yield* Effect.promise(() =>
           lucid
@@ -463,7 +483,7 @@ describe("governance module (emulator, real validators)", () => {
         // eligibility token lands in a UTxO that also carries a decoy name
         // under member_policy.
         selectWalletFromSeed(lucid, ctx.creator.seedPhrase);
-        const member2Unit = MEMBER_POLICY + fromText("member2");
+        const member2Unit = MEMBER_POLICY + MEMBER2_NAME;
         const decoyUnit = MEMBER_POLICY + fromText("decoy");
         const mergeTx = yield* Effect.promise(() =>
           lucid
@@ -503,6 +523,11 @@ describe("governance module (emulator, real validators)", () => {
             .length,
         ).toBe(1);
 
+        // member2 needs their own account: the eligibility policy is the
+        // governed vault's policy here, so registration is fund-bound.
+        yield* mintMemberAccount(lucid, TARGET, 1n, MEMBER2_REF_UNIT);
+        yield* advanceBlock(emulator, 2);
+
         // registerVoter, which failed before the split, now succeeds.
         const { tx: voterTx } = yield* unsignedRegisterVoterTxProgram(lucid, {
           instance,
@@ -513,7 +538,7 @@ describe("governance module (emulator, real validators)", () => {
         yield* advanceBlock(emulator, 2);
 
         const { roster } = yield* resolveRoster(lucid, instance);
-        expect(roster.members).toContain(fromText("member2"));
+        expect(roster.members).toContain(MEMBER2_NAME);
       }),
   );
 

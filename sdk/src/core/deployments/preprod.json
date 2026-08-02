@@ -1,26 +1,71 @@
 {
   "network": "Preprod",
-  "verifiedAt": "2026-07-26",
-  "sdkVersion": "0.5.7-preprod.0",
+  "verifiedAt": "2026-08-02",
+  "sdkVersion": "0.6.0-preprod.0",
   "settingsPolicy": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d",
   "deployAddress": "addr_test1wq3vnggra5ljl2tunqkhd4hz4agvt422cvrfswcedj8um2cwsu3l3",
   "refScripts": {
-    "treasury": { "txHash": "32ed531dd7d119b9da091ded2e599034eb8a16fe5b42b4101beefef556cd5d83", "outputIndex": 0, "scriptHash": "0ba6478fdb7651c557d052c0ee49a8d3ff302e826e277631b6a312ea" },
-    "group": { "txHash": "880b914172d6fdd1aaefb57a96bcb6f1243b7edcbb19c4ce3664c2d387063306", "outputIndex": 0, "scriptHash": "3cfdf8bf653ca8be1af605e4df4f00433f704ab0172e420b54209416" },
-    "treasuryRounds": { "txHash": "b29e7092d39f8b93e2f45535ec0eb6e1ef3c24b60f68adbb399529e952464a66", "outputIndex": 0, "scriptHash": "4689e405085170a8cf03ac1b6bb88bf1a3c048bed603e5564f344d15" },
-    "treasuryLifecycle": { "txHash": "fae7e405eafb985e887ad6711fa898eecf59e76335db3d850c33e4ee129c663a", "outputIndex": 0, "scriptHash": "89aeb986765a0b61d0231b96313c4bf72d7ff23d0376e1149bcb386a" },
-    "treasuryRecovery": { "txHash": "76c7e8126185494235bf8dbea90ad1d55ddefe893f89ff5951a47af5a75f0471", "outputIndex": 0, "scriptHash": "891e8c8cc613967dd4c0155f5db321ba51db97d741fca2ee7a16c550" },
-    "treasuryReserve": { "txHash": "39ea5fb76144d894509e5dd6ebf01e23c3c1e8c6dad52a3bf0f4705f7e210e79", "outputIndex": 0, "scriptHash": "46ce037514b1e7e69b78681100560ba568c75d1f076870ca8d5c2bf8" },
-    "savings": { "txHash": "e4f6a1a29690da98fb7c9dcbda9574d4d41ba908ca0f7d43d979ebbe4cced370", "outputIndex": 0, "scriptHash": "04ec9b8f1425e576fc3b8469bd32f268c2901736a6263149e8511e15" },
-    "escrowV2": { "txHash": "83ef75ce2b9711c95dba523bb990c01c256e971dbceb9c05d1c133205eea016b", "outputIndex": 0, "scriptHash": "3623c729aae8b1cb32889d27c60c5cfb2a33f59e3074db0f5d208310" },
-    "governanceDispatcher": { "txHash": "46098be0493cbd04f462b1e3fa9dfcd62f72a033614cf0907f149137704c372b", "outputIndex": 0, "scriptHash": "1461174ad1702e11983ddc0f5dd82bfc29eb518ea700f180fc43f879" },
-    "governanceVoting": { "txHash": "54755310c78a6e41041e99d0fd3236360beb9522512e48ce36a327d6b6be1d96", "outputIndex": 0, "scriptHash": "ed48dbbe96ed01af22b676b1baad2a58f3dbbcffb6aa38a3bf903adf" }
+    "treasury": {
+      "txHash": "32ed531dd7d119b9da091ded2e599034eb8a16fe5b42b4101beefef556cd5d83",
+      "outputIndex": 0,
+      "scriptHash": "0ba6478fdb7651c557d052c0ee49a8d3ff302e826e277631b6a312ea"
+    },
+    "group": {
+      "txHash": "880b914172d6fdd1aaefb57a96bcb6f1243b7edcbb19c4ce3664c2d387063306",
+      "outputIndex": 0,
+      "scriptHash": "3cfdf8bf653ca8be1af605e4df4f00433f704ab0172e420b54209416"
+    },
+    "treasuryRounds": {
+      "txHash": "b29e7092d39f8b93e2f45535ec0eb6e1ef3c24b60f68adbb399529e952464a66",
+      "outputIndex": 0,
+      "scriptHash": "4689e405085170a8cf03ac1b6bb88bf1a3c048bed603e5564f344d15"
+    },
+    "treasuryLifecycle": {
+      "txHash": "fae7e405eafb985e887ad6711fa898eecf59e76335db3d850c33e4ee129c663a",
+      "outputIndex": 0,
+      "scriptHash": "89aeb986765a0b61d0231b96313c4bf72d7ff23d0376e1149bcb386a"
+    },
+    "treasuryRecovery": {
+      "txHash": "76c7e8126185494235bf8dbea90ad1d55ddefe893f89ff5951a47af5a75f0471",
+      "outputIndex": 0,
+      "scriptHash": "891e8c8cc613967dd4c0155f5db321ba51db97d741fca2ee7a16c550"
+    },
+    "treasuryReserve": {
+      "txHash": "39ea5fb76144d894509e5dd6ebf01e23c3c1e8c6dad52a3bf0f4705f7e210e79",
+      "outputIndex": 0,
+      "scriptHash": "46ce037514b1e7e69b78681100560ba568c75d1f076870ca8d5c2bf8"
+    },
+    "savings": {
+      "txHash": "a0cb3114b7944372a613e12dd763a22d191f0151e4cd0cebbfe9bae519bffaf7",
+      "outputIndex": 0,
+      "scriptHash": "a61214861092a20f87f2e11d493b73fb592c8955c1118c57ec0de4f1"
+    },
+    "escrowV2": {
+      "txHash": "fa2a6cb592286000088bc41267a2bbd860e16c8f0ceefce8a0b09f470f8a7ce5",
+      "outputIndex": 0,
+      "scriptHash": "3623c729aae8b1cb32889d27c60c5cfb2a33f59e3074db0f5d208310"
+    },
+    "governanceDispatcher": {
+      "txHash": "088131321225b1d792c6b6f1c36ca132b57d939e64e7d1250d885428c081de22",
+      "outputIndex": 0,
+      "scriptHash": "a0508287708c55747734c48cb109387b09f2d28b49c435e673d19f4b"
+    },
+    "governanceVoting": {
+      "txHash": "343adad79a12b344a5a5470574e8691f1f5a1a0411500c2327a2bce640ab6bb6",
+      "outputIndex": 0,
+      "scriptHash": "35fd58e45e158d3aefe9bbb86656dc4e8f67d229cb947287351f2392"
+    }
   },
   "governance": {
-    "seed": { "txHash": "0ca091d4f4a20d75f069fe00fc97bfc7bfe61e9d70401d78a7b0e9b39848f1eb", "outputIndex": 0 },
-    "settingsPolicy": "810d188c8a7f11870d19ee51ad554ea7c92c415b6e7ee7b3e2074268",
-    "govPolicy": "1461174ad1702e11983ddc0f5dd82bfc29eb518ea700f180fc43f879",
-    "gateHash": "9ac0ad14556756c71616129ceaff9f093faed9cf5d7c1eab7b59a7ee",
-    "votingStakeHash": "ed48dbbe96ed01af22b676b1baad2a58f3dbbcffb6aa38a3bf903adf"
+    "seed": {
+      "txHash": "640dfc0003e82d389f325e700220a111e2c6d96e7e6d5229beed57993e31850c",
+      "outputIndex": 0
+    },
+    "settingsPolicy": "783c548d2b6d30c7fbf8fa3ff3df97b0af4808e8d15144ed90dfde7e",
+    "govPolicy": "a0508287708c55747734c48cb109387b09f2d28b49c435e673d19f4b",
+    "gateHash": "53cc6ae071208ba567665e681cf882eeb95bc8ac2c67cbf1ee6bf2ab",
+    "votingStakeHash": "35fd58e45e158d3aefe9bbb86656dc4e8f67d229cb947287351f2392",
+    "memberPolicy": "a61214861092a20f87f2e11d493b73fb592c8955c1118c57ec0de4f1",
+    "governedFund": "e2ebb1e92a45a97a1074a7a91627166c5c5b81e69df05011cc24257f9d106595"
   }
 }

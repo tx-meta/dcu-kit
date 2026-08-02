@@ -6,6 +6,94 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+**Validator hashes changed for governance and savings.** Both families were
+redeployed on Preprod (2026-08-02) and the manifest carries the new references.
+ROSCA and escrow blueprints are untouched, so their references and any position
+under them are unaffected.
+
+### Added
+
+- `group_type` on the savings fund datum: `0 ASCA, 1 VSLA, 2 Welfare, 3 Pool`,
+  constrained at creation and frozen by `updateFund`. `createFund` takes an
+  optional `groupType` (default `Asca`); `GroupType` is exported from
+  `@tx-meta/dcu-kit/savings`.
+- Share-weighted voting is enforced on-chain. A cast under `ShareWeighted` now
+  weighs the voter's share units, read from their member account, instead of
+  failing. It requires the charter's `share_source_policy` to be the eligibility
+  policy, and rejects a voter holding no shares.
+- `govActionForOperation` and `SavingsOperation` (governance utils): build a
+  decision that authorizes exactly one operation on the governed vault.
+
+### Changed
+
+- **Voters are bound to the fund they vote on.** When the eligibility policy is
+  the same policy that identifies the governed vault, one policy covers every
+  vault under it, so holding a token proved nothing about which vault. Register
+  and cast now reference-read the voter's member account and require its fund to
+  be the governed one. `registerVoter` and `castVote` attach that reference
+  automatically; the validator finds it by the (100) twin it holds, so no
+  reference-input index is involved.
+- **A decision is bound to the operation it authorizes.** The gate previously
+  discarded the decision's action, so a decision authorizing one operation on a
+  vault authorized any operation on it. It now requires the target input's
+  redeemer to match what the decision named. Binding is on the redeemer
+  constructor by default, because a vault redeemer carries input indices
+  resolved at build time and its exact bytes are unknowable when a proposal is
+  opened; a `Generic` action with a payload binds the exact bytes instead.
+  A target spent with no redeemer performs no action and is rejected.
+- A welfare fund that never sold shares can close its cycle with an empty pot,
+  once its welfare is fully disbursed, giving it a route to dissolution. The
+  SDK's `closeCycle` allows the same case.
+- Reference-script deploys select only the inputs they need, preferring ADA-only
+  ones. A deploy carries the whole script, and an unbounded wallet selection
+  built a 16,645-byte transaction for the same 15.8 KB script that fits in
+  16,001 bytes from a single clean input.
+- The default opener policy covers `Generic` actions (tag 5), which is how a
+  decision names an operation.
+
+Validator fingerprints are unchanged, so no redeployment is required. The Preprod
+reference scripts WERE republished on 2026-08-01, so consumers must pick up the new
+out-refs from `src/core/deployments/preprod.json`.
+
+### Added
+
+- `deployModuleScripts` (admin): publishes the standalone-module validators
+  (`savings`, `escrowV2`, `pool`, `project`, `governanceDispatcher`,
+  `governanceVoting`) as reference scripts at the permanent always-fails address,
+  with the size ceiling, launch-surface freeze and indexing poll `deployScripts`
+  already applied to the six ROSCA refs. Idempotent via `options.existing`, and a
+  recorded reference that carries a different hash is republished alongside the old
+  one rather than replacing it, so positions bound to the old hash stay spendable.
+- `refScripts` (admin): the shared reference-script deploy layer behind both deploy
+  functions. `spendableWalletUtxos` filters reference-script UTxOs out of the input
+  set a deploy may spend, passed to Lucid as `presetWalletInputs`.
+- `EscrowV2ScriptRefs` and `scriptRefs` on every escrow v2 endpoint that witnesses a
+  validator (20 endpoints; previously only `allocateToEscrow`, under the name
+  `escrowScriptRef`). Session defaults via `configureEscrowV2ReferenceScripts`,
+  mirroring the ROSCA convention.
+- `getPoolEscrows` (escrow v2 query): lists the live escrows a pool has funded, so a
+  fundraiser can offer a list where `allocateToEscrow`'s `existingStateTokenName`
+  previously required a token name supplied from memory.
+- `GroupFullError` and `InsufficientFundsError`: `joinGroup` now names a full group
+  and an unfundable deposit before signing, rather than surfacing them as a validator
+  crash and a coin-selection failure.
+- `groupTokenSuffix` (optional) on `CancelRecoveryConfig`, to pick which group's
+  recovery request is being vetoed when the same fresh account token backs a request
+  in more than one. SDK-side selection only: the veto carries no group on-chain.
+
+### Changed
+
+- `verifyProtocolDeployment` asserts the always-fails address for all ten reference
+  scripts. The module refs were previously exempt as "deployer-owned by design"; a
+  reference at a spendable address is one coin selection away from being destroyed,
+  which is how the savings reference was lost on Preprod.
+- `ReferenceScriptMismatchError.validator` accepts the module validator names.
+
+### Deprecated
+
+- `AllocateToEscrowConfig.escrowScriptRef`, in favour of `scriptRefs: { escrow }`.
+  Still honoured, and it wins when both are supplied.
+
 ## [0.5.7-preprod.0] - 2026-07-29
 
 Validator fingerprints are unchanged, so no redeployment is required. This completes

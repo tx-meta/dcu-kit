@@ -36,6 +36,7 @@ fn loan_in(datum: SavingsDatum) -> Input {
 fn f_loaned() -> SavingsDatum {
   SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -198,6 +199,7 @@ test disburse__rejects_liquidity_breach() {
   // dip below social 3 + buffer 2
   let charter = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -216,6 +218,7 @@ test disburse__rejects_liquidity_breach() {
   }
   let after = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -313,6 +316,7 @@ test disburse__rejects_book_understated() {
   let m = member_in(make_member(10, 3_000_000))
   let understated = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -378,6 +382,7 @@ test repay__accepts_partial() {
 fn repay_fund_after(loans_outstanding: Int) -> SavingsDatum {
   SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -662,6 +667,7 @@ test write_off__accepts_full_seizure() {
   let l = loan_in(make_loan(3_000_000, 400_000, Defaulted))
   let fund_after = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -705,6 +711,7 @@ test write_off__accepts_partial_seizure_socialized() {
   let l = loan_in(make_loan(8_000_000, 0, Defaulted))
   let fund_after = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -796,6 +803,7 @@ test write_off__rejects_value_taken() {
   let l = loan_in(make_loan(3_000_000, 400_000, Defaulted))
   let fund_after = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -942,6 +950,7 @@ test prop_write_off_seizure_bounded(units via fuzz.int_between(1, 12)) {
   }
   let fund_after = SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",

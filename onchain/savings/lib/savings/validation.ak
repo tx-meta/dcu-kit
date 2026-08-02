@@ -187,6 +187,7 @@ pub fn validate_create_fund(
   expect  
       SavingsFund {
         title,
+        group_type,
         asset_policy,
         asset_name,
         share_value,
@@ -205,6 +206,10 @@ pub fn validate_create_fund(
     = output_datum(out)
   let charter_sane = and {
     bytearray.length(title) <= 64,
+    // [spec 3.3 CreateFund]: only the four audited taxonomy values exist —
+    // 0 ASCA, 1 VSLA, 2 Welfare, 3 Pool. An unrecognised type would be a
+    // configuration no audit covers.
+    group_type >= 0 && group_type <= 3,
     share_value > 0,
     min_shares_per_deposit > 0,
     min_shares_per_deposit <= max_shares_per_deposit,
@@ -377,6 +382,7 @@ pub fn validate_deposit(
   expect  
       SavingsFund {
         title,
+        group_type,
         quorum,
         asset_policy,
         asset_name,
@@ -445,6 +451,7 @@ pub fn validate_deposit(
     (
       SavingsFund {
         title,
+        group_type,
         quorum,
         asset_policy,
         asset_name,
@@ -480,6 +487,7 @@ pub fn validate_deposit(
     (
       SavingsFund {
         title,
+        group_type,
         quorum,
         asset_policy,
         asset_name,
@@ -511,6 +519,7 @@ pub fn validate_deposit(
     (
       SavingsFund {
         title,
+        group_type,
         quorum,
         asset_policy,
         asset_name,
@@ -566,6 +575,7 @@ pub fn validate_withdraw(
   expect  
       SavingsFund {
         title,
+        group_type,
         quorum,
         asset_policy,
         asset_name,
@@ -612,6 +622,7 @@ pub fn validate_withdraw(
   let released = units * share_value
   let expected_fund = SavingsFund {
     title,
+    group_type,
     quorum,
     asset_policy,
     asset_name,
@@ -677,6 +688,7 @@ pub fn validate_claim_share_out(
   expect  
       SavingsFund {
         title,
+        group_type,
         quorum,
         asset_policy,
         asset_name,
@@ -720,6 +732,7 @@ pub fn validate_claim_share_out(
   expect Some(member_out) = list.at(outputs, member_output_index)
   let expected_fund = SavingsFund {
     title,
+    group_type,
     quorum,
     asset_policy,
     asset_name,
@@ -805,6 +818,7 @@ pub fn validate_social_payout(
   expect  
       SavingsFund {
         title,
+        group_type,
         quorum,
         asset_policy,
         asset_name,
@@ -831,6 +845,7 @@ pub fn validate_social_payout(
   )
   let expected_fund = SavingsFund {
     title,
+    group_type,
     quorum,
     asset_policy,
     asset_name,
@@ -869,6 +884,17 @@ pub fn validate_social_payout(
 
 /// [spec 3.3 UpdateFund]: quorum amends mutable charter fields / rotates the
 /// quorum. Asset, share_value, totals, and status are immutable.
+/// A quorum may bring the cycle end forward or drop it, never push it out.
+/// Extending it (or imposing one where there was none) would let the quorum
+/// defer CloseCycle forever and strand every member's savings in the vault.
+fn cycle_end_not_extended(current: Option<Int>, next: Option<Int>) -> Bool {
+  when (current, next) is {
+    (_, None) -> True
+    (None, Some(_)) -> False
+    (Some(old), Some(new)) -> new <= old
+  }
+}
+
 pub fn validate_update_fund(
   policy_id: PolicyId,
   datum: SavingsDatum,
@@ -880,10 +906,13 @@ pub fn validate_update_fund(
 ) -> Bool {
   expect  
       SavingsFund {
+        group_type,
         quorum,
         asset_policy,
         asset_name,
         share_value,
+        withdrawal_policy,
+        cycle_end,
         shares_total,
         savings_total,
         social_total,
@@ -898,6 +927,7 @@ pub fn validate_update_fund(
   expect  
       SavingsFund {
         title: new_title,
+        group_type: out_group_type,
         quorum: _new_quorum,
         asset_policy: out_asset_policy,
         asset_name: out_asset_name,
@@ -907,7 +937,7 @@ pub fn validate_update_fund(
         withdrawal_policy: new_wp,
         max_loan_multiple: new_multiple,
         loan_grace: new_grace,
-        cycle_end: _new_cycle_end,
+        cycle_end: new_cycle_end,
         shares_total: out_shares_total,
         savings_total: out_savings_total,
         social_total: out_social_total,
@@ -923,6 +953,9 @@ pub fn validate_update_fund(
     (out_asset_policy == asset_policy)?,
     (out_asset_name == asset_name)?,
     (out_share_value == share_value)?,
+    // [spec 3.3 UpdateFund]: a fund cannot change what kind of fund it is —
+    // members joined under an audited taxonomy and it governs them for life
+    (out_group_type == group_type)?,
     (out_shares_total == shares_total)?,
     (out_savings_total == savings_total)?,
     (out_social_total == social_total)?,
@@ -933,7 +966,15 @@ pub fn validate_update_fund(
     (bytearray.length(new_title) <= 64)?,
     (new_min > 0)?,
     (new_min <= new_max)?,
-    (new_wp == 0 || new_wp == 1)?,
+    // [spec 3.3 UpdateFund]: the withdrawal policy is what a member relied on
+    // when they deposited. Flipping flexible (1) → locked (0) afterwards traps
+    // savings the member was promised they could take out, so it is frozen for
+    // the life of the fund rather than merely range-checked.
+    (new_wp == withdrawal_policy)?,
+    // [spec 3.3 UpdateFund]: cycle_end gates CloseCycle, so pushing it out
+    // postpones every member's share-out indefinitely. It may be brought
+    // forward or removed, never extended or newly imposed.
+    cycle_end_not_extended(cycle_end, new_cycle_end)?,
     (new_multiple >= 0)?,
     (new_grace >= 0)?,
     // [spec 3.3 UpdateFund]: amending moves no money
@@ -956,6 +997,7 @@ pub fn validate_close_cycle(
   expect  
       SavingsFund {
         title,
+        group_type,
         quorum,
         asset_policy,
         asset_name,
@@ -994,6 +1036,7 @@ pub fn validate_close_cycle(
   expect Some(fund_out) = list.at(outputs, fund_output_index)
   let expected_fund = SavingsFund {
     title,
+    group_type,
     quorum,
     asset_policy,
     asset_name,
@@ -1022,8 +1065,22 @@ pub fn validate_close_cycle(
     // repaid or written off before the pot freezes
     (loans_outstanding == 0)?,
     (fund_out.address == own_input.output.address)?,
-    (pot > 0)?,
-    (shares_total > 0)?,
+    // [spec 3.3 CloseCycle]: a share-bearing fund freezes a non-empty pot. A
+    // welfare-only fund never sells shares, so it would have no way to reach
+    // SharingOut and no way to dissolve — its min-ADA would be locked forever.
+    // It closes with an empty pot instead, and only once its welfare has been
+    // paid out, otherwise social_total strands with no path out.
+    or {
+      and {
+        shares_total > 0,
+        pot > 0,
+      },
+      and {
+        shares_total == 0,
+        pot == 0,
+        social_total == 0,
+      },
+    }?,
     // [spec 3.3 CloseCycle]: freezing moves no money
     (fund_out.value == own_input.output.value)?,
     (output_datum(fund_out) == expected_fund)?,
@@ -1152,6 +1209,7 @@ pub fn validate_disburse_loan(
   expect  
       SavingsFund {
         title,
+        group_type,
         quorum,
         asset_policy,
         asset_name,
@@ -1214,6 +1272,7 @@ pub fn validate_disburse_loan(
   expect Finite(hi) = tx.validity_range.upper_bound.bound_type
   let expected_fund = SavingsFund {
     title,
+    group_type,
     quorum,
     asset_policy,
     asset_name,
@@ -1305,6 +1364,7 @@ pub fn validate_repay_loan(
   expect  
       SavingsFund {
         title,
+        group_type,
         quorum,
         asset_policy,
         asset_name,
@@ -1405,6 +1465,7 @@ pub fn validate_repay_loan(
   expect Some(member_out) = list.at(outputs, member_output_index)
   let expected_fund = SavingsFund {
     title,
+    group_type,
     quorum,
     asset_policy,
     asset_name,
@@ -1525,6 +1586,7 @@ pub fn validate_write_off_loan(
   expect  
       SavingsFund {
         title,
+        group_type,
         quorum,
         asset_policy,
         asset_name,
@@ -1581,6 +1643,7 @@ pub fn validate_write_off_loan(
   expect Some(member_out) = list.at(outputs, member_output_index)
   let expected_fund = SavingsFund {
     title,
+    group_type,
     quorum,
     asset_policy,
     asset_name,

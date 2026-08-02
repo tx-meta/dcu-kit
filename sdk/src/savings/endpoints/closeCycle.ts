@@ -45,6 +45,14 @@ export type CloseCycleConfig = {
   /** Required when the quorum is a script credential. */
   quorumWitness?: PartyWitness;
   /**
+   * Clock override (POSIX ms). Pass `emulator.now()` in emulator tests, and on
+   * a live network pass an older time when the chain tip is lagging: the
+   * default 60s drift buffer is occasionally not enough, and the ledger then
+   * rejects the transaction with `OutsideValidityIntervalUTxO` because its
+   * lower bound sits a few slots ahead of the tip.
+   */
+  currentTime?: bigint;
+  /**
    * Optional human-readable note attached to this transaction as CIP-20
    * metadata (label 674). Transaction-scoped: no validator reads it, it costs
    * no min-ADA, and it can never be edited. Public and permanent — never PII.
@@ -71,11 +79,18 @@ export const unsignedCloseCycleTxProgram = (
     }
 
     const network = lucid.config().network ?? "Preprod";
-    const now = BigInt(Date.now());
+    const now = config.currentTime ?? BigInt(Date.now());
+    // The validator compares the transaction's LOWER BOUND against cycle_end
+    // (lo >= cycle_end), and that bound is `now` minus the clock-drift buffer,
+    // carried as a 1-second slot the ledger floors. Preflighting `now` instead
+    // would accept a transaction for the whole drift window that the chain then
+    // rejects, so check the bound that is actually submitted.
+    const drift = now - (network === "Custom" ? 0n : 60_000n);
+    const validFromMs = ((drift + 999n) / 1000n) * 1000n;
     if (
       fund.cycle_end !== null &&
       network !== "Custom" &&
-      now < fund.cycle_end
+      validFromMs < fund.cycle_end
     ) {
       return yield* Effect.fail(
         new ConfigurationError({
@@ -91,11 +106,21 @@ export const unsignedCloseCycleTxProgram = (
     const buffer = unit === "lovelace" ? MIN_ADA_BUFFER : 0n;
     const vaultValue = fundUtxo.assets[unit] ?? 0n;
     const pot = vaultValue - fund.social_total - buffer;
-    if (pot <= 0n || fund.shares_total <= 0n) {
+    // A share-bearing fund freezes a non-empty pot. A welfare-only fund never
+    // sold shares, so it closes with an empty pot instead — that is its only
+    // route to a terminal state, and without it the fund could never dissolve.
+    // Its welfare must be fully disbursed first, or social_total strands with
+    // no path out.
+    const welfareClose =
+      fund.shares_total === 0n && pot === 0n && fund.social_total === 0n;
+    if (!welfareClose && (pot <= 0n || fund.shares_total <= 0n)) {
       return yield* Effect.fail(
         new ConfigurationError({
           configKey: "fundTokenName",
-          message: "nothing to share out — the fund has no distributable pot",
+          message:
+            fund.shares_total === 0n
+              ? "a fund with no shares can only close once its welfare pot is fully disbursed"
+              : "nothing to share out — the fund has no distributable pot",
         }),
       );
     }
@@ -128,7 +153,7 @@ export const unsignedCloseCycleTxProgram = (
       inputs: [fundUtxo],
     };
 
-    const validFrom = Number(now - (network === "Custom" ? 0n : 60_000n));
+    const validFrom = Number(validFromMs);
     const txDraft = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([fundUtxo], redeemer)
       .compose(

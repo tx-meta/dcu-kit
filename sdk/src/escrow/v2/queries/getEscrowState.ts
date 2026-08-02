@@ -2,7 +2,7 @@ import { LucidEvolution, toText } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { DcuError } from "../../../core/errors.js";
 import { makeReturn } from "../../../core/utils/index.js";
-import { fromOnchainAddress } from "../types.js";
+import { credentialToParty, fromOnchainAddress } from "../types.js";
 import {
   cureBoundary,
   disputeFrozen,
@@ -33,6 +33,16 @@ export type EscrowV2State = {
   fundingMode: "Upfront" | "PerMilestone";
   timeoutPolicy: "RefundToFunder" | "ReleaseToBeneficiary";
   hasArbiter: boolean;
+  /**
+   * Who may release, as a credential rather than an address: the verifier can
+   * be a script (a multisig or a governance gate), which has no single address.
+   * Exposed so a caller can tell whether the connected wallet holds the release
+   * authority BEFORE offering the action. Without it a UI can only show the
+   * button to everyone and let the build fail, which reads as a broken app.
+   */
+  verifier: { type: "Key" | "Script"; hash: string };
+  /** The tie-breaker credential, or null when the dispute path is disabled. */
+  arbiter: { type: "Key" | "Script"; hash: string } | null;
   milestones: {
     amount: bigint;
     deadline: bigint;
@@ -90,6 +100,8 @@ export const getEscrowStateProgram = (
       fundingMode: datum.funding_mode,
       timeoutPolicy: datum.timeout_policy,
       hasArbiter: datum.arbiter !== null,
+      verifier: credentialToParty(datum.verifier),
+      arbiter: datum.arbiter === null ? null : credentialToParty(datum.arbiter),
       milestones: datum.milestones.map((m, i) => ({
         amount: m.amount,
         deadline: m.deadline,

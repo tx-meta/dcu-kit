@@ -320,6 +320,23 @@ export type CredentialD = Data.Static<typeof CredentialSchema>;
  */
 export type PartyRef = string | { type: "Key" | "Script"; hash: string };
 
+/**
+ * The inverse of `partyToCredential`: reads an on-chain credential back into the
+ * `{ type, hash }` half of PartyRef.
+ *
+ * Deliberately not an address. A verifier or arbiter may be a script (a multisig
+ * or a governance gate), which has no single address, and rendering one as an
+ * enterprise address would invite callers to compare it against a wallet address
+ * and get the wrong answer. Compare hashes against the connected wallet's
+ * payment credential instead.
+ */
+export const credentialToParty = (
+  credential: CredentialD,
+): { type: "Key" | "Script"; hash: string } =>
+  "VerificationKey" in credential
+    ? { type: "Key", hash: credential.VerificationKey[0] }
+    : { type: "Script", hash: credential.Script[0] };
+
 /** Normalizes a PartyRef to the on-chain credential representation. */
 export const partyToCredential = (
   party: PartyRef,

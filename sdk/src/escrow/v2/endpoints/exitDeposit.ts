@@ -22,6 +22,12 @@ import {
 } from "../../../core/utils/index.js";
 import { PoolSpendRedeemer, VaultDatum } from "../types.js";
 import { poolVaultValidator } from "../validators.js";
+import {
+  effectiveEscrowV2ScriptRefs,
+  EscrowV2ScriptRefs,
+  verifyEscrowV2ScriptRefs,
+  witnessEscrowV2Script,
+} from "../scriptRefs.js";
 import { applyPartyWitness, PartyWitness, poolVaultAddress } from "../utils.js";
 
 /**
@@ -35,6 +41,13 @@ import { applyPartyWitness, PartyWitness, poolVaultAddress } from "../utils.js";
  * @returns Effect yielding TxSignBuilder.
  */
 export type ExitDepositConfig = {
+  /**
+   * Reference-script UTxOs for the escrow v2 validators. Supplying the
+   * escrow ref keeps its 11.4 KB out of the transaction body. Falls back
+   * to the session default set by `configureEscrowV2ReferenceScripts`,
+   * then to inlining the script.
+   */
+  scriptRefs?: EscrowV2ScriptRefs;
   /** The pool's permanent identity (returned by createPool). */
   poolTokenName: string;
   /** Required when the contributor credential is a script hash. */
@@ -54,6 +67,8 @@ export const unsignedExitDepositTxProgram = (
   config: ExitDepositConfig,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const scriptRefs = effectiveEscrowV2ScriptRefs(config.scriptRefs);
+    yield* verifyEscrowV2ScriptRefs(scriptRefs);
     const network = lucid.config().network ?? "Preprod";
     const walletAddress = yield* getWalletAddress(lucid);
     const myCredential = paymentCredentialOf(walletAddress).hash;
@@ -117,9 +132,13 @@ export const unsignedExitDepositTxProgram = (
       inputs: [deposit],
     };
 
-    let baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
+    let baseTx = witnessEscrowV2Script(
+      yield* attachTxMessage(lucid.newTx(), config.message),
+      "pool",
+      scriptRefs,
+      ["spend"],
+    )
       .collectFrom([deposit], redeemer)
-      .attach.SpendingValidator(poolVaultValidator.spendPool)
       .pay.ToAddress(walletAddress, deposit.assets);
     if (depositDatum.locked_until !== null) {
       baseTx = baseTx.validFrom(Number(depositDatum.locked_until + 1_000n));

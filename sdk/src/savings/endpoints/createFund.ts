@@ -26,6 +26,8 @@ import {
   partyToCredential,
   SavingsDatum,
   SavingsMintRedeemer,
+  GroupType,
+  type GroupTypeValue,
 } from "../types.js";
 import { savingsPolicyId, savingsVaultValidator } from "../validators.js";
 import {
@@ -50,6 +52,14 @@ export type CreateFundConfig = {
   scriptRef?: UTxO;
   /** Short human-readable label, max 64 UTF-8 bytes. Never PII. */
   title: string;
+  /**
+   * The fund's taxonomy — see {@link GroupType}. Immutable once created, so a
+   * fund cannot later become a different kind of fund. Defaults to `Asca`.
+   *
+   * `Welfare` is the one type that never sells shares: it closes with an empty
+   * pot once its welfare is disbursed, rather than on a share-out.
+   */
+  groupType?: GroupTypeValue;
   /** The ratification authority (address or multisig). Defaults to the wallet. */
   quorum?: PartyRef;
   /** The fund's asset. Omit (or "") for ADA. */
@@ -155,6 +165,7 @@ export const unsignedCreateFundTxProgram = (
     const datum: SavingsDatum = {
       SavingsFund: {
         title: titleHex,
+        group_type: config.groupType ?? GroupType.Asca,
         quorum,
         asset_policy: config.assetPolicy ?? "",
         asset_name: config.assetName ?? "",

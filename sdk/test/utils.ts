@@ -11,6 +11,7 @@
 
 import {
   CML,
+  Data,
   Emulator,
   fromText,
   generateEmulatorAccount,
@@ -20,11 +21,13 @@ import {
   PROTOCOL_PARAMETERS_DEFAULT,
   Script,
   scriptFromNative,
+  validatorToAddress,
   UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { GroupDatum } from "../src/core/types.js";
-import { signAndSubmit } from "../src/core/utils/index.js";
+import { assetNameLabels, signAndSubmit } from "../src/core/utils/index.js";
+import { SavingsDatum, SavingsDatumSchema } from "../src/savings/types.js";
 import type { GovScriptRefs } from "../src/governance/utils.js";
 import type { GovernanceInstance } from "../src/governance/validators.js";
 
@@ -159,8 +162,56 @@ export const advancePast = (emulator: Emulator, deadlineMs: bigint) =>
  */
 export const membershipScript = scriptFromNative({ type: "all", scripts: [] });
 export const MEMBER_POLICY = mintingPolicyToId(membershipScript);
-export const MEMBER_NAME = fromText("member");
+// CIP-68 named, like the savings user tokens this policy stands in for: the
+// governance fund binding finds a member's account by the (100) twin of the
+// (222) token they present, so the pair has to share a suffix.
+export const MEMBER_SUFFIX = "11".repeat(28);
+export const MEMBER_NAME = assetNameLabels.prefix222 + MEMBER_SUFFIX;
+export const MEMBER_REF_NAME = assetNameLabels.prefix100 + MEMBER_SUFFIX;
 export const MEMBER_UNIT = MEMBER_POLICY + MEMBER_NAME;
+export const MEMBER_REF_UNIT = MEMBER_POLICY + MEMBER_REF_NAME;
+
+/**
+ * Parks the member's (100) account UTxO with a savings MemberAccount datum
+ * naming `fundId`. Governance reference-reads it to bind a voter to one fund
+ * and, under ShareWeighted, to read their share units.
+ */
+export const mintMemberAccount = (
+  lucid: LucidEvolution,
+  fundId: string,
+  shareUnits = 1n,
+  refUnit: string = MEMBER_REF_UNIT,
+) =>
+  Effect.gen(function* () {
+    const datum: SavingsDatum = {
+      MemberAccount: {
+        fund_id: fundId,
+        share_units: shareUnits,
+        social_paid: 0n,
+        borrowed: 0n,
+        consent: true,
+        joined_at: 0n,
+      },
+    };
+    // Parked OFF-wallet: a UTxO cannot be both spent and referenced in one
+    // transaction, so leaving it in the wallet would let coin selection consume
+    // the very input governance reads.
+    const network = lucid.config().network ?? "Custom";
+    const address = validatorToAddress(network, membershipScript);
+    const tx = yield* Effect.promise(() =>
+      lucid
+        .newTx()
+        .mintAssets({ [refUnit]: 1n })
+        .attach.MintingPolicy(membershipScript)
+        .pay.ToAddressWithData(
+          address,
+          { kind: "inline", value: Data.to(datum, SavingsDatum) },
+          { [refUnit]: 1n },
+        )
+        .complete(),
+    );
+    yield* signAndSubmit(tx);
+  });
 
 /** Mint one membership token to the connected wallet. */
 export const mintMembership = (

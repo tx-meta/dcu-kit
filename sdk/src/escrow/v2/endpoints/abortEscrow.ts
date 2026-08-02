@@ -14,6 +14,12 @@ import {
 } from "../../../core/utils/index.js";
 import { EscrowV2MintRedeemer, EscrowV2SpendRedeemer } from "../types.js";
 import { escrowV2Validator } from "../validators.js";
+import {
+  effectiveEscrowV2ScriptRefs,
+  EscrowV2ScriptRefs,
+  verifyEscrowV2ScriptRefs,
+  witnessEscrowV2Script,
+} from "../scriptRefs.js";
 import { applyPartyWitness, PartyWitness, resolveEscrowV2 } from "../utils.js";
 import { stateUnitOf } from "./tranche.js";
 
@@ -27,6 +33,13 @@ import { stateUnitOf } from "./tranche.js";
  * @returns Effect yielding TxSignBuilder (needs both signatures).
  */
 export type AbortEscrowV2Config = {
+  /**
+   * Reference-script UTxOs for the escrow v2 validators. Supplying the
+   * escrow ref keeps its 11.4 KB out of the transaction body. Falls back
+   * to the session default set by `configureEscrowV2ReferenceScripts`,
+   * then to inlining the script.
+   */
+  scriptRefs?: EscrowV2ScriptRefs;
   /** The escrow's permanent identity (returned by createEscrow). */
   stateTokenName: string;
   /** Explicit distribution both parties agreed on. */
@@ -48,6 +61,8 @@ export const unsignedAbortEscrowV2TxProgram = (
   config: AbortEscrowV2Config,
 ): Effect.Effect<TxSignBuilder, DcuError, never> =>
   Effect.gen(function* () {
+    const scriptRefs = effectiveEscrowV2ScriptRefs(config.scriptRefs);
+    yield* verifyEscrowV2ScriptRefs(scriptRefs);
     const { utxo: escrowUtxo, datum } = yield* resolveEscrowV2(
       lucid,
       config.stateTokenName,
@@ -64,14 +79,17 @@ export const unsignedAbortEscrowV2TxProgram = (
       inputs: [escrowUtxo],
     };
 
-    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
+    const baseTx = witnessEscrowV2Script(
+      yield* attachTxMessage(lucid.newTx(), config.message),
+      "escrow",
+      scriptRefs,
+      ["spend", "mint"],
+    )
       .collectFrom([escrowUtxo], redeemer)
-      .attach.SpendingValidator(escrowV2Validator.spendEscrow)
       .mintAssets(
         { [stateUnit]: -1n },
         Data.to("BurnEscrowV2", EscrowV2MintRedeemer),
-      )
-      .attach.MintingPolicy(escrowV2Validator.mintEscrow);
+      );
 
     const withPayouts = config.payouts.reduce(
       (t, p) => t.pay.ToAddress(p.address, p.assets),

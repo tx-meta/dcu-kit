@@ -257,8 +257,6 @@ export const GovSpendRedeemerSchema = Data.Enum([
       voter_index: Data.Integer(),
       record_input_index: Data.Integer(),
       record_output_index: Data.Integer(),
-      /** 99 under OneMemberOneVote (no share reference input read). */
-      share_ref_index: Data.Integer(),
       approve: Data.Boolean(),
       withdrawal_index: Data.Integer(),
     }),
@@ -317,7 +315,6 @@ export const VotingActionSchema = Data.Enum([
       voter_index: Data.Integer(),
       record_input_index: Data.Integer(),
       record_output_index: Data.Integer(),
-      share_ref_index: Data.Integer(),
       approve: Data.Boolean(),
     }),
   }),

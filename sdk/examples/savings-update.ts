@@ -52,9 +52,8 @@ async function main() {
     ...(process.env.MAX_SHARES
       ? { maxSharesPerDeposit: BigInt(process.env.MAX_SHARES) }
       : {}),
-    ...(process.env.WITHDRAWAL_POLICY
-      ? { withdrawalPolicy: BigInt(process.env.WITHDRAWAL_POLICY) }
-      : {}),
+    // WITHDRAWAL_POLICY is intentionally not settable here: the charter
+    // freezes it for the life of the fund. Set it at createFund.
     ...(process.env.CYCLE_END_MINUTES
       ? {
           cycleEnd: BigInt(

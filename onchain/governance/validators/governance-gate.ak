@@ -21,12 +21,13 @@ validator governance_gate(gov_policy: PolicyId) {
     self: Transaction,
   ) {
     // [security]: datum must be present — guards against datum-less injection.
-    expect Some(Decision { target_policy, target_id, .. }) = datum
+    expect Some(Decision { target_policy, target_id, action, .. }) = datum
     let Authorize { decision_input_index, target_input_index } = redeemer
     validate_authorize(
       gov_policy,
       target_policy,
       target_id,
+      action,
       decision_input_index,
       target_input_index,
       own_ref,

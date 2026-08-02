@@ -4,6 +4,7 @@ import { Effect } from "effect";
 import { ConfigurationError } from "../../../core/errors.js";
 import { EscrowDatumV2, fromOnchainAddress } from "../types.js";
 import { escrowV2PolicyId, escrowV2Validator } from "../validators.js";
+import { EscrowV2ScriptRefs } from "../scriptRefs.js";
 import { escrowV2AssetUnit, MIN_ADA_BUFFER } from "../utils.js";
 import { EscrowV2MintRedeemer } from "../types.js";
 
@@ -18,6 +19,7 @@ export const applyTrancheOutputs = (
   escrowUtxo: UTxO,
   datum: EscrowDatumV2,
   stateUnit: string,
+  scriptRefs: EscrowV2ScriptRefs,
 ): Effect.Effect<
   {
     tx: TxBuilder;
@@ -42,6 +44,26 @@ export const applyTrancheOutputs = (
       );
     }
     const tranche = milestone.amount;
+
+    // PerMilestone escrows are funded one tranche at a time, and
+    // `allocateToEscrow { newEscrow }` locks only MIN_ADA_BUFFER: the tranche
+    // itself arrives in a SECOND allocation against `existingStateTokenName`.
+    // Releasing before that money lands crashes the validator with a bare
+    // "failed script execution Spend[0]" that names neither the milestone nor
+    // the shortfall, so the caller is told here instead, before paying a fee.
+    const lockedBalance = escrowUtxo.assets[escrowV2AssetUnit(datum)] ?? 0n;
+    if (lockedBalance < tranche) {
+      return yield* Effect.fail(
+        new ConfigurationError({
+          configKey: "stateTokenName",
+          message:
+            `milestone ${releasedCount + 1} of ${datum.milestones.length} needs ${tranche} ` +
+            `but only ${lockedBalance} is locked. Fund the tranche first ` +
+            `(allocateToEscrow with existingStateTokenName), then release`,
+        }),
+      );
+    }
+
     const isFinal = releasedCount + 1 === datum.milestones.length;
     const beneficiaryAddress = yield* fromOnchainAddress(
       network,
@@ -91,14 +113,21 @@ export const applyTrancheOutputs = (
       for (const [unit, amount] of Object.entries(funderRemainder)) {
         if (amount <= 0n) delete funderRemainder[unit];
       }
+      // The caller already witnessed the spend purpose. Mint and spend share
+      // one compiled script, so re-attaching it inline while a reference input
+      // is in play would make the witness extraneous and fail the ledger.
+      const burnBase = baseTx.mintAssets(
+        { [stateUnit]: -1n },
+        Data.to("BurnEscrowV2", EscrowV2MintRedeemer),
+      );
+      // Mint and spend share one compiled script. When the caller witnessed it
+      // from a reference input, that covers the burn too; attaching it inline
+      // as well would make the witness extraneous and fail the ledger.
       const burnTx = paySplit(
-        baseTx
-          .mintAssets(
-            { [stateUnit]: -1n },
-            Data.to("BurnEscrowV2", EscrowV2MintRedeemer),
-          )
-          .attach.MintingPolicy(escrowV2Validator.mintEscrow)
-          .pay.ToAddress(beneficiaryAddress, payoutAssets),
+        (scriptRefs.escrow
+          ? burnBase
+          : burnBase.attach.MintingPolicy(escrowV2Validator.mintEscrow)
+        ).pay.ToAddress(beneficiaryAddress, payoutAssets),
       );
       const withRemainder =
         Object.keys(funderRemainder).length > 0

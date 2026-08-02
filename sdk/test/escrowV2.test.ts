@@ -22,6 +22,7 @@ import {
 } from "../src/escrow/v2/endpoints/createEscrow.js";
 import { unsignedReleaseMilestoneV2TxProgram } from "../src/escrow/v2/endpoints/releaseMilestone.js";
 import { unsignedTimeoutReleaseTxProgram } from "../src/escrow/v2/endpoints/timeoutRelease.js";
+import { unsignedAbortEscrowV2TxProgram } from "../src/escrow/v2/endpoints/abortEscrow.js";
 import { unsignedReclaimEscrowV2TxProgram } from "../src/escrow/v2/endpoints/reclaimEscrow.js";
 import { unsignedContributeTxProgram } from "../src/escrow/v2/endpoints/contribute.js";
 import { unsignedSubmitEvidenceTxProgram } from "../src/escrow/v2/endpoints/submitEvidence.js";
@@ -36,6 +37,8 @@ import { unsignedCreatePoolTxProgram } from "../src/escrow/v2/endpoints/createPo
 import { unsignedDepositToPoolTxProgram } from "../src/escrow/v2/endpoints/depositToPool.js";
 import { unsignedExitDepositTxProgram } from "../src/escrow/v2/endpoints/exitDeposit.js";
 import { unsignedAllocateToEscrowTxProgram } from "../src/escrow/v2/endpoints/allocateToEscrow.js";
+import { unsignedUpdatePoolTxProgram } from "../src/escrow/v2/endpoints/updatePool.js";
+import { unsignedClosePoolTxProgram } from "../src/escrow/v2/endpoints/closePool.js";
 import { getPoolStateProgram } from "../src/escrow/v2/queries/getPoolState.js";
 import { escrowV2Validator } from "../src/escrow/v2/validators.js";
 import { getPoolDepositsProgram } from "../src/escrow/v2/queries/getPoolDeposits.js";
@@ -209,7 +212,12 @@ describe("escrow v2 lifecycle (emulator)", () => {
         expect(state.lockedBalance < 40_000_000n).toBe(true);
         expect(state.nextTrancheFunded).toBe(false);
 
-        // Real UPLC: the validator rejects the underfunded tranche.
+        // The SDK refuses before building, naming the milestone and the
+        // shortfall. The validator still rejects this independently — that is
+        // the security boundary — but a caller who hits it on a live network
+        // gets a bare "failed script execution Spend[0]" and no way to tell an
+        // underfunded tranche from any other rejection, so the check is
+        // duplicated here where it can produce a real message.
         ctx.lucid.selectWallet.fromPrivateKey(ctx.verifier.privateKey);
         const underfunded = yield* Effect.either(
           unsignedReleaseMilestoneV2TxProgram(ctx.lucid, {
@@ -218,6 +226,12 @@ describe("escrow v2 lifecycle (emulator)", () => {
           }),
         );
         expect(underfunded._tag).toBe("Left");
+        if (underfunded._tag === "Left") {
+          expect(underfunded.left._tag).toBe("ConfigurationError");
+          expect(String(underfunded.left.message)).toContain(
+            "Fund the tranche first",
+          );
+        }
 
         selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
         const topUp = yield* unsignedContributeTxProgram(ctx.lucid, {
@@ -887,6 +901,228 @@ describe("escrow v2 lifecycle (emulator)", () => {
         getProjectStateProgram(ctx.lucid, { projectTokenName }),
       );
       expect(gone._tag).toBe("Left");
+    }),
+  );
+  it.effect(
+    "pool vault: the quorum amends the charter, rotates itself, and closes",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const { tx: poolTx, poolTokenName } =
+          yield* unsignedCreatePoolTxProgram(ctx.lucid, {
+            title: "borehole fund",
+            quorum: ctx.arbiter.address,
+          });
+        yield* signAndSubmit(poolTx);
+        yield* advanceBlock(ctx.emulator);
+
+        // The quorum amends the charter AND hands authority to the verifier.
+        // Rotation is the interesting half: if it did not take effect, the
+        // close below would still succeed under the old quorum.
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.arbiter.privateKey);
+        const upd = yield* unsignedUpdatePoolTxProgram(ctx.lucid, {
+          poolTokenName,
+          title: "borehole fund (closed)",
+          status: "Closed",
+          newQuorum: ctx.verifier.address,
+        });
+        yield* signAndSubmit(upd);
+        yield* advanceBlock(ctx.emulator);
+
+        const amended = yield* getPoolStateProgram(ctx.lucid, {
+          poolTokenName,
+        });
+        expect(amended.title).toBe("borehole fund (closed)");
+        expect(amended.status).toBe("Closed");
+        expect(amended.quorum.hash).toBe(
+          paymentCredentialOf(ctx.verifier.address).hash,
+        );
+
+        // A closed pool takes no new commitments.
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const rejected = yield* Effect.flip(
+          unsignedDepositToPoolTxProgram(ctx.lucid, {
+            poolTokenName,
+            amount: 10_000_000n,
+          }),
+        );
+        expect(rejected._tag).toBe("ConfigurationError");
+
+        // The OLD quorum can no longer close it. The transaction still BUILDS
+        // — applyPartyWitness reads the CURRENT quorum from the datum, so the
+        // body requires the verifier's signature — but the arbiter's wallet
+        // cannot produce that signature, so submission is what fails.
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.arbiter.privateKey);
+        const staleClose = yield* unsignedClosePoolTxProgram(ctx.lucid, {
+          poolTokenName,
+        });
+        const staleSubmit = yield* Effect.flip(signAndSubmit(staleClose));
+        expect(staleSubmit).toBeDefined();
+
+        // The rotated-in quorum can. The anchor burns and the pool is gone.
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.verifier.privateKey);
+        const close = yield* unsignedClosePoolTxProgram(ctx.lucid, {
+          poolTokenName,
+        });
+        yield* signAndSubmit(close);
+        yield* advanceBlock(ctx.emulator);
+
+        const gone = yield* Effect.flip(
+          getPoolStateProgram(ctx.lucid, { poolTokenName }),
+        );
+        expect(gone._tag).toBe("UtxoNotFoundError");
+      }),
+  );
+
+  it.effect(
+    "abort: both parties co-sign a split, the escrow burns, nobody is stranded",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const stateTokenName = yield* createDefault(ctx);
+
+        const before = yield* getEscrowStateProgram(ctx.lucid, {
+          stateTokenName,
+          currentTime: BigInt(ctx.emulator.now()),
+        });
+        expect(before.lockedBalance).toBe(102_000_000n);
+
+        // The read model names the release authority as a credential, so a
+        // caller can tell whether the connected wallet holds it before
+        // offering the action rather than letting the build fail.
+        expect(before.verifier).toEqual(
+          paymentCredentialOf(ctx.verifier.address),
+        );
+        expect(before.arbiter).toBeNull();
+
+        // Mutual consent: the work stopped half-done and the parties agree to
+        // split what is locked. Neither side can do this alone.
+        const funderCut = 60_000_000n;
+        const beneficiaryCut = before.lockedBalance - funderCut;
+        const funderBefore = yield* lovelaceAt(ctx, ctx.funder.address);
+        const beneficiaryBefore = yield* lovelaceAt(
+          ctx,
+          ctx.beneficiary.address,
+        );
+
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const abortTx = yield* unsignedAbortEscrowV2TxProgram(ctx.lucid, {
+          stateTokenName,
+          payouts: [
+            { address: ctx.funder.address, assets: { lovelace: funderCut } },
+            {
+              address: ctx.beneficiary.address,
+              assets: { lovelace: beneficiaryCut },
+            },
+          ],
+        });
+        yield* coSignAndSubmit(ctx, abortTx, [ctx.beneficiary.privateKey]);
+
+        const beneficiaryAfter = yield* lovelaceAt(
+          ctx,
+          ctx.beneficiary.address,
+        );
+        expect(beneficiaryAfter - beneficiaryBefore).toBe(beneficiaryCut);
+        // The funder pays the fee, so assert they are strictly better off by
+        // roughly their cut rather than pinning an exact fee.
+        const funderAfter = yield* lovelaceAt(ctx, ctx.funder.address);
+        expect(funderAfter - funderBefore).toBeGreaterThan(
+          funderCut - 2_000_000n,
+        );
+
+        // The state token is burned: no dust escrow left behind to confuse a
+        // wind-down, and no way to release against it afterwards.
+        const gone = yield* Effect.either(
+          getEscrowStateProgram(ctx.lucid, { stateTokenName }),
+        );
+        expect(gone._tag).toBe("Left");
+      }),
+  );
+
+  it.effect(
+    "abort: the funder alone cannot walk away with the locked funds",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const stateTokenName = yield* createDefault(ctx);
+
+        // Same abort, but paying everything to the funder and signing only as
+        // the funder. Consent is what makes abort safe; without the
+        // beneficiary's signature this must not go through.
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const grab = yield* unsignedAbortEscrowV2TxProgram(ctx.lucid, {
+          stateTokenName,
+          payouts: [
+            {
+              address: ctx.funder.address,
+              assets: { lovelace: 102_000_000n },
+            },
+          ],
+        });
+        const solo = yield* Effect.either(signAndSubmit(grab));
+        expect(solo._tag).toBe("Left");
+
+        // The escrow is untouched and still releasable.
+        const after = yield* getEscrowStateProgram(ctx.lucid, {
+          stateTokenName,
+          currentTime: BigInt(ctx.emulator.now()),
+        });
+        expect(after.lockedBalance).toBe(102_000_000n);
+        expect(after.releasedCount).toBe(0);
+      }),
+  );
+
+  it.effect("pool vault: closing a pool leaves deposits exitable", () =>
+    Effect.gen(function* () {
+      const ctx = yield* makeContext;
+      selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+      const { tx: poolTx, poolTokenName } = yield* unsignedCreatePoolTxProgram(
+        ctx.lucid,
+        {
+          title: "wound-down pool",
+          quorum: ctx.arbiter.address,
+        },
+      );
+      yield* signAndSubmit(poolTx);
+      yield* advanceBlock(ctx.emulator);
+
+      const dep = yield* unsignedDepositToPoolTxProgram(ctx.lucid, {
+        poolTokenName,
+        amount: 40_000_000n,
+      });
+      yield* signAndSubmit(dep);
+      yield* advanceBlock(ctx.emulator);
+
+      // The quorum burns the anchor while a deposit is still outstanding.
+      ctx.lucid.selectWallet.fromPrivateKey(ctx.arbiter.privateKey);
+      const close = yield* unsignedClosePoolTxProgram(ctx.lucid, {
+        poolTokenName,
+      });
+      yield* signAndSubmit(close);
+      yield* advanceBlock(ctx.emulator);
+      yield* Effect.flip(getPoolStateProgram(ctx.lucid, { poolTokenName }));
+
+      // The ledger still lists the deposit with the anchor gone — a wind-down
+      // is exactly when an operator needs to see what is outstanding.
+      const orphaned = yield* getPoolDepositsProgram(ctx.lucid, {
+        poolTokenName,
+      });
+      expect(orphaned.length).toBe(1);
+      expect(orphaned[0]!.amount).toBe(40_000_000n);
+
+      // [spec 3.5 ClosePool]: deposits are individually owned, so the
+      // contributor still recovers their money with no anchor in existence.
+      selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+      const exit = yield* unsignedExitDepositTxProgram(ctx.lucid, {
+        poolTokenName,
+        currentTime: BigInt(ctx.emulator.now()),
+      });
+      yield* signAndSubmit(exit);
+      yield* advanceBlock(ctx.emulator);
+
+      const left = yield* getPoolDepositsProgram(ctx.lucid, { poolTokenName });
+      expect(left.length).toBe(0);
     }),
   );
 });

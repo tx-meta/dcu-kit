@@ -642,19 +642,72 @@ export const resolveUtxoByUnit = (
 
 ## Common mistakes
 
-| Mistake                                             | Fix                                                         |
-| --------------------------------------------------- | ----------------------------------------------------------- |
-| `.complete()` on tx                                 | Use `completeProgram()` — returns Effect                    |
-| `Data.from(datum!)`                                 | Use `parseSafeDatum(datum, Schema)`                         |
-| `lucid.wallet().address()` inline                   | Hoist: `yield* getWalletAddress(lucid)`                     |
-| Hardcoded input index in redeemer                   | Use `RedeemerBuilder { kind: "selected" }`                  |
-| Missing `makeReturn()` on endpoint                  | Every exported endpoint needs it                            |
-| Missing `Effect.mapError` on `completeProgram()`    | Always pipe to `TransactionBuildError`                      |
-| Batching multiple endpoints in one commit           | One commit per endpoint (after tests pass)                  |
-| Changing a datum type without updating spec first   | Update spec → update types → retest                         |
-| Saving `{ txHash, outputIndex }` as entity identity | Save `tokenSuffix` — survives every spend                   |
-| Passing `UTxO` objects in endpoint configs          | Configs take `tokenSuffix: string`; SDK resolves UTxOs      |
-| Calling `lucid.utxoByUnit()` directly in endpoint   | Use `resolveUtxoByUnit()` — handles `undefined` on emulator |
+| Mistake                                                     | Fix                                                         |
+| ----------------------------------------------------------- | ----------------------------------------------------------- |
+| `.complete()` on tx                                         | Use `completeProgram()` — returns Effect                    |
+| `Data.from(datum!)`                                         | Use `parseSafeDatum(datum, Schema)`                         |
+| `lucid.wallet().address()` inline                           | Hoist: `yield* getWalletAddress(lucid)`                     |
+| Hardcoded input index in redeemer                           | Use `RedeemerBuilder { kind: "selected" }`                  |
+| Missing `makeReturn()` on endpoint                          | Every exported endpoint needs it                            |
+| Missing `Effect.mapError` on `completeProgram()`            | Always pipe to `TransactionBuildError`                      |
+| Batching multiple endpoints in one commit                   | One commit per endpoint (after tests pass)                  |
+| Changing a datum type without updating spec first           | Update spec → update types → retest                         |
+| Saving `{ txHash, outputIndex }` as entity identity         | Save `tokenSuffix` — survives every spend                   |
+| Passing `UTxO` objects in endpoint configs                  | Configs take `tokenSuffix: string`; SDK resolves UTxOs      |
+| Calling `lucid.utxoByUnit()` directly in endpoint           | Use `resolveUtxoByUnit()` — handles `undefined` on emulator |
+| Assuming every endpoint yields a bare `TxSignBuilder`       | Minting endpoints yield `{ tx, <name> }` — see below        |
+| Driving a governance instance without `registerVotingStake` | One-time bootstrap per instance — see below                 |
+
+---
+
+## Endpoint return shape: bare builder vs `{ tx, name }`
+
+The rule is mechanical, and worth knowing before you write a caller:
+
+- **A pure spend yields a bare `TxSignBuilder`** — `deposit`, `updateFund`, `closeCycle`,
+  `updateCharter`, `registerVotingStake`, every escrow v2 spend.
+- **An endpoint that MINTS a new identity yields `{ tx, <thatIdentity> }`**, because the
+  token name is derived from the seed input and cannot be recomputed by the caller
+  afterwards: `createFund → fundTokenName`, `joinFund → memberTokenSuffix`,
+  `disburseLoan → loanTokenName`, `createPool → poolTokenName`,
+  `initGovernance → instance`, `registerVoter`/`castVote → recordName`,
+  `openProposal → proposalId`, `executeDecision → decisionName`.
+- Two yield an outcome rather than an identity: `finalizeProposal → { tx, passed }`.
+
+Getting this wrong fails at `tx.sign` with `Cannot read properties of undefined`, not at
+build time, so it survives until the transaction is already paid for on a live network.
+
+---
+
+## Governance: register the voting stake credential once per instance
+
+Every governance endpoint carries a 0-ADA withdrawal from the voting validator (the
+withdraw-zero home of the heavy validation). The ledger rejects a withdrawal from an
+unregistered account, so a fresh instance is **inert** until `registerVotingStake` runs:
+
+```
+ConwayWithdrawalsMissingAccounts (Withdrawals {... ScriptHashObj "<votingStakeHash>" ...})
+```
+
+`splitEligibility` is a **prerequisite transaction before every voter-token call**, not a
+one-time setup: ordinary change handling merges the member tokens back into a single UTxO after
+each transaction. A two-voter, two-proposal cycle is therefore nine submissions, which on Preprod
+is roughly 100 seconds each. A 15-minute voting deadline expires before the last vote lands, so
+proposal deadlines must budget for the split overhead, and fee estimates shown to members should
+include one extra transaction per vote.
+
+Budget per governance instance, all one-time and non-recoverable:
+
+| Cost                                  | Amount  |
+| ------------------------------------- | ------- |
+| Dispatcher + voting reference scripts | ~83 ADA |
+| Voting stake registration deposit     | 2 ADA   |
+
+Governance validators are parameterised by the instance seed, so each instance has its own
+hashes and needs its **own** reference scripts — the deployment manifest's belong to
+whichever instance deployed them. `registerVoter` witnesses dispatcher (7.6 KB) + voting
+(10.9 KB), which cannot both ride inline under the 16 KB transaction ceiling. An instance
+per group does not scale; prefer one instance whose charter lists several governed targets.
 
 ---
 

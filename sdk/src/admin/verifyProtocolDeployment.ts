@@ -19,6 +19,7 @@ import {
 import { validatorRegistry } from "../core/validators/registry.js";
 import { DcuError, SetupError } from "../core/errors.js";
 import { DeployedScriptKey, ScriptRefOutRef } from "./deployScripts.js";
+import type { ModuleScriptKey } from "./deployModuleScripts.js";
 import {
   unsignedVerifySettingsProgram,
   VerifySettingsResult,
@@ -27,15 +28,13 @@ import type { GovernanceInstance } from "../governance/validators.js";
 
 /**
  * The four standalone-module reference scripts that ship alongside a full
- * deployment but are NOT part of what `deployScripts()` deploys — each has
- * its own `*-deploy.ts` example (savings-deploy, escrow-v2-deploy,
- * governance-init) and is parked at the deployer's OWN address, not the
- * ROSCA always-fails address. Kept separate from `DeployedScriptKey` (which
- * must stay exactly the six refs `deployScripts()` actually returns) —
- * verification covers a strictly wider set than deployment does.
+ * deployment but are NOT part of what `deployScripts()` deploys — they are
+ * published by `deployModuleScripts()`, at the same always-fails address.
+ * Kept separate from `DeployedScriptKey` (which must stay exactly the six
+ * refs `deployScripts()` returns) — verification covers a strictly wider
+ * set than any single deploy call does.
  */
-export type ModuleScriptKey =
-  "savings" | "escrowV2" | "governanceDispatcher" | "governanceVoting";
+export type { ModuleScriptKey };
 
 /** Every reference script this verifier can check: the six ROSCA refs plus the four standalone modules. */
 export type VerifiableScriptKey = DeployedScriptKey | ModuleScriptKey;
@@ -118,6 +117,11 @@ export type VerifyProtocolDeploymentResult = {
   settings: VerifySettingsResult;
   settingsAtDeployAddress: boolean;
   stakeRegistrations: Record<TreasuryFamily, StakeRegistrationCheck>;
+  /**
+   * The governance instance's voting stake credential, when a `governanceSeed`
+   * was supplied. Null when no seed was given (nothing to derive it from).
+   */
+  governanceVotingStake: StakeRegistrationCheck | null;
   registry: RegistryVerification;
 };
 
@@ -133,16 +137,13 @@ const ROSCA_KEYS: DeployedScriptKey[] = [
 const MODULE_KEYS: ModuleScriptKey[] = [
   "savings",
   "escrowV2",
+  "pool",
+  "project",
   "governanceDispatcher",
   "governanceVoting",
 ];
 
 const ALL_KEYS: VerifiableScriptKey[] = [...ROSCA_KEYS, ...MODULE_KEYS];
-
-/** Only the six ROSCA refs are expected at the permanent always-fails
- *  deployment address; the four module refs sit at the deployer's own
- *  (recoverable) address by design, so no fixed address applies to them. */
-const ALWAYS_FAILS_KEYS = new Set<VerifiableScriptKey>(ROSCA_KEYS);
 
 const FAMILIES: TreasuryFamily[] = [
   "rounds",
@@ -269,9 +270,9 @@ const stakeRegistrationStatus = (
  * - Every ref present in `config.refs` (the six ROSCA refs are mandatory; the
  *   four module refs are opt-in) exists at its out-ref and holds the exact
  *   applied-script CBOR the SDK derives locally; on-chain script hashes match.
- *   Only the six ROSCA refs are checked against the always-fails deployment
- *   address — the four module refs are deployer-owned by design, so no fixed
- *   address is enforced for them.
+ *   All ten are checked against the always-fails deployment address: a ref at
+ *   any other address is spendable, and spending one takes the deployment down
+ *   for every consumer.
  * - `governanceDispatcher` / `governanceVoting` are parameterised by
  *   `buildGovernance(config.governanceSeed)`; if that key is present in
  *   `refs` but no seed is given, it's reported as an explicit issue rather
@@ -284,6 +285,10 @@ const stakeRegistrationStatus = (
  *   treasury family stake hashes (via `verifySettings`).
  * - The four family stake credentials are registered (read-only provider query;
  *   see `stakeRegistrationStatus`).
+ * - When a `governanceSeed` is given, the instance's voting stake credential is
+ *   registered. Without it the instance is inert: every governance endpoint
+ *   withdraws 0 ADA from the voting validator, which the ledger rejects for an
+ *   unregistered account.
  * - The manifest's `settingsUnit` / `network` agree with the derived/connected
  *   values when `expected` is given.
  *
@@ -356,15 +361,23 @@ export const verifyProtocolDeployment = (
         })).savingsVaultValidator
       : null;
 
-    const escrowV2Validator = requestedKeys.includes("escrowV2")
-      ? (yield* Effect.tryPromise({
-          try: () => import("../escrow/v2/validators.js"),
-          catch: (e) =>
-            new SetupError({
-              message: `verifyProtocolDeployment: failed to load the escrow v2 module: ${e}`,
-            }),
-        })).escrowV2Validator
-      : null;
+    // escrowV2, pool and project all live in the same module, so one lazy
+    // import covers whichever of the three keys were requested.
+    const escrowV2Module =
+      requestedKeys.includes("escrowV2") ||
+      requestedKeys.includes("pool") ||
+      requestedKeys.includes("project")
+        ? yield* Effect.tryPromise({
+            try: () => import("../escrow/v2/validators.js"),
+            catch: (e) =>
+              new SetupError({
+                message: `verifyProtocolDeployment: failed to load the escrow v2 module: ${e}`,
+              }),
+          })
+        : null;
+    const escrowV2Validator = escrowV2Module?.escrowV2Validator ?? null;
+    const poolVaultValidator = escrowV2Module?.poolVaultValidator ?? null;
+    const projectValidator = escrowV2Module?.projectValidator ?? null;
 
     // Governance's dispatcher/voting scripts are parameterised by the seed —
     // derive the instance once, up front, if a seed was given AND actually
@@ -401,6 +414,10 @@ export const verifyProtocolDeployment = (
           return savingsVaultValidator?.spendVault ?? null;
         case "escrowV2":
           return escrowV2Validator?.spendEscrow ?? null;
+        case "pool":
+          return poolVaultValidator?.spendPool ?? null;
+        case "project":
+          return projectValidator?.spendProject ?? null;
         case "governanceDispatcher":
           return governanceInstance?.dispatcherValidator.spend ?? null;
         case "governanceVoting":
@@ -486,15 +503,14 @@ export const verifyProtocolDeployment = (
         continue;
       }
 
-      // Only the six ROSCA refs live at the permanent always-fails address;
-      // the four module refs are deployer-owned by design (recoverable) —
-      // no fixed address applies, so this check is skipped for them.
-      const checkAddress = ALWAYS_FAILS_KEYS.has(key);
-      const atDeployAddress = checkAddress
-        ? utxo.address === deployAddress
-        : true;
-      if (checkAddress && !atDeployAddress)
-        issues.push(`${key} ref UTxO is at wrong address: ${utxo.address}`);
+      // Every reference script must sit at the permanent always-fails address.
+      // Anywhere else it is an ordinary spendable UTxO that coin selection can
+      // consume, which takes the deployment down for every consumer at once.
+      const atDeployAddress = utxo.address === deployAddress;
+      if (!atDeployAddress)
+        issues.push(
+          `${key} ref UTxO is at a spendable address, not the always-fails deployment address: ${utxo.address}`,
+        );
 
       let scriptMatches = false;
       let onChainScriptHash: string | null = null;
@@ -570,6 +586,29 @@ export const verifyProtocolDeployment = (
       stakeRegistrations[family] = { rewardAddress, status };
     }
 
+    // The governance instance's voting stake credential. Every governance
+    // endpoint carries a 0-ADA withdrawal from the voting validator, and the
+    // ledger rejects a withdrawal from an unregistered account — so an instance
+    // whose stake was never registered is inert, and fails only at submit time
+    // with ConwayWithdrawalsMissingAccounts. Checked whenever a seed is given.
+    let governanceVotingStake: StakeRegistrationCheck | null = null;
+    if (governanceInstance !== null) {
+      const rewardAddress = validatorToRewardAddress(
+        network,
+        governanceInstance.votingValidator,
+      );
+      const status = yield* stakeRegistrationStatus(lucid, rewardAddress);
+      if (status === "not-registered")
+        issues.push(
+          "governance voting stake credential is not registered — every propose/vote/finalize/execute call will be rejected until registerVotingStake runs",
+        );
+      if (status === "unknown")
+        issues.push(
+          "governance voting stake registration state is not readable through this provider — verify with Blockfrost or the emulator",
+        );
+      governanceVotingStake = { rewardAddress, status };
+    }
+
     return {
       ok: issues.length === 0,
       issues,
@@ -579,6 +618,7 @@ export const verifyProtocolDeployment = (
       settings,
       settingsAtDeployAddress,
       stakeRegistrations,
+      governanceVotingStake,
       registry,
     };
   });

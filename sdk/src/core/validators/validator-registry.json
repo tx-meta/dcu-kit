@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "sdkVersion": "0.5.7-preprod.0",
+  "sdkVersion": "0.6.0-preprod.0",
   "families": {
     "rosca": {
       "status": "launch",
@@ -68,9 +68,9 @@
       "onchainSource": "onchain/savings/plutus.json",
       "plutusVersion": "v3",
       "validators": {
-        "savings_vault_validator.savings_vault.mint": "33974493468d0efda804c4549f0c937c0fa5a9685f7df92ec5a1f3621270465f",
-        "savings_vault_validator.savings_vault.spend": "33974493468d0efda804c4549f0c937c0fa5a9685f7df92ec5a1f3621270465f",
-        "savings_vault_validator.savings_vault.else": "33974493468d0efda804c4549f0c937c0fa5a9685f7df92ec5a1f3621270465f"
+        "savings_vault_validator.savings_vault.mint": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd",
+        "savings_vault_validator.savings_vault.spend": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd",
+        "savings_vault_validator.savings_vault.else": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd"
       },
       "deployments": {}
     },
@@ -80,15 +80,15 @@
       "onchainSource": "onchain/governance/plutus.json",
       "plutusVersion": "v3",
       "validators": {
-        "governance_dispatcher.governance_dispatcher.mint": "6bd77ced806c2d7312e06eb99896975829272cbb4f61b2a9efc4effd90ed4a03",
-        "governance_dispatcher.governance_dispatcher.spend": "6bd77ced806c2d7312e06eb99896975829272cbb4f61b2a9efc4effd90ed4a03",
-        "governance_dispatcher.governance_dispatcher.else": "6bd77ced806c2d7312e06eb99896975829272cbb4f61b2a9efc4effd90ed4a03",
-        "governance_gate.governance_gate.spend": "23f9a64ec621c707393d4f44231412304f744392407f126dd25b3e8a5b7d6a06",
-        "governance_gate.governance_gate.else": "23f9a64ec621c707393d4f44231412304f744392407f126dd25b3e8a5b7d6a06",
+        "governance_dispatcher.governance_dispatcher.mint": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
+        "governance_dispatcher.governance_dispatcher.spend": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
+        "governance_dispatcher.governance_dispatcher.else": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
+        "governance_gate.governance_gate.spend": "b88b16df72597d253fa7180aa45d3d7729a3846299384c2214d892263f897c8f",
+        "governance_gate.governance_gate.else": "b88b16df72597d253fa7180aa45d3d7729a3846299384c2214d892263f897c8f",
         "governance_settings.governance_settings.mint": "16d5f0a1c6f0cf693e4775f7116baa1cf7d14d7105cf22ccd6680e7f60e9d617",
         "governance_settings.governance_settings.else": "16d5f0a1c6f0cf693e4775f7116baa1cf7d14d7105cf22ccd6680e7f60e9d617",
-        "governance_voting.governance_voting.withdraw": "ab1c2157cba6a7d6eebfabca8069966adf0fc3e38751ba921835e9debc69b2f2",
-        "governance_voting.governance_voting.else": "ab1c2157cba6a7d6eebfabca8069966adf0fc3e38751ba921835e9debc69b2f2"
+        "governance_voting.governance_voting.withdraw": "92cf239f89964197a0640bd53ead6c16e624de2a0cfca9165820e42549f5f7a8",
+        "governance_voting.governance_voting.else": "92cf239f89964197a0640bd53ead6c16e624de2a0cfca9165820e42549f5f7a8"
       },
       "deployments": {
         "preprod": {
@@ -99,6 +99,48 @@
     }
   },
   "history": [
+    {
+      "date": "2026-08-02",
+      "sdkVersion": "0.6.0-preprod.0",
+      "changed": [],
+      "note": "release 0.6.0-preprod.0: the savings charter freeze and the governance voter-fund binding ship in THIS version. The 2026-08-02 history entries above record the fingerprint changes while package.json still read 0.5.7-preprod.0, but published 0.5.7-preprod.0 carries the OLD hashes. Consumers must map savings a6121486 and the new governance instance to 0.6.0-preprod.0."
+    },
+    {
+      "date": "2026-08-02",
+      "sdkVersion": "0.5.7-preprod.0",
+      "changed": [
+        "savings:savings_vault_validator.savings_vault.mint",
+        "savings:savings_vault_validator.savings_vault.spend",
+        "savings:savings_vault_validator.savings_vault.else"
+      ],
+      "note": "savings charter freeze: withdrawal_policy immutable for the life of the fund; cycle_end may only move earlier or be dropped, never extended or newly imposed"
+    },
+    {
+      "date": "2026-08-02",
+      "sdkVersion": "0.5.7-preprod.0",
+      "changed": [
+        "governance:governance_gate.governance_gate.spend",
+        "governance:governance_gate.governance_gate.else"
+      ],
+      "note": "governance voter-fund binding, decision-to-operation binding, share-weighted voting; savings group_type and welfare zero-share close"
+    },
+    {
+      "date": "2026-08-01",
+      "sdkVersion": "0.5.7-preprod.0",
+      "changed": [
+        "savings:savings_vault_validator.savings_vault.mint",
+        "savings:savings_vault_validator.savings_vault.spend",
+        "savings:savings_vault_validator.savings_vault.else",
+        "governance:governance_dispatcher.governance_dispatcher.mint",
+        "governance:governance_dispatcher.governance_dispatcher.spend",
+        "governance:governance_dispatcher.governance_dispatcher.else",
+        "governance:governance_gate.governance_gate.spend",
+        "governance:governance_gate.governance_gate.else",
+        "governance:governance_voting.governance_voting.withdraw",
+        "governance:governance_voting.governance_voting.else"
+      ],
+      "note": "governance voter-fund binding, decision-to-action binding, share-weighted voting; savings group_type field and welfare zero-share close"
+    },
     {
       "date": "2026-07-29",
       "sdkVersion": "0.5.7-preprod.0",
