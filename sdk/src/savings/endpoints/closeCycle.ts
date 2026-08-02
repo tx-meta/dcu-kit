@@ -72,10 +72,17 @@ export const unsignedCloseCycleTxProgram = (
 
     const network = lucid.config().network ?? "Preprod";
     const now = BigInt(Date.now());
+    // The validator compares the transaction's LOWER BOUND against cycle_end
+    // (lo >= cycle_end), and that bound is `now` minus the clock-drift buffer,
+    // carried as a 1-second slot the ledger floors. Preflighting `now` instead
+    // would accept a transaction for the whole drift window that the chain then
+    // rejects, so check the bound that is actually submitted.
+    const drift = now - (network === "Custom" ? 0n : 60_000n);
+    const validFromMs = ((drift + 999n) / 1000n) * 1000n;
     if (
       fund.cycle_end !== null &&
       network !== "Custom" &&
-      now < fund.cycle_end
+      validFromMs < fund.cycle_end
     ) {
       return yield* Effect.fail(
         new ConfigurationError({
@@ -138,7 +145,7 @@ export const unsignedCloseCycleTxProgram = (
       inputs: [fundUtxo],
     };
 
-    const validFrom = Number(now - (network === "Custom" ? 0n : 60_000n));
+    const validFrom = Number(validFromMs);
     const txDraft = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([fundUtxo], redeemer)
       .compose(

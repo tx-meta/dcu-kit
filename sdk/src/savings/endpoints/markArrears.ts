@@ -57,7 +57,13 @@ export const unsignedMarkArrearsTxProgram = (
 
     const network = lucid.config().network ?? "Preprod";
     const now = config.currentTime ?? BigInt(Date.now());
-    const validFrom = now - (network === "Custom" ? 0n : 60_000n);
+    // The ledger carries validFrom as a 1-second SLOT and floors it, while the
+    // deadline checks below compare milliseconds. Without rounding up, a bound
+    // a few hundred ms past `due` passes these checks and then floors to a slot
+    // at or before `due`, so the validator rejects a transaction the SDK just
+    // said was fine. Round to the next whole second so both agree.
+    const drift = now - (network === "Custom" ? 0n : 60_000n);
+    const validFrom = ((drift + 999n) / 1000n) * 1000n;
 
     let nextStatus: "Late" | "Defaulted";
     if (loan.status === "Current") {
