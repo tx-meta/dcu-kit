@@ -7,7 +7,7 @@
  * The claim is the point. Share-out is member-pulled, not quorum-pushed: no
  * authority can move a member's savings, so the only way the pot leaves the
  * vault is each member spending their own account against it. USER2 is the
- * proof that carries the weight — they neither created the fund nor hold any
+ * proof that carries the weight. They neither created the fund nor hold any
  * quorum authority over it, and still cannot be stopped from taking their 4/12.
  *
  * Usage: from sdk/, `npx tsx examples/roundtrip-savings-tail.mjs`
@@ -51,7 +51,7 @@ const retry = async (label, fn, attempts = 4) => {
     try {
       return await fn();
     } catch (e) {
-      const transient = /fetch failed|socket|ECONN|timeout|502|503|504/i.test(
+      const transient = /fetch failed|socket|ECONN|timeout|502|503|504|OutsideValidityInterval/i.test(
         String(e?.message ?? e),
       );
       if (!transient || i === attempts) throw e;
@@ -186,7 +186,7 @@ const claim2Tx = await run(
     memberTokenSuffix: member2,
   }),
 );
-await submit(claim2Tx, "claimShareOut (USER2, 4/12 — non-creator)");
+await submit(claim2Tx, "claimShareOut (USER2, 4/12, non-creator)");
 asUser1();
 const after = await show(fundTokenName, "after both claims");
 if (after.fund.status.SharingOut?.shares_remaining !== 0n) {
@@ -201,5 +201,5 @@ const closeFundTx = await run(
 );
 await submit(closeFundTx, "closeFund");
 console.log(
-  "\nSAVINGS TAIL COMPLETE — two members, both share-outs claimed, fund dissolved.",
+  "\nSAVINGS TAIL COMPLETE: two members, both share-outs claimed, fund dissolved.",
 );

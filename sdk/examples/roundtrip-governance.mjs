@@ -64,7 +64,7 @@ const instance = buildGovernance(manifest.governance.seed);
 const fundTokenName = manifest.governance.governedFund;
 const savingsPolicy = manifest.governance.memberPolicy;
 
-// 1. Join the fund — this mints the member (100)/(222) pair. The (222) is the
+// 1. Join the fund. This mints the member (100)/(222) pair. The (222) is the
 //    eligibility token; the (100) account is what binds the voter to this fund.
 const { tx: joinTx, memberTokenSuffix } = await Effect.runPromise(
   unsignedJoinFundTxProgram(lucid, {
@@ -120,7 +120,7 @@ const { tx: voteTx } = await Effect.runPromise(
 );
 await submit(voteTx, "castVote");
 
-// 5. Finalize — only valid strictly after the deadline. Never run live before.
+// 5. Finalize. Only valid strictly after the deadline. Never run live before.
 const waitMs = Number(deadline - BigInt(Date.now())) + 90_000;
 if (waitMs > 0) {
   console.log(
@@ -139,7 +139,7 @@ const { tx: finTx, passed } = await Effect.runPromise(
 console.log("  passed:", passed);
 await submit(finTx, "finalizeProposal");
 
-// 6. Execute — mints the one-shot decision at the gate. Never run live before.
+// 6. Execute. Mints the one-shot decision at the gate. Never run live before.
 const { tx: execTx, decisionName } = await Effect.runPromise(
   unsignedExecuteDecisionTxProgram(lucid, {
     instance,

@@ -76,7 +76,7 @@ const retry = async (label, fn, attempts = 4) => {
     try {
       return await fn();
     } catch (e) {
-      const transient = /fetch failed|socket|ECONN|timeout|502|503|504/i.test(
+      const transient = /fetch failed|socket|ECONN|timeout|502|503|504|OutsideValidityInterval/i.test(
         String(e?.message ?? e),
       );
       if (!transient || i === attempts) throw e;
@@ -109,7 +109,7 @@ const savingsRef = await ref("savings");
 console.log("savings policy (electorate):", savingsPolicyId);
 
 // 1. Stand up the instance. The electorate IS the savings policy, so voter
-//    eligibility and fund identity share one policy — the exact collision the
+//    eligibility and fund identity share one policy, the exact collision the
 //    voter-to-fund binding closes.
 //
 // Resume an existing instance with `--seed <txHash>#<index>`. Standing one up
@@ -142,7 +142,7 @@ if (seedArg !== -1) {
       governedTargets: [],
       quorum: 1n,
       threshold: 5000n,
-      // Tag 5 is Generic — without it, operation-bound proposals are refused.
+      // Tag 5 is Generic. Without it, operation-bound proposals are refused.
       openerPolicy: [[5n, "AnyMember"]],
     }),
   );
@@ -153,7 +153,7 @@ if (seedArg !== -1) {
 }
 
 // Governance validators are parameterised by the instance seed, so EVERY
-// instance has its own hashes and needs its OWN reference scripts — the
+// instance has its own hashes and needs its OWN reference scripts. The
 // manifest's belong to whichever instance deployed them. registerVoter
 // witnesses dispatcher (7.6 KB) + voting (10.9 KB), which cannot both ride
 // inline under the 16 KB ceiling.
@@ -200,7 +200,7 @@ await settle();
 
 // 1b. Register the voting stake credential. EVERY governance endpoint carries a
 // 0-ADA withdrawal from the voting validator, and the ledger rejects a
-// withdrawal from an unregistered account — so without this one-time tx the
+// withdrawal from an unregistered account, so without this one-time tx the
 // whole instance is inert (ConwayWithdrawalsMissingAccounts on registerVoter).
 // Already-registered is the expected state on a resume, so tolerate it.
 try {
@@ -269,7 +269,7 @@ if (fundArg !== -1) {
   );
   await submit(charterTx, "updateCharter (bind the fund)");
 
-  // 4. Join — the (222) token is eligibility, the (100) account binds the voter
+  // 4. Join. The (222) token is eligibility, the (100) account binds the voter
   //    to THIS fund.
   const { tx: joinTx, memberTokenSuffix: joined } = await run(
     "joinFund",
@@ -288,7 +288,7 @@ const voterTokenUnit =
 // The on-chain member-id derivation requires the voter input to hold EXACTLY
 // one token name under member_policy. This wallet holds member tokens from
 // several savings funds, and ordinary change handling merges them back into one
-// UTxO after every transaction — so the split is a prerequisite tx that must be
+// UTxO after every transaction, so the split is a prerequisite tx that must be
 // re-run immediately before each call that consumes the voter token, not once.
 const splitEligibility = async () => {
   const splitTx = await run(
@@ -382,7 +382,7 @@ const before = await run(
 );
 console.log("  title before:", before.fund.title);
 
-// The gate fragment INDEXES the fund input without collecting it — updateFund
+// The gate fragment INDEXES the fund input without collecting it: updateFund
 // spends it with its own UpdateFund redeemer, in the same transaction.
 const { utxo: fundUtxo } = await run(
   "resolveFund",
@@ -431,5 +431,5 @@ writeFileSync(
   ),
 );
 console.log(
-  "\nGOVERNED SAVINGS ROUND TRIP COMPLETE — the gate moved the fund.",
+  "\nGOVERNED SAVINGS ROUND TRIP COMPLETE: the gate moved the fund.",
 );

@@ -8,7 +8,7 @@
  *   USER2 = beneficiary
  *
  * It also exercises BOTH allocation shapes. A `PerMilestone` escrow seeded by
- * `newEscrow` locks only the min-ADA buffer — tranches are funded by later
+ * `newEscrow` locks only the min-ADA buffer: tranches are funded by later
  * allocations. So allocating once and releasing crashes the validator on an
  * unfunded tranche; the second allocation into `existingStateTokenName` is
  * what makes the release valid.
@@ -188,5 +188,5 @@ const exitTx = await Effect.runPromise(
 );
 await submit(exitTx, "exitDeposit (after the anchor burned)");
 console.log(
-  "\nFUNDRAISER ROUND TRIP COMPLETE — pool closed, deposit recovered.",
+  "\nFUNDRAISER ROUND TRIP COMPLETE: pool closed, deposit recovered.",
 );

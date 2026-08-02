@@ -116,4 +116,4 @@ const closeFundTx = await Effect.runPromise(
   unsignedCloseFundTxProgram(lucid, { scriptRef, fundTokenName }),
 );
 await submit(closeFundTx, "closeFund");
-console.log("\nWELFARE ROUND TRIP COMPLETE — the fund dissolved.");
+console.log("\nWELFARE ROUND TRIP COMPLETE: the fund dissolved.");
