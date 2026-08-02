@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "sdkVersion": "0.5.7-preprod.0",
+  "sdkVersion": "0.6.0-preprod.0",
   "families": {
     "rosca": {
       "status": "launch",
@@ -99,6 +99,12 @@
     }
   },
   "history": [
+    {
+      "date": "2026-08-02",
+      "sdkVersion": "0.6.0-preprod.0",
+      "changed": [],
+      "note": "release 0.6.0-preprod.0: the savings charter freeze and the governance voter-fund binding ship in THIS version. The 2026-08-02 history entries above record the fingerprint changes while package.json still read 0.5.7-preprod.0, but published 0.5.7-preprod.0 carries the OLD hashes. Consumers must map savings a6121486 and the new governance instance to 0.6.0-preprod.0."
+    },
     {
       "date": "2026-08-02",
       "sdkVersion": "0.5.7-preprod.0",
