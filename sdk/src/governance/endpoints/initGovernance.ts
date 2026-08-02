@@ -80,12 +80,16 @@ export type InitGovernanceConfig = {
   message?: TxMessage;
 };
 
+// Keyed by GovAction constructor tag. Tag 5 is `Generic`, which is how a
+// decision names one operation on a governed vault (see govActionForOperation)
+// — the ordinary case, so it is openable by default like the typed arms.
 const DEFAULT_OPENER_POLICY: [bigint, OpenerPolicy][] = [
   [0n, "AnyMember"],
   [1n, "AnyMember"],
   [2n, "AnyMember"],
   [3n, "AnyMember"],
   [4n, "AnyMember"],
+  [5n, "AnyMember"],
 ];
 
 export const unsignedInitGovernanceTxProgram = (

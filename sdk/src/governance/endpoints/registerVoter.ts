@@ -3,6 +3,7 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
+  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -11,9 +12,11 @@ import {
   TransactionBuildError,
 } from "../../core/errors.js";
 import {
+  assetNameLabels,
   getWalletUtxos,
   makeReturn,
   attachTxMessage,
+  resolveUtxoByUnit,
   type TxMessage,
 } from "../../core/utils/index.js";
 import {
@@ -71,7 +74,7 @@ export const unsignedRegisterVoterTxProgram = (
     const { instance } = config;
     const network = lucid.config().network ?? "Preprod";
 
-    const { utxo: anchorUtxo } = yield* resolveAnchor(lucid, instance);
+    const { utxo: anchorUtxo, anchor } = yield* resolveAnchor(lucid, instance);
     const { utxo: rosterUtxo, roster } = yield* resolveRoster(lucid, instance);
 
     const memberId = config.voterTokenUnit.slice(56);
@@ -103,6 +106,19 @@ export const unsignedRegisterVoterTxProgram = (
             "under member_policy — split it into its own output first (see splitEligibility)",
         }),
       );
+    }
+
+    // When the instance governs any vault under the eligibility policy, the
+    // registrant must belong to one of them. The validator finds the account
+    // among the reference inputs by the (100) twin it holds, so only its
+    // presence matters here.
+    const accountRefs: UTxO[] = [];
+    if ([...anchor.governed_targets.keys()].includes(memberPolicy)) {
+      const twin =
+        memberPolicy +
+        assetNameLabels.prefix100 +
+        memberId.slice(assetNameLabels.prefix222.length);
+      accountRefs.push(yield* resolveUtxoByUnit(lucid, twin));
     }
 
     const recordName = voterRecordTokenName(memberId);
@@ -165,7 +181,7 @@ export const unsignedRegisterVoterTxProgram = (
     const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([rosterUtxo], rosterRedeemer)
       .collectFrom([voterUtxo])
-      .readFrom([anchorUtxo])
+      .readFrom([anchorUtxo, ...accountRefs])
       .mintAssets({ [recordUnit]: 1n }, mintRedeemer)
       .compose(
         config.scriptRefs?.dispatcher

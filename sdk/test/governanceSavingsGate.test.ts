@@ -15,6 +15,10 @@ import { unsignedFinalizeProposalTxProgram } from "../src/governance/endpoints/f
 import { unsignedExecuteDecisionTxProgram } from "../src/governance/endpoints/executeDecision.js";
 import { gateWitnessProgram } from "../src/governance/endpoints/authorizeAction.js";
 import {
+  govActionForOperation,
+  SavingsOperation,
+} from "../src/governance/utils.js";
+import {
   decisionTokenName,
   gateAddress,
   GovScriptRefs,
@@ -155,7 +159,9 @@ const runProposalToExecuted = (
         targetId: fundTokenName,
         // "raise the per-deposit share ceiling" — the charter change the
         // members are ratifying.
-        action: { ParamChange: { field_tag: 0n, new_value: 250n } },
+        // The decision authorizes exactly one operation on this fund: an
+        // UpdateFund. It cannot later be spent to write off a loan.
+        action: govActionForOperation(SavingsOperation.UpdateFund),
         deadline,
         openerTokenUnit: MEMBER_UNIT,
         currentTime: now,

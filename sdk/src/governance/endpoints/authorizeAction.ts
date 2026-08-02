@@ -40,6 +40,14 @@ export type AuthorizeActionConfig = {
    *  this is the vault input of the composed action transaction. */
   targetUtxo: UTxO;
   /**
+   * The redeemer the target input is spent with. The gate binds a decision to
+   * ONE action by requiring these exact bytes: a `Generic` action's payload is
+   * this redeemer's CBOR, and a typed action must BE this redeemer. Omit only
+   * when the target needs no redeemer, which the gate then rejects — a decision
+   * cannot authorize a transaction that performs no action.
+   */
+  targetRedeemer?: string;
+  /**
    * Optional human-readable note attached to this transaction as CIP-20
    * metadata (label 674). Transaction-scoped: no validator reads it, it costs
    * no min-ADA, and it can never be edited. Public and permanent — never PII.
@@ -148,7 +156,10 @@ export const unsignedAuthorizeActionTxProgram = (
     const tx = yield* (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([decisionUtxo], spendRedeemer)
       .attach.SpendingValidator(instance.gateValidator)
-      .collectFrom([config.targetUtxo])
+      .collectFrom(
+        [config.targetUtxo],
+        ...(config.targetRedeemer ? [config.targetRedeemer] : []),
+      )
       .mintAssets({ [decisionUnit]: -1n }, burnRedeemer)
       .attach.MintingPolicy(instance.dispatcherValidator.mint)
       .completeProgram()

@@ -31,9 +31,30 @@ export const LoanStatus = LoanStatusSchema as unknown as LoanStatus;
 
 // --- Vault datum (three variants at one address) ---
 
+/**
+ * The audited fund taxonomies. Only these four values validate at creation.
+ *
+ * `Welfare` funds never sell shares, so they close with an empty pot once their
+ * welfare is disbursed; every other type closes on a share-out.
+ */
+export const GroupType = {
+  Asca: 0n,
+  Vsla: 1n,
+  Welfare: 2n,
+  Pool: 3n,
+} as const;
+
+export type GroupTypeValue = (typeof GroupType)[keyof typeof GroupType];
+
 export const SavingsFundFieldsSchema = Data.Object({
   /** Short inline fund name (max 64 bytes). Group-level only, never PII. */
   title: Data.Bytes(),
+  /**
+   * Fund taxonomy, fixed at creation — see {@link GroupType}. Immutable: a fund
+   * cannot change what kind of fund it is, so the audited configuration a member
+   * joined under governs it for life.
+   */
+  group_type: Data.Integer(),
   /** Ratification authority — a multisig today, a vote script later. */
   quorum: CredentialSchema,
   /** The fund's asset. Empty string (`""`) means ADA. */
