@@ -30,7 +30,6 @@ validator governance_voting(settings_policy: PolicyId) {
         voter_index,
         record_input_index,
         record_output_index,
-        share_ref_index,
         approve,
       } ->
         validate_cast(
@@ -40,7 +39,6 @@ validator governance_voting(settings_policy: PolicyId) {
           voter_index,
           record_input_index,
           record_output_index,
-          share_ref_index,
           approve,
           self,
         )
