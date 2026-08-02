@@ -105,6 +105,7 @@ pub fn make_fund(
 ) -> SavingsDatum {
   SavingsFund {
     title: #"546573742046756e64",
+    group_type: 0,
     quorum: addr.VerificationKey(quorum_pkh()),
     asset_policy: "",
     asset_name: "",
@@ -132,6 +133,7 @@ pub fn make_token_fund(
 ) -> SavingsDatum {
   SavingsFund {
     title: #"546f6b656e2046756e64",
+    group_type: 0,
     quorum: addr.VerificationKey(quorum_pkh()),
     asset_policy: token_policy(),
     asset_name: token_name(),

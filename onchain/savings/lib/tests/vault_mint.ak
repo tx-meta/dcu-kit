@@ -97,6 +97,7 @@ test create_fund__rejects_bad_band() fail {
   // min 0 violates charter sanity
   let bad = SavingsFund {
     title: #"",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: "",
     asset_name: "",
@@ -128,6 +129,7 @@ test create_fund__rejects_bad_band() fail {
 test create_fund__rejects_own_policy_as_asset() fail {
   let bad = SavingsFund {
     title: #"",
+    group_type: 0,
     quorum: common.quorum_credential(),
     asset_policy: policy(),
     asset_name: #"544b4e",

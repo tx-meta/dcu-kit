@@ -22,6 +22,10 @@ pub type SavingsDatum {
   // totals. One UTxO per fund; it custodies ALL deposited value.
   SavingsFund {
     title: ByteArray,
+    // Fund taxonomy, fixed at creation: 0 ASCA, 1 VSLA, 2 Welfare, 3 Pool.
+    // Immutable — a fund cannot change what kind of fund it is, so the audited
+    // configuration a member joined under is the one that governs it for life.
+    group_type: Int,
     // Ratification authority: native multisig or key today, a vote-tally
     // script (primitive #9) later, by rotation.
     quorum: Credential,
