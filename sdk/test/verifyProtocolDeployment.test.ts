@@ -218,8 +218,45 @@ describe("verifyProtocolDeployment (emulator)", () => {
           ),
         ).toBe(true);
         expect(result.refs.governanceDispatcher.expectedScriptHash).toBeNull();
+        // Nothing to derive a voting stake credential from without a seed.
+        expect(result.governanceVotingStake).toBeNull();
         // Never crashes, and the six ROSCA refs are unaffected.
         expect(result.refs.treasury.scriptMatches).toBe(true);
       }),
+  );
+
+  it.effect("reports an unregistered governance voting stake credential", () =>
+    Effect.gen(function* () {
+      const { context } = yield* setupBase();
+
+      // A governance instance that was never bootstrapped. Its voting stake
+      // credential is unregistered, so every propose/vote/finalize/execute
+      // call would be rejected at submit with
+      // ConwayWithdrawalsMissingAccounts — a failure that otherwise only
+      // surfaces on a live network, after the refs are already paid for.
+      const result = yield* verifyProtocolDeployment(context.lucid, {
+        settingsPolicy: context.protocol!.settingsPolicy,
+        refs: {
+          ...refsFromContext(context.scriptRefs!),
+          governanceDispatcher: { txHash: "0".repeat(64), outputIndex: 0 },
+        },
+        governanceSeed: { txHash: "1".repeat(64), outputIndex: 0 },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.governanceVotingStake?.status).toBe("not-registered");
+      expect(
+        result.governanceVotingStake?.rewardAddress.startsWith("stake"),
+      ).toBe(true);
+      expect(
+        result.issues.some(
+          (i) =>
+            i.includes("governance voting stake") &&
+            i.includes("registerVotingStake"),
+        ),
+      ).toBe(true);
+      // The treasury families are registered by setup and stay unaffected.
+      expect(result.refs.treasury.scriptMatches).toBe(true);
+    }),
   );
 });
