@@ -46,26 +46,26 @@
       "scriptHash": "3623c729aae8b1cb32889d27c60c5cfb2a33f59e3074db0f5d208310"
     },
     "governanceDispatcher": {
-      "txHash": "d16271f4b293a3fbf9bfbb0d323c5b101daf195c90e4c02534fa039876e14a5a",
+      "txHash": "088131321225b1d792c6b6f1c36ca132b57d939e64e7d1250d885428c081de22",
       "outputIndex": 0,
-      "scriptHash": "da03ba47aac382abf142bbf61359af0567b62d46f311bc6850c96619"
+      "scriptHash": "a0508287708c55747734c48cb109387b09f2d28b49c435e673d19f4b"
     },
     "governanceVoting": {
-      "txHash": "f5e4e19bf24d133ce4405f53f0fb11e1bae3e9822154058e21570f4c853612d0",
+      "txHash": "343adad79a12b344a5a5470574e8691f1f5a1a0411500c2327a2bce640ab6bb6",
       "outputIndex": 0,
-      "scriptHash": "9d578b5178a42c58eb2e88689fd1efa4c3bfd6be381e1c816efd5ac1"
+      "scriptHash": "35fd58e45e158d3aefe9bbb86656dc4e8f67d229cb947287351f2392"
     }
   },
   "governance": {
     "seed": {
-      "txHash": "19ad250962d6685c34e8b55f89cf2ad02cbea5334d696662e1bbca9525b5b7a6",
-      "outputIndex": 1
+      "txHash": "640dfc0003e82d389f325e700220a111e2c6d96e7e6d5229beed57993e31850c",
+      "outputIndex": 0
     },
-    "settingsPolicy": "53914da88e9b5762f5b2b686edfbcaa87723d0d2d2f77758d5480819",
-    "govPolicy": "da03ba47aac382abf142bbf61359af0567b62d46f311bc6850c96619",
-    "gateHash": "7aab749e157ce33672485964cd37fde1cd642f00bdf3179fe3f82c43",
-    "votingStakeHash": "9d578b5178a42c58eb2e88689fd1efa4c3bfd6be381e1c816efd5ac1",
-    "memberPolicy": "e1051b5ac5893d21340cd00eb392086bbb51ea8a8970b9a8c966c35c",
-    "governedFund": "a7618b430b99ceaf79420f7f7aae986af9c1c443b2d554a9798d0b4e7ea87820"
+    "settingsPolicy": "783c548d2b6d30c7fbf8fa3ff3df97b0af4808e8d15144ed90dfde7e",
+    "govPolicy": "a0508287708c55747734c48cb109387b09f2d28b49c435e673d19f4b",
+    "gateHash": "53cc6ae071208ba567665e681cf882eeb95bc8ac2c67cbf1ee6bf2ab",
+    "votingStakeHash": "35fd58e45e158d3aefe9bbb86656dc4e8f67d229cb947287351f2392",
+    "memberPolicy": "a61214861092a20f87f2e11d493b73fb592c8955c1118c57ec0de4f1",
+    "governedFund": "e2ebb1e92a45a97a1074a7a91627166c5c5b81e69df05011cc24257f9d106595"
   }
 }
