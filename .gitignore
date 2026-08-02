@@ -36,4 +36,7 @@ tmp/
 # Local deployment state (per-wallet, never commit)
 sdk/examples/state.json
 sdk/examples/state.json.bak-*
+# Local run artifact from roundtrip-governed-savings.mjs. The authoritative
+# copy of this instance lives in sdk/src/core/deployments/preprod.json.
+sdk/examples/governed-savings.json
 sdk/state.json
