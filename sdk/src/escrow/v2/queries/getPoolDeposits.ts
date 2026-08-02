@@ -11,6 +11,11 @@ import { poolVaultAddress, resolvePool } from "../utils.js";
  * settles against. Read-only address scan; an indexer keyed by pool id is the
  * faster equivalent at scale.
  *
+ * Works after `closePool`. Deposits are individually owned and outlive the
+ * anchor, so a wind-down is exactly when you need to see what is still
+ * outstanding. The anchor is consulted only to name the pool's asset; once it
+ * is burned the unit is inferred from each deposit's own value.
+ *
  * @param lucid - Lucid instance (no wallet needed).
  * @param config - GetPoolDepositsConfig.
  * @returns Effect yielding one row per deposit UTxO.
@@ -35,11 +40,23 @@ export const getPoolDepositsProgram = (
 ): Effect.Effect<PoolDepositRow[], DcuError, never> =>
   Effect.gen(function* () {
     const network = lucid.config().network ?? "Preprod";
-    const { pool } = yield* resolvePool(lucid, config.poolTokenName);
-    const assetUnit =
-      pool.asset_policy === ""
-        ? "lovelace"
-        : pool.asset_policy + pool.asset_name;
+    // null once the anchor is burned — see the note above.
+    const assetUnit: string | null = yield* resolvePool(
+      lucid,
+      config.poolTokenName,
+    ).pipe(
+      Effect.map(({ pool }) =>
+        pool.asset_policy === ""
+          ? "lovelace"
+          : pool.asset_policy + pool.asset_name,
+      ),
+      Effect.catchAll(() => Effect.succeed(null)),
+    );
+    // A deposit holds the pool asset, plus min-ADA when that asset is a token.
+    const inferUnit = (utxo: UTxO): string => {
+      const tokens = Object.keys(utxo.assets).filter((u) => u !== "lovelace");
+      return tokens.length === 1 ? tokens[0]! : "lovelace";
+    };
     const utxos: UTxO[] = yield* Effect.tryPromise({
       try: () => lucid.utxosAt(poolVaultAddress(network)),
       catch: (e) =>
@@ -66,7 +83,7 @@ export const getPoolDepositsProgram = (
         txHash: utxo.txHash,
         outputIndex: utxo.outputIndex,
         contributorAddress,
-        amount: utxo.assets[assetUnit] ?? 0n,
+        amount: utxo.assets[assetUnit ?? inferUnit(utxo)] ?? 0n,
         lockedUntil: d.locked_until,
       });
     }

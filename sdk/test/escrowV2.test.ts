@@ -36,6 +36,8 @@ import { unsignedCreatePoolTxProgram } from "../src/escrow/v2/endpoints/createPo
 import { unsignedDepositToPoolTxProgram } from "../src/escrow/v2/endpoints/depositToPool.js";
 import { unsignedExitDepositTxProgram } from "../src/escrow/v2/endpoints/exitDeposit.js";
 import { unsignedAllocateToEscrowTxProgram } from "../src/escrow/v2/endpoints/allocateToEscrow.js";
+import { unsignedUpdatePoolTxProgram } from "../src/escrow/v2/endpoints/updatePool.js";
+import { unsignedClosePoolTxProgram } from "../src/escrow/v2/endpoints/closePool.js";
 import { getPoolStateProgram } from "../src/escrow/v2/queries/getPoolState.js";
 import { escrowV2Validator } from "../src/escrow/v2/validators.js";
 import { getPoolDepositsProgram } from "../src/escrow/v2/queries/getPoolDeposits.js";
@@ -887,6 +889,130 @@ describe("escrow v2 lifecycle (emulator)", () => {
         getProjectStateProgram(ctx.lucid, { projectTokenName }),
       );
       expect(gone._tag).toBe("Left");
+    }),
+  );
+  it.effect(
+    "pool vault: the quorum amends the charter, rotates itself, and closes",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const { tx: poolTx, poolTokenName } =
+          yield* unsignedCreatePoolTxProgram(ctx.lucid, {
+            title: "borehole fund",
+            quorum: ctx.arbiter.address,
+          });
+        yield* signAndSubmit(poolTx);
+        yield* advanceBlock(ctx.emulator);
+
+        // The quorum amends the charter AND hands authority to the verifier.
+        // Rotation is the interesting half: if it did not take effect, the
+        // close below would still succeed under the old quorum.
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.arbiter.privateKey);
+        const upd = yield* unsignedUpdatePoolTxProgram(ctx.lucid, {
+          poolTokenName,
+          title: "borehole fund (closed)",
+          status: "Closed",
+          newQuorum: ctx.verifier.address,
+        });
+        yield* signAndSubmit(upd);
+        yield* advanceBlock(ctx.emulator);
+
+        const amended = yield* getPoolStateProgram(ctx.lucid, {
+          poolTokenName,
+        });
+        expect(amended.title).toBe("borehole fund (closed)");
+        expect(amended.status).toBe("Closed");
+        expect(amended.quorum.hash).toBe(
+          paymentCredentialOf(ctx.verifier.address).hash,
+        );
+
+        // A closed pool takes no new commitments.
+        selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+        const rejected = yield* Effect.flip(
+          unsignedDepositToPoolTxProgram(ctx.lucid, {
+            poolTokenName,
+            amount: 10_000_000n,
+          }),
+        );
+        expect(rejected._tag).toBe("ConfigurationError");
+
+        // The OLD quorum can no longer close it. The transaction still BUILDS
+        // — applyPartyWitness reads the CURRENT quorum from the datum, so the
+        // body requires the verifier's signature — but the arbiter's wallet
+        // cannot produce that signature, so submission is what fails.
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.arbiter.privateKey);
+        const staleClose = yield* unsignedClosePoolTxProgram(ctx.lucid, {
+          poolTokenName,
+        });
+        const staleSubmit = yield* Effect.flip(signAndSubmit(staleClose));
+        expect(staleSubmit).toBeDefined();
+
+        // The rotated-in quorum can. The anchor burns and the pool is gone.
+        ctx.lucid.selectWallet.fromPrivateKey(ctx.verifier.privateKey);
+        const close = yield* unsignedClosePoolTxProgram(ctx.lucid, {
+          poolTokenName,
+        });
+        yield* signAndSubmit(close);
+        yield* advanceBlock(ctx.emulator);
+
+        const gone = yield* Effect.flip(
+          getPoolStateProgram(ctx.lucid, { poolTokenName }),
+        );
+        expect(gone._tag).toBe("UtxoNotFoundError");
+      }),
+  );
+
+  it.effect("pool vault: closing a pool leaves deposits exitable", () =>
+    Effect.gen(function* () {
+      const ctx = yield* makeContext;
+      selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+      const { tx: poolTx, poolTokenName } = yield* unsignedCreatePoolTxProgram(
+        ctx.lucid,
+        {
+          title: "wound-down pool",
+          quorum: ctx.arbiter.address,
+        },
+      );
+      yield* signAndSubmit(poolTx);
+      yield* advanceBlock(ctx.emulator);
+
+      const dep = yield* unsignedDepositToPoolTxProgram(ctx.lucid, {
+        poolTokenName,
+        amount: 40_000_000n,
+      });
+      yield* signAndSubmit(dep);
+      yield* advanceBlock(ctx.emulator);
+
+      // The quorum burns the anchor while a deposit is still outstanding.
+      ctx.lucid.selectWallet.fromPrivateKey(ctx.arbiter.privateKey);
+      const close = yield* unsignedClosePoolTxProgram(ctx.lucid, {
+        poolTokenName,
+      });
+      yield* signAndSubmit(close);
+      yield* advanceBlock(ctx.emulator);
+      yield* Effect.flip(getPoolStateProgram(ctx.lucid, { poolTokenName }));
+
+      // The ledger still lists the deposit with the anchor gone — a wind-down
+      // is exactly when an operator needs to see what is outstanding.
+      const orphaned = yield* getPoolDepositsProgram(ctx.lucid, {
+        poolTokenName,
+      });
+      expect(orphaned.length).toBe(1);
+      expect(orphaned[0]!.amount).toBe(40_000_000n);
+
+      // [spec 3.5 ClosePool]: deposits are individually owned, so the
+      // contributor still recovers their money with no anchor in existence.
+      selectWalletFromSeed(ctx.lucid, ctx.funder.seedPhrase);
+      const exit = yield* unsignedExitDepositTxProgram(ctx.lucid, {
+        poolTokenName,
+        currentTime: BigInt(ctx.emulator.now()),
+      });
+      yield* signAndSubmit(exit);
+      yield* advanceBlock(ctx.emulator);
+
+      const left = yield* getPoolDepositsProgram(ctx.lucid, { poolTokenName });
+      expect(left.length).toBe(0);
     }),
   );
 });
