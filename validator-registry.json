@@ -68,9 +68,9 @@
       "onchainSource": "onchain/savings/plutus.json",
       "plutusVersion": "v3",
       "validators": {
-        "savings_vault_validator.savings_vault.mint": "e09683db5ce799d7c2ae013622bb6574641187276718c5f2ffaad6f78edd05b5",
-        "savings_vault_validator.savings_vault.spend": "e09683db5ce799d7c2ae013622bb6574641187276718c5f2ffaad6f78edd05b5",
-        "savings_vault_validator.savings_vault.else": "e09683db5ce799d7c2ae013622bb6574641187276718c5f2ffaad6f78edd05b5"
+        "savings_vault_validator.savings_vault.mint": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd",
+        "savings_vault_validator.savings_vault.spend": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd",
+        "savings_vault_validator.savings_vault.else": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd"
       },
       "deployments": {}
     },
@@ -99,6 +99,16 @@
     }
   },
   "history": [
+    {
+      "date": "2026-08-02",
+      "sdkVersion": "0.5.7-preprod.0",
+      "changed": [
+        "savings:savings_vault_validator.savings_vault.mint",
+        "savings:savings_vault_validator.savings_vault.spend",
+        "savings:savings_vault_validator.savings_vault.else"
+      ],
+      "note": "savings charter freeze: withdrawal_policy immutable for the life of the fund; cycle_end may only move earlier or be dropped, never extended or newly imposed"
+    },
     {
       "date": "2026-08-02",
       "sdkVersion": "0.5.7-preprod.0",

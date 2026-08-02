@@ -51,8 +51,14 @@ export type UpdateFundConfig = {
   quorum?: PartyRef;
   minSharesPerDeposit?: bigint;
   maxSharesPerDeposit?: bigint;
-  withdrawalPolicy?: bigint;
-  /** Pass null to clear the bound. */
+  /**
+   * Bring the cycle end forward, or pass null to clear it. It can NEVER be
+   * pushed out or newly imposed: cycle_end gates CloseCycle, so extending it
+   * would let the quorum defer every member's share-out indefinitely.
+   *
+   * `withdrawalPolicy` is deliberately absent — it is frozen for the life of
+   * the fund, because it is what a member relied on when they deposited.
+   */
   cycleEnd?: bigint | null;
   /** Required when the CURRENT quorum is a script credential. */
   quorumWitness?: PartyWitness;
@@ -98,7 +104,6 @@ export const unsignedUpdateFundTxProgram = (
         : fund.quorum;
     const minShares = config.minSharesPerDeposit ?? fund.min_shares_per_deposit;
     const maxShares = config.maxSharesPerDeposit ?? fund.max_shares_per_deposit;
-    const withdrawalPolicy = config.withdrawalPolicy ?? fund.withdrawal_policy;
     if (minShares <= 0n || minShares > maxShares) {
       return yield* Effect.fail(
         new ConfigurationError({
@@ -107,13 +112,28 @@ export const unsignedUpdateFundTxProgram = (
         }),
       );
     }
-    if (withdrawalPolicy !== 0n && withdrawalPolicy !== 1n) {
-      return yield* Effect.fail(
-        new ConfigurationError({
-          configKey: "withdrawalPolicy",
-          message: "withdrawalPolicy must be 0 (locked) or 1 (flexible)",
-        }),
-      );
+    // Fail fast with the reason, rather than letting the validator reject the
+    // built transaction with a bare script-execution error.
+    const cycleEnd =
+      config.cycleEnd === undefined ? fund.cycle_end : config.cycleEnd;
+    if (cycleEnd !== null) {
+      if (fund.cycle_end === null) {
+        return yield* Effect.fail(
+          new ConfigurationError({
+            configKey: "cycleEnd",
+            message:
+              "a cycle end cannot be imposed on a fund that has none — it would defer every share-out",
+          }),
+        );
+      }
+      if (cycleEnd > fund.cycle_end) {
+        return yield* Effect.fail(
+          new ConfigurationError({
+            configKey: "cycleEnd",
+            message: `the cycle end can only move earlier (current ${fund.cycle_end})`,
+          }),
+        );
+      }
     }
 
     const newFund = {
@@ -122,9 +142,9 @@ export const unsignedUpdateFundTxProgram = (
       quorum: newQuorum,
       min_shares_per_deposit: minShares,
       max_shares_per_deposit: maxShares,
-      withdrawal_policy: withdrawalPolicy,
-      cycle_end:
-        config.cycleEnd === undefined ? fund.cycle_end : config.cycleEnd,
+      // withdrawal_policy is carried through from `fund` by the spread — the
+      // validator freezes it, so there is nothing to set here.
+      cycle_end: cycleEnd,
     };
 
     const redeemer: RedeemerBuilder = {
