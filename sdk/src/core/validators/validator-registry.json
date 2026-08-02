@@ -68,9 +68,9 @@
       "onchainSource": "onchain/savings/plutus.json",
       "plutusVersion": "v3",
       "validators": {
-        "savings_vault_validator.savings_vault.mint": "33974493468d0efda804c4549f0c937c0fa5a9685f7df92ec5a1f3621270465f",
-        "savings_vault_validator.savings_vault.spend": "33974493468d0efda804c4549f0c937c0fa5a9685f7df92ec5a1f3621270465f",
-        "savings_vault_validator.savings_vault.else": "33974493468d0efda804c4549f0c937c0fa5a9685f7df92ec5a1f3621270465f"
+        "savings_vault_validator.savings_vault.mint": "e09683db5ce799d7c2ae013622bb6574641187276718c5f2ffaad6f78edd05b5",
+        "savings_vault_validator.savings_vault.spend": "e09683db5ce799d7c2ae013622bb6574641187276718c5f2ffaad6f78edd05b5",
+        "savings_vault_validator.savings_vault.else": "e09683db5ce799d7c2ae013622bb6574641187276718c5f2ffaad6f78edd05b5"
       },
       "deployments": {}
     },
@@ -80,15 +80,15 @@
       "onchainSource": "onchain/governance/plutus.json",
       "plutusVersion": "v3",
       "validators": {
-        "governance_dispatcher.governance_dispatcher.mint": "6bd77ced806c2d7312e06eb99896975829272cbb4f61b2a9efc4effd90ed4a03",
-        "governance_dispatcher.governance_dispatcher.spend": "6bd77ced806c2d7312e06eb99896975829272cbb4f61b2a9efc4effd90ed4a03",
-        "governance_dispatcher.governance_dispatcher.else": "6bd77ced806c2d7312e06eb99896975829272cbb4f61b2a9efc4effd90ed4a03",
-        "governance_gate.governance_gate.spend": "23f9a64ec621c707393d4f44231412304f744392407f126dd25b3e8a5b7d6a06",
-        "governance_gate.governance_gate.else": "23f9a64ec621c707393d4f44231412304f744392407f126dd25b3e8a5b7d6a06",
+        "governance_dispatcher.governance_dispatcher.mint": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
+        "governance_dispatcher.governance_dispatcher.spend": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
+        "governance_dispatcher.governance_dispatcher.else": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
+        "governance_gate.governance_gate.spend": "b88b16df72597d253fa7180aa45d3d7729a3846299384c2214d892263f897c8f",
+        "governance_gate.governance_gate.else": "b88b16df72597d253fa7180aa45d3d7729a3846299384c2214d892263f897c8f",
         "governance_settings.governance_settings.mint": "16d5f0a1c6f0cf693e4775f7116baa1cf7d14d7105cf22ccd6680e7f60e9d617",
         "governance_settings.governance_settings.else": "16d5f0a1c6f0cf693e4775f7116baa1cf7d14d7105cf22ccd6680e7f60e9d617",
-        "governance_voting.governance_voting.withdraw": "ab1c2157cba6a7d6eebfabca8069966adf0fc3e38751ba921835e9debc69b2f2",
-        "governance_voting.governance_voting.else": "ab1c2157cba6a7d6eebfabca8069966adf0fc3e38751ba921835e9debc69b2f2"
+        "governance_voting.governance_voting.withdraw": "92cf239f89964197a0640bd53ead6c16e624de2a0cfca9165820e42549f5f7a8",
+        "governance_voting.governance_voting.else": "92cf239f89964197a0640bd53ead6c16e624de2a0cfca9165820e42549f5f7a8"
       },
       "deployments": {
         "preprod": {
@@ -99,6 +99,32 @@
     }
   },
   "history": [
+    {
+      "date": "2026-08-02",
+      "sdkVersion": "0.5.7-preprod.0",
+      "changed": [
+        "governance:governance_gate.governance_gate.spend",
+        "governance:governance_gate.governance_gate.else"
+      ],
+      "note": "governance voter-fund binding, decision-to-operation binding, share-weighted voting; savings group_type and welfare zero-share close"
+    },
+    {
+      "date": "2026-08-01",
+      "sdkVersion": "0.5.7-preprod.0",
+      "changed": [
+        "savings:savings_vault_validator.savings_vault.mint",
+        "savings:savings_vault_validator.savings_vault.spend",
+        "savings:savings_vault_validator.savings_vault.else",
+        "governance:governance_dispatcher.governance_dispatcher.mint",
+        "governance:governance_dispatcher.governance_dispatcher.spend",
+        "governance:governance_dispatcher.governance_dispatcher.else",
+        "governance:governance_gate.governance_gate.spend",
+        "governance:governance_gate.governance_gate.else",
+        "governance:governance_voting.governance_voting.withdraw",
+        "governance:governance_voting.governance_voting.else"
+      ],
+      "note": "governance voter-fund binding, decision-to-action binding, share-weighted voting; savings group_type field and welfare zero-share close"
+    },
     {
       "date": "2026-07-29",
       "sdkVersion": "0.5.7-preprod.0",
