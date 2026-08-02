@@ -454,6 +454,7 @@ All temporal conditions run on the transaction validity interval: "entirely befo
 + *RegisterAction* (couples to `RosterSpend` + the `RegisterVoter` mint)
 
   - The spent roster input holds the one-shot roster NFT (genuine), and the registrant presents an eligibility token of `charter.member_policy` at `member_index` — its name is `member_id`.
+  - *Fund binding:* when any `charter.governed_targets` entry has policy `member_policy`, one policy mints eligibility tokens for every vault under it, so the token proves membership of SOME vault and not of a governed one. A reference input holding the CIP-68 (100) twin of `member_id` under `member_policy` is then required, and its datum's `fund_id` must be one of those targets. Located by the twin it holds, never by a redeemer index — the ledger presents reference inputs as a sorted set. When no governed target shares the eligibility policy there is no such collision and no account is read.
   - `member_id` ∉ `roster.members` — *one registration per member, ever.*
   - The roster continuation preserves the NFT and address, appends `member_id`, and skims no value.
   - Exactly one Voter Record token of name `blake2b_256("voter" ++ member_id)` is minted into a record UTxO at the dispatcher with datum `VoterRecord { member_id, voted: [] }`.
@@ -462,8 +463,9 @@ All temporal conditions run on the transaction validity interval: "entirely befo
 
   - The proposal is `Open` and the tx is entirely before `deadline`.
   - The voter presents an eligibility token of `charter.member_policy` at `voter_index` — its name is `member_id`.
+  - *Fund binding:* when `proposal.target_policy == member_policy`, the voter's (100) account reference input is required and its `fund_id` must equal `proposal.target_id`. Same rule and same rationale as RegisterAction.
   - *Nullifier:* the voter's record UTxO (token name `blake2b_256("voter" ++ member_id)`, bound `member_id` matching) is SPENT; `proposal_id` ∉ `record.voted`; the continuation appends it, preserving token, address, and value. Exactly one voter record is spent in the transaction. Voting twice therefore requires either a UTxO the ledger already consumed or a successor datum that already lists the proposal — both impossible.
-  - *Weight:* under `OneMemberOneVote`, weight `= 1`. Under `ShareWeighted`, the reference input at `share_ref_index` is the voter's savings account of `voting_mode.share_source_policy`, its user token matches `member_id`, and weight `= share_units` from its datum (an authenticated reference-read, never a spend). On-chain share-weighted enforcement is deferred; a cast under it fails.
+  - *Weight:* under `OneMemberOneVote`, weight `= 1`. Under `ShareWeighted`, weight `= share_units` read from the voter's (100) account reference input — the same reference the fund binding uses, located the same way. `voting_mode.share_source_policy` must equal `member_policy`: share units live in the account the eligibility token authenticates, and no other policy's account can be tied to this voter. A voter holding no shares is rejected rather than casting a weightless vote that still counts toward quorum.
   - The proposal output increments `tally_yes` (if `approve`) or `tally_no` by weight, and `votes_cast` by one; all other fields unchanged.
 
 + *FinalizeAction* (couples to `Finalize`)
@@ -554,12 +556,17 @@ The handler reads the anchor charter once, then runs the matching check from the
 + *Authorize*
 
   - *Self-reference:* `inputs[decision_input_index].output_reference == own_ref`, and it holds a Decision token of `gov_policy`.
-  - *Binding:* the input at `target_input_index` holds the governed vault's state NFT under the exact `(datum.target_policy, datum.target_id)` — a name alone is forgeable under a permissionless policy (the decoy-target attack), so both halves bind. Action-level binding (the vault's redeemer matches `datum.action` with parameters) lives in each primitive's NEXT version, which decodes the frozen `GovAction` directly; the gate stays semantics-free by design.
+  - *Target binding:* the input at `target_input_index` holds the governed vault's state NFT under the exact `(datum.target_policy, datum.target_id)` — a name alone is forgeable under a permissionless policy (the decoy-target attack), so both halves bind.
+  - *Action binding:* the target input's redeemer must match `datum.action`, so a decision authorizing one operation on a vault cannot authorize another. The gate cannot decode every family's redeemer, so it binds on what it can read from any of them:
+    - `Generic { tag, payload: "" }` — the redeemer's CONSTRUCTOR must equal `tag`. The general form: a family's redeemer usually carries input indices that the offchain builder resolves at build time, so its exact bytes are unknowable when the proposal is opened, but which operation it is always is. This binds the operation, *not its parameters*.
+    - `Generic { tag, payload }` with a payload — the redeemer must serialise to exactly those bytes. Strictest, available to a family whose redeemer is index-free.
+    - a typed arm — the redeemer must BE the action, for a family that adopts `GovAction` as its own redeemer type.
+    A target spent with no redeemer performs no action and is rejected.
   - *Freshness:* if `exec_deadline = Some(d)`, `now ≤ d`.
   - *One-shot:* the Decision token is burned in this transaction (`BurnDecision`, `-1`), so it cannot be reused. *Fixed, not configurable:* replay protection is the gate's entire purpose.
   - *No double satisfaction:* the gate consumes exactly one decision per authorized action; when several decisions/actions appear in one transaction they are matched pairwise by strictly-increasing index (`multi_utxo_indexer`), never many-to-one. The `else` branch fails.
 
-The escrow and savings validators require *no change*: their existing `credential_authorized(quorum, tx)` sees a spent input at the gate credential and passes; the gate independently guarantees that input represents a genuine, bound, unexpired, single-use decision. Duties are separated — the gate proves the group approved this action on this vault; the vault proves the action is well-formed.
+The escrow and savings validators require *no change*: their existing `credential_authorized(quorum, tx)` sees a spent input at the gate credential and passes; the gate independently guarantees that input represents a genuine, target-bound, action-bound, unexpired, single-use decision. Duties are separated — the gate proves the group approved this action on this vault; the vault proves the action is well-formed.
 
 #pagebreak()
 \
