@@ -7,7 +7,13 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { AdminAuthConfig, applyAdminWitness } from "../multisig/index.js";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import {
+  effectiveScriptRefs,
+  requireLiveReferenceScripts,
+  ScriptRefs,
+  verifyReferenceScripts,
+} from "../core/scripts.js";
+import { requirementsFor } from "../core/operationRequirements.js";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -47,10 +53,7 @@ import {
 export type BeginRecommitConfig = {
   groupTokenSuffix: string;
   currentTime?: bigint; // POSIX ms — emulator.now() for emulator, omit for live
-  scriptRefs?: {
-    treasury?: UTxO;
-    group?: UTxO;
-  };
+  scriptRefs?: ScriptRefs;
   /**
    * Optional human-readable note attached to this transaction as CIP-20
    * metadata (label 674). Transaction-scoped: no validator reads it, it costs
@@ -112,16 +115,25 @@ export const unsignedBeginRecommitTxProgram = (
     };
     const adminAddress = yield* getWalletAddress(lucid);
 
-    // The group's reserve as a REFERENCE input — the on-chain clean gate reads
-    // standin_rounds == 0 from it (owed default cover must finish before a reset).
+    // The group's reserve as a REFERENCE input. ADR-R1 allows positive communal
+    // cover to carry only when the next slot is provably vacant; the validator
+    // derives that condition from the authenticated group and reserve datums.
     const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
     const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
     const reserveUtxo = patchInlineDatum(reserveUtxoRaw);
 
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const network = lucid.config().network!;
+    yield* requireLiveReferenceScripts(
+      network,
+      "beginRecommit",
+      scriptRefs,
+      requirementsFor("beginRecommit"),
+    );
+    yield* verifyReferenceScripts(protocol, { group: scriptRefs.group });
     const allReferenceInputs = [
       reserveUtxo,
-      ...([scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[]),
+      ...([scriptRefs.group].filter(Boolean) as UTxO[]),
     ];
     const reserveRefInputIndex = referenceInputIndex(
       allReferenceInputs,
@@ -173,12 +185,9 @@ export const unsignedBeginRecommitTxProgram = (
       .validFrom(Number(now))
       .readFrom([reserveUtxo]);
 
-    const withValidators =
-      scriptRefs.treasury || scriptRefs.group
-        ? baseTx.readFrom(
-            [scriptRefs.treasury, scriptRefs.group].filter(Boolean) as UTxO[],
-          )
-        : baseTx.attach.SpendingValidator(groupValidator.spendGroup);
+    const withValidators = scriptRefs.group
+      ? baseTx.readFrom([scriptRefs.group])
+      : baseTx.attach.SpendingValidator(groupValidator.spendGroup);
 
     const withSigners = applyAdminWitness(withValidators, config);
 

@@ -23,7 +23,10 @@ import { ScriptRefs } from "./scripts.js";
 // (settings publishes the four stake hashes); the dispatcher checks the family
 // action covers each spent treasury UTxO.
 
-const REF_KEY: Record<TreasuryFamily, keyof ScriptRefs> = {
+/** Single source of truth from a treasury family to its deployed reference. */
+export const treasuryFamilyReferenceKey: Readonly<
+  Record<TreasuryFamily, keyof ScriptRefs>
+> = {
   rounds: "treasuryRounds",
   lifecycle: "treasuryLifecycle",
   recovery: "treasuryRecovery",
@@ -63,7 +66,7 @@ export const attachFamilyWithdrawal = (
     0n,
     actionRedeemer,
   );
-  const ref = refs[REF_KEY[family]] as UTxO | undefined;
+  const ref = refs[treasuryFamilyReferenceKey[family]] as UTxO | undefined;
   if (!ref && network !== "Custom")
     throw new Error(
       `Missing reference script for the treasury ${family} family on ${network}. ` +

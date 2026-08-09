@@ -5,7 +5,10 @@ import {
   mintingPolicyToId,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { ReferenceScriptMismatchError } from "./errors.js";
+import {
+  MissingReferenceScriptError,
+  ReferenceScriptMismatchError,
+} from "./errors.js";
 import type { Protocol } from "./validators/constants.js";
 
 /**
@@ -117,6 +120,31 @@ export const resolveScriptRefs = (
  */
 export const effectiveScriptRefs = (perCall?: ScriptRefs): ScriptRefs =>
   resolveScriptRefs(perCall).refs;
+
+/**
+ * Enforces the reference scripts that a size-sensitive operation needs on a
+ * live network. Custom networks keep the inline path for emulator tests.
+ */
+export const requireLiveReferenceScripts = (
+  network: Network,
+  operation: string,
+  refs: ScriptRefs,
+  required: readonly (keyof ScriptRefs)[],
+): Effect.Effect<void, MissingReferenceScriptError> =>
+  Effect.gen(function* () {
+    if (network === "Custom") return;
+    for (const validator of required) {
+      if (!refs[validator]) {
+        return yield* Effect.fail(
+          new MissingReferenceScriptError({
+            operation,
+            validator,
+            network,
+          }),
+        );
+      }
+    }
+  });
 
 // ─── Verification ─────────────────────────────────────────────────────────────
 
