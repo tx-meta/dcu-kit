@@ -15,8 +15,8 @@ Obtained from `createDcuSdk(settingsPolicy)`. See [Getting Started](/docs/gettin
 - The datum is structurally unchanged (a `TreasuryState` top-up); the group UTxO is a read-only reference input.
 - Requires the member's account NFT in the wallet for authorization.
 
-<Callout title="ICS is terminal" type="warn">
-`contribute` requires a `TreasuryState` datum. A treasury already in `DefaultState` (insufficient collateral) cannot be topped up to recover — its only resolutions are an admin grace extension or termination.
+<Callout title="Default recovery" type="info">
+`contribute` accepts both `TreasuryState` and `DefaultState`. A defaulted member recovers when the post-top-up contributable balance reaches at least one contribution fee. That transaction also spends the group UTxO, restores `TreasuryState`, and increments `active_member_count`. `PenaltyState` cannot be topped up.
 </Callout>
 
 ## Configuration

@@ -22,10 +22,10 @@ if (Either.isLeft(result)) {
     case "TransactionBuildError":
       console.error(`Build failed in ${error.operation}:`, error.error);
       break;
-    case "UtxoNotFound":
+    case "UtxoNotFoundError":
       console.error(`UTxO not found: ${error.tokenName} at ${error.address}`);
       break;
-    case "InvalidDatum":
+    case "InvalidDatumError":
       console.error(`Invalid datum field "${error.field}":`, error.reason);
       break;
     default:
@@ -61,6 +61,31 @@ Raised when a required UTxO or token cannot be located at the expected address.
 |-------|------|-------------|
 | `tokenName` | `string` | The token name being searched for |
 | `address` | `string` | The address where it was expected |
+
+Provider outages and rate limits are returned as `LucidError`, not rewritten as
+`UtxoNotFoundError`. An empty result alone is not called index lag because the
+provider abstraction does not expose a trustworthy tip.
+
+### `AmbiguousUtxoError`
+Raised when a token unit resolves to more than one live UTxO. This is permanent,
+not retryable; pass the owning group where the endpoint supports it.
+
+### `MissingReferenceScriptError`
+Raised on live networks when an endpoint's required deployed script reference is
+absent. Its `operation`, `validator`, and `network` fields identify the exact
+requirement.
+
+### `ReferenceScriptMismatchError`
+Raised before submission when a supplied reference UTxO has no script or its
+script hash differs from the compiled validator.
+
+### `CoSignBundleError`
+Raised when a portable co-signing bundle is malformed, has a transaction-body,
+network or deployment mismatch, is expired, consumes stale inputs, contains an
+invalid or unexpected witness, or is missing signers. The `reason` field is one
+of `InvalidBundle`, `TransactionMismatch`, `InvalidWitness`,
+`UnexpectedSigner`, `MissingSigners`, `NetworkMismatch`,
+`DeploymentMismatch`, `ExpiredBundle`, or `StaleInputs`.
 
 ---
 
@@ -111,7 +136,7 @@ These errors indicate misconfiguration rather than user input errors:
 |-------|--------|----------------|
 | `TransactionSignError` | `"TransactionSignError"` | Wallet signing failed |
 | `TransactionSubmitError` | `"TransactionSubmitError"` | Chain submission rejected |
-| `ValidatorNotFoundError` | `"ValidatorNotFound"` | A compiled validator is missing from the blueprint |
+| `ValidatorNotFoundError` | `"ValidatorNotFoundError"` | A compiled validator is missing from the blueprint |
 | `BlueprintLoadError` | `"BlueprintLoadError"` | The Aiken-compiled blueprint JSON could not be loaded |
 | `ConfigurationError` | `"ConfigurationError"` | A required SDK configuration key is absent |
 | `SetupError` | `"SetupError"` | General SDK initialisation failure |
@@ -127,14 +152,20 @@ import type { DcuError } from "@tx-meta/dcu-kit";
 type DcuError =
   | TransactionBuildError
   | UtxoNotFoundError
+  | AmbiguousUtxoError
+  | InsufficientUtxosError
+  | GroupFullError
+  | InsufficientFundsError
   | InvalidDatumError
   | DatumDecodingError
-  | InsufficientUtxosError
-  | LucidError
   | TransactionSignError
   | TransactionSubmitError
+  | CoSignBundleError
   | ValidatorNotFoundError
   | BlueprintLoadError
   | ConfigurationError
-  | SetupError;
+  | SetupError
+  | MissingReferenceScriptError
+  | ReferenceScriptMismatchError
+  | LucidError;
 ```
