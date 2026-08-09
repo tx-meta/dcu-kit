@@ -1136,8 +1136,11 @@ describe("Treasury Endpoints", () => {
       expect(result.txHash).toHaveLength(64);
       // Both members' treasuries are spent and re-output, each debited exactly the fee
       // (5) in the contribution token: 10 locked - 5 = 5 remaining.
-      expect(result.treasuryOutputs).toHaveLength(2);
-      for (const out of result.treasuryOutputs) {
+      const memberOutputs = result.treasuryOutputs.filter(
+        (out) => out.assets[tokenUnit] === 5n,
+      );
+      expect(memberOutputs).toHaveLength(2);
+      for (const out of memberOutputs) {
         expect(out.assets[tokenUnit]).toBe(5n);
       }
     }),

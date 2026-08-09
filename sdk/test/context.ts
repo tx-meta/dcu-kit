@@ -306,10 +306,9 @@ const makeEmulatorContext = (seedAssets?: Record<string, bigint>) =>
   });
 
 // Benchmark helper: an emulator context with `memberCount` funded member wallets
-// (plus admin), exposed as `memberSeeds`. Used by the scale benchmark to build
-// N-member distribute rounds. maxTxSize defaults very high so transaction SIZE never
-// blocks the build — the benchmark measures EX-UNITS (mem/cpu), which are independent
-// of inline-vs-reference scripts and are the real per-tx constraint.
+// (plus admin), exposed as `memberSeeds`. It deploys the same reference scripts
+// as the normal emulator context so the measured transaction shape matches live
+// operation rather than silently inlining validator bytes.
 export const makeEmulatorContextWithMembers = (
   memberCount: number,
   options?: { seedAssets?: Record<string, bigint>; maxTxSize?: number },
@@ -338,6 +337,11 @@ export const makeEmulatorContextWithMembers = (
       emulator,
       admin.seedPhrase,
     );
+    const scriptRefs = yield* deployEmulatorScriptRefs(
+      lucid,
+      emulator,
+      protocol,
+    );
 
     return {
       lucid,
@@ -355,6 +359,7 @@ export const makeEmulatorContextWithMembers = (
       emulator,
       protocol,
       settingsUnit,
+      scriptRefs,
       memberSeeds: members.map((m) => m.seedPhrase),
     } as LucidContext & { memberSeeds: string[] };
   });

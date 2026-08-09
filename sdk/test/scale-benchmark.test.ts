@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { it } from "@effect/vitest";
-import { describe } from "vitest";
+import { describe, expect } from "vitest";
 import { makeEmulatorContextWithMembers } from "./context.js";
 import {
   createAccountTestCase,
@@ -20,8 +20,8 @@ import { resolveUtxoByUnit } from "../src/core/utils/resolve.js";
 //   - scriptExecs: redeemer count = N treasury spends + 1 group spend = N+1. This
 //     empirically confirms the per-tx cost MULTIPLIER: the treasury validator runs
 //     once per member, so per-tx cost ≈ (N+1) × per-execution cost.
-//   - sizeBytes: INLINE tx size (the emulator inlines the ~15 KB validator;
-//     production uses reference scripts, so treat this as an upper bound only).
+//   - sizeBytes: production-shaped tx size using the deployed emulator reference
+//     scripts. ADR-R1 gates N=20 at no more than 90% of 16,384 bytes.
 //
 // EX-UNITS are NOT measured here: the Lucid emulator's evaluateTx is a no-op for
 // ex-units, and local UPLC eval fails on distribute's settings .readFrom input
@@ -32,7 +32,9 @@ import { resolveUtxoByUnit } from "../src/core/utils/resolve.js";
 // Run explicitly: `BENCH=1 NETWORK=Emulator pnpm exec vitest run test/scale-benchmark.test.ts`
 // Skipped in the normal suite.
 
-const MEMBER_COUNTS = [2, 10, 20, 40, 60, 80, 100];
+const MEMBER_COUNTS = [2, 10, 20];
+const MAX_TX_SIZE = 16_384;
+const SIZE_GATE = Math.floor(MAX_TX_SIZE * 0.9);
 
 // Sum ex-units from the built tx's redeemers (CML), mirroring Lucid's own
 // makeTxSignBuilder. With local UPLC eval enabled (BENCH_LOCAL_EVAL=1) the redeemers
@@ -117,7 +119,7 @@ const benchOne = (n: number) =>
     const distributeTx = yield* unsignedDistributePayoutTxProgram(
       protocol!,
       lucid,
-      { groupTokenSuffix },
+      { groupTokenSuffix, scriptRefs: context.scriptRefs },
     );
     const size = distributeTx.toCBOR().length / 2;
     const { count } = sumTxExUnits(distributeTx as never);
@@ -139,10 +141,11 @@ describe("Scale benchmark — distribute ex-units vs members", () => {
             continue;
           }
           const { size, scriptExecs } = result.right;
+          if (n === 20) expect(size).toBeLessThanOrEqual(SIZE_GATE);
           rows.push({
             members: n,
             scriptExecs,
-            inlineSizeBytes: size,
+            referenceScriptSizeBytes: size,
             status: "built ok",
           });
         }

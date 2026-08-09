@@ -18,6 +18,8 @@ import {
 import { assetNameLabels } from "../src/core/utils/index.js";
 import { unsignedBeginRecommitTxProgram } from "../src/endpoints/beginRecommit.js";
 import { unsignedDistributePayoutTxProgram } from "../src/endpoints/distributePayout.js";
+import { unsignedTerminateDefaultTxProgram } from "../src/endpoints/terminateDefault.js";
+import { getReserveStateProgram } from "../src/queries/getReserveState.js";
 import {
   parseGroupCip68Datum,
   getScriptAddress,
@@ -287,5 +289,124 @@ describe("recommit lifecycle (emulator)", () => {
         const sealed = yield* startGroupTestCase(context, { groupUtxo });
         expect(sealed.txHash).toHaveLength(64);
       }),
+  );
+
+  it.effect(
+    "ADR-R1: next-slot termination carries cover through recommit and drains after re-seal",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* setupBase();
+        const { context, groupUtxo } = yield* setupGroup(base, {
+          interval_length: 20_000n,
+          collateral_rounds: 1n,
+          grace_period_length: 0n,
+          recommit_window: 86_400_000n,
+        });
+        const { lucid, users } = context;
+        const groupTokenSuffix = extractTokenSuffix(
+          groupUtxo,
+          context.protocol!.groupPolicyId,
+          assetNameLabels.prefix100,
+        );
+
+        const {
+          outputs: { userUtxo: u1Account },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user1.seedPhrase,
+        });
+        const {
+          outputs: { userUtxo: u2Account },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.user2.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: u1Account,
+          userSeed: users.user1.seedPhrase,
+          overrideDepositLovelace: 10_000_000n,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: u2Account,
+          userSeed: users.user2.seedPhrase,
+        });
+        yield* startGroupTestCase(context, { groupUtxo });
+
+        // Round 0 pays user1. User2 contributes their one-round collateral and
+        // enters DefaultState immediately before their slot-1 payout turn.
+        yield* distributePayoutTestCase(context, {
+          groupUtxo,
+          callerSeed: users.user1.seedPhrase,
+        });
+
+        const u2Suffix = extractTokenSuffix(
+          u2Account,
+          context.protocol!.accountPolicyId,
+          assetNameLabels.prefix222,
+        );
+        selectWalletFromSeed(lucid, users.admin.seedPhrase);
+        const terminateTx = yield* unsignedTerminateDefaultTxProgram(
+          context.protocol!,
+          lucid,
+          {
+            groupTokenSuffix,
+            memberAccountTokenSuffix: u2Suffix,
+            currentTime: BigInt(context.emulator!.now()),
+            scriptRefs: context.scriptRefs,
+          },
+        );
+        yield* signAndSubmit(terminateTx);
+        yield* advanceBlock(context.emulator);
+
+        const haltedCover = yield* getReserveStateProgram(
+          context.protocol!,
+          lucid,
+          groupTokenSuffix,
+        );
+        expect(haltedCover.standinRounds).toBe(1n);
+        const halted = yield* readGroupDatum(context);
+        expect(halted.member_slots).toEqual([0n]);
+
+        // This was the deadlocked state: next slot vacant and cover positive.
+        yield* beginRecommitAction(context, groupUtxo);
+        const window = yield* readGroupDatum(context);
+        expect(window.is_started).toBe(false);
+        expect(window.member_slots).toEqual([]);
+        const carried = yield* getReserveStateProgram(
+          context.protocol!,
+          lucid,
+          groupTokenSuffix,
+        );
+        expect(carried.standinRounds).toBe(1n);
+
+        // StartGroup keeps its two-member minimum. A new member may join during
+        // the opt-out window, and ADR-R1 deliberately lets old-roster communal
+        // cover carry into that changed roster.
+        const {
+          outputs: { userUtxo: replacementAccount },
+        } = yield* createAccountTestCase(context, {
+          userSeed: users.admin.seedPhrase,
+        });
+        yield* joinGroupTestCase(context, {
+          groupUtxo,
+          accountUtxo: replacementAccount,
+          userSeed: users.admin.seedPhrase,
+        });
+
+        yield* advanceBlock(context.emulator, 4321);
+        yield* startGroupTestCase(context, { groupUtxo });
+        yield* distributePayoutTestCase(context, {
+          groupUtxo,
+          callerSeed: users.user1.seedPhrase,
+        });
+
+        const drained = yield* getReserveStateProgram(
+          context.protocol!,
+          lucid,
+          groupTokenSuffix,
+        );
+        expect(drained.standinRounds).toBe(0n);
+      }),
+    { timeout: 120_000 },
   );
 });

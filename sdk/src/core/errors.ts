@@ -127,6 +127,19 @@ export class TransactionSubmitError extends Data.TaggedError(
 
 // --- Validator Errors ---
 
+export type ReferenceScriptName =
+  | "treasury"
+  | "group"
+  | "treasuryRounds"
+  | "treasuryLifecycle"
+  | "treasuryRecovery"
+  | "treasuryReserve"
+  // Standalone modules, deployed by `deployModuleScripts`.
+  | "savings"
+  | "escrowV2"
+  | "pool"
+  | "project";
+
 export class ValidatorNotFoundError extends Data.TaggedError(
   "ValidatorNotFoundError",
 )<{
@@ -154,6 +167,19 @@ export class SetupError extends Data.TaggedError("SetupError")<{
 }> {}
 
 /**
+ * A size-sensitive live-network operation is missing a required reference
+ * script. The same operation may inline validators on the emulator, but doing
+ * so on a live network can exceed the transaction-size limit.
+ */
+export class MissingReferenceScriptError extends Data.TaggedError(
+  "MissingReferenceScriptError",
+)<{
+  readonly operation: string;
+  readonly validator: ReferenceScriptName;
+  readonly network: string;
+}> {}
+
+/**
  * A supplied reference-script UTxO does not match the deployment's compiled
  * validator hash (stale/wrong ref), or carries no script at all. Surfaces the
  * otherwise-cryptic on-chain "script hash mismatch" as a typed, early failure.
@@ -161,18 +187,7 @@ export class SetupError extends Data.TaggedError("SetupError")<{
 export class ReferenceScriptMismatchError extends Data.TaggedError(
   "ReferenceScriptMismatchError",
 )<{
-  readonly validator:
-    | "treasury"
-    | "group"
-    | "treasuryRounds"
-    | "treasuryLifecycle"
-    | "treasuryRecovery"
-    | "treasuryReserve"
-    // Standalone modules, deployed by `deployModuleScripts`.
-    | "savings"
-    | "escrowV2"
-    | "pool"
-    | "project";
+  readonly validator: ReferenceScriptName;
   readonly expectedHash: string;
   readonly actualHash: string;
   readonly reason: string;
@@ -195,5 +210,6 @@ export type DcuError =
   | BlueprintLoadError
   | ConfigurationError
   | SetupError
+  | MissingReferenceScriptError
   | ReferenceScriptMismatchError
   | LucidError;

@@ -11,10 +11,11 @@
 
 import {
   CML,
+  credentialToAddress,
   Data,
   Emulator,
-  fromText,
   generateEmulatorAccount,
+  getAddressDetails,
   Lucid,
   LucidEvolution,
   mintingPolicyToId,
@@ -27,7 +28,7 @@ import {
 import { Effect } from "effect";
 import { GroupDatum } from "../src/core/types.js";
 import { assetNameLabels, signAndSubmit } from "../src/core/utils/index.js";
-import { SavingsDatum, SavingsDatumSchema } from "../src/savings/types.js";
+import { SavingsDatum } from "../src/savings/types.js";
 import type { GovScriptRefs } from "../src/governance/utils.js";
 import type { GovernanceInstance } from "../src/governance/validators.js";
 
@@ -257,7 +258,7 @@ type DeployContext = {
   creator: { address: string };
 };
 
-/** Publish `script` as a reference script at the creator's address. */
+/** Publish `script` at the creator's shorter enterprise address. */
 export const deployScriptRef = (
   ctx: DeployContext,
   script: Script,
@@ -265,7 +266,9 @@ export const deployScriptRef = (
 ): Effect.Effect<UTxO> =>
   Effect.gen(function* () {
     const { lucid, emulator } = ctx;
-    const address = ctx.creator.address;
+    const payment = getAddressDetails(ctx.creator.address).paymentCredential;
+    if (!payment) throw new Error("creator has no payment credential");
+    const address = credentialToAddress(lucid.config().network!, payment);
     const tx = yield* Effect.promise(() =>
       lucid
         .newTx()

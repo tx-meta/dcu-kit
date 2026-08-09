@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { type UTxO } from "@lucid-evolution/lucid";
+import { Effect } from "effect";
 import {
   clearReferenceScripts,
   configureReferenceScripts,
   effectiveScriptRefs,
   getSessionReferenceScripts,
+  requireLiveReferenceScripts,
   resolveScriptRefs,
 } from "../src/core/scripts.js";
 
@@ -62,5 +64,54 @@ describe("session configuration", () => {
     // an explicit per-call still wins
     const perCall = { treasury: utxo("override") };
     expect(effectiveScriptRefs(perCall)).toBe(perCall);
+  });
+});
+
+describe("live reference requirements", () => {
+  it("allows inline validators on Custom emulator networks", async () => {
+    const exit = await Effect.runPromiseExit(
+      requireLiveReferenceScripts("Custom", "distributeRound", {}, [
+        "treasury",
+        "group",
+        "treasuryRounds",
+      ]),
+    );
+    expect(exit._tag).toBe("Success");
+  });
+
+  it("names the first missing live reference script", async () => {
+    const exit = await Effect.runPromiseExit(
+      requireLiveReferenceScripts(
+        "Preprod",
+        "distributeRound",
+        { treasury: utxo("t") },
+        ["treasury", "group", "treasuryRounds"],
+      ),
+    );
+    expect(exit._tag).toBe("Failure");
+    if (exit._tag === "Failure" && exit.cause._tag === "Fail") {
+      expect(exit.cause.error).toMatchObject({
+        _tag: "MissingReferenceScriptError",
+        operation: "distributeRound",
+        validator: "group",
+        network: "Preprod",
+      });
+    }
+  });
+
+  it("accepts a complete live operation set", async () => {
+    const exit = await Effect.runPromiseExit(
+      requireLiveReferenceScripts(
+        "Preprod",
+        "distributeRound",
+        {
+          treasury: utxo("t"),
+          group: utxo("g"),
+          treasuryRounds: utxo("r"),
+        },
+        ["treasury", "group", "treasuryRounds"],
+      ),
+    );
+    expect(exit._tag).toBe("Success");
   });
 });
