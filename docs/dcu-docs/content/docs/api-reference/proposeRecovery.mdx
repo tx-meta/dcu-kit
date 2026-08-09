@@ -1,0 +1,22 @@
+---
+title: proposeRecovery
+description: Open a timelocked recovery request for a lost member identity.
+---
+
+The recoveree first creates a fresh account `N'`. `sdk.proposeRecovery` locks its
+treasury-side token in a `RecoveryRequest`, binds the new payment credential, and
+records one or more signed member approvals.
+
+```ts
+await sdk.proposeRecovery(lucid, {
+  groupTokenSuffix,
+  targetTokenSuffix,
+  newAccountTokenSuffix,
+  newPaymentCredential,
+  approverTokenSuffixes,
+  scriptRefs,
+}).unsafeRun();
+```
+
+Every approver must partially sign the same transaction body. Use the portable
+co-signing bundle workflow for asynchronous signatures.

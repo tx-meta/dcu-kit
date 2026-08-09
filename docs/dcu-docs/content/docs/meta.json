@@ -9,6 +9,7 @@
         "rotation-lifecycle",
         "crank-runbook",
         "reserve",
+        "read-and-signing-workflows",
         "escrow",
         "error-reference",
         "api-reference"

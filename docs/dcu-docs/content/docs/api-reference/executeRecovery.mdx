@@ -1,0 +1,19 @@
+---
+title: executeRecovery
+description: Rotate a lost member from N to N' after quorum and timelock.
+---
+
+`sdk.executeRecovery` atomically consumes the request and old treasury, burns `N`,
+moves `N'` into the preserved treasury position, and swaps the group registry.
+
+```ts
+await sdk.executeRecovery(lucid, {
+  groupTokenSuffix,
+  targetTokenSuffix,
+  newAccountTokenSuffix,
+  scriptRefs,
+}).unsafeRun();
+```
+
+Execution is permissionless once the request has enough still-valid approvals and
+the transaction lower bound reaches `earliest_execution_slot`.

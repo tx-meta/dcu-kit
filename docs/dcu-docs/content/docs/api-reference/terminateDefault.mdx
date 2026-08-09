@@ -1,0 +1,19 @@
+---
+title: terminateDefault
+description: Remove a member after their default grace window expires.
+---
+
+`sdk.terminateDefault` spends the defaulted treasury and group, burns membership,
+and sends the defaulter's contributable balance into the mutual reserve before
+using communal cover. The resulting cover counter is carried across a vacant-slot
+recommit and decremented on every later distribution.
+
+```ts
+await sdk.terminateDefault(lucid, {
+  groupTokenSuffix,
+  memberAccountTokenSuffix,
+  scriptRefs,
+}).unsafeRun();
+```
+
+The transaction lower bound must be strictly after `grace_expires_at`.

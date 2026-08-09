@@ -1,0 +1,86 @@
+---
+title: Read and signing workflows
+description: Canonical discovery, lifecycle preflight, and portable partial signatures.
+---
+
+## Discovery
+
+The query module exports `getGroup`, `listGroups`, `listMembers`,
+`listMemberships`, and `listMyMemberships`. List calls accept `{ cursor, limit }`
+with a stable `txHash#outputIndex` cursor and a limit from 1 to 100.
+
+```ts
+import { listGroups, listMyMemberships } from "@tx-meta/dcu-kit";
+
+const groups = await listGroups(sdk.protocol, lucid, { limit: 25 }).unsafeRun();
+const mine = await listMyMemberships(sdk.protocol, lucid).unsafeRun();
+```
+
+Pages return `items`, `nextCursor`, `diagnostics`, `queryStrategy`, and
+`observedSlot`.
+Malformed datums are reported in `diagnostics` instead of disappearing. Provider
+failures remain `LucidError`. Pass Blockfrost connection details in the page
+request to populate a trustworthy `observedSlot`; otherwise it is `null`.
+`queryStrategy` explicitly distinguishes bounded asset-indexed reads from a
+full shared-address scan.
+
+## Lifecycle preflight
+
+`getGroupEligibility` reads the group and reserve and returns structured verdicts
+for `distribute`, `beginRecommit`, `startGroup`, and `deleteGroup`.
+
+```ts
+import { getGroupEligibility } from "@tx-meta/dcu-kit";
+
+const eligibility = await getGroupEligibility(
+  sdk.protocol,
+  lucid,
+  groupTokenSuffix,
+).unsafeRun();
+```
+
+These verdicts explain protocol-state eligibility. They do not claim the wallet
+has the right signer, sufficient funds, or all required reference scripts.
+
+## Portable co-signing
+
+`createCoSignBundle` freezes the unsigned transaction body, network, deployment
+fingerprint, validity bounds, consumed inputs and required key hashes. Each
+participant validates and signs the same JSON-safe bundle with
+`signCoSignBundle`; live validation rejects changed networks/deployments,
+expired bodies, spent inputs and understated input signers. `addCoSignWitness`
+verifies every Ed25519 witness against the body hash and rejects undeclared
+signers.
+
+```ts
+import {
+  createCoSignBundle,
+  signCoSignBundle,
+  getCoSignStatus,
+  completeCoSignBundle,
+} from "@tx-meta/dcu-kit/multisig";
+
+const context = {
+  deploymentFingerprint: publishedManifestHash,
+  // Required whenever unsignedTx has an upper validity bound.
+  currentSlot: observedChainTipSlot,
+};
+let bundle = createCoSignBundle(
+  lucid,
+  unsignedTx,
+  requiredSignerKeyHashes,
+  context,
+);
+bundle = await signCoSignBundle(lucid, bundle, context).unsafeRun();
+if ((await getCoSignStatus(lucid, bundle, context).unsafeRun()).ready) {
+  const signed = await completeCoSignBundle(
+    lucid,
+    bundle,
+    context,
+  ).unsafeRun();
+  await signed.submit();
+}
+```
+
+Transport the serialized bundle over any authenticated channel; never merge
+witnesses into a transaction whose body hash differs.

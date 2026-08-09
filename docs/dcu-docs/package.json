@@ -34,11 +34,5 @@
     "postcss": "^8.5.16",
     "tailwindcss": "^4.3.2",
     "typescript": "^5.9.3"
-  },
-  "pnpm": {
-    "overrides": {
-      "next>postcss": "^8.5.10",
-      "fumadocs-mdx>esbuild": "^0.28.1"
-    }
   }
 }
