@@ -202,7 +202,7 @@ export const publishRefScript = (
     walletAddress: string;
     presetWalletInputs: UTxO[];
     operation: string;
-    awaitSettled?: (txHash: string) => Effect.Effect<void, DcuError, never>;
+    awaitSettled?: (_txHash: string) => Effect.Effect<void, DcuError, never>;
   },
 ): Effect.Effect<ScriptRefOutRef, DcuError, never> =>
   Effect.gen(function* () {

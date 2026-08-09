@@ -80,7 +80,7 @@ export type DeployModuleScriptsOptions = {
    * default polls the provider's wallet UTxO endpoint; the Lucid emulator
    * never advances on its own, so emulator callers pass a block-advancing wait.
    */
-  awaitSettled?: (txHash: string) => Effect.Effect<void, DcuError, never>;
+  awaitSettled?: (_txHash: string) => Effect.Effect<void, DcuError, never>;
 };
 
 /**
