@@ -12,7 +12,7 @@ import {
   type TxMessage,
 } from "../../../core/utils/index.js";
 import { PoolMintRedeemer, PoolSpendRedeemer } from "../types.js";
-import { poolPolicyId, poolVaultValidator } from "../validators.js";
+import { poolPolicyId } from "../validators.js";
 import {
   effectiveEscrowV2ScriptRefs,
   EscrowV2ScriptRefs,
