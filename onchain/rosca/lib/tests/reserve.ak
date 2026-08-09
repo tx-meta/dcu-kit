@@ -849,6 +849,7 @@ fn close_tx(
   member_count: Int,
   burn_group_ref: Bool,
   burn_reserve: Bool,
+  standin_rounds: Int,
 ) -> Transaction {
   let group_in = common.test_input(
     transaction.OutputReference {
@@ -883,7 +884,10 @@ fn close_tx(
     ..transaction.placeholder,
     inputs: [
       group_in,
-      reserve_input(0, reserve_create_value() |> assets.merge(contribution(37))),
+      reserve_input(
+        standin_rounds,
+        reserve_create_value() |> assets.merge(contribution(37)),
+      ),
     ],
     outputs: [],
     mint: group_burn |> assets.merge(reserve_burn),
@@ -901,19 +905,25 @@ fn run_close(tx: Transaction) -> Bool {
 }
 
 test reserve_close__accepts_genuine_deletion() {
-  run_close(close_tx(0, True, True))
+  run_close(close_tx(0, True, True, 0))
+}
+
+// [ADR-R1]: wind-down remains the terminal escape hatch. Once the roster is
+// empty, unresolved communal cover does not orphan the reserve or block deletion.
+test reserve_close__accepts_unresolved_cover_retirement() {
+  run_close(close_tx(0, True, True, 3))
 }
 
 test reserve_close__rejects_with_members_left() {
-  !run_close(close_tx(1, True, True))
+  !run_close(close_tx(1, True, True, 0))
 }
 
 test reserve_close__rejects_without_group_burn() {
-  !run_close(close_tx(0, False, True))
+  !run_close(close_tx(0, False, True, 0))
 }
 
 test reserve_close__rejects_without_reserve_burn() {
-  !run_close(close_tx(0, True, False))
+  !run_close(close_tx(0, True, False, 0))
 }
 
 // ─── group_reserve_burned (deletion coupling) ─────────────────────────────────

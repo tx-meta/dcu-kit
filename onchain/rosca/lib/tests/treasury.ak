@@ -17,9 +17,8 @@ use dcu/treasury_actions.{ExitAction, JoinAction, run_lifecycle_action}
 use dcu/treasury_utils.{min_ada_reserve}
 use dcu/treasury_validation.{
   validate_claim_payout, validate_claim_penalty, validate_claim_penalty_mint,
-  validate_contribute, validate_distribute_withdraw, validate_exit_treasury,
-  validate_extend_grace, validate_join_treasury, validate_terminate_default,
-  validate_update_payout,
+  validate_contribute, validate_exit_treasury, validate_extend_grace,
+  validate_join_treasury, validate_terminate_default, validate_update_payout,
 }
 use tests/common
 
@@ -1352,7 +1351,40 @@ test join_group__rejects_group_output_without_member_count_increment() {
 // Group input: last_distributed_round = -1 → group output: last_distributed_round = 0
 // Borrower receives 2M (1 member × 2M contribution_fee)
 //
-// Indices: inputs=[group(0), treasury(1)], outputs=[treasury_out(0), group_out(1), borrower(2)]
+// Base fixture indices: inputs=[group(0), treasury(1)],
+// outputs=[treasury_out(0), group_out(1), borrower(2)]. The local validation
+// helper appends the mandatory dry reserve to keep legacy unit fixtures concise.
+
+fn validate_distribute_withdraw(
+  own_policy_id: assets.PolicyId,
+  trusted_group_policy: assets.PolicyId,
+  round_number: Int,
+  group_ref_input_index: Int,
+  group_output_index: Int,
+  treasury_input_indices: List<Int>,
+  treasury_output_indices: List<Int>,
+  borrower_output_index: Int,
+  tx: Transaction,
+) -> Bool {
+  let reserve_input_index = list.length(tx.inputs)
+  let reserve_output_index = list.length(tx.outputs)
+  let with_reserve = Transaction {
+    ..tx,
+    inputs: list.concat(tx.inputs, [join_reserve_input(2_000_000)]),
+    outputs: list.concat(tx.outputs, [join_reserve_utxo(2_000_000)]),
+  }
+  treasury_validation.validate_distribute_withdraw(
+    own_policy_id,
+    trusted_group_policy,
+    round_number,
+    group_ref_input_index,
+    group_output_index,
+    list.concat(treasury_input_indices, [reserve_input_index]),
+    list.concat(treasury_output_indices, [reserve_output_index]),
+    borrower_output_index,
+    with_reserve,
+  )
+}
 
 fn setup_distribute_round() -> (Transaction, TreasuryDatum, OutputReference) {
   let tp = treasury_policy()
@@ -4951,7 +4983,7 @@ fn distribute_reserve_tx(
 }
 
 fn run_distribute_reserve(tx: Transaction) -> Bool {
-  validate_distribute_withdraw(
+  treasury_validation.validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -4993,8 +5025,7 @@ test distribute_reserve__accepts_partial_draw() {
   run_distribute_reserve(tx)
 }
 
-// A configured round levy makes the reserve leg MANDATORY.
-test distribute_reserve__rejects_missing_reserve_when_levy_set() {
+fn distribute_without_reserve_tx(round_levy: Int) -> Transaction {
   let tp = treasury_policy()
   let gp = group_policy()
   let group_datum = GroupDatum {
@@ -5005,7 +5036,7 @@ test distribute_reserve__rejects_missing_reserve_when_levy_set() {
     active_member_count: 1,
     member_token_names: [member_tn()],
     member_slots: [0],
-    reserve_round_levy: 250_000,
+    reserve_round_levy: round_levy,
   }
   let group_in_value = assets.from_lovelace(2_000_000)
     |> assets.merge(assets.from_asset(gp, group_ref_tn(), 1))
@@ -5044,13 +5075,16 @@ test distribute_reserve__rejects_missing_reserve_when_levy_set() {
     assets.from_lovelace(min_ada_reserve + 3_000_000)
       |> assets.merge(assets.from_asset(tp, member_tn(), 1)),
   )
-  let tx = Transaction {
+  Transaction {
     ..transaction.placeholder,
     inputs: [group_input, treasury_in],
     outputs: [treasury_out, group_output, test_borrower_output()],
     validity_range: interval.after(0),
   }
-  !validate_distribute_withdraw(
+}
+
+fn run_distribute_without_reserve(round_levy: Int) -> Bool {
+  !treasury_validation.validate_distribute_withdraw(
     treasury_policy(),
     group_policy(),
     0,
@@ -5059,8 +5093,19 @@ test distribute_reserve__rejects_missing_reserve_when_levy_set() {
     [1],
     [0],
     2,
-    tx,
+    distribute_without_reserve_tx(round_levy),
   )
+}
+
+// Every successful distribution must carry the unique reserve, even when there
+// is no configured levy. This prevents hand-built transactions from skipping a
+// dry stand-in decrement and making cover persistence an off-chain convention.
+test distribute_reserve__rejects_missing_reserve_when_dry() fail {
+  run_distribute_without_reserve(0)
+}
+
+test distribute_reserve__rejects_missing_reserve_when_levy_set() fail {
+  run_distribute_without_reserve(250_000)
 }
 
 // The reserve's delta is exact — skimming the levy (crediting less than
