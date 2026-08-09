@@ -18,9 +18,9 @@ use tests/common
 // runs the real validation, so `aiken check` reports the genuine UPLC mem/cpu of
 // the withdraw redeemer at each N. This is the measurement harness for finalizing
 // `max_group_members`: read the per-test execution_units from
-// `aiken check -m scale_probe` (JSON) and keep the cap at the largest N whose mem
-// stays ≤ ~70% of the 14M per-tx limit (headroom for the per-input spend handlers,
-// which the withdraw-zero pattern reduced to a thin withdrawal-presence check).
+// `aiken check -m scale_probe` (JSON). ADR-R1 requires the N=20 reserve-active
+// probe to remain at or below 80% of active-network memory and CPU limits; the
+// full transaction builder separately gates serialized size at 90%.
 //
 // N > 20 cases are synthetic (a real group cannot exceed max_group_members = 20);
 // they exist to show how much room a raised cap would have.
@@ -144,6 +144,55 @@ fn probe_treasury_output(i: Int) -> Output {
   }
 }
 
+const probe_levy: Int = 100_000
+
+fn probe_reserve_tn() -> assets.AssetName {
+  // prefix_rsv + the group ref's 28-byte unique part
+  bytearray.concat(#"52535645", bytearray.drop(probe_group_ref(), 4))
+}
+
+fn probe_reserve_input(standin_rounds: Int, contributable: Int) -> Input {
+  Input {
+    output_reference: OutputReference {
+      transaction_id: #"9999999999999999999999999999999999999999999999999999999999999999",
+      output_index: 0,
+    },
+    output: Output {
+      address: Address {
+        payment_credential: Script(tp()),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(min_ada_reserve + contributable)
+        |> assets.merge(assets.from_asset(tp(), probe_reserve_tn(), 1)),
+      datum: InlineDatum(
+        treasury.ReserveState {
+          group_reference_tokenname: probe_group_ref(),
+          standin_rounds,
+        },
+      ),
+      reference_script: None,
+    },
+  }
+}
+
+fn probe_reserve_output(standin_rounds: Int, contributable: Int) -> Output {
+  Output {
+    address: Address {
+      payment_credential: Script(tp()),
+      stake_credential: None,
+    },
+    value: assets.from_lovelace(min_ada_reserve + contributable)
+      |> assets.merge(assets.from_asset(tp(), probe_reserve_tn(), 1)),
+    datum: InlineDatum(
+      treasury.ReserveState {
+        group_reference_tokenname: probe_group_ref(),
+        standin_rounds,
+      },
+    ),
+    reference_script: None,
+  }
+}
+
 // Runs a full round-0 distribute for n members and validates it. Borrower is the
 // member at slot 0 (Push mode — wallet output receives n × probe_fee).
 fn run_probe(n: Int) -> Bool {
@@ -189,11 +238,16 @@ fn run_probe(n: Int) -> Bool {
   let member_indices = list.range(0, n - 1)
   let treasury_inputs = list.map(member_indices, probe_treasury_input)
   let treasury_outputs = list.map(member_indices, probe_treasury_output)
+  let reserve_input = probe_reserve_input(0, 0)
+  let reserve_output = probe_reserve_output(0, 0)
 
   let tx = Transaction {
     ..transaction.placeholder,
-    inputs: [group_input, ..treasury_inputs],
-    outputs: list.concat(treasury_outputs, [group_output, borrower_output]),
+    inputs: list.concat([group_input, ..treasury_inputs], [reserve_input]),
+    outputs: list.concat(
+      treasury_outputs,
+      [group_output, borrower_output, reserve_output],
+    ),
     validity_range: interval.after(0),
   }
 
@@ -205,10 +259,10 @@ fn run_probe(n: Int) -> Bool {
     0,
     // group_output_index — after the n treasury outputs
     n,
-    // treasury_input_indices: 1..n (group is input 0)
-    list.map(member_indices, fn(i) { i + 1 }),
-    // treasury_output_indices: 0..n-1
-    member_indices,
+    // treasury inputs 1..n plus the mandatory reserve at n+1
+    list.concat(list.map(member_indices, fn(i) { i + 1 }), [n + 1]),
+    // treasury outputs 0..n-1 plus the reserve at n+2
+    list.concat(member_indices, [n + 2]),
     // borrower_output_index — after group output
     n + 1,
     tx,
@@ -236,13 +290,6 @@ test scale_probe__distribute_n30() {
 }
 
 // ─── Reserve-leg probe: levy ON + stand-in draw active (worst case) ───────────
-
-const probe_levy: Int = 100_000
-
-fn probe_reserve_tn() -> assets.AssetName {
-  // prefix_rsv + the group ref's 28-byte unique part
-  bytearray.concat(#"52535645", bytearray.drop(probe_group_ref(), 4))
-}
 
 // Runs the same full round-0 distribute with the reserve leg included: round
 // levy accruing AND a stand-in fee-unit drawn (counter 2 → 1) — the heaviest
@@ -283,42 +330,8 @@ fn run_probe_reserve(n: Int) -> Bool {
   // Reserve: 5M contributable, stand-in counter 2 → draws one full fee (2M).
   let levy_total = n * probe_levy
   let draw = probe_fee
-  let reserve_in = Input {
-    output_reference: OutputReference {
-      transaction_id: #"9999999999999999999999999999999999999999999999999999999999999999",
-      output_index: 0,
-    },
-    output: Output {
-      address: Address {
-        payment_credential: Script(tp()),
-        stake_credential: None,
-      },
-      value: assets.from_lovelace(min_ada_reserve + 5_000_000)
-        |> assets.merge(assets.from_asset(tp(), probe_reserve_tn(), 1)),
-      datum: InlineDatum(
-        treasury.ReserveState {
-          group_reference_tokenname: probe_group_ref(),
-          standin_rounds: 2,
-        },
-      ),
-      reference_script: None,
-    },
-  }
-  let reserve_out = Output {
-    address: Address {
-      payment_credential: Script(tp()),
-      stake_credential: None,
-    },
-    value: assets.from_lovelace(min_ada_reserve + 5_000_000 + levy_total - draw)
-      |> assets.merge(assets.from_asset(tp(), probe_reserve_tn(), 1)),
-    datum: InlineDatum(
-      treasury.ReserveState {
-        group_reference_tokenname: probe_group_ref(),
-        standin_rounds: 1,
-      },
-    ),
-    reference_script: None,
-  }
+  let reserve_in = probe_reserve_input(2, 5_000_000)
+  let reserve_out = probe_reserve_output(1, 5_000_000 + levy_total - draw)
   let borrower_output = Output {
     address: Address {
       payment_credential: VerificationKey(borrower_pkh()),

@@ -153,6 +153,15 @@ test begin_recommit__accepts_at_vacant_slot_halt() {
   run_begin(current, expected_window(current), True)
 }
 
+// [ADR-R1]: cover is communal and survives a roster reset. When the next slot
+// is vacant, no distribution can drain the counter, so recommit must open and
+// preserve the reserve datum for the newly sealed era.
+test begin_recommit__accepts_vacant_halt_with_pending_cover() {
+  let policy_id = common.test_policy_id()
+  let current = halted_group(policy_id)
+  run_begin_standin(current, expected_window(current), True, 2)
+}
+
 // Mid-cycle, no vacancy: rounds 0 done, next slot 1 is held by b — rotation can
 // proceed, so there is nothing to reset.
 test begin_recommit__rejects_mid_cycle_without_vacancy() {
@@ -486,8 +495,8 @@ test prop_begin__vacancy_or_boundary_when_halted(k via gen_rounds_case()) {
   )
 }
 
-// [spec Reserve §5]: pending stand-in cover blocks the reset — owed cover must
-// finish paying out before a lap resets the rotation math.
+// [spec Reserve §5 / ADR-R1]: a full roster cannot reset merely to reshuffle
+// pending cover; carry is permitted only for a provably halted vacant slot.
 test begin_recommit__rejects_pending_standin_cover() {
   let policy_id = common.test_policy_id()
   let current = started_group(policy_id)

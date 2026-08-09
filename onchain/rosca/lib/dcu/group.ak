@@ -240,9 +240,9 @@ pub type GroupSpendRedeemer {
     admin_input_index: Int,
     group_input_index: Int,
     group_output_index: Int,
-    // The group's reserve UTxO as a REFERENCE input — the clean gate additionally
-    // requires standin_rounds == 0 (owed default cover must finish paying out
-    // before a lap resets the rotation math). Appended field.
+    // The group's reserve UTxO as a REFERENCE input — the clean gate normally
+    // requires standin_rounds == 0, but ADR-R1 permits carried communal cover
+    // when the next slot is provably vacant. Appended field.
     reserve_ref_input_index: Int,
   }
 }
@@ -1032,9 +1032,10 @@ pub fn validate_begin_recommit(
     group_ref_token_name,
   )
 
-  // [spec Reserve §5]: owed default cover must finish paying out before a reset —
-  // the group's reserve (located by its deterministic token under the treasury
-  // policy, read-only) must show standin_rounds == 0.
+  // [spec Reserve §5 / ADR-R1]: read the group's reserve through its
+  // deterministic token. Pending communal cover normally keeps the current
+  // rotation in place, but it may carry across a recommit when the next slot is
+  // provably vacant and distribution is therefore halted.
   expect Some(reserve_ref) = list.at(
     tx.reference_inputs,
     reserve_ref_input_index,
@@ -1050,12 +1051,11 @@ pub fn validate_begin_recommit(
     ) == 1
   expect InlineDatum(reserve_datum_data) = reserve_ref.output.datum
   expect ReserveState { standin_rounds, .. }: TreasuryDatum = reserve_datum_data
-  let no_pending_cover = standin_rounds == 0
-
   let next_era_round = current.last_distributed_round + 1 - current.era_start_round
   let at_boundary = next_era_round % current.num_rounds == 0
   let next_slot = next_era_round % current.num_rounds
   let slot_vacant = !list.has(current.member_slots, next_slot)
+  let cover_settled_or_halted = standin_rounds == 0 || slot_vacant
 
   let current_time = get_lower_bound(tx)
   expect Some(group_output) = list.at(outputs, group_output_index)
@@ -1082,7 +1082,7 @@ pub fn validate_begin_recommit(
 
   and {
     admin_authorized?,
-    no_pending_cover?,
+    cover_settled_or_halted?,
     current.is_started?,
     current.is_active?,
     (current.active_member_count == current.member_count)?,
