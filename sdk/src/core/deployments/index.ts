@@ -13,6 +13,8 @@ export type DeploymentManifest = {
   network: string;
   verifiedAt: string;
   sdkVersion: string;
+  status?: "current" | "legacy-validator-set";
+  statusNote?: string;
   settingsPolicy: string;
   deployAddress: string;
   refScripts: Record<string, RefScriptEntry>;
