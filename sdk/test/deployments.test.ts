@@ -39,18 +39,22 @@ describe("deployment manifest", () => {
     );
   });
 
-  it("records hashes for all six ROSCA refs that match buildProtocol(settingsPolicy)", () => {
+  it("marks the two ADR-R1 refs as legacy until the candidate hashes deploy", () => {
     const d = loadDeployment("Preprod");
     const protocol = buildProtocol(d.settingsPolicy);
 
-    expect(d.refScripts.treasury.scriptHash).toBe(
-      validatorToScriptHash(protocol.treasuryValidator.mintTreasury),
-    );
-    expect(d.refScripts.group.scriptHash).toBe(
+    expect(d.status).toBe("legacy-validator-set");
+    expect(d.sdkVersion).toBe("0.6.0-preprod.0");
+    expect(d.refScripts.group.scriptHash).not.toBe(
       validatorToScriptHash(protocol.groupValidator.spendGroup),
     );
-    expect(d.refScripts.treasuryRounds.scriptHash).toBe(
+    expect(d.refScripts.treasuryRounds.scriptHash).not.toBe(
       validatorToScriptHash(protocol.treasuryStakeValidators.rounds),
+    );
+
+    // The other four applied ROSCA scripts did not move in ADR-R1.
+    expect(d.refScripts.treasury.scriptHash).toBe(
+      validatorToScriptHash(protocol.treasuryValidator.mintTreasury),
     );
     expect(d.refScripts.treasuryLifecycle.scriptHash).toBe(
       validatorToScriptHash(protocol.treasuryStakeValidators.lifecycle),
