@@ -1,6 +1,10 @@
 import { LucidEvolution, UTxO, OutRef } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { AmbiguousUtxoError, UtxoNotFoundError } from "../errors.js";
+import {
+  AmbiguousUtxoError,
+  LucidError,
+  UtxoNotFoundError,
+} from "../errors.js";
 
 /**
  * Matches the Lucid Evolution failure raised when a unit is held by more than one
@@ -11,28 +15,37 @@ import { AmbiguousUtxoError, UtxoNotFoundError } from "../errors.js";
 const isMultiMatchMessage = (reason: string): boolean =>
   /needs to be an NFT|only held by one address/i.test(reason);
 
+/** Provider messages that specifically mean the requested unit is absent. */
+const isNotFoundMessage = (reason: string): boolean =>
+  /\b404\b|not found|no UTxO|could not find/i.test(reason);
+
 export const resolveUtxoByUnit = (
   lucid: LucidEvolution,
   unit: string,
-): Effect.Effect<UTxO, UtxoNotFoundError | AmbiguousUtxoError> =>
+): Effect.Effect<UTxO, UtxoNotFoundError | AmbiguousUtxoError | LucidError> =>
   Effect.tryPromise({
     try: () => lucid.utxoByUnit(unit),
     catch: (e) => {
       const reason = String(e);
-      return isMultiMatchMessage(reason)
-        ? new AmbiguousUtxoError({
-            unit,
-            // A floor, not a count: Lucid rejects without reporting how many it saw.
-            candidates: 2,
-            message: `${unit} is held by more than one UTxO: ${reason}`,
-            cause: e,
-          })
-        : new UtxoNotFoundError({
-            tokenName: unit,
-            address: "chain",
-            message: reason,
-            cause: e,
-          });
+      if (isMultiMatchMessage(reason))
+        return new AmbiguousUtxoError({
+          unit,
+          // A floor, not a count: Lucid rejects without reporting how many it saw.
+          candidates: 2,
+          message: `${unit} is held by more than one UTxO: ${reason}`,
+          cause: e,
+        });
+      if (isNotFoundMessage(reason))
+        return new UtxoNotFoundError({
+          tokenName: unit,
+          address: "chain",
+          message: reason,
+          cause: e,
+        });
+      return new LucidError({
+        message: `provider failed while resolving unit ${unit}`,
+        cause: e,
+      });
     },
   }).pipe(
     Effect.filterOrFail(
@@ -49,19 +62,27 @@ export const resolveUtxoByUnit = (
 export const resolveUtxoByOutRef = (
   lucid: LucidEvolution,
   outRef: OutRef,
-): Effect.Effect<UTxO, UtxoNotFoundError> =>
+): Effect.Effect<UTxO, UtxoNotFoundError | LucidError> =>
   Effect.tryPromise({
-    try: async () => {
-      const utxos = await lucid.utxosByOutRef([outRef]);
-      if (!utxos[0]) throw new Error("not found");
-      return utxos[0];
-    },
-    catch: () =>
-      new UtxoNotFoundError({
-        tokenName: `${outRef.txHash}#${outRef.outputIndex}`,
-        address: "chain",
+    try: () => lucid.utxosByOutRef([outRef]),
+    catch: (cause) =>
+      new LucidError({
+        message: `provider failed while resolving ${outRef.txHash}#${outRef.outputIndex}`,
+        cause,
       }),
-  });
+  }).pipe(
+    Effect.flatMap((utxos) =>
+      utxos[0]
+        ? Effect.succeed(utxos[0])
+        : Effect.fail(
+            new UtxoNotFoundError({
+              tokenName: `${outRef.txHash}#${outRef.outputIndex}`,
+              address: "chain",
+              message: "provider returned no live UTxO for the out-ref",
+            }),
+          ),
+    ),
+  );
 
 /**
  * Computes a UTxO's index within the canonically-ordered `reference_inputs` list of a

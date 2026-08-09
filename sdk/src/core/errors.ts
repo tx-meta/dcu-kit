@@ -125,6 +125,22 @@ export class TransactionSubmitError extends Data.TaggedError(
   readonly cause?: unknown;
 }> {}
 
+/** A portable co-signing bundle is malformed, altered, or not ready. */
+export class CoSignBundleError extends Data.TaggedError("CoSignBundleError")<{
+  readonly reason:
+    | "InvalidBundle"
+    | "TransactionMismatch"
+    | "InvalidWitness"
+    | "UnexpectedSigner"
+    | "MissingSigners"
+    | "NetworkMismatch"
+    | "DeploymentMismatch"
+    | "ExpiredBundle"
+    | "StaleInputs";
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
 // --- Validator Errors ---
 
 export type ReferenceScriptName =
@@ -206,6 +222,7 @@ export type DcuError =
   | TransactionBuildError
   | TransactionSignError
   | TransactionSubmitError
+  | CoSignBundleError
   | ValidatorNotFoundError
   | BlueprintLoadError
   | ConfigurationError
