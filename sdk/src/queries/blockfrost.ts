@@ -49,3 +49,19 @@ export const bfGet = (
     catch: (e) =>
       new SetupError({ message: `Blockfrost query failed: ${e}`, cause: e }),
   }).pipe(Effect.retry(retrySchedule));
+
+/** Trustworthy chain-tip slot for observation metadata. */
+export const blockfrostTipSlot = (
+  config: BlockfrostConfig,
+): Effect.Effect<bigint, SetupError> =>
+  Effect.flatMap(bfGet(config, "/blocks/latest"), (value) => {
+    if (
+      !value ||
+      typeof value !== "object" ||
+      typeof (value as { slot?: unknown }).slot !== "number"
+    )
+      return Effect.fail(
+        new SetupError({ message: "Blockfrost latest block omitted slot" }),
+      );
+    return Effect.succeed(BigInt((value as { slot: number }).slot));
+  });
