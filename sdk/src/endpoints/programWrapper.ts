@@ -246,6 +246,8 @@ export const createDcuSession = (
     deleteGroup: (config: DeleteGroupConfig) => sdk.deleteGroup(lucid, config),
     joinGroup: (config: JoinGroupConfig) => sdk.joinGroup(lucid, config),
     startGroup: (config: StartGroupConfig) => sdk.startGroup(lucid, config),
+    beginRecommit: (config: BeginRecommitConfig) =>
+      sdk.beginRecommit(lucid, config),
     distributePayout: (config: DistributePayoutConfig) =>
       sdk.distributePayout(lucid, config),
     exitGroup: (config: ExitGroupConfig) => sdk.exitGroup(lucid, config),
