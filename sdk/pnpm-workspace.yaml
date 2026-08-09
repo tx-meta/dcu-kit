@@ -11,3 +11,6 @@ overrides:
   libsodium-wrappers-sumo: 0.8.2
   libsodium-sumo: 0.8.2
   "tsup>esbuild": "^0.28.1"
+  # GHSA-mwp4-54f8-5fhr reaches in through @cardano-sdk/core; the pinned
+  # lucid line has no release carrying the patched range yet.
+  ip-address: ">=10.3.1"
