@@ -485,6 +485,14 @@ describe("escrow v2 lifecycle (emulator)", () => {
         ],
       });
 
+      const split = yield* getEscrowStateProgram(ctx.lucid, {
+        stateTokenName,
+      });
+      expect(split.coBeneficiaries).toEqual([
+        { address: coA.address, shareBps: 2_000n },
+        { address: coB.address, shareBps: 1_000n },
+      ]);
+
       yield* releaseAsVerifier(ctx, stateTokenName);
 
       const balA = yield* lovelaceAt(ctx, coA.address);

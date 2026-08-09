@@ -26,7 +26,7 @@ import {
   ProjectDatum,
   ProjectMintRedeemer,
 } from "../types.js";
-import { projectPolicyId, projectValidator } from "../validators.js";
+import { projectPolicyId } from "../validators.js";
 import {
   effectiveEscrowV2ScriptRefs,
   EscrowV2ScriptRefs,

@@ -30,6 +30,8 @@ export type EscrowV2State = {
   title: string;
   funderAddress: string;
   beneficiaryAddress: string;
+  /** Payout-only split recipients and their fixed basis-point shares. */
+  coBeneficiaries: { address: string; shareBps: bigint }[];
   fundingMode: "Upfront" | "PerMilestone";
   timeoutPolicy: "RefundToFunder" | "ReleaseToBeneficiary";
   hasArbiter: boolean;
@@ -83,6 +85,15 @@ export const getEscrowStateProgram = (
       network,
       datum.beneficiary,
     );
+    const coBeneficiaries = yield* Effect.forEach(
+      datum.co_beneficiaries,
+      (co) =>
+        Effect.map(fromOnchainAddress(network, co.address), (address) => ({
+          address,
+          shareBps: co.share_bps,
+        })),
+      { concurrency: "unbounded" },
+    );
     const now = config.currentTime ?? BigInt(Date.now());
     const assetUnit = escrowV2AssetUnit(datum);
     const releasedCount = Number(datum.released_count);
@@ -97,6 +108,7 @@ export const getEscrowStateProgram = (
       title: toText(datum.title),
       funderAddress,
       beneficiaryAddress,
+      coBeneficiaries,
       fundingMode: datum.funding_mode,
       timeoutPolicy: datum.timeout_policy,
       hasArbiter: datum.arbiter !== null,

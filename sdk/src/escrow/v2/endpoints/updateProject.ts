@@ -22,7 +22,6 @@ import {
   ProjectDatum,
   ProjectSpendRedeemer,
 } from "../types.js";
-import { projectValidator } from "../validators.js";
 import {
   effectiveEscrowV2ScriptRefs,
   EscrowV2ScriptRefs,

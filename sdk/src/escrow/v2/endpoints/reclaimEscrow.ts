@@ -21,7 +21,6 @@ import {
   EscrowV2SpendRedeemer,
   fromOnchainAddress,
 } from "../types.js";
-import { escrowV2Validator } from "../validators.js";
 import {
   effectiveEscrowV2ScriptRefs,
   EscrowV2ScriptRefs,
