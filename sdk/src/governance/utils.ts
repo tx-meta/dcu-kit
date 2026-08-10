@@ -304,3 +304,19 @@ export const govActionForRedeemer = (
   operation: bigint,
   redeemerCbor: string,
 ): GovAction => ({ Generic: { tag: operation, payload: redeemerCbor } });
+
+/**
+ * Parameter-bound authorization for a target redeemer carrying `intentHash`
+ * as field 0. Generic remains available for constructor-only and exact-CBOR
+ * compatibility; governed savings should use this arm.
+ */
+export const govActionForIntent = (
+  operation: bigint,
+  intentHash: string,
+): GovAction => {
+  if (!/^[0-9a-f]{64}$/i.test(intentHash))
+    throw new Error("intentHash must be a 32-byte hex digest");
+  return {
+    BoundIntent: { tag: operation, intent: intentHash.toLowerCase() },
+  };
+};

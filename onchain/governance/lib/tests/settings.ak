@@ -201,7 +201,7 @@ test settings__rejects_opener_tag_beyond_enum() {
     voting_mode: OneMemberOneVote,
     default_quorum: 1,
     default_threshold: 5000,
-    opener_policy: [Pair(6, AnyMember)],
+    opener_policy: [Pair(7, AnyMember)],
     timelock: 0,
     creator: addr.VerificationKey(creator_pkh()),
     voting_stake_hash: voting_hash(),

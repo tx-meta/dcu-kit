@@ -40,6 +40,11 @@ pub type GovAction {
   // action); ONLY a vault version that decodes and understands a given tag may
   // act on it. Without this arm, any new action kind forces a governance v2.
   Generic { tag: Int, payload: ByteArray }
+  // Parameter-bound action for families whose redeemer carries a canonical
+  // 32-byte intent hash at field index 0. `tag` still names the target
+  // redeemer constructor; `intent` binds its economically relevant payload.
+  // Additive: Generic and every typed arm retain their original encoding.
+  BoundIntent { tag: Int, intent: ByteArray }
 }
 
 // [spec 3.3]: datum at the dispatcher address — the charter (with published

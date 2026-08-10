@@ -83,6 +83,14 @@ export const GovActionSchema = Data.Enum([
       payload: Data.Bytes(),
     }),
   }),
+  Data.Object({
+    BoundIntent: Data.Object({
+      /** Target family's redeemer constructor index. */
+      tag: Data.Integer(),
+      /** 32-byte hash of the target's canonical economic intent. */
+      intent: Data.Bytes(),
+    }),
+  }),
 ]);
 export type GovAction = Data.Static<typeof GovActionSchema>;
 export const GovAction = GovActionSchema as unknown as GovAction;
@@ -96,6 +104,8 @@ export const GOV_ACTION_TAG = {
   MembershipChange: 4n,
   /** All Generic actions share one opener class — the inner tag is not a key. */
   Generic: 5n,
+  /** Parameter-bound target action; additive beside Generic. */
+  BoundIntent: 6n,
 } as const;
 
 // --- Datum at the dispatcher address (charter + proposals) ---
