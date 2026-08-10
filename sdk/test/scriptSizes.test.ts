@@ -41,10 +41,10 @@ describe("compiled validator sizes", () => {
     );
   });
 
-  // The savings-credit validator sits at ~15.6KB — 97% of the ceiling. This
-  // guard is what turns the next size regression into a loud test failure
-  // instead of a blocked deploy; the known remedy is a withdraw-zero family
-  // split (the treasury precedent).
+  // The savings-credit validator sits at 16,105 bytes — 99.86% of the
+  // conservative ceiling. This guard turns the next size regression into a
+  // loud test failure instead of a blocked deploy; the known remedy is a
+  // withdraw-zero family split (the treasury precedent).
   it("every savings validator is within the deployable-ref-script ceiling", () => {
     expect(oversized(savingsBlueprint as { validators: Validator[] })).toEqual(
       [],
