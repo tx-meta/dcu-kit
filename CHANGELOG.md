@@ -6,6 +6,41 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+## [0.6.2-preprod.0] - 2026-08-10
+
+**Savings validator hashes changed.** ROSCA, escrow and governance are
+byte-identical to `0.6.1-preprod.0`. Nothing is deployed on these hashes;
+`0.6.1-preprod.0` stands as the undeployed pre-split candidate and the Preprod
+manifest stays pinned at `0.6.0-preprod.0`.
+
+### Changed
+
+- **The savings vault is now three validators (ADR-0003).** At 16,105 bytes
+  against a 16,128-byte deployable ceiling it was frozen: no security fix could
+  be deployed without a size refactor first. It is now a thin spend/mint
+  dispatcher (4,731 B) plus two withdraw-zero families, `savings_governed`
+  (8,713 B) and `savings_direct` (8,873 B), split on who authorizes the
+  operation. Every vault-spending endpoint config takes `familyRef` beside
+  `scriptRef`; `createFund` and `joinFund` are unaffected. The six
+  quorum-controlled operations keep their constructor tags and `intent_hash` at
+  field 0, so ADR-0002 intent binding reads the same bytes as before.
+- `deployModuleScripts` takes `savingsGoverned` and `savingsDirect` alongside
+  `savings`. All three are required on a live network.
+- `verifyProtocolDeployment` verifies savings as a unit: naming any savings
+  reference requires all three and checks both family stake registrations, so a
+  deployment on which every savings transaction would fail can no longer report
+  `ok: true`.
+
+### Added
+
+- `registerSavingsStake`, the savings counterpart to `registerTreasuryStake`.
+  The ledger rejects a withdrawal from an unregistered credential, so both
+  savings families must be registered once per deployment before any savings
+  endpoint runs.
+- An 80% warning threshold (12,902 bytes) on compiled validator size, enforced
+  as a test alongside the existing hard ceiling. Crossing it is the signal to
+  split a validator, not to spend the remaining headroom.
+
 ## [0.6.1-preprod.0] - 2026-08-10
 
 **Validator hashes changed for ROSCA, savings and governance.** The Preprod
