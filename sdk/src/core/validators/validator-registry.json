@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "sdkVersion": "0.6.0-preprod.0",
+  "sdkVersion": "0.6.1-preprod.0",
   "families": {
     "rosca": {
       "status": "launch",

@@ -5,8 +5,15 @@ import { buildProtocol } from "../src/core/validators/constants.js";
 import { buildGovernance } from "../src/governance/validators.js";
 import { savingsVaultValidator } from "../src/savings/validators.js";
 import { escrowV2Validator } from "../src/escrow/v2/validators.js";
+import packageJson from "../package.json" with { type: "json" };
 
 describe("deployment manifest", () => {
+  it("does not claim the candidate package was deployed", () => {
+    const d = loadDeployment("Preprod");
+    expect(d.sdkVersion).not.toBe(packageJson.version);
+    expect(packageJson.version).toBe("0.6.1-preprod.0");
+  });
+
   it("pins a settings policy and every module ref script", () => {
     const d = loadDeployment("Preprod");
     expect(d.settingsPolicy).toBe(
