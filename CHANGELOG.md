@@ -6,6 +6,55 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+## [0.6.1-preprod.0] - 2026-08-10
+
+**Validator hashes changed for ROSCA, savings and governance.** The Preprod
+manifest is marked `legacy-validator-set` and stays pinned at `0.6.0-preprod.0`
+so existing positions keep operating on the hashes they were created with.
+Nothing is deployed on the new hashes yet.
+
+### Fixed
+
+- **ROSCA continuation deadlock (ADR-R1).** Terminating a defaulter whose payout
+  slot had not yet passed left pending stand-in cover and a vacant next slot,
+  which blocked `DistributeRound` (no borrower) and `BeginRecommit` (pending
+  cover) at the same time, with no path back to a running rotation.
+  `BeginRecommit` now opens at a provably vacant slot and carries the cover
+  across the re-seal.
+- **Governance authorized operations, not parameters.** A passed `DisburseLoan`
+  decision authorized any borrower for any amount, and `CloseFund` named no
+  destination. Each governed savings operation now commits its economic payload
+  (ADR-G1), and `CloseFund` routes the entire residual to the committed address.
+- `beginRecommit` was missing from `createDcuSession`.
+- `resolveUtxoByOutRef` reported provider outages as a missing UTxO.
+- `EscrowV2State` omitted `co_beneficiaries`, so a split recipient could not
+  discover their own escrow.
+
+### Added
+
+- `BoundIntent` governance action arm, additive: `Generic` and every typed arm
+  keep their original encoding.
+- Discovery reads: `getGroup`, `listGroups`, `listMembers`, `listMemberships`,
+  with cursors, observation slots, a reported query strategy, and diagnostics
+  for malformed or unattributable UTxOs.
+- Lifecycle eligibility verdicts with reason codes and the out-refs and slot
+  they were computed from.
+- Portable co-signing bundles bound to network, deployment, validity interval
+  and consumed inputs, with cryptographic witness verification.
+- Generated reference-script requirements; `distributePayout`, `beginRecommit`
+  and `startGroup` now reject a missing reference on live networks instead of
+  inlining validator bytes past the transaction-size limit.
+- `docs/adr/` with ADR-0001 and ADR-0002.
+
+### Changed
+
+- Every distribution must spend the group's reserve, making the stand-in
+  decrement an on-chain invariant rather than an off-chain convention.
+- API reference: the `nextCycle` page is removed, DefaultState recovery and the
+  error discriminator names are corrected, and nine missing endpoint pages added.
+
+## [0.6.0-preprod.0] - 2026-08-02
+
 **Validator hashes changed for governance and savings.** Both families were
 redeployed on Preprod (2026-08-02) and the manifest carries the new references.
 ROSCA and escrow blueprints are untouched, so their references and any position
