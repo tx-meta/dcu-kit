@@ -312,6 +312,222 @@ The address holds one datum type with two variants.
 No datum field in any variant carries personal data. Balances, flags, terms, and identifiers only.
 \
 
+===== Redeemers
+\
+Since ADR-0003 the vault is a thin spend/mint dispatcher plus two withdraw-zero
+family stake validators. The heavy validation runs ONCE per transaction, in the
+family withdrawal; the vault's spend handler runs per input and only proves that
+its family's action covers that input.
+
+*Spending redeemer.* Every vault UTxO an operation consumes is spent with that
+operation's constructor. The six quorum-controlled operations carry
+`intent_hash` at FIELD 0 — the ABI the Governance Gate's `BoundIntent` arm reads
+(ADR-0002). Constructor order is frozen.
+
+- *```rust
+  Deposit
+  Withdraw
+  SocialPayout { intent_hash: ByteArray }
+  UpdateFund { intent_hash: ByteArray }
+  CloseCycle { intent_hash: ByteArray }
+  ClaimShareOut
+  DisburseLoan { intent_hash: ByteArray }
+  RepayLoan
+  MarkArrears
+  WriteOffLoan { intent_hash: ByteArray }
+  RemoveAccount
+  CloseFund { intent_hash: ByteArray }
+  ```*
+
+*`savings_governed` withdrawal action* — SocialPayout, UpdateFund, CloseCycle,
+DisburseLoan, WriteOffLoan, CloseFund. Field 0 of every variant is
+`covered_inputs`: the vault inputs this action validates.
+
+- *```rust
+  SocialPayoutAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    fund_output_index: Int,
+    payout_output_index: Int,
+  }
+  UpdateFundAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    fund_output_index: Int,
+  }
+  CloseCycleAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    fund_output_index: Int,
+  }
+  DisburseLoanAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    member_input_index: Int,
+    seed_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+    loan_output_index: Int,
+  }
+  WriteOffLoanAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    member_input_index: Int,
+    loan_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+  }
+  CloseFundAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    payout_output_index: Int,
+  }
+  ```*
+
+*`savings_direct` withdrawal action* — Deposit, Withdraw, ClaimShareOut,
+RepayLoan, MarkArrears, RemoveAccount. "Direct" is not "unguarded": these still
+enforce member, borrower, timing and state authorization. The split axis is who
+authorizes, not how much is checked.
+
+- *```rust
+  DepositAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    member_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+    fund_tag: Int,
+  }
+  WithdrawAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    member_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+  }
+  ClaimShareOutAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    member_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+  }
+  RepayLoanAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    member_input_index: Int,
+    loan_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+    loan_output_index: Int,
+  }
+  MarkArrearsAction {
+    covered_inputs: List<Int>,
+    loan_input_index: Int,
+    loan_output_index: Int,
+  }
+  RemoveAccountAction { covered_inputs: List<Int>, member_input_index: Int }
+  ```*
+  (`loan_output_index = 99` when the repayment closes the loan — no loan continuation; the Loan State NFT burns.)
+
+Paired transitions (`Deposit`, `Withdraw`, `ClaimShareOut`) spend the fund anchor and the member's reference UTxO in one transaction; triple transitions (`DisburseLoan`, `RepayLoan`, `WriteOffLoan`) additionally spend or create the loan account UTxO. All spent script inputs present the same spending redeemer value; the family action names each of them in `covered_inputs`, and the covered set must be exactly the vault inputs the transaction consumes — anchor and satellites, each covered once. That single check replaces the previous per-input satellite branch: no vault input can be spent without a family action that validates it.
+\
+
+===== Validation
+\
++ *CreateFund*
+
+  Mints the Fund State NFT and initializes the fund anchor.
+
+  - The input at `seed_input_index` is consumed; the token name equals `blake2b_256(serialise(seed.output_reference))`.
+  - Exactly one token of the own policy is minted in the transaction, quantity `+1`.
+  - The output at `fund_output_index` is at the own script address, carries the Fund State NFT, and holds an inline `SavingsFund` datum.
+  - *Charter sanity:* `share_value > 0`, `0 < min_shares_per_deposit <= max_shares_per_deposit`, `withdrawal_policy` is `0` or `1`, `max_loan_multiple >= 0` (`0` disables lending), `loan_grace >= 0`, `status` is `Active`.
+  - *Zero start:* `shares_total == 0`, `savings_total == 0`, `social_total == 0`, `loans_outstanding == 0`.
+  - The anchor output's non-ADA value is exactly the Fund State NFT (no foreign tokens smuggled in at creation).
+
++ *MintAccount*
+
+  Mints one Member Account pair against a live fund.
+
+  - The reference input at `fund_ref_index` is at the own script address, carries a Fund State NFT of the own policy, and its `SavingsFund` datum has `status == Active`.
+  - The input at `seed_input_index` is consumed; the 28-byte suffix is derived from its `output_reference`.
+  - Exactly two tokens of the own policy are minted: reference token (`000643b0` + suffix) and user token (`000de140` + suffix), quantity `+1` each.
+  - The output at `ref_output_index` is at the own script address, carries the reference token, and holds an inline `MemberAccount` datum with: `fund_id` equal to the referenced Fund State NFT's token name, `share_units == 0`, `social_paid == 0`, `joined_at` inside the transaction validity window.
+  - *User token destination:* the output at `user_output_index` pays the user token to a `VerificationKey` payment credential (never a script).
+
++ *MintLoan*
+
+  Mints one Loan State NFT. Runs only alongside the fund anchor spend under `DisburseLoan`, which carries the full loan-origination validation; this policy enforces the token's shape and one-shot uniqueness.
+
+  - The input at `seed_input_index` is consumed; the token name equals `blake2b_256(serialise(seed.output_reference))` and is not CIP-68 prefixed.
+  - Exactly one token of the own policy is minted, quantity `+1`.
+  - At least one spending input sits at the own script address (the anchor spend — every own spend path except `DisburseLoan` forbids own-policy mints, so the coupling is transitive).
+
++ *BurnLoan*
+
+  - Exactly one token of the own policy is minted, quantity `-1`, with a Fund-State-shaped name (32 bytes, not CIP-68 prefixed). The loan spend paths (`RepayLoan` closing, `WriteOffLoan`) authorize which token actually burns.
+
++ *BurnAccount*
+
+  - Exactly two tokens of the own policy are minted, quantity `-1` each: a reference token and a user token sharing one suffix.
+  - Runs only alongside the spend of the member's reference UTxO under `RemoveAccount` (two-phase deregistration — the spending validator authorizes the exit; this policy only enforces the paired burn).
+
++ *BurnFund*
+
+  - Exactly one token of the own policy is minted, quantity `-1`, and it is a Fund State NFT (32-byte name, no CIP-68 prefix).
+  - Runs only alongside the spend of the fund anchor under `CloseFund`.
+\
+
+==== Spend Purpose
+
+===== Datum
+\
+The address holds one datum type with two variants.
+
+- *```rust
+  SavingsFund
+  ```* — the fund anchor:
+  - *`title`: ```rs ByteArray```* – Human-readable fund name (not PII; group-level only).
+  - *`group_type`: ```rs Int```* – Fund taxonomy, fixed at creation: `0` ASCA, `1` VSLA, `2` Welfare, `3` Pool. Only these four values validate at mint, and `UpdateFund` carries the field through from the input datum, so a fund cannot change what kind of fund it is — the audited configuration a member joined under governs it for life. It is also what lets an indexer group funds by kind without inferring it from a combination of charter fields.
+  - *`quorum`: ```rs Credential```* – Ratification authority (multisig script or key). Rotatable via `UpdateFund`.
+  - *`asset_policy`: ```rs PolicyId```* / *`asset_name`: ```rs AssetName```* – The fund's asset; empty policy = ADA. Set at creation, immutable (USDCx-ready).
+  - *`share_value`: ```rs Int```* – Price of one share unit, in base units of the fund asset. Immutable for the fund's lifetime — the unit that keeps share math exact.
+  - *`min_shares_per_deposit`: ```rs Int```* / *`max_shares_per_deposit`: ```rs Int```* – VSLA-style per-transaction purchase band.
+  - *`withdrawal_policy`: ```rs Int```* – `0` = savings locked until share-out (VSLA preset); `1` = flexible withdrawal (ASCA preset).
+  - *`max_loan_multiple`: ```rs Int```* – Loan eligibility cap: a member may borrow up to this multiple of their share value. `0` disables lending; `1` (the SDK default) keeps every loan fully self-collateralized; above `1` the excess is unsecured by construction.
+  - *`loan_grace`: ```rs Int```* – Milliseconds after a loan's `due` before `Late` can become `Defaulted`.
+  - *`cycle_end`: ```rs Option<Int>```* – POSIX ms; before this bound, `CloseCycle` is invalid (`None` = quorum may close at any time).
+  - *`shares_total`: ```rs Int```* – Sum of all members' share units. The load-bearing aggregate.
+  - *`savings_total`: ```rs Int```* – Always `shares_total * share_value`; tracked explicitly so every transition can assert the invariant cheaply.
+  - *`social_total`: ```rs Int```* – The social (welfare) fund; separate from the share-out pot by construction.
+  - *`status`: ```rs FundStatus```* – `Active` or `SharingOut { pot: Int, shares: Int, shares_remaining: Int }`.
+
+- *```rust
+  MemberAccount
+  ```* — one per member:
+  - *`fund_id`: ```rs AssetName```* – The Fund State NFT token name this account belongs to.
+  - *`share_units`: ```rs Int```* – The member's current share units. The balance \#8 will read for loan eligibility.
+  - *`social_paid`: ```rs Int```* – Cumulative social-fund contributions (standing/eligibility history; never redeemable as savings).
+  - *`consent`: ```rs Bool```* – Standing-layer event-capture consent flag (credentials-not-scores; set at join, member-changeable).
+  - *`joined_at`: ```rs Int```* – POSIX ms.
+
+- *```rust
+  LoanAccount
+  ```* — one per active loan (the loan book entry):
+  - *`fund_id`: ```rs AssetName```* – The Fund State NFT token name this loan belongs to.
+  - *`borrower_ref`: ```rs AssetName```* – The borrower's member (100) reference-token name.
+  - *`principal`: ```rs Int```* – Amount disbursed, in base units of the fund asset.
+  - *`outstanding`: ```rs Int```* – Remaining principal; repayments reduce it.
+  - *`service_charge`: ```rs Int```* – The flat charge due, fixed at disbursement (never compounds).
+  - *`charge_paid`: ```rs Int```* – Charge repaid so far (income — flows to the pot).
+  - *`due`: ```rs Int```* – POSIX ms repayment deadline; arrears transitions key off it.
+  - *`grace`: ```rs Int```* – Milliseconds after `due` before `Late` can become `Defaulted`. Copied from the charter's `loan_grace` at disbursement — like the service charge, arrears terms are FIXED at disbursement and immune to later charter updates.
+  - *`status`: ```rs LoanStatus```* – `Current`, `Late` (past due), or `Defaulted` (past `due + grace`).
+
+No datum field in any variant carries personal data. Balances, flags, terms, and identifiers only.
+\
+
 ===== Redeemer
 \
 - *```rust
@@ -406,8 +622,10 @@ Paired transitions (`Deposit`, `Withdraw`, `ClaimShareOut`) spend the fund ancho
 \
 Common checks on every spend (stated once, applied everywhere):
 
-- *Self-reference:* the input at the redeemer index for the spent UTxO resolves to the UTxO being validated (`inputs[i].output_reference == own_ref`), and its payment credential yields the own policy ID.
-- *Input discipline:* the transaction spends exactly the expected own-script inputs for the redeemer — one (anchor-only, member-only, and loan-only actions), two (paired actions), or three (loan transitions: anchor + member + loan). Nothing extra may ride along.
+- *Self-reference:* the family action's `covered_inputs` must name the UTxO being spent (`inputs[i].output_reference == own_ref`); presence of a family withdrawal alone is not sufficient, or a second vault input could ride an action that never validates it. The primary input's payment credential yields the own policy ID, and every covered input must sit at that same credential.
+- *Input discipline:* the covered set is duplicate-free and exactly as long as the operation's family size, and the transaction spends exactly that many own-script inputs — one (anchor-only, member-only, and loan-only actions), two (paired actions), or three (loan transitions: anchor + member + loan). Nothing extra may ride along, and two operations cannot batch under one withdrawal.
+- *Family membership:* the primary input's spending redeemer constructor must be the operation the family action claims to run, so a decision ratified for one operation cannot be executed as another.
+- *Withdraw-zero discipline:* exactly one withdrawal from the family credential, for exactly 0.
 - *Datum present:* a missing datum fails before any branch.
 - *Continuation integrity:* every continuing output returns to the own script address, keeps its state token, and holds an inline datum; only the fields named per-redeemer may change.
 

@@ -8,6 +8,52 @@ cryptic script errors. Validator hashes for each release are tabled at the botto
 
 ---
 
+## `0.6.1-preprod.0` → `0.6.2-preprod.0` (savings two-family split)
+
+Savings changes source; ROSCA, escrow and governance are byte-identical. Neither
+`0.6.1-preprod.0` nor `0.6.2-preprod.0` is deployed: `0.6.1-preprod.0` stands as
+the undeployed pre-split candidate, and consumers stay on `0.6.0-preprod.0`,
+which is what `sdk/src/core/deployments/preprod.json` still describes.
+
+A fresh deployment on these hashes carries **eleven** reference scripts (the six
+ROSCA refs, the three savings refs, and the two governance refs) and **six**
+stake registrations (four treasury, two savings).
+
+### The savings vault is now three validators (ADR-0003)
+
+The single savings validator reached 16,105 bytes against a 16,128-byte
+deployable-reference-script ceiling: it could not take a security fix without
+first being made smaller. It is now a thin spend/mint dispatcher plus two
+withdraw-zero family stake validators, `savings_governed` and `savings_direct`,
+split on who authorizes the operation.
+
+What changes for an integrator:
+
+- **Deploy three savings reference scripts, not one.** `deployModuleScripts`
+  takes `savingsGoverned` and `savingsDirect` alongside `savings`. All three are
+  required on a live network: attaching a family validator inline exceeds the
+  transaction-size limit.
+- **Register the two savings stake credentials** with `registerSavingsStake`
+  before any savings endpoint runs, the same way `registerTreasuryStake` is a
+  prerequisite for ROSCA. The ledger rejects a withdrawal from an unregistered
+  credential, even a zero one.
+- **Every vault-SPENDING endpoint config takes `familyRef`** beside the existing
+  `scriptRef`: the reference script for the family that operation belongs to.
+  `scriptRef` still means the vault dispatcher. `createFund` and `joinFund` are
+  unaffected — creation is one-shot and joining reads the fund as a reference
+  input, so neither spends a vault UTxO and neither needs a family withdrawal.
+- **The spending-redeemer ABI changed.** Indices and routing data moved to the
+  family withdrawal redeemer. The six quorum-controlled operations keep their
+  constructor tags AND `intent_hash` at field 0, so the Governance Gate's
+  `BoundIntent` binding from ADR-0002 reads exactly the bytes it read before.
+  Every vault input must be spent with the constructor matching the family
+  action that runs, satellites included. Only a caller that hand-builds savings
+  redeemers is affected; SDK callers are not.
+
+Governed family: `SocialPayout`, `UpdateFund`, `CloseCycle`, `DisburseLoan`,
+`WriteOffLoan`, `CloseFund`. Direct family: `Deposit`, `Withdraw`,
+`ClaimShareOut`, `RepayLoan`, `MarkArrears`, `RemoveAccount`.
+
 ## `0.6.0-preprod.0` → `0.6.1-preprod.0` (ROSCA, savings and governance hash wave)
 
 Three families change **source**: ROSCA (`group_validator`, `treasury_rounds`),

@@ -1,7 +1,7 @@
 # ADR-0003: Splitting the savings vault into two withdraw-zero families
 
-Status: accepted, not yet implemented
-Target release: `0.6.1-preprod.0` (unpublished; see "Release identity")
+Status: accepted, implemented (2026-08-10)
+Target release: `0.6.2-preprod.0` (see "Release identity")
 
 ## Context
 
@@ -36,6 +36,41 @@ Mint handlers plus shared library floor, measured alone: **4,450 bytes**.
 
 Per-operation solo probes ranged 4,898 (`RemoveAccount`) to 7,045 (`RepayLoan`).
 No single handler dominates; the problem is accumulation.
+
+### Measured against the implemented shape (2026-08-10)
+
+The probes above still carried the mint handlers and no family withdrawal. The
+implemented architecture puts the mint handlers in the thin dispatcher and
+nothing else, so both families came in well below their probe estimates:
+
+| Compiled validator | bytes | % of 16,128 |
+| ------------------ | ----: | ----------: |
+| `savings_vault` (thin dispatcher, mint + spend) | 4,731 | 29.3% |
+| `savings_governed` | 8,713 | 54.0% |
+| `savings_direct` | 8,873 | 55.0% |
+
+All three are under the 12,902-byte warning threshold, enforced by
+`sdk/test/scriptSizes.test.ts`.
+
+Transaction size and execution units, measured on the Lucid emulator with real
+UPLC evaluation across all twelve operations
+(`sdk/test/savings.test.ts`, "ADR-0003 gate 1"):
+
+| Operation | script execs | tx bytes | % tx limit | % max mem | % max steps |
+| --------- | -----------: | -------: | ---------: | --------: | ----------: |
+| `RepayLoan` (closing) | 5 |  9,999 | 61.0% | 8.2% | 4.2% |
+| `RepayLoan` (partial) | 4 | 10,144 | 61.9% | 8.1% | 4.1% |
+| `WriteOffLoan`        | 5 |  9,844 | 60.1% | 8.0% | 4.2% |
+| `DisburseLoan`        | 4 | 10,123 | 61.8% | 7.5% | 4.0% |
+| `Deposit`             | 3 |  9,823 | 60.0% | 5.8% | 2.9% |
+| `MarkArrears`         | 2 |  9,525 | 58.1% | 2.4% | 1.2% |
+
+The size column is the inline-family worst case: those transactions reference
+the dispatcher but attach the family validator inline, which is permitted only
+on the emulator. A live deployment references both, so roughly 8.8 KB comes off
+every figure. Execution units are unaffected by where the script bytes come
+from. The binding constraint is now execution units at well under a tenth of
+the per-transaction budget, not size.
 
 ## Decision
 
@@ -86,8 +121,13 @@ Therefore:
   3. confirm the operation belongs to this family;
   4. recompute the economic intent from the validated transition;
   5. compare it against the spending redeemer's `intent_hash`.
-- The **thin spending validator** must prove that the appropriate family
-  withdrawal exists and covers its own input.
+- The **thin spending validator** must bind EVERY vault input it guards — anchor
+  and satellites alike — to both the family its constructor names AND that
+  family's action variant, and must prove that action covers the input.
+  Coverage alone is not enough: without the action-tag half, a satellite could
+  be spent under any other constructor of the same family while the anchor's
+  transition still validated, so the redeemer sitting on that input would not
+  describe the operation that ran. That redeemer is the ABI the Gate reads.
 
 This keeps the governance gate independent of savings internals: it continues to
 read field 0 of a spend redeemer and needs no knowledge of the family layout.
@@ -145,6 +185,9 @@ Every row must fail. Aiken unit tests unless marked emulator.
 | R4  | family withdrawal present but not covering this spending input    |
 | R5  | withdrawal from a foreign script credential resembling a family   |
 | R6  | withdrawal amount non-zero                                        |
+| R7  | satellite spent with another constructor of the SAME family       |
+| R8  | satellite spent with a governed constructor under a direct action |
+| R9  | governed satellite spent with another governed constructor        |
 
 ### Coverage
 
@@ -196,28 +239,36 @@ Every row must fail. Aiken unit tests unless marked emulator.
 
 ## Release identity
 
-The split lands as **`0.6.1-preprod.0`**, reusing the version already in staging
-rather than cutting `0.6.2`.
+The split lands as **`0.6.2-preprod.0`**, appended to the registry history.
 
-`0.6.1-preprod.0` has never been published. npm carries `0.6.0-preprod.0` on the
-`preprod` tag and `0.4.1` on `latest`. VERSIONING rule 1 governs _a publish whose
-fingerprints differ from the previous release_; since no 0.6.1 artifact exists for
-any consumer, reusing the number creates no silent hash change.
+An earlier draft of this ADR proposed reusing `0.6.1-preprod.0` on the grounds
+that it was never published, so no consumer could observe the change. That was
+rejected: `0.6.1-preprod.0` already has a release commit and a registry identity
+on staging, and rewriting a version's recorded fingerprints in place weakens
+reproducibility whether or not anyone downloaded the artifact. A version's
+history entry describes what that version was, not what we later wished it had
+been.
 
-**Consequence that must be handled:** staging's registry already carries a
-`0.6.1-preprod.0` history entry recording the pre-split savings hash
-`801774429f3dcf1b…`. When the split lands, that entry must be **amended in place**,
-not appended to. Two entries claiming different savings hashes for one version
-would make the history false.
+So:
+
+- `0.6.1-preprod.0` stands as the **undeployed pre-split candidate**, with its
+  original savings fingerprint `801774429f3dcf1b…` intact in the history.
+- `0.6.2-preprod.0` carries the split, **appended** as a new history entry.
+- Neither is deployed. Consumers stay on `0.6.0-preprod.0`, which is what the
+  Preprod manifest still describes.
 
 ## Gates before deployment
 
-1. Two-family implementation complete, all three scripts under the 80% warning
-   threshold, execution units measured.
-2. Full negative-test matrix green, plus the complete emulator suite.
-3. Registry `0.6.1-preprod.0` entry amended with the final hashes.
-4. Fresh settings deployment, nine reference scripts, four stake registrations
-   (ADR-0001).
+1. ~~Two-family implementation complete, all three scripts under the 80% warning
+   threshold, execution units measured.~~ Done 2026-08-10; see "Measured against
+   the implemented shape".
+2. ~~Full negative-test matrix green, plus the complete emulator suite.~~ Done
+   2026-08-10: 51 matrix checks in `onchain/savings/validators/split-tests.ak`,
+   778 Aiken checks and the full SDK suite green.
+3. ~~Registry history entry recorded for `0.6.2-preprod.0`.~~ Done 2026-08-10,
+   appended; `0.6.1-preprod.0` keeps its own entry unchanged.
+4. Fresh settings deployment, **eleven** reference scripts, **six** stake
+   registrations (four treasury, two savings) — ADR-0001 plus this ADR.
 5. Fresh governance instance and bootstrap.
 6. Exact-hash Preprod verification.
 7. Live ROSCA deadlock and recommit rehearsal (ADR-0001).
@@ -230,7 +281,7 @@ configuration:
 
 - existing `0.6.0-preprod.0` positions keep their settings policy, reference
   scripts and a compatible SDK;
-- new positions use the deployed `0.6.1-preprod.0` family;
+- new positions use the deployed `0.6.2-preprod.0` family;
 - the undeployed intermediate state is never used.
 
 This requires version-aware manifests carrying both deployments rather than the
