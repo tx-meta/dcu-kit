@@ -26,6 +26,7 @@ import {
 import { savingsVaultValidator } from "../validators.js";
 import {
   applyQuorumWitness,
+  computeSavingsIntentHash,
   PartyWitness,
   resolveFund,
   savingsVaultAddress,
@@ -146,6 +147,17 @@ export const unsignedUpdateFundTxProgram = (
       // validator freezes it, so there is nothing to set here.
       cycle_end: cycleEnd,
     };
+    const intentHash = computeSavingsIntentHash({
+      UpdateFundIntent: {
+        title: newFund.title,
+        quorum: newFund.quorum,
+        min_shares_per_deposit: newFund.min_shares_per_deposit,
+        max_shares_per_deposit: newFund.max_shares_per_deposit,
+        max_loan_multiple: newFund.max_loan_multiple,
+        loan_grace: newFund.loan_grace,
+        cycle_end: newFund.cycle_end,
+      },
+    });
 
     const redeemer: RedeemerBuilder = {
       kind: "selected",
@@ -153,6 +165,7 @@ export const unsignedUpdateFundTxProgram = (
         Data.to(
           {
             UpdateFund: {
+              intent_hash: intentHash,
               fund_input_index: inputIndices[0],
               fund_output_index: 0n,
             },

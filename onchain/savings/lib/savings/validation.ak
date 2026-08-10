@@ -1,8 +1,10 @@
+use aiken/cbor
 use aiken/collection/dict
 use aiken/collection/list
+use aiken/crypto.{blake2b_256}
 use aiken/interval.{Finite}
 use aiken/primitive/bytearray
-use cardano/address.{Script, VerificationKey}
+use cardano/address.{Address, Credential, Script, VerificationKey}
 use cardano/address as address_mod
 use cardano/assets.{AssetName, PolicyId, Value, ada_policy_id}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction, ValidityRange}
@@ -17,6 +19,59 @@ use savings/types.{
 /// funds it is excluded from the share-out pot; enforcing it at creation keeps
 /// the CloseCycle pot arithmetic non-negative.
 pub const min_ada_buffer: Int = 2_000_000
+
+// Canonical economic payloads. The Governance Gate separately binds the
+// savings redeemer constructor, so the payload does not duplicate an action
+// tag; this keeps the reference script deployable below the ledger size cap.
+pub fn social_payout_intent_hash(destination: Address, amount: Int) -> ByteArray {
+  blake2b_256(cbor.serialise((destination, amount)))
+}
+
+pub fn datum_intent_hash(value: SavingsDatum) -> ByteArray {
+  blake2b_256(cbor.serialise(value))
+}
+
+/// Only the charter fields that UpdateFund may actually amend are committed.
+/// Live balances and counters are deliberately excluded: a passed decision
+/// must remain executable after ordinary deposits, withdrawals or repayments.
+pub fn update_fund_intent_hash(
+  title: ByteArray,
+  quorum: Credential,
+  min_shares_per_deposit: Int,
+  max_shares_per_deposit: Int,
+  max_loan_multiple: Int,
+  loan_grace: Int,
+  cycle_end: Option<Int>,
+) -> ByteArray {
+  blake2b_256(
+    cbor.serialise(
+      (
+        title,
+        quorum,
+        min_shares_per_deposit,
+        max_shares_per_deposit,
+        max_loan_multiple,
+        loan_grace,
+        cycle_end,
+      ),
+    ),
+  )
+}
+
+/// CloseCycle has no discretionary parameter: the target NFT and redeemer tag
+/// are bound by the Governance Gate, while the resulting snapshot is derived
+/// entirely from the live, validator-authenticated fund state.
+pub fn close_cycle_intent_hash() -> ByteArray {
+  blake2b_256("")
+}
+
+pub fn write_off_intent_hash(loan_id: AssetName) -> ByteArray {
+  blake2b_256(loan_id)
+}
+
+pub fn close_fund_intent_hash(destination: Address) -> ByteArray {
+  blake2b_256(cbor.serialise(destination))
+}
 
 // ── value helpers ───────────────────────────────────────────────────────────
 
@@ -806,11 +861,13 @@ pub fn validate_paired_member(
 
 /// [spec 3.3 SocialPayout]: the quorum pays a welfare claim from the social
 /// fund. Valid in Active AND SharingOut.
-pub fn validate_social_payout(
+pub fn validate_social_payout_bound(
   policy_id: PolicyId,
   datum: SavingsDatum,
   own_input: Input,
+  intent_hash: ByteArray,
   fund_output_index: Int,
+  payout_output_index: Int,
   outputs: List<Output>,
   mint: Value,
   tx: Transaction,
@@ -837,6 +894,7 @@ pub fn validate_social_payout(
       }
     = datum
   expect Some(fund_out) = list.at(outputs, fund_output_index)
+  expect Some(payout_out) = list.at(outputs, payout_output_index)
   // [spec 3.3 SocialPayout]: paid = the vault's fund-asset decrease
   let paid = asset_amount(own_input.output.value, asset_policy, asset_name) - asset_amount(
     fund_out.value,
@@ -870,6 +928,8 @@ pub fn validate_social_payout(
     // [spec 3.3 SocialPayout]: bounded by the social fund — member savings
     // and the share-out pot are out of the quorum's reach
     (paid <= social_total)?,
+    (asset_amount(payout_out.value, asset_policy, asset_name) == paid)?,
+    (social_payout_intent_hash(payout_out.address, paid) == intent_hash)?,
     only_fund_asset_moved(
       own_input.output.value,
       fund_out.value,
@@ -895,10 +955,11 @@ fn cycle_end_not_extended(current: Option<Int>, next: Option<Int>) -> Bool {
   }
 }
 
-pub fn validate_update_fund(
+pub fn validate_update_fund_bound(
   policy_id: PolicyId,
   datum: SavingsDatum,
   own_input: Input,
+  intent_hash: ByteArray,
   fund_output_index: Int,
   outputs: List<Output>,
   mint: Value,
@@ -924,11 +985,12 @@ pub fn validate_update_fund(
   // [spec 3.3 UpdateFund]: only while Active
   expect Active = status
   expect Some(fund_out) = list.at(outputs, fund_output_index)
+  let next_fund = output_datum(fund_out)
   expect  
       SavingsFund {
         title: new_title,
         group_type: out_group_type,
-        quorum: _new_quorum,
+        quorum: new_quorum,
         asset_policy: out_asset_policy,
         asset_name: out_asset_name,
         share_value: out_share_value,
@@ -944,9 +1006,18 @@ pub fn validate_update_fund(
         loans_outstanding: out_loans_outstanding,
         status: out_status,
       }
-    = output_datum(fund_out)
+    = next_fund
   and {
     credential_authorized(quorum, tx)?,
+    (update_fund_intent_hash(
+      new_title,
+      new_quorum,
+      new_min,
+      new_max,
+      new_multiple,
+      new_grace,
+      new_cycle_end,
+    ) == intent_hash)?,
     (fund_out.address == own_input.output.address)?,
     // [spec 3.3 UpdateFund]: immutable forever — changing share_value would
     // corrupt the share invariant; changing the asset would strand custody
@@ -985,10 +1056,11 @@ pub fn validate_update_fund(
 
 /// [spec 3.3 CloseCycle]: the quorum freezes the share-out snapshot, EXACTLY:
 /// pot = vault - social - buffer(ADA funds). Freezing moves no value.
-pub fn validate_close_cycle(
+pub fn validate_close_cycle_bound(
   policy_id: PolicyId,
   datum: SavingsDatum,
   own_input: Input,
+  intent_hash: ByteArray,
   fund_output_index: Int,
   outputs: List<Output>,
   mint: Value,
@@ -1060,6 +1132,7 @@ pub fn validate_close_cycle(
   }
   and {
     credential_authorized(quorum, tx)?,
+    (close_cycle_intent_hash() == intent_hash)?,
     after_cycle_end?,
     // [spec 3.3 CloseCycle]: loans clear first (VSLA rule) — every loan is
     // repaid or written off before the pot freezes
@@ -1114,10 +1187,13 @@ pub fn validate_remove_account(
 
 /// [spec 3.3 CloseFund]: after every share is claimed, the quorum burns the
 /// anchor and releases the residual (dust + unclaimed social) as it directs.
-pub fn validate_close_fund(
+pub fn validate_close_fund_bound(
   policy_id: PolicyId,
   datum: SavingsDatum,
   own_input: Input,
+  intent_hash: ByteArray,
+  payout_output_index: Int,
+  outputs: List<Output>,
   mint: Value,
   tx: Transaction,
 ) -> Bool {
@@ -1125,8 +1201,14 @@ pub fn validate_close_fund(
   // [spec 3.3 CloseFund]: closure only after the share-out completes
   expect SharingOut { shares_remaining, .. } = status
   let fund_name = fund_name_of(own_input, policy_id)
+  expect Some(payout_out) = list.at(outputs, payout_output_index)
   and {
     credential_authorized(quorum, tx)?,
+    (close_fund_intent_hash(payout_out.address) == intent_hash)?,
+    // The committed destination receives every residual asset. Applying the
+    // exact Fund-NFT burn to the input must produce this one payout output; no
+    // dust, social balance or unrelated token can be diverted elsewhere.
+    (assets.merge(own_input.output.value, mint) == payout_out.value)?,
     (shares_remaining == 0)?,
     // [spec 3.3 CloseFund]: the Fund State NFT burns — no half-closed funds
     (own_tokens(mint, policy_id) == [Pair(fund_name, -1)])?,
@@ -1192,10 +1274,11 @@ fn loan_input_for(
 
 /// [spec 3.3 DisburseLoan]: quorum AND borrower originate a loan — principal
 /// to the borrower's wallet, the record UTxO to the vault.
-pub fn validate_disburse_loan(
+pub fn validate_disburse_loan_bound(
   policy_id: PolicyId,
   datum: SavingsDatum,
   own_input: Input,
+  intent_hash: ByteArray,
   member_input_index: Int,
   seed_input_index: Int,
   fund_output_index: Int,
@@ -1255,6 +1338,7 @@ pub fn validate_disburse_loan(
   expect Some(member_out) = list.at(outputs, member_output_index)
   expect Some(loan_out) = list.at(outputs, loan_output_index)
   // [spec 3.3 DisburseLoan]: the new loan's terms, read from the record
+  let new_loan = output_datum(loan_out)
   expect  
       LoanAccount {
         fund_id: l_fund,
@@ -1267,7 +1351,7 @@ pub fn validate_disburse_loan(
         grace,
         status: l_status,
       }
-    = output_datum(loan_out)
+    = new_loan
   // [spec 3.3 DisburseLoan]: due must lie beyond the tx validity window
   expect Finite(hi) = tx.validity_range.upper_bound.bound_type
   let expected_fund = SavingsFund {
@@ -1306,6 +1390,7 @@ pub fn validate_disburse_loan(
   }
   and {
     credential_authorized(quorum, tx)?,
+    (datum_intent_hash(new_loan) == intent_hash)?,
     borrower_consents?,
     // [spec 3.3 DisburseLoan]: lending enabled; one loan at a time
     (max_loan_multiple > 0)?,
@@ -1570,10 +1655,11 @@ pub fn validate_mark_arrears(
 
 /// [spec 3.3 WriteOffLoan]: the quorum closes a Defaulted loan — seize the
 /// borrower's shares first, socialize only the remainder. No value moves.
-pub fn validate_write_off_loan(
+pub fn validate_write_off_loan_bound(
   policy_id: PolicyId,
   datum: SavingsDatum,
   own_input: Input,
+  intent_hash: ByteArray,
   member_input_index: Int,
   loan_input_index: Int,
   fund_output_index: Int,
@@ -1670,6 +1756,7 @@ pub fn validate_write_off_loan(
   }
   and {
     credential_authorized(quorum, tx)?,
+    (write_off_intent_hash(loan_name) == intent_hash)?,
     // [spec 3.3 WriteOffLoan]: only Defaulted loans; the record must match
     (l_status == Defaulted)?,
     (borrower_ref == ref_name)?,

@@ -3,9 +3,11 @@ import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import {
   CML,
+  credentialToAddress,
   Emulator,
   generateEmulatorAccount,
   generatePrivateKey,
+  getAddressDetails,
   Lucid,
   LucidEvolution,
   PROTOCOL_PARAMETERS_DEFAULT,
@@ -49,7 +51,7 @@ type SavingsContext = {
   treasurer: { seedPhrase: string; address: string };
   member1: { seedPhrase: string; address: string };
   member2: { seedPhrase: string; address: string };
-  /** The ~15.5KB validator deployed once as a reference script. */
+  /** The ~15.7KiB validator deployed once as a reference script. */
   scriptRef: UTxO;
 };
 
@@ -65,11 +67,14 @@ const makeContext = Effect.gen(function* () {
   // Deploy the validator once as a reference script (it cannot ride inline
   // within the 16KB tx limit).
   selectWalletFromSeed(lucid, treasurer.seedPhrase);
+  const payment = getAddressDetails(treasurer.address).paymentCredential;
+  if (!payment) throw new Error("treasurer has no payment credential");
+  const referenceAddress = credentialToAddress("Custom", payment);
   const deploy = yield* Effect.promise(() =>
     lucid
       .newTx()
       .pay.ToAddressWithData(
-        treasurer.address,
+        referenceAddress,
         undefined,
         { lovelace: 25_000_000n },
         savingsVaultValidator.spendVault,
@@ -79,7 +84,7 @@ const makeContext = Effect.gen(function* () {
   yield* signAndSubmit(deploy);
   yield* advanceBlock(emulator, 2);
   const scriptRef = (yield* Effect.promise(() =>
-    lucid.utxosAt(treasurer.address),
+    lucid.utxosAt(referenceAddress),
   )).find((u) => u.scriptRef);
   if (!scriptRef) throw new Error("script ref deploy failed");
   return {
@@ -347,11 +352,14 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
         );
         const lucid = yield* Effect.promise(() => Lucid(emulator, "Custom"));
         selectWalletFromSeed(lucid, treasurer.seedPhrase);
+        const payment = getAddressDetails(treasurer.address).paymentCredential;
+        if (!payment) throw new Error("treasurer has no payment credential");
+        const referenceAddress = credentialToAddress("Custom", payment);
         const deploy = yield* Effect.promise(() =>
           lucid
             .newTx()
             .pay.ToAddressWithData(
-              treasurer.address,
+              referenceAddress,
               undefined,
               { lovelace: 25_000_000n },
               savingsVaultValidator.spendVault,
@@ -361,7 +369,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
         yield* signAndSubmit(deploy);
         yield* advanceBlock(emulator, 2);
         const scriptRefNt = (yield* Effect.promise(() =>
-          lucid.utxosAt(treasurer.address),
+          lucid.utxosAt(referenceAddress),
         )).find((u) => u.scriptRef);
         if (!scriptRefNt) throw new Error("script ref deploy failed");
         const ctx = {

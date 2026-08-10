@@ -20,6 +20,7 @@ import { SavingsDatum, SavingsSpendRedeemer } from "../types.js";
 import { savingsVaultValidator } from "../validators.js";
 import {
   applyQuorumWitness,
+  computeSavingsIntentHash,
   fundAssetUnit,
   MIN_ADA_BUFFER,
   PartyWitness,
@@ -137,6 +138,9 @@ export const unsignedCloseCycleTxProgram = (
         },
       },
     };
+    const intentHash = computeSavingsIntentHash({
+      CloseCycleIntent: {},
+    });
 
     const redeemer: RedeemerBuilder = {
       kind: "selected",
@@ -144,6 +148,7 @@ export const unsignedCloseCycleTxProgram = (
         Data.to(
           {
             CloseCycle: {
+              intent_hash: intentHash,
               fund_input_index: inputIndices[0],
               fund_output_index: 0n,
             },

@@ -115,11 +115,24 @@ pub type SavingsSpendRedeemer {
     member_output_index: Int,
   }
   // Anchor only, quorum: welfare payment from social_total.
-  SocialPayout { fund_input_index: Int, fund_output_index: Int }
+  SocialPayout {
+    intent_hash: ByteArray,
+    fund_input_index: Int,
+    fund_output_index: Int,
+    payout_output_index: Int,
+  }
   // Anchor only, quorum: mutable charter fields + quorum rotation.
-  UpdateFund { fund_input_index: Int, fund_output_index: Int }
+  UpdateFund {
+    intent_hash: ByteArray,
+    fund_input_index: Int,
+    fund_output_index: Int,
+  }
   // Anchor only, quorum: freeze the share-out snapshot; moves no value.
-  CloseCycle { fund_input_index: Int, fund_output_index: Int }
+  CloseCycle {
+    intent_hash: ByteArray,
+    fund_input_index: Int,
+    fund_output_index: Int,
+  }
   // Paired: member claims pot * share_units / shares (floor).
   ClaimShareOut {
     fund_input_index: Int,
@@ -130,6 +143,7 @@ pub type SavingsSpendRedeemer {
   // Triple (anchor + member + loan creation), quorum AND borrower: loan
   // origination. Principal to the borrower; the record to the vault.
   DisburseLoan {
+    intent_hash: ByteArray,
     fund_input_index: Int,
     member_input_index: Int,
     seed_input_index: Int,
@@ -152,6 +166,7 @@ pub type SavingsSpendRedeemer {
   // Triple (anchor + member + loan consumed), quorum: close a Defaulted
   // loan — seize shares first, socialize the remainder. BurnLoan pairs.
   WriteOffLoan {
+    intent_hash: ByteArray,
     fund_input_index: Int,
     member_input_index: Int,
     loan_input_index: Int,
@@ -162,7 +177,11 @@ pub type SavingsSpendRedeemer {
   // zero balance; paired with the BurnAccount mint.
   RemoveAccount { member_input_index: Int }
   // Anchor only, quorum, shares_remaining == 0: paired with BurnFund.
-  CloseFund { fund_input_index: Int }
+  CloseFund {
+    intent_hash: ByteArray,
+    fund_input_index: Int,
+    payout_output_index: Int,
+  }
 }
 
 pub type SavingsMintRedeemer {

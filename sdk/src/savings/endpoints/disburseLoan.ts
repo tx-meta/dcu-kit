@@ -25,6 +25,7 @@ import {
 import { savingsPolicyId, savingsVaultValidator } from "../validators.js";
 import {
   applyQuorumWitness,
+  computeSavingsIntentHash,
   findUserTokenUtxo,
   fundAssetUnit,
   fundStateTokenName,
@@ -179,6 +180,9 @@ export const unsignedDisburseLoanTxProgram = (
         status: "Current",
       },
     };
+    const intentHash = computeSavingsIntentHash({
+      DisburseLoanIntent: { loan: loanDatum },
+    });
 
     const spendRedeemer: RedeemerBuilder = {
       kind: "selected",
@@ -186,6 +190,7 @@ export const unsignedDisburseLoanTxProgram = (
         Data.to(
           {
             DisburseLoan: {
+              intent_hash: intentHash,
               fund_input_index: inputIndices[0],
               member_input_index: inputIndices[1],
               seed_input_index: inputIndices[2],

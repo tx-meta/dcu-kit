@@ -19,7 +19,13 @@ import {
 } from "../../core/utils/index.js";
 import { SavingsMintRedeemer, SavingsSpendRedeemer } from "../types.js";
 import { savingsPolicyId, savingsVaultValidator } from "../validators.js";
-import { applyQuorumWitness, PartyWitness, resolveFund } from "../utils.js";
+import {
+  applyQuorumWitness,
+  computeSavingsIntentHash,
+  PartyWitness,
+  resolveFund,
+  toSavingsAddress,
+} from "../utils.js";
 
 /**
  * Creates an unsigned transaction closing the fund after every share has
@@ -79,12 +85,21 @@ export const unsignedCloseFundTxProgram = (
     const fundUnit = savingsPolicyId + config.fundTokenName;
     const residual = { ...fundUtxo.assets };
     delete residual[fundUnit];
+    const intentHash = computeSavingsIntentHash({
+      CloseFundIntent: { destination: toSavingsAddress(destination) },
+    });
 
     const redeemer: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
-          { CloseFund: { fund_input_index: inputIndices[0] } },
+          {
+            CloseFund: {
+              intent_hash: intentHash,
+              fund_input_index: inputIndices[0],
+              payout_output_index: 0n,
+            },
+          },
           SavingsSpendRedeemer,
         ),
       inputs: [fundUtxo],
