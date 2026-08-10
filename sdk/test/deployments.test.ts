@@ -11,7 +11,7 @@ describe("deployment manifest", () => {
   it("does not claim the candidate package was deployed", () => {
     const d = loadDeployment("Preprod");
     expect(d.sdkVersion).not.toBe(packageJson.version);
-    expect(packageJson.version).toBe("0.6.1-preprod.0");
+    expect(packageJson.version).toBe("0.6.2-preprod.0");
   });
 
   it("pins a settings policy and every module ref script", () => {

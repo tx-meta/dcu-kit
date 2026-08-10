@@ -3,7 +3,6 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
-  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -23,8 +22,13 @@ import {
 import {
   SavingsDatum,
   SavingsMintRedeemer,
+  SavingsGovernedAction,
   SavingsSpendRedeemer,
 } from "../types.js";
+import {
+  attachSavingsFamilyWithdrawal,
+  type SavingsRefConfig,
+} from "../familyWithdraw.js";
 import { savingsPolicyId, savingsVaultValidator } from "../validators.js";
 import {
   applyQuorumWitness,
@@ -47,10 +51,7 @@ import {
  * @param config - WriteOffLoanConfig.
  * @returns Effect yielding TxSignBuilder.
  */
-export type WriteOffLoanConfig = {
-  /** Deployed savings script reference — pass on live networks;
-   *  the ~15.5KB validator cannot ride inline within the tx limit. */
-  scriptRef?: UTxO;
+export type WriteOffLoanConfig = SavingsRefConfig & {
   fundTokenName: string;
   loanTokenName: string;
   /** Required when the quorum is a script credential. */
@@ -115,13 +116,24 @@ export const unsignedWriteOffLoanTxProgram = (
       WriteOffLoanIntent: { loan_id: config.loanTokenName },
     });
 
-    const redeemer: RedeemerBuilder = {
+    // ADR-0003: the spending redeemer carries the operation and its ADR-0002
+    // commitment at field 0 — the bytes the Governance Gate reads. Indices and
+    // the covered set ride on the governed family withdrawal.
+    const spendRedeemer = Data.to(
+      { WriteOffLoan: { intent_hash: intentHash } },
+      SavingsSpendRedeemer,
+    );
+    const action: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            WriteOffLoan: {
-              intent_hash: intentHash,
+            WriteOffLoanAction: {
+              covered_inputs: [
+                inputIndices[0],
+                inputIndices[1],
+                inputIndices[2],
+              ],
               fund_input_index: inputIndices[0],
               member_input_index: inputIndices[1],
               loan_input_index: inputIndices[2],
@@ -129,7 +141,7 @@ export const unsignedWriteOffLoanTxProgram = (
               member_output_index: 1n,
             },
           },
-          SavingsSpendRedeemer,
+          SavingsGovernedAction,
         ),
       inputs: [fundUtxo, refUtxo, loanUtxo],
     };
@@ -146,8 +158,9 @@ export const unsignedWriteOffLoanTxProgram = (
     }
 
     const vaultAddress = fundUtxo.address;
+    const network = lucid.config().network ?? "Preprod";
     const txDraft = (yield* attachTxMessage(lucid.newTx(), config.message))
-      .collectFrom([fundUtxo, refUtxo, loanUtxo], redeemer)
+      .collectFrom([fundUtxo, refUtxo, loanUtxo], spendRedeemer)
       .collectFrom([feeInput])
       .compose(
         config.scriptRef
@@ -182,9 +195,17 @@ export const unsignedWriteOffLoanTxProgram = (
         refUtxo.assets,
       );
 
+    const txWithFamily = attachSavingsFamilyWithdrawal(
+      txDraft,
+      network,
+      "governed",
+      action,
+      config.familyRef,
+    );
+
     const txWitnessed = yield* applyQuorumWitness(
       lucid,
-      txDraft,
+      txWithFamily,
       fund.quorum,
       config.quorumWitness,
     );

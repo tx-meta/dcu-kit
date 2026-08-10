@@ -33,6 +33,7 @@ import {
   savingsVaultValidator,
 } from "../src/savings/validators.js";
 import { computeSavingsIntentHash, resolveFund } from "../src/savings/utils.js";
+import { registerSavingsStake } from "../src/savings/registerSavingsStake.js";
 import { advanceBlock } from "./effects.js";
 import {
   advancePast,
@@ -59,6 +60,10 @@ const makeContext = Effect.gen(function* () {
     savingsVaultValidator.spendVault,
     25_000_000n,
   );
+  // ADR-0003: savings operations withdraw 0 ADA from their family's stake
+  // credential, which the ledger rejects while the credential is unregistered.
+  yield* registerSavingsStake(base.lucid);
+  yield* advanceBlock(base.emulator, 1);
   return { ...base, savingsRef } as Ctx;
 });
 

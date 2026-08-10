@@ -15,6 +15,40 @@ use savings/types.{
   SavingsFund, SharingOut,
 }
 
+// MLabs security checklist (2026-07-12, re-run 2026-08-10 for the ADR-0003
+// two-family split — all 11). The operation logic below is unchanged by the
+// split; what moved is WHERE it runs. Entries 1, 6 and 7 are the ones the split
+// re-homes, and they are now enforced centrally in `savings/family.open`:
+//   1 Other Redeemer — every vault input a transaction consumes must be covered
+//     exactly once by ONE family action, and the primary's spending redeemer
+//     constructor must be the action's operation. No input can be spent under a
+//     redeemer whose logic never runs, and the light satellite branch is gone.
+//   6 Unbounded Inputs — the covered set is pinned to the operation's exact
+//     family size (1, 2 or 3), so no handler iterates an unbounded input list.
+//   7 Multiple Satisfaction — own-input count + duplicate-free coverage +
+//     constructor-distinct expected datums force distinct continuations; two
+//     operations cannot batch under one withdrawal.
+// Unchanged by the split, enforced in the functions below:
+//   2 Other Token Name — all mints are exact-shape allowlists from seed
+//     derivations. 3 Arbitrary Datum — every continuation compared against a
+//     fully-constructed expected datum. 4 Unbounded Datum — no growing fields;
+//     title capped at 64 bytes. 5 Unbounded Value — creation pins policies to
+//     [ada, own]; transitions move ONLY the fund asset (exact merge).
+//   8 UTxO Authentication — anchor = Fund State NFT (shape-checked), member =
+//     CIP-68 (100) token, loan = Loan State NFT. 9 UTxO Contention — a single
+//     vault UTxO serializes deposits and claims; ACCEPTED v1 limit
+//     (meeting-cadence groups), documented in the spec; joins use a reference
+//     input. 10 Cheap Spam — all state paths need the member user token or the
+//     quorum, except MarkArrears, which is permissionless but only advances
+//     truthful, time-proven state one step; accounts carry min-ADA.
+//   11 Staking Key Control — creations pinned to the canonical no-stake script
+//     address; continuations must keep the full input address. The two family
+//     stake credentials are separate scripts whose `else` handlers fail, so
+//     neither can be deregistered or used to vote.
+// Value flow: disburse/repay move EXACTLY principal/repayment; write-off moves
+// nothing (accounting + burn); close-fund moves the entire residual to the
+// committed destination.
+
 /// The anchor's protocol lovelace buffer (shared SDK convention). For ADA
 /// funds it is excluded from the share-out pot; enforcing it at creation keeps
 /// the CloseCycle pot arithmetic non-negative.

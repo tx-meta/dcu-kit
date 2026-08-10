@@ -3,7 +3,6 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
-  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -16,7 +15,15 @@ import {
   attachTxMessage,
   type TxMessage,
 } from "../../core/utils/index.js";
-import { SavingsDatum, SavingsSpendRedeemer } from "../types.js";
+import {
+  SavingsDatum,
+  SavingsDirectAction,
+  SavingsSpendRedeemer,
+} from "../types.js";
+import {
+  attachSavingsFamilyWithdrawal,
+  type SavingsRefConfig,
+} from "../familyWithdraw.js";
 import { savingsVaultValidator } from "../validators.js";
 import { resolveLoan } from "../utils.js";
 
@@ -30,10 +37,7 @@ import { resolveLoan } from "../utils.js";
  * @param config - MarkArrearsConfig.
  * @returns Effect yielding TxSignBuilder.
  */
-export type MarkArrearsConfig = {
-  /** Deployed savings script reference — pass on live networks;
-   *  the ~15.5KB validator cannot ride inline within the tx limit. */
-  scriptRef?: UTxO;
+export type MarkArrearsConfig = SavingsRefConfig & {
   loanTokenName: string;
   /** Override the wall clock (emulator tests pass emulator.now()). */
   currentTime?: bigint;
@@ -96,23 +100,28 @@ export const unsignedMarkArrearsTxProgram = (
     }
 
     const newLoan = { ...loan, status: nextStatus };
-    const redeemer: RedeemerBuilder = {
+    // ADR-0003: the spending redeemer carries only the operation; indices and
+    // the covered set ride on the direct family withdrawal, which runs the
+    // validation once per transaction.
+    const spendRedeemer = Data.to("MarkArrears", SavingsSpendRedeemer);
+    const action: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            MarkArrears: {
+            MarkArrearsAction: {
+              covered_inputs: [inputIndices[0]],
               loan_input_index: inputIndices[0],
               loan_output_index: 0n,
             },
           },
-          SavingsSpendRedeemer,
+          SavingsDirectAction,
         ),
       inputs: [loanUtxo],
     };
 
-    return yield* (yield* attachTxMessage(lucid.newTx(), config.message))
-      .collectFrom([loanUtxo], redeemer)
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
+      .collectFrom([loanUtxo], spendRedeemer)
       .compose(
         config.scriptRef
           ? lucid.newTx().readFrom([config.scriptRef])
@@ -128,17 +137,25 @@ export const unsignedMarkArrearsTxProgram = (
         },
         loanUtxo.assets,
       )
-      .validFrom(Number(validFrom))
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "markArrears",
-              error: String(e),
-            }),
-        ),
-      );
+      .validFrom(Number(validFrom));
+
+    const txWithFamily = attachSavingsFamilyWithdrawal(
+      baseTx,
+      network,
+      "direct",
+      action,
+      config.familyRef,
+    );
+
+    return yield* txWithFamily.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "markArrears",
+            error: String(e),
+          }),
+      ),
+    );
   });
 
 export const markArrears = (lucid: LucidEvolution, config: MarkArrearsConfig) =>

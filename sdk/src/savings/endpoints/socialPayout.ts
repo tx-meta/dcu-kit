@@ -3,7 +3,6 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
-  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -16,7 +15,15 @@ import {
   attachTxMessage,
   type TxMessage,
 } from "../../core/utils/index.js";
-import { SavingsDatum, SavingsSpendRedeemer } from "../types.js";
+import {
+  SavingsDatum,
+  SavingsGovernedAction,
+  SavingsSpendRedeemer,
+} from "../types.js";
+import {
+  attachSavingsFamilyWithdrawal,
+  type SavingsRefConfig,
+} from "../familyWithdraw.js";
 import { savingsVaultValidator } from "../validators.js";
 import {
   applyQuorumWitness,
@@ -38,10 +45,7 @@ import {
  * @param config - SocialPayoutConfig.
  * @returns Effect yielding TxSignBuilder.
  */
-export type SocialPayoutConfig = {
-  /** Deployed savings script reference — pass on live networks;
-   *  the ~15.5KB validator cannot ride inline within the tx limit. */
-  scriptRef?: UTxO;
+export type SocialPayoutConfig = SavingsRefConfig & {
   fundTokenName: string;
   /** Payment in base units of the fund asset. */
   amount: bigint;
@@ -88,26 +92,33 @@ export const unsignedSocialPayoutTxProgram = (
       },
     });
 
-    const redeemer: RedeemerBuilder = {
+    // ADR-0003: the spending redeemer carries the operation and its ADR-0002
+    // commitment at field 0 — the bytes the Governance Gate reads. Indices and
+    // the covered set ride on the governed family withdrawal.
+    const spendRedeemer = Data.to(
+      { SocialPayout: { intent_hash: intentHash } },
+      SavingsSpendRedeemer,
+    );
+    const action: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            SocialPayout: {
-              intent_hash: intentHash,
+            SocialPayoutAction: {
+              covered_inputs: [inputIndices[0]],
               fund_input_index: inputIndices[0],
               fund_output_index: 0n,
               payout_output_index: 1n,
             },
           },
-          SavingsSpendRedeemer,
+          SavingsGovernedAction,
         ),
       inputs: [fundUtxo],
     };
 
     const network = lucid.config().network ?? "Preprod";
     const txDraft = (yield* attachTxMessage(lucid.newTx(), config.message))
-      .collectFrom([fundUtxo], redeemer)
+      .collectFrom([fundUtxo], spendRedeemer)
       .compose(
         config.scriptRef
           ? lucid.newTx().readFrom([config.scriptRef])
@@ -125,9 +136,17 @@ export const unsignedSocialPayoutTxProgram = (
       )
       .pay.ToAddress(config.destination, { [unit]: config.amount });
 
+    const txWithFamily = attachSavingsFamilyWithdrawal(
+      txDraft,
+      network,
+      "governed",
+      action,
+      config.familyRef,
+    );
+
     const txWitnessed = yield* applyQuorumWitness(
       lucid,
-      txDraft,
+      txWithFamily,
       fund.quorum,
       config.quorumWitness,
     );

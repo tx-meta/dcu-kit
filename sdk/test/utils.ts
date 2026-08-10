@@ -301,3 +301,92 @@ export const deployGovRefs = (
     const voting = yield* deployScriptRef(ctx, instance.votingValidator);
     return { dispatcher, voting };
   });
+
+// ─── Transaction cost measurement ────────────────────────────────────────────
+// Sums ex-units from a built transaction's redeemers (CML), mirroring Lucid's
+// own makeTxSignBuilder. With local UPLC evaluation on — the default for every
+// suite except distributePayout — the redeemers carry the real per-script
+// mem/cpu the node would charge.
+
+type CmlRedeemer = {
+  ex_units: () => { mem: () => bigint; steps: () => bigint };
+};
+
+type CmlRedeemers = {
+  as_arr_legacy_redeemer?: () => {
+    len: () => number;
+    get: (_i: number) => CmlRedeemer;
+  } | null;
+  as_map_redeemer_key_to_redeemer_val?: () => {
+    keys: () => { len: () => number; get: (_i: number) => unknown };
+    get: (_k: unknown) => CmlRedeemer;
+  } | null;
+};
+
+// Structural, not nominal: CML's own types are re-exported under several
+// package paths, so matching on shape keeps this usable from any of them.
+type RedeemerCarrier = {
+  toTransaction: () => {
+    witness_set: () => {
+      redeemers: () => CmlRedeemers | null | undefined;
+    };
+  };
+};
+
+export const sumTxExUnits = (
+  txb: unknown,
+): { mem: number; cpu: number; count: number } => {
+  const carrier = txb as RedeemerCarrier;
+  let mem = 0;
+  let cpu = 0;
+  let count = 0;
+  const reds = carrier.toTransaction().witness_set().redeemers();
+  if (reds) {
+    const arr = reds.as_arr_legacy_redeemer?.();
+    if (arr) {
+      for (let i = 0; i < arr.len(); i++) {
+        const r = arr.get(i);
+        mem += Number(r.ex_units().mem().toString());
+        cpu += Number(r.ex_units().steps().toString());
+        count++;
+      }
+    }
+    const map = reds.as_map_redeemer_key_to_redeemer_val?.();
+    if (map) {
+      const keys = map.keys();
+      for (let i = 0; i < keys.len(); i++) {
+        const v = map.get(keys.get(i));
+        mem += Number(v.ex_units().mem().toString());
+        cpu += Number(v.ex_units().steps().toString());
+        count++;
+      }
+    }
+  }
+  return { mem, cpu, count };
+};
+
+export type TxMeasurement = {
+  operation: string;
+  sizeBytes: number;
+  scriptExecs: number;
+  mem: number;
+  cpu: number;
+};
+
+/**
+ * Records one built transaction's size and execution units under a label.
+ * Callers collect into their own array so suites stay independent.
+ */
+export const measureTx = (
+  operation: string,
+  tx: { toCBOR: () => string },
+): TxMeasurement => {
+  const { mem, cpu, count } = sumTxExUnits(tx);
+  return {
+    operation,
+    sizeBytes: tx.toCBOR().length / 2,
+    scriptExecs: count,
+    mem,
+    cpu,
+  };
+};

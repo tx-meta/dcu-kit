@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "sdkVersion": "0.6.1-preprod.0",
+  "sdkVersion": "0.6.2-preprod.0",
   "families": {
     "rosca": {
       "status": "launch",
@@ -68,9 +68,13 @@
       "onchainSource": "onchain/savings/plutus.json",
       "plutusVersion": "v3",
       "validators": {
-        "savings_vault_validator.savings_vault.mint": "2383e72d720d93c566b4c7b2f647940b359af7cf88b9310c095bc925f2ee12d6",
-        "savings_vault_validator.savings_vault.spend": "2383e72d720d93c566b4c7b2f647940b359af7cf88b9310c095bc925f2ee12d6",
-        "savings_vault_validator.savings_vault.else": "2383e72d720d93c566b4c7b2f647940b359af7cf88b9310c095bc925f2ee12d6"
+        "savings_direct.savings_direct.withdraw": "c5046fa41010958b7173453c16dd89be70bb12e726359786fadd7d3fc1891f4c",
+        "savings_direct.savings_direct.else": "c5046fa41010958b7173453c16dd89be70bb12e726359786fadd7d3fc1891f4c",
+        "savings_governed.savings_governed.withdraw": "892dc83bcfe028dd738a15d3b5d6e28e99576184d073827de0d71fec566fab4a",
+        "savings_governed.savings_governed.else": "892dc83bcfe028dd738a15d3b5d6e28e99576184d073827de0d71fec566fab4a",
+        "savings_vault_validator.savings_vault.mint": "5edc93d18dce444c1b682082b26f5f3c24690e21ab0b9c0260125b81eb71c33e",
+        "savings_vault_validator.savings_vault.spend": "5edc93d18dce444c1b682082b26f5f3c24690e21ab0b9c0260125b81eb71c33e",
+        "savings_vault_validator.savings_vault.else": "5edc93d18dce444c1b682082b26f5f3c24690e21ab0b9c0260125b81eb71c33e"
       },
       "deployments": {}
     },
@@ -99,6 +103,20 @@
     }
   },
   "history": [
+    {
+      "date": "2026-08-10",
+      "sdkVersion": "0.6.2-preprod.0",
+      "changed": [
+        "savings:savings_direct.savings_direct.withdraw",
+        "savings:savings_direct.savings_direct.else",
+        "savings:savings_governed.savings_governed.withdraw",
+        "savings:savings_governed.savings_governed.else",
+        "savings:savings_vault_validator.savings_vault.mint",
+        "savings:savings_vault_validator.savings_vault.spend",
+        "savings:savings_vault_validator.savings_vault.else"
+      ],
+      "note": "ADR-0003: split the savings vault into a thin spend/mint dispatcher plus the savings_governed and savings_direct withdraw-zero families, and bind every vault spend to both its family and that family's action variant. 0.6.1-preprod.0 remains the undeployed pre-split candidate; intent_hash stays at field 0 of the spending redeemer, so the Gate's BoundIntent binding is unchanged."
+    },
     {
       "date": "2026-08-09",
       "sdkVersion": "0.6.1-preprod.0",

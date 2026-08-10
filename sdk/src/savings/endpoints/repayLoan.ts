@@ -3,7 +3,6 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
-  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -19,8 +18,13 @@ import {
 import {
   SavingsDatum,
   SavingsMintRedeemer,
+  SavingsDirectAction,
   SavingsSpendRedeemer,
 } from "../types.js";
+import {
+  attachSavingsFamilyWithdrawal,
+  type SavingsRefConfig,
+} from "../familyWithdraw.js";
 import { savingsPolicyId, savingsVaultValidator } from "../validators.js";
 import {
   findUserTokenUtxo,
@@ -43,10 +47,7 @@ import {
  * @param config - RepayLoanConfig.
  * @returns Effect yielding TxSignBuilder.
  */
-export type RepayLoanConfig = {
-  /** Deployed savings script reference — pass on live networks;
-   *  the ~15.5KB validator cannot ride inline within the tx limit. */
-  scriptRef?: UTxO;
+export type RepayLoanConfig = SavingsRefConfig & {
   fundTokenName: string;
   memberTokenSuffix: string;
   loanTokenName: string;
@@ -137,12 +138,21 @@ export const unsignedRepayLoanTxProgram = (
       borrowed: account.borrowed - principalPaid,
     };
 
-    const redeemer: RedeemerBuilder = {
+    // ADR-0003: the spending redeemer carries only the operation; indices and
+    // the covered set ride on the direct family withdrawal, which runs the
+    // validation once per transaction.
+    const spendRedeemer = Data.to("RepayLoan", SavingsSpendRedeemer);
+    const action: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
           {
-            RepayLoan: {
+            RepayLoanAction: {
+              covered_inputs: [
+                inputIndices[0],
+                inputIndices[1],
+                inputIndices[2],
+              ],
               fund_input_index: inputIndices[0],
               member_input_index: inputIndices[1],
               loan_input_index: inputIndices[2],
@@ -151,14 +161,15 @@ export const unsignedRepayLoanTxProgram = (
               loan_output_index: closing ? 99n : 2n,
             },
           },
-          SavingsSpendRedeemer,
+          SavingsDirectAction,
         ),
       inputs: [fundUtxo, refUtxo, loanUtxo],
     };
 
     const vaultAddress = fundUtxo.address;
+    const network = lucid.config().network ?? "Preprod";
     let tx = (yield* attachTxMessage(lucid.newTx(), config.message))
-      .collectFrom([fundUtxo, refUtxo, loanUtxo], redeemer)
+      .collectFrom([fundUtxo, refUtxo, loanUtxo], spendRedeemer)
       .collectFrom([userTokenUtxo])
       .compose(
         config.scriptRef
@@ -213,7 +224,15 @@ export const unsignedRepayLoanTxProgram = (
       );
     }
 
-    return yield* tx.completeProgram().pipe(
+    const txWithFamily = attachSavingsFamilyWithdrawal(
+      tx,
+      network,
+      "direct",
+      action,
+      config.familyRef,
+    );
+
+    return yield* txWithFamily.completeProgram().pipe(
       Effect.mapError(
         (e) =>
           new TransactionBuildError({
