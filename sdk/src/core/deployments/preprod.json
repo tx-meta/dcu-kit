@@ -3,7 +3,7 @@
   "verifiedAt": "2026-08-02",
   "sdkVersion": "0.6.0-preprod.0",
   "status": "legacy-validator-set",
-  "statusNote": "ROSCA group and treasuryRounds remain the 0.6.0 deployment for legacy positions; deploy and rehearse the ADR-R1 candidate hashes before promoting this manifest.",
+  "statusNote": "ROSCA group/treasuryRounds plus savings and governance remain the 0.6.0 deployment for legacy positions and instances; deploy and rehearse the coupled candidate hashes before promoting this manifest.",
   "settingsPolicy": "138efe0f9ceb96441b24d2bf72a7dc43e74692004dd1b2c2d1ace48d",
   "deployAddress": "addr_test1wq3vnggra5ljl2tunqkhd4hz4agvt422cvrfswcedj8um2cwsu3l3",
   "refScripts": {

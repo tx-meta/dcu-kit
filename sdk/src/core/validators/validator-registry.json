@@ -68,9 +68,9 @@
       "onchainSource": "onchain/savings/plutus.json",
       "plutusVersion": "v3",
       "validators": {
-        "savings_vault_validator.savings_vault.mint": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd",
-        "savings_vault_validator.savings_vault.spend": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd",
-        "savings_vault_validator.savings_vault.else": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd"
+        "savings_vault_validator.savings_vault.mint": "2383e72d720d93c566b4c7b2f647940b359af7cf88b9310c095bc925f2ee12d6",
+        "savings_vault_validator.savings_vault.spend": "2383e72d720d93c566b4c7b2f647940b359af7cf88b9310c095bc925f2ee12d6",
+        "savings_vault_validator.savings_vault.else": "2383e72d720d93c566b4c7b2f647940b359af7cf88b9310c095bc925f2ee12d6"
       },
       "deployments": {}
     },
@@ -80,15 +80,15 @@
       "onchainSource": "onchain/governance/plutus.json",
       "plutusVersion": "v3",
       "validators": {
-        "governance_dispatcher.governance_dispatcher.mint": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
-        "governance_dispatcher.governance_dispatcher.spend": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
-        "governance_dispatcher.governance_dispatcher.else": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
-        "governance_gate.governance_gate.spend": "b88b16df72597d253fa7180aa45d3d7729a3846299384c2214d892263f897c8f",
-        "governance_gate.governance_gate.else": "b88b16df72597d253fa7180aa45d3d7729a3846299384c2214d892263f897c8f",
-        "governance_settings.governance_settings.mint": "16d5f0a1c6f0cf693e4775f7116baa1cf7d14d7105cf22ccd6680e7f60e9d617",
-        "governance_settings.governance_settings.else": "16d5f0a1c6f0cf693e4775f7116baa1cf7d14d7105cf22ccd6680e7f60e9d617",
-        "governance_voting.governance_voting.withdraw": "92cf239f89964197a0640bd53ead6c16e624de2a0cfca9165820e42549f5f7a8",
-        "governance_voting.governance_voting.else": "92cf239f89964197a0640bd53ead6c16e624de2a0cfca9165820e42549f5f7a8"
+        "governance_dispatcher.governance_dispatcher.mint": "e9d525c4b98f5c6724c009b8dc134eaf8e3e357c403d4bb323a30c05a009307b",
+        "governance_dispatcher.governance_dispatcher.spend": "e9d525c4b98f5c6724c009b8dc134eaf8e3e357c403d4bb323a30c05a009307b",
+        "governance_dispatcher.governance_dispatcher.else": "e9d525c4b98f5c6724c009b8dc134eaf8e3e357c403d4bb323a30c05a009307b",
+        "governance_gate.governance_gate.spend": "54fccf2a9eb4606f5cf48d5cc1910ca529cbb4db56718fd7e56170f22428402a",
+        "governance_gate.governance_gate.else": "54fccf2a9eb4606f5cf48d5cc1910ca529cbb4db56718fd7e56170f22428402a",
+        "governance_settings.governance_settings.mint": "16a5a954ffbe378d638d8dfd565c5c8d61b4244f19be3abcc6bb29e768ee3278",
+        "governance_settings.governance_settings.else": "16a5a954ffbe378d638d8dfd565c5c8d61b4244f19be3abcc6bb29e768ee3278",
+        "governance_voting.governance_voting.withdraw": "4fd952843da8c05c48f6565e894a19b6d19cfcf0f591bf5f8ac6db9c4d393f50",
+        "governance_voting.governance_voting.else": "4fd952843da8c05c48f6565e894a19b6d19cfcf0f591bf5f8ac6db9c4d393f50"
       },
       "deployments": {
         "preprod": {
@@ -99,6 +99,25 @@
     }
   },
   "history": [
+    {
+      "date": "2026-08-09",
+      "sdkVersion": "0.6.1-preprod.0",
+      "changed": [
+        "savings:savings_vault_validator.savings_vault.mint",
+        "savings:savings_vault_validator.savings_vault.spend",
+        "savings:savings_vault_validator.savings_vault.else",
+        "governance:governance_dispatcher.governance_dispatcher.mint",
+        "governance:governance_dispatcher.governance_dispatcher.spend",
+        "governance:governance_dispatcher.governance_dispatcher.else",
+        "governance:governance_gate.governance_gate.spend",
+        "governance:governance_gate.governance_gate.else",
+        "governance:governance_settings.governance_settings.mint",
+        "governance:governance_settings.governance_settings.else",
+        "governance:governance_voting.governance_voting.withdraw",
+        "governance:governance_voting.governance_voting.else"
+      ],
+      "note": "ADR-G1: add additive BoundIntent governance authorization and bind six quorum-controlled savings actions to canonical economic intent hashes"
+    },
     {
       "date": "2026-08-09",
       "sdkVersion": "0.6.1-preprod.0",
