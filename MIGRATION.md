@@ -10,16 +10,36 @@ cryptic script errors. Validator hashes for each release are tabled at the botto
 
 ## `0.6.0-preprod.0` → `0.6.1-preprod.0` (ROSCA, savings and governance hash wave)
 
-Three families change hash: ROSCA (`group_validator`, `treasury_rounds`),
-savings, and governance. Escrow and the other four applied ROSCA scripts are
-byte-identical.
+Three families change **source**: ROSCA (`group_validator`, `treasury_rounds`),
+savings, and governance. The other four ROSCA validators and escrow are
+byte-identical at source.
+
+**This is a fresh-deployment migration, not a partial ref refresh.** The settings
+UTxO is a one-shot NFT with no update path, and its datum records the group policy
+and the four treasury stake hashes. Changing the group and rounds source makes that
+datum unable to describe the new family, so a **fresh settings seed is mandatory**.
+Every ROSCA validator is parameterized off the settings policy, so treasury,
+lifecycle, recovery and reserve get **new applied hashes even though their source
+did not change**.
+
+**Nine new reference scripts:** the six ROSCA refs (`treasury`, `group`,
+`treasuryRounds`, `treasuryLifecycle`, `treasuryRecovery`, `treasuryReserve`),
+`savings`, and the two governance refs. Plus a fresh settings UTxO, **four fresh
+treasury stake registrations**, and a **fresh governance instance** with its own
+seed, voting-stake registration, voter registration and charter — governance is
+instance-seed parameterized, so new references do not upgrade an existing anchor.
+
+`escrowV2` carries over unchanged. `pool` (4,145 B) and `project` (2,312 B) are
+optional: both attach inline within the transaction-size limit, so they are not
+counted in the nine.
 
 **Nothing is deployed on the new hashes yet.**
 `sdk/src/core/deployments/preprod.json` is marked `legacy-validator-set` and
 still carries the `0.6.0-preprod.0` references. Keep SDK `0.6.0-preprod.0`
 pinned for any existing group, fund or governance instance: it operates the
 hashes those positions were created with. Positions do not migrate across a
-hash change; wind them down and recreate, or leave them on the old deployment.
+hash change, and never across a settings policy; wind them down and recreate, or
+leave them on the old deployment.
 
 ### `BeginRecommit` may now carry reserve cover
 
