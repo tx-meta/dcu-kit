@@ -26,7 +26,7 @@ did not change**.
 `treasuryRounds`, `treasuryLifecycle`, `treasuryRecovery`, `treasuryReserve`),
 `savings`, and the two governance refs. Plus a fresh settings UTxO, **four fresh
 treasury stake registrations**, and a **fresh governance instance** with its own
-seed, voting-stake registration, voter registration and charter — governance is
+seed, voting-stake registration, voter registration and charter. Governance is
 instance-seed parameterized, so new references do not upgrade an existing anchor.
 
 `escrowV2` carries over unchanged. `pool` (4,145 B) and `project` (2,312 B) are
@@ -72,10 +72,10 @@ Callers building a governance decision must switch from the operation-only
 constructor to the intent-bound one.
 
 ```ts
-// before — authorized the operation, not its parameters
+// before: authorized the operation, not its parameters
 govActionForOperation(SavingsOperation.DisburseLoan);
 
-// after — authorizes exactly this loan
+// after: authorizes exactly this loan
 govActionForIntent(
   SavingsOperation.DisburseLoan,
   computeSavingsIntentHash({ DisburseLoanIntent: { loan } }),
