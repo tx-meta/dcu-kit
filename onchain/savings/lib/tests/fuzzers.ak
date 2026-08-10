@@ -2,13 +2,13 @@ use aiken/fuzz
 use cardano/assets
 use savings/types.{Active, SharingOut}
 use savings/validation.{
-  validate_claim_share_out, validate_close_cycle, validate_deposit,
-  validate_withdraw,
+  validate_claim_share_out, validate_deposit, validate_withdraw,
 }
 use tests/common.{
   anchor_value, make_fund, make_member, member_ref_value, policy, quorum_tx,
   user_token_input, vault_input, vault_output,
 }
+use tests/validation_wrappers.{validate_close_cycle}
 
 // Any share purchase inside the band, matched by an exact delta, is accepted.
 test prop_deposit_accepts_any_units_in_band(n via fuzz.int_between(1, 100)) {

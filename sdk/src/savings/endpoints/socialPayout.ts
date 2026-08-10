@@ -20,10 +20,12 @@ import { SavingsDatum, SavingsSpendRedeemer } from "../types.js";
 import { savingsVaultValidator } from "../validators.js";
 import {
   applyQuorumWitness,
+  computeSavingsIntentHash,
   fundAssetUnit,
   PartyWitness,
   resolveFund,
   savingsVaultAddress,
+  toSavingsAddress,
   withAssetDelta,
 } from "../utils.js";
 
@@ -79,6 +81,12 @@ export const unsignedSocialPayoutTxProgram = (
       social_total: fund.social_total - config.amount,
     };
     const newFundAssets = withAssetDelta(fundUtxo.assets, unit, -config.amount);
+    const intentHash = computeSavingsIntentHash({
+      SocialPayoutIntent: {
+        destination: toSavingsAddress(config.destination),
+        amount: config.amount,
+      },
+    });
 
     const redeemer: RedeemerBuilder = {
       kind: "selected",
@@ -86,8 +94,10 @@ export const unsignedSocialPayoutTxProgram = (
         Data.to(
           {
             SocialPayout: {
+              intent_hash: intentHash,
               fund_input_index: inputIndices[0],
               fund_output_index: 0n,
+              payout_output_index: 1n,
             },
           },
           SavingsSpendRedeemer,

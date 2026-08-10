@@ -11,12 +11,12 @@ use savings/types.{
 }
 use savings/validation.{
   own_input_count_is, validate_burn_account, validate_burn_fund,
-  validate_burn_loan, validate_claim_share_out, validate_close_cycle,
-  validate_close_fund, validate_create_fund, validate_deposit,
-  validate_disburse_loan, validate_mark_arrears, validate_mint_account,
+  validate_burn_loan, validate_claim_share_out, validate_close_cycle_bound,
+  validate_close_fund_bound, validate_create_fund, validate_deposit,
+  validate_disburse_loan_bound, validate_mark_arrears, validate_mint_account,
   validate_mint_loan, validate_paired_member, validate_remove_account,
-  validate_repay_loan, validate_social_payout, validate_update_fund,
-  validate_withdraw, validate_write_off_loan,
+  validate_repay_loan, validate_social_payout_bound, validate_update_fund_bound,
+  validate_withdraw, validate_write_off_loan_bound,
 }
 
 // MLabs security checklist (2026-07-12, re-run for the loan paths — all 11):
@@ -53,10 +53,16 @@ use savings/validation.{
 
 // [security]: self-reference — the indexed input must be the UTxO being spent,
 // preventing cross-UTxO attacks that bypass per-UTxO guards.
-fn own(inputs: List<Input>, ix: Int, utxo: OutputReference) -> (Input, PolicyId) {
+fn own(
+  inputs: List<Input>,
+  ix: Int,
+  utxo: OutputReference,
+  family_size: Int,
+) -> (Input, PolicyId) {
   expect Some(own_input) = list.at(inputs, ix)
   expect own_input.output_reference == utxo
   expect Script(policy_id) = own_input.output.address.payment_credential
+  expect own_input_count_is(inputs, policy_id, family_size)
   (own_input, policy_id)
 }
 
@@ -121,34 +127,33 @@ validator savings_vault {
       } ->
         when savings_datum is {
           SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 2),
-              validate_deposit(
-                policy_id,
-                savings_datum,
-                own_input,
-                member_input_index,
-                fund_output_index,
-                member_output_index,
-                fund_tag,
-                inputs,
-                outputs,
-                mint,
-              ),
-            }
+            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 2)
+            validate_deposit(
+              policy_id,
+              savings_datum,
+              own_input,
+              member_input_index,
+              fund_output_index,
+              member_output_index,
+              fund_tag,
+              inputs,
+              outputs,
+              mint,
+            )
           }
           MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(inputs, member_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 2),
-              validate_paired_member(
-                policy_id,
-                savings_datum,
-                fund_input_index,
-                inputs,
-              ),
-            }
+            let (_own_input, policy_id) = own(
+              inputs,
+              member_input_index,
+              utxo,
+              2,
+            )
+            validate_paired_member(
+              policy_id,
+              savings_datum,
+              fund_input_index,
+              inputs,
+            )
           }
           LoanAccount { .. } -> False
         }
@@ -161,33 +166,32 @@ validator savings_vault {
       } ->
         when savings_datum is {
           SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 2),
-              validate_withdraw(
-                policy_id,
-                savings_datum,
-                own_input,
-                member_input_index,
-                fund_output_index,
-                member_output_index,
-                inputs,
-                outputs,
-                mint,
-              ),
-            }
+            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 2)
+            validate_withdraw(
+              policy_id,
+              savings_datum,
+              own_input,
+              member_input_index,
+              fund_output_index,
+              member_output_index,
+              inputs,
+              outputs,
+              mint,
+            )
           }
           MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(inputs, member_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 2),
-              validate_paired_member(
-                policy_id,
-                savings_datum,
-                fund_input_index,
-                inputs,
-              ),
-            }
+            let (_own_input, policy_id) = own(
+              inputs,
+              member_input_index,
+              utxo,
+              2,
+            )
+            validate_paired_member(
+              policy_id,
+              savings_datum,
+              fund_input_index,
+              inputs,
+            )
           }
           LoanAccount { .. } -> False
         }
@@ -200,86 +204,86 @@ validator savings_vault {
       } ->
         when savings_datum is {
           SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 2),
-              validate_claim_share_out(
-                policy_id,
-                savings_datum,
-                own_input,
-                member_input_index,
-                fund_output_index,
-                member_output_index,
-                inputs,
-                outputs,
-                mint,
-              ),
-            }
+            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 2)
+            validate_claim_share_out(
+              policy_id,
+              savings_datum,
+              own_input,
+              member_input_index,
+              fund_output_index,
+              member_output_index,
+              inputs,
+              outputs,
+              mint,
+            )
           }
           MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(inputs, member_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 2),
-              validate_paired_member(
-                policy_id,
-                savings_datum,
-                fund_input_index,
-                inputs,
-              ),
-            }
+            let (_own_input, policy_id) = own(
+              inputs,
+              member_input_index,
+              utxo,
+              2,
+            )
+            validate_paired_member(
+              policy_id,
+              savings_datum,
+              fund_input_index,
+              inputs,
+            )
           }
           LoanAccount { .. } -> False
         }
 
-      SocialPayout { fund_input_index, fund_output_index } -> {
-        let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
-        and {
-          own_input_count_is(inputs, policy_id, 1),
-          validate_social_payout(
-            policy_id,
-            savings_datum,
-            own_input,
-            fund_output_index,
-            outputs,
-            mint,
-            self,
-          ),
-        }
+      SocialPayout {
+        intent_hash,
+        fund_input_index,
+        fund_output_index,
+        payout_output_index,
+      } -> {
+        let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 1)
+        validate_social_payout_bound(
+          policy_id,
+          savings_datum,
+          own_input,
+          intent_hash,
+          fund_output_index,
+          payout_output_index,
+          outputs,
+          mint,
+          self,
+        )
       }
 
-      UpdateFund { fund_input_index, fund_output_index } -> {
-        let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
-        and {
-          own_input_count_is(inputs, policy_id, 1),
-          validate_update_fund(
-            policy_id,
-            savings_datum,
-            own_input,
-            fund_output_index,
-            outputs,
-            mint,
-            self,
-          ),
-        }
+      UpdateFund { intent_hash, fund_input_index, fund_output_index } -> {
+        let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 1)
+        validate_update_fund_bound(
+          policy_id,
+          savings_datum,
+          own_input,
+          intent_hash,
+          fund_output_index,
+          outputs,
+          mint,
+          self,
+        )
       }
 
-      CloseCycle { fund_input_index, fund_output_index } -> {
-        let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
-        and {
-          own_input_count_is(inputs, policy_id, 1),
-          validate_close_cycle(
-            policy_id,
-            savings_datum,
-            own_input,
-            fund_output_index,
-            outputs,
-            mint,
-            self,
-          ),
-        }
+      CloseCycle { intent_hash, fund_input_index, fund_output_index } -> {
+        let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 1)
+        validate_close_cycle_bound(
+          policy_id,
+          savings_datum,
+          own_input,
+          intent_hash,
+          fund_output_index,
+          outputs,
+          mint,
+          self,
+        )
       }
 
       DisburseLoan {
+        intent_hash,
         fund_input_index,
         member_input_index,
         seed_input_index,
@@ -289,36 +293,36 @@ validator savings_vault {
       } ->
         when savings_datum is {
           SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 2),
-              validate_disburse_loan(
-                policy_id,
-                savings_datum,
-                own_input,
-                member_input_index,
-                seed_input_index,
-                fund_output_index,
-                member_output_index,
-                loan_output_index,
-                inputs,
-                outputs,
-                mint,
-                self,
-              ),
-            }
+            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 2)
+            validate_disburse_loan_bound(
+              policy_id,
+              savings_datum,
+              own_input,
+              intent_hash,
+              member_input_index,
+              seed_input_index,
+              fund_output_index,
+              member_output_index,
+              loan_output_index,
+              inputs,
+              outputs,
+              mint,
+              self,
+            )
           }
           MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(inputs, member_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 2),
-              validate_paired_member(
-                policy_id,
-                savings_datum,
-                fund_input_index,
-                inputs,
-              ),
-            }
+            let (_own_input, policy_id) = own(
+              inputs,
+              member_input_index,
+              utxo,
+              2,
+            )
+            validate_paired_member(
+              policy_id,
+              savings_datum,
+              fund_input_index,
+              inputs,
+            )
           }
           LoanAccount { .. } -> False
         }
@@ -333,67 +337,61 @@ validator savings_vault {
       } ->
         when savings_datum is {
           SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 3),
-              validate_repay_loan(
-                policy_id,
-                savings_datum,
-                own_input,
-                member_input_index,
-                loan_input_index,
-                fund_output_index,
-                member_output_index,
-                loan_output_index,
-                inputs,
-                outputs,
-                mint,
-              ),
-            }
+            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 3)
+            validate_repay_loan(
+              policy_id,
+              savings_datum,
+              own_input,
+              member_input_index,
+              loan_input_index,
+              fund_output_index,
+              member_output_index,
+              loan_output_index,
+              inputs,
+              outputs,
+              mint,
+            )
           }
           MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(inputs, member_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 3),
-              validate_paired_member(
-                policy_id,
-                savings_datum,
-                fund_input_index,
-                inputs,
-              ),
-            }
+            let (_own_input, policy_id) = own(
+              inputs,
+              member_input_index,
+              utxo,
+              3,
+            )
+            validate_paired_member(
+              policy_id,
+              savings_datum,
+              fund_input_index,
+              inputs,
+            )
           }
           LoanAccount { .. } -> {
-            let (_own_input, policy_id) = own(inputs, loan_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 3),
-              validate_paired_member(
-                policy_id,
-                savings_datum,
-                fund_input_index,
-                inputs,
-              ),
-            }
+            let (_own_input, policy_id) = own(inputs, loan_input_index, utxo, 3)
+            validate_paired_member(
+              policy_id,
+              savings_datum,
+              fund_input_index,
+              inputs,
+            )
           }
         }
 
       MarkArrears { loan_input_index, loan_output_index } -> {
-        let (own_input, policy_id) = own(inputs, loan_input_index, utxo)
-        and {
-          own_input_count_is(inputs, policy_id, 1),
-          validate_mark_arrears(
-            policy_id,
-            savings_datum,
-            own_input,
-            loan_output_index,
-            outputs,
-            mint,
-            self,
-          ),
-        }
+        let (own_input, policy_id) = own(inputs, loan_input_index, utxo, 1)
+        validate_mark_arrears(
+          policy_id,
+          savings_datum,
+          own_input,
+          loan_output_index,
+          outputs,
+          mint,
+          self,
+        )
       }
 
       WriteOffLoan {
+        intent_hash,
         fund_input_index,
         member_input_index,
         loan_input_index,
@@ -402,70 +400,70 @@ validator savings_vault {
       } ->
         when savings_datum is {
           SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 3),
-              validate_write_off_loan(
-                policy_id,
-                savings_datum,
-                own_input,
-                member_input_index,
-                loan_input_index,
-                fund_output_index,
-                member_output_index,
-                inputs,
-                outputs,
-                mint,
-                self,
-              ),
-            }
+            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 3)
+            validate_write_off_loan_bound(
+              policy_id,
+              savings_datum,
+              own_input,
+              intent_hash,
+              member_input_index,
+              loan_input_index,
+              fund_output_index,
+              member_output_index,
+              inputs,
+              outputs,
+              mint,
+              self,
+            )
           }
           MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(inputs, member_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 3),
-              validate_paired_member(
-                policy_id,
-                savings_datum,
-                fund_input_index,
-                inputs,
-              ),
-            }
+            let (_own_input, policy_id) = own(
+              inputs,
+              member_input_index,
+              utxo,
+              3,
+            )
+            validate_paired_member(
+              policy_id,
+              savings_datum,
+              fund_input_index,
+              inputs,
+            )
           }
           LoanAccount { .. } -> {
-            let (_own_input, policy_id) = own(inputs, loan_input_index, utxo)
-            and {
-              own_input_count_is(inputs, policy_id, 3),
-              validate_paired_member(
-                policy_id,
-                savings_datum,
-                fund_input_index,
-                inputs,
-              ),
-            }
+            let (_own_input, policy_id) = own(inputs, loan_input_index, utxo, 3)
+            validate_paired_member(
+              policy_id,
+              savings_datum,
+              fund_input_index,
+              inputs,
+            )
           }
         }
 
       RemoveAccount { member_input_index } -> {
-        let (own_input, policy_id) = own(inputs, member_input_index, utxo)
-        and {
-          own_input_count_is(inputs, policy_id, 1),
-          validate_remove_account(
-            policy_id,
-            savings_datum,
-            own_input,
-            inputs,
-            mint,
-          ),
-        }
+        let (own_input, policy_id) = own(inputs, member_input_index, utxo, 1)
+        validate_remove_account(
+          policy_id,
+          savings_datum,
+          own_input,
+          inputs,
+          mint,
+        )
       }
 
-      CloseFund { fund_input_index } -> {
-        let (own_input, policy_id) = own(inputs, fund_input_index, utxo)
-        and {
-          own_input_count_is(inputs, policy_id, 1),
-          validate_close_fund(policy_id, savings_datum, own_input, mint, self),
-        }
+      CloseFund { intent_hash, fund_input_index, payout_output_index } -> {
+        let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 1)
+        validate_close_fund_bound(
+          policy_id,
+          savings_datum,
+          own_input,
+          intent_hash,
+          payout_output_index,
+          outputs,
+          mint,
+          self,
+        )
       }
     }
   }

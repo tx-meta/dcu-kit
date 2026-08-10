@@ -1,6 +1,7 @@
 import {
   Constr,
   Data,
+  getAddressDetails,
   LucidEvolution,
   Network,
   Script,
@@ -18,6 +19,7 @@ import {
   AmbiguousUtxoError,
   UtxoNotFoundError,
 } from "../core/errors.js";
+import { CredentialSchema } from "../core/types.js";
 import {
   getUtxosAt,
   parseSafeDatum,
@@ -27,17 +29,109 @@ import {
 } from "../core/utils/index.js";
 import { assetNameLabels } from "../core/utils/assets.js";
 import {
-  CredentialD,
+  type CredentialD,
   LoanAccountFields,
   MemberAccountFields,
   SavingsDatum,
   SavingsDatumSchema,
   SavingsFundFields,
+  SavingsIntent,
+  SavingsAddressSchema,
+  type SavingsAddress,
 } from "./types.js";
 import { savingsPolicyId, savingsVaultValidator } from "./validators.js";
 
 /** Lovelace buffer locked at create (shared protocol convention). */
 export const MIN_ADA_BUFFER = 2_000_000n;
+
+/** Converts bech32 into the ledger `Address` data used by savings intents. */
+export const toSavingsAddress = (bech32: string): SavingsAddress => {
+  const details = getAddressDetails(bech32);
+  const payment = details.paymentCredential;
+  if (!payment) throw new Error("address has no payment credential");
+  const payment_credential =
+    payment.type === "Key"
+      ? ({ VerificationKey: [payment.hash] } as const)
+      : ({ Script: [payment.hash] } as const);
+  const stake = details.stakeCredential;
+  const stake_credential = stake
+    ? ({
+        Inline: [
+          stake.type === "Key"
+            ? ({ VerificationKey: [stake.hash] } as const)
+            : ({ Script: [stake.hash] } as const),
+        ],
+      } as const)
+    : null;
+  return { payment_credential, stake_credential } as SavingsAddress;
+};
+
+const SocialIntentTupleSchema = Data.Tuple([
+  SavingsAddressSchema,
+  Data.Integer(),
+]);
+type SocialIntentTuple = Data.Static<typeof SocialIntentTupleSchema>;
+const SocialIntentTuple =
+  SocialIntentTupleSchema as unknown as SocialIntentTuple;
+
+const UpdateFundIntentTupleSchema = Data.Tuple([
+  Data.Bytes(),
+  CredentialSchema,
+  Data.Integer(),
+  Data.Integer(),
+  Data.Integer(),
+  Data.Integer(),
+  Data.Nullable(Data.Integer()),
+]);
+type UpdateFundIntentTuple = Data.Static<typeof UpdateFundIntentTupleSchema>;
+const UpdateFundIntentTuple =
+  UpdateFundIntentTupleSchema as unknown as UpdateFundIntentTuple;
+
+/**
+ * blake2b_256 of the canonical economic payload. The Governance Gate binds
+ * the target redeemer constructor separately, so the payload does not repeat
+ * an action tag. UpdateFund binds only its amendable charter fields so normal
+ * balance changes cannot stale a passed vote. CloseCycle has no discretionary
+ * payload because its snapshot is derived from authenticated live state.
+ */
+export const computeSavingsIntentHash = (intent: SavingsIntent): string => {
+  let encoded: string;
+  if ("SocialPayoutIntent" in intent) {
+    encoded = Data.to(
+      [
+        intent.SocialPayoutIntent.destination,
+        intent.SocialPayoutIntent.amount,
+      ] as SocialIntentTuple,
+      SocialIntentTuple,
+    );
+  } else if ("UpdateFundIntent" in intent) {
+    const update = intent.UpdateFundIntent;
+    encoded = Data.to(
+      [
+        update.title,
+        update.quorum,
+        update.min_shares_per_deposit,
+        update.max_shares_per_deposit,
+        update.max_loan_multiple,
+        update.loan_grace,
+        update.cycle_end,
+      ] as UpdateFundIntentTuple,
+      UpdateFundIntentTuple,
+    );
+  } else if ("CloseCycleIntent" in intent) {
+    return bytesToHex(blake2b(new Uint8Array(), { dkLen: 32 }));
+  } else if ("DisburseLoanIntent" in intent) {
+    encoded = Data.to(intent.DisburseLoanIntent.loan, SavingsDatum);
+  } else if ("WriteOffLoanIntent" in intent) {
+    encoded = intent.WriteOffLoanIntent.loan_id;
+  } else {
+    encoded = Data.to(
+      intent.CloseFundIntent.destination,
+      SavingsAddressSchema as unknown as SavingsAddress,
+    );
+  }
+  return bytesToHex(blake2b(hexToBytes(encoded), { dkLen: 32 }));
+};
 
 /** The savings-vault script address for a network. */
 export const savingsVaultAddress = (network: Network): string =>

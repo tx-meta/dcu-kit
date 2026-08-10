@@ -28,6 +28,7 @@ import {
 import { savingsPolicyId, savingsVaultValidator } from "../validators.js";
 import {
   applyQuorumWitness,
+  computeSavingsIntentHash,
   PartyWitness,
   resolveFund,
   resolveLoan,
@@ -110,6 +111,9 @@ export const unsignedWriteOffLoanTxProgram = (
       share_units: account.share_units - seizedUnits,
       borrowed: 0n,
     };
+    const intentHash = computeSavingsIntentHash({
+      WriteOffLoanIntent: { loan_id: config.loanTokenName },
+    });
 
     const redeemer: RedeemerBuilder = {
       kind: "selected",
@@ -117,6 +121,7 @@ export const unsignedWriteOffLoanTxProgram = (
         Data.to(
           {
             WriteOffLoan: {
+              intent_hash: intentHash,
               fund_input_index: inputIndices[0],
               member_input_index: inputIndices[1],
               loan_input_index: inputIndices[2],

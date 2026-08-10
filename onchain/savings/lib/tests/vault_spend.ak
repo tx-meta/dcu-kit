@@ -2,14 +2,19 @@ use cardano/assets
 use cardano/transaction.{Input}
 use savings/types.{Active, MemberAccount, SavingsDatum, SavingsFund, SharingOut}
 use savings/validation.{
-  validate_claim_share_out, validate_close_cycle, validate_close_fund,
-  validate_deposit, validate_paired_member, validate_remove_account,
-  validate_social_payout, validate_update_fund, validate_withdraw,
+  close_fund_intent_hash, update_fund_intent_hash, validate_claim_share_out,
+  validate_close_cycle_bound, validate_close_fund_bound, validate_deposit,
+  validate_paired_member, validate_remove_account, validate_social_payout_bound,
+  validate_update_fund_bound, validate_withdraw,
 }
 use tests/common.{
   anchor_value, fund_name, make_fund, make_member, member_ref_value, policy,
   quorum_tx, ref_name, unsigned_tx, user_name, user_token_input, vault_input,
   vault_output,
+}
+use tests/validation_wrappers.{
+  validate_close_cycle, validate_close_fund, validate_social_payout,
+  validate_update_fund,
 }
 
 // Standing fixture: ADA fund, 15 shares total (this member holds 10),
@@ -464,6 +469,26 @@ test social_payout__accepts_valid() {
   )
 }
 
+test social_payout__rejects_wrong_intent() {
+  let a = anchor_in(f0(), 22_000_000)
+  let fund_out = vault_output(
+    make_fund(0, 15, 15_000_000, 1_000_000, Active),
+    anchor_value(20_000_000),
+  )
+  let payout_out = vault_output(f0(), assets.from_lovelace(2_000_000))
+  !validate_social_payout_bound(
+    policy(),
+    f0(),
+    a,
+    #"00",
+    0,
+    1,
+    [fund_out, payout_out],
+    no_mint(),
+    quorum_tx(),
+  )
+}
+
 test social_payout__accepts_during_sharing_out() {
   let sharing = make_fund(
     0,
@@ -575,6 +600,67 @@ test update_fund__accepts_band_widen_and_rotation() {
   }
   let fund_out = vault_output(updated, anchor_value(22_000_000))
   validate_update_fund(policy(), f0(), a, 0, [fund_out], no_mint(), quorum_tx())
+}
+
+test update_fund__rejects_wrong_intent() {
+  let a = anchor_in(f0(), 22_000_000)
+  let fund_out = vault_output(f0(), anchor_value(22_000_000))
+  !validate_update_fund_bound(
+    policy(),
+    f0(),
+    a,
+    #"00",
+    0,
+    [fund_out],
+    no_mint(),
+    quorum_tx(),
+  )
+}
+
+test update_fund__intent_survives_live_counter_changes() {
+  // The decision was opened for this charter amendment. Deposits changed all
+  // live totals before execution, but those counters are not voter-selected
+  // parameters and therefore cannot stale the passed decision.
+  let current = make_fund(0, 20, 20_000_000, 4_000_000, Active)
+  let a = anchor_in(current, 26_000_000)
+  let updated = SavingsFund {
+    title: #"546573742046756e64",
+    group_type: 0,
+    quorum: common.quorum_credential(),
+    asset_policy: "",
+    asset_name: "",
+    share_value: 1_000_000,
+    min_shares_per_deposit: 1,
+    max_shares_per_deposit: 200,
+    withdrawal_policy: 0,
+    max_loan_multiple: 1,
+    loan_grace: 604_800_000,
+    cycle_end: None,
+    shares_total: 20,
+    savings_total: 20_000_000,
+    social_total: 4_000_000,
+    loans_outstanding: 0,
+    status: Active,
+  }
+  let fund_out = vault_output(updated, anchor_value(26_000_000))
+  validate_update_fund_bound(
+    policy(),
+    current,
+    a,
+    update_fund_intent_hash(
+      #"546573742046756e64",
+      common.quorum_credential(),
+      1,
+      200,
+      1,
+      604_800_000,
+      None,
+    ),
+    0,
+    [fund_out],
+    no_mint(),
+    quorum_tx(),
+  )
 }
 
 /// f0's charter with the two frozen fields overridable, everything else verbatim.
@@ -743,6 +829,21 @@ test close_cycle__accepts_exact_pot() {
   let a = anchor_in(f0(), 22_000_000)
   let fund_out = vault_output(sharing_datum(), anchor_value(22_000_000))
   validate_close_cycle(policy(), f0(), a, 0, [fund_out], no_mint(), quorum_tx())
+}
+
+test close_cycle__rejects_wrong_intent() {
+  let a = anchor_in(f0(), 22_000_000)
+  let fund_out = vault_output(sharing_datum(), anchor_value(22_000_000))
+  !validate_close_cycle_bound(
+    policy(),
+    f0(),
+    a,
+    #"00",
+    0,
+    [fund_out],
+    no_mint(),
+    quorum_tx(),
+  )
 }
 
 test close_cycle__rejects_understated_pot() {
@@ -1078,6 +1179,40 @@ test close_fund__accepts_completed_shareout() {
     policy(),
     done_datum(),
     a,
+    assets.from_asset(policy(), fund_name(), -1),
+    quorum_tx(),
+  )
+}
+
+test close_fund__rejects_wrong_intent() {
+  let a = anchor_in(done_datum(), 2_000_045)
+  let payout_out = vault_output(done_datum(), assets.from_lovelace(2_000_045))
+  !validate_close_fund_bound(
+    policy(),
+    done_datum(),
+    a,
+    #"00",
+    0,
+    [payout_out],
+    assets.from_asset(policy(), fund_name(), -1),
+    quorum_tx(),
+  )
+}
+
+test close_fund__rejects_residual_diversion() {
+  let a = anchor_in(done_datum(), 2_000_045)
+  let committed_out = vault_output(
+    done_datum(),
+    assets.from_lovelace(2_000_000),
+  )
+  let diverted_out = vault_output(done_datum(), assets.from_lovelace(45))
+  !validate_close_fund_bound(
+    policy(),
+    done_datum(),
+    a,
+    close_fund_intent_hash(committed_out.address),
+    0,
+    [committed_out, diverted_out],
     assets.from_asset(policy(), fund_name(), -1),
     quorum_tx(),
   )

@@ -5,8 +5,8 @@ use savings/types.{
   Active, Current, Defaulted, Late, LoanAccount, SavingsDatum, SavingsFund,
 }
 use savings/validation.{
-  validate_burn_loan, validate_disburse_loan, validate_mark_arrears,
-  validate_mint_loan, validate_repay_loan, validate_write_off_loan,
+  validate_burn_loan, validate_disburse_loan_bound, validate_mark_arrears,
+  validate_mint_loan, validate_repay_loan, validate_write_off_loan_bound,
 }
 use tests/common.{
   anchor_value, fund_name, loan_name, loan_seed_ref, loan_value, make_fund,
@@ -14,6 +14,7 @@ use tests/common.{
   quorum_tx, quorum_tx_bounded, ref_name, seed_input, tx_after, unsigned_tx,
   user_token_input, vault_input, vault_output,
 }
+use tests/validation_wrappers.{validate_disburse_loan, validate_write_off_loan}
 
 // Standing fixture: ADA fund, 15 shares (this member 10), social 3, vault 22.
 fn f0() -> SavingsDatum {
@@ -83,6 +84,26 @@ test disburse__accepts_valid() {
     policy(),
     f0(),
     a,
+    1,
+    3,
+    0,
+    1,
+    2,
+    [a, m, user_token_input(), seed_input(loan_seed_ref())],
+    disburse_outputs(f_loaned(), 14_000_000),
+    mint_loan_nft(),
+    quorum_tx_bounded(),
+  )
+}
+
+test disburse__rejects_wrong_intent() {
+  let a = anchor_in(f0(), 22_000_000)
+  let m = member_in(make_member(10, 3_000_000))
+  !validate_disburse_loan_bound(
+    policy(),
+    f0(),
+    a,
+    #"00",
     1,
     3,
     0,
@@ -692,6 +713,31 @@ test write_off__accepts_full_seizure() {
     policy(),
     f,
     a,
+    1,
+    2,
+    0,
+    1,
+    [a, m, l],
+    outputs,
+    burn_loan_nft(),
+    quorum_tx(),
+  )
+}
+
+test write_off__rejects_wrong_intent() {
+  let f = repay_fund_after(3_000_000)
+  let a = anchor_in(f, 19_400_000)
+  let m = member_in(make_member_borrowed(10, 3_000_000, 3_000_000))
+  let l = loan_in(make_loan(3_000_000, 400_000, Defaulted))
+  let outputs = [
+    vault_output(repay_fund_after(0), anchor_value(19_400_000)),
+    vault_output(make_member_borrowed(7, 3_000_000, 0), member_ref_value()),
+  ]
+  !validate_write_off_loan_bound(
+    policy(),
+    f,
+    a,
+    #"00",
     1,
     2,
     0,

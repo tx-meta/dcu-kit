@@ -136,6 +136,56 @@ export type LoanAccountFields = Extract<
   { LoanAccount: unknown }
 >["LoanAccount"];
 
+// --- Governance intent commitments ---
+
+const SavingsStakeCredentialSchema = Data.Enum([
+  Data.Object({ Inline: Data.Tuple([CredentialSchema]) }),
+  Data.Object({
+    Pointer: Data.Tuple([Data.Integer(), Data.Integer(), Data.Integer()]),
+  }),
+]);
+
+export const SavingsAddressSchema = Data.Object({
+  payment_credential: CredentialSchema,
+  stake_credential: Data.Nullable(SavingsStakeCredentialSchema),
+});
+export type SavingsAddress = Data.Static<typeof SavingsAddressSchema>;
+
+/** Mirrors `SavingsIntent` in on-chain constructor order. */
+export const SavingsIntentSchema = Data.Enum([
+  Data.Object({
+    SocialPayoutIntent: Data.Object({
+      destination: SavingsAddressSchema,
+      amount: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    UpdateFundIntent: Data.Object({
+      title: Data.Bytes(),
+      quorum: CredentialSchema,
+      min_shares_per_deposit: Data.Integer(),
+      max_shares_per_deposit: Data.Integer(),
+      max_loan_multiple: Data.Integer(),
+      loan_grace: Data.Integer(),
+      cycle_end: Data.Nullable(Data.Integer()),
+    }),
+  }),
+  Data.Object({
+    CloseCycleIntent: Data.Object({}),
+  }),
+  Data.Object({
+    DisburseLoanIntent: Data.Object({ loan: SavingsDatumSchema }),
+  }),
+  Data.Object({
+    WriteOffLoanIntent: Data.Object({ loan_id: Data.Bytes() }),
+  }),
+  Data.Object({
+    CloseFundIntent: Data.Object({ destination: SavingsAddressSchema }),
+  }),
+]);
+export type SavingsIntent = Data.Static<typeof SavingsIntentSchema>;
+export const SavingsIntent = SavingsIntentSchema as unknown as SavingsIntent;
+
 // --- Redeemers (constructor order matches savings/types.ak exactly) ---
 
 export const SavingsSpendRedeemerSchema = Data.Enum([
@@ -158,18 +208,22 @@ export const SavingsSpendRedeemerSchema = Data.Enum([
   }),
   Data.Object({
     SocialPayout: Data.Object({
+      intent_hash: Data.Bytes(),
       fund_input_index: Data.Integer(),
       fund_output_index: Data.Integer(),
+      payout_output_index: Data.Integer(),
     }),
   }),
   Data.Object({
     UpdateFund: Data.Object({
+      intent_hash: Data.Bytes(),
       fund_input_index: Data.Integer(),
       fund_output_index: Data.Integer(),
     }),
   }),
   Data.Object({
     CloseCycle: Data.Object({
+      intent_hash: Data.Bytes(),
       fund_input_index: Data.Integer(),
       fund_output_index: Data.Integer(),
     }),
@@ -184,6 +238,7 @@ export const SavingsSpendRedeemerSchema = Data.Enum([
   }),
   Data.Object({
     DisburseLoan: Data.Object({
+      intent_hash: Data.Bytes(),
       fund_input_index: Data.Integer(),
       member_input_index: Data.Integer(),
       seed_input_index: Data.Integer(),
@@ -211,6 +266,7 @@ export const SavingsSpendRedeemerSchema = Data.Enum([
   }),
   Data.Object({
     WriteOffLoan: Data.Object({
+      intent_hash: Data.Bytes(),
       fund_input_index: Data.Integer(),
       member_input_index: Data.Integer(),
       loan_input_index: Data.Integer(),
@@ -222,7 +278,11 @@ export const SavingsSpendRedeemerSchema = Data.Enum([
     RemoveAccount: Data.Object({ member_input_index: Data.Integer() }),
   }),
   Data.Object({
-    CloseFund: Data.Object({ fund_input_index: Data.Integer() }),
+    CloseFund: Data.Object({
+      intent_hash: Data.Bytes(),
+      fund_input_index: Data.Integer(),
+      payout_output_index: Data.Integer(),
+    }),
   }),
 ]);
 export type SavingsSpendRedeemer = Data.Static<
