@@ -10,8 +10,8 @@ use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Spend, Transaction,
 }
 use governance/types.{
-  Generic, GovAction, GovernanceAnchor, GovernanceDatum, Proposal, Roster,
-  VoterRecord,
+  BoundIntent, Generic, GovAction, GovernanceAnchor, GovernanceDatum, Proposal,
+  Roster, VoterRecord,
 }
 
 // A UTxO at a governance script address: its payment credential IS that script's
@@ -199,9 +199,9 @@ pub fn charter_valid(anchor: GovernanceDatum) -> Bool {
         }
       },
     )?,
-    // [spec 3.3.2 charter]: opener rules key GovAction constructor tags (0..5;
-    //   5 = the Generic forward-compatibility arm).
-    list.all(opener_policy, fn(p) { p.1st >= 0 && p.1st <= 5 })?,
+    // [spec 3.3.2 charter]: opener rules key GovAction constructor tags (0..6;
+    //   5 = Generic, 6 = the additive BoundIntent arm).
+    list.all(opener_policy, fn(p) { p.1st >= 0 && p.1st <= 6 })?,
   }
 }
 
@@ -322,6 +322,19 @@ pub fn validate_authorize(
           } else {
             payload == builtin.serialise_data(target_redeemer)
           }
+        BoundIntent { tag, intent } -> {
+          let decoded = builtin.un_constr_data(target_redeemer)
+          let constructor = builtin.fst_pair(decoded)
+          let fields = builtin.snd_pair(decoded)
+          when list.at(fields, 0) is {
+            Some(intent_data) -> and {
+                (bytearray.length(intent) == 32)?,
+                (constructor == tag)?,
+                (builtin.un_b_data(intent_data) == intent)?,
+              }
+            None -> False
+          }
+        }
         _ ->
           builtin.serialise_data(action) == builtin.serialise_data(
             target_redeemer,

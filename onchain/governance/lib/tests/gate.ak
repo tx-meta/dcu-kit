@@ -2,7 +2,7 @@ use aiken/builtin
 use aiken/collection/list
 use cardano/assets.{Value}
 use cardano/transaction.{Input, NoDatum, Output, Spend, Transaction}
-use governance/types.{Generic, GovAction, ParamChange}
+use governance/types.{BoundIntent, Generic, GovAction, ParamChange}
 use governance/validation.{validate_authorize}
 use tests/common.{
   dispatcher_address, empty_tx, gate_address, gov_policy, member_policy, ref_at,
@@ -277,5 +277,79 @@ test gate__operation_binding_ignores_the_resolved_indices() {
     1,
     ref_at(0),
     gate_tx_with(indexed_redeemer(3, 99), burn_decision()),
+  )
+}
+
+fn intent() -> ByteArray {
+  #"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+}
+
+fn intent_redeemer(constructor: Int, committed: ByteArray, index: Int) -> Data {
+  builtin.constr_data(
+    constructor,
+    [builtin.b_data(committed), builtin.i_data(index)],
+  )
+}
+
+test gate__bound_intent_accepts_matching_field_zero() {
+  let action = BoundIntent { tag: 6, intent: intent() }
+  validate_authorize(
+    gov_policy(),
+    target_policy(),
+    target_id(),
+    action,
+    0,
+    1,
+    ref_at(0),
+    gate_tx_with(intent_redeemer(6, intent(), 99), burn_decision()),
+  )
+}
+
+test gate__bound_intent_rejects_parameter_substitution() {
+  let action = BoundIntent { tag: 6, intent: intent() }
+  !validate_authorize(
+    gov_policy(),
+    target_policy(),
+    target_id(),
+    action,
+    0,
+    1,
+    ref_at(0),
+    gate_tx_with(
+      intent_redeemer(
+        6,
+        #"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        99,
+      ),
+      burn_decision(),
+    ),
+  )
+}
+
+test gate__bound_intent_rejects_wrong_operation() {
+  let action = BoundIntent { tag: 6, intent: intent() }
+  !validate_authorize(
+    gov_policy(),
+    target_policy(),
+    target_id(),
+    action,
+    0,
+    1,
+    ref_at(0),
+    gate_tx_with(intent_redeemer(9, intent(), 99), burn_decision()),
+  )
+}
+
+test gate__bound_intent_rejects_non_32_byte_commitment() {
+  let action = BoundIntent { tag: 6, intent: #"01" }
+  !validate_authorize(
+    gov_policy(),
+    target_policy(),
+    target_id(),
+    action,
+    0,
+    1,
+    ref_at(0),
+    gate_tx_with(intent_redeemer(6, #"01", 99), burn_decision()),
   )
 }
