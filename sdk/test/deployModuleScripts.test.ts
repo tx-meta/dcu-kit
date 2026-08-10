@@ -10,7 +10,11 @@ import { advanceBlock } from "./effects.js";
 import { deployModuleScripts } from "../src/admin/deployModuleScripts.js";
 import { MAX_REF_SCRIPT_BYTES } from "../src/admin/refScripts.js";
 import { alwaysFailsValidator } from "../src/core/validators/constants.js";
-import { savingsVaultValidator } from "../src/savings/validators.js";
+import {
+  savingsDirectValidator,
+  savingsGovernedValidator,
+  savingsVaultValidator,
+} from "../src/savings/validators.js";
 import { escrowV2Validator } from "../src/escrow/v2/validators.js";
 import { selectWalletFromSeed } from "../src/core/utils/index.js";
 
@@ -26,9 +30,14 @@ describe("deployModuleScripts (emulator)", () => {
       const { lucid, emulator } = context;
       selectWalletFromSeed(lucid, context.users.admin.seedPhrase);
 
+      // ADR-0003: savings ships three scripts. Deploying only the dispatcher
+      // produces a deployment on which every savings transaction fails, so the
+      // trio is what a real deploy publishes and what this asserts.
       const result = yield* deployModuleScripts(
         {
           savings: savingsVaultValidator.spendVault,
+          savingsGoverned: savingsGovernedValidator,
+          savingsDirect: savingsDirectValidator,
           escrowV2: escrowV2Validator.spendEscrow,
         },
         lucid,
@@ -42,26 +51,34 @@ describe("deployModuleScripts (emulator)", () => {
       expect(result.deployAddress).toBe(alwaysFailsAddress);
       expect(result.status).toEqual({
         savings: "deployed",
+        savingsGoverned: "deployed",
+        savingsDirect: "deployed",
         escrowV2: "deployed",
       });
 
       // Both refs must be resolvable, carry the script, and sit where they can
       // never be spent — the property the whole function exists for.
       const utxos = yield* Effect.promise(() =>
-        lucid.utxosByOutRef([result.refs.savings!, result.refs.escrowV2!]),
+        lucid.utxosByOutRef([
+          result.refs.savings!,
+          result.refs.savingsGoverned!,
+          result.refs.savingsDirect!,
+          result.refs.escrowV2!,
+        ]),
       );
-      expect(utxos).toHaveLength(2);
+      expect(utxos).toHaveLength(4);
       for (const utxo of utxos) {
         expect(utxo.address).toBe(alwaysFailsAddress);
         expect(utxo.scriptRef).toBeTruthy();
       }
       const hashes = utxos.map((u) => validatorToScriptHash(u.scriptRef!));
-      expect(hashes).toContain(
-        validatorToScriptHash(savingsVaultValidator.spendVault),
-      );
-      expect(hashes).toContain(
-        validatorToScriptHash(escrowV2Validator.spendEscrow),
-      );
+      for (const script of [
+        savingsVaultValidator.spendVault,
+        savingsGovernedValidator,
+        savingsDirectValidator,
+        escrowV2Validator.spendEscrow,
+      ])
+        expect(hashes).toContain(validatorToScriptHash(script));
     }),
   );
 

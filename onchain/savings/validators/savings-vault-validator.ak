@@ -1,76 +1,54 @@
-use aiken/collection/list
-use cardano/address.{Script}
+use aiken/crypto.{ScriptHash}
 use cardano/assets.{PolicyId}
-use cardano/transaction.{Input, OutputReference, Transaction}
+use cardano/transaction.{OutputReference, Transaction}
+use savings/dispatch.{action_binds_own_input, action_tag_is}
 use savings/types.{
   BurnAccount, BurnFund, BurnLoan, ClaimShareOut, CloseCycle, CloseFund,
-  CreateFund, Deposit, DisburseLoan, LoanAccount, MarkArrears, MemberAccount,
-  MintAccount, MintLoan, RemoveAccount, RepayLoan, SavingsDatum, SavingsFund,
-  SavingsMintRedeemer, SavingsSpendRedeemer, SocialPayout, UpdateFund, Withdraw,
-  WriteOffLoan,
+  CreateFund, Deposit, DisburseLoan, MarkArrears, MintAccount, MintLoan,
+  RemoveAccount, RepayLoan, SavingsDatum, SavingsMintRedeemer,
+  SavingsSpendRedeemer, SocialPayout, UpdateFund, Withdraw, WriteOffLoan,
 }
 use savings/validation.{
-  own_input_count_is, validate_burn_account, validate_burn_fund,
-  validate_burn_loan, validate_claim_share_out, validate_close_cycle_bound,
-  validate_close_fund_bound, validate_create_fund, validate_deposit,
-  validate_disburse_loan_bound, validate_mark_arrears, validate_mint_account,
-  validate_mint_loan, validate_paired_member, validate_remove_account,
-  validate_repay_loan, validate_social_payout_bound, validate_update_fund_bound,
-  validate_withdraw, validate_write_off_loan_bound,
+  validate_burn_account, validate_burn_fund, validate_burn_loan,
+  validate_create_fund, validate_mint_account, validate_mint_loan,
 }
 
-// MLabs security checklist (2026-07-12, re-run for the loan paths — all 11):
-// LOANS — 1 Other Redeemer: loan branches self-validating; the satellite
-//   branch handles member AND loan variants; Deposit/Withdraw/Claim reject
-//   LoanAccount datums; every non-Disburse spend forbids own-policy mints so
-//   MintLoan couples transitively to DisburseLoan. 7 Multiple Satisfaction:
-//   triple transitions use count==3 + constructor-distinct expected datums.
-//   8 Authentication: loan records carry the shape-checked Loan State NFT.
-//   10 Cheap Spam: MarkArrears is permissionless but only advances truthful,
-//   time-proven state one step; repayment stays open in every status.
-//   Value flow: disburse/repay move EXACTLY principal/repayment; write-off
-//   moves nothing (accounting + burn). Input discipline is now 1, 2, or 3
-//   own inputs per redeemer.
-// Original checklist (2026-07-12, savings paths):
-// 1 Other Redeemer — each branch fully self-validating; paired-member light
-//   branch is safe because every anchor redeemer that admits two own inputs
-//   enforces the full member continuation. 2 Other Token Name — all mints are
-//   exact-shape allowlists from seed derivations. 3 Arbitrary Datum — every
-//   continuation compared against a fully-constructed expected datum.
-// 4 Unbounded Datum — no growing fields; title capped at 64 bytes.
-// 5 Unbounded Value — creation pins policies to [ada, own]; transitions move
-//   ONLY the fund asset (exact merge). 6 Unbounded Inputs — n/a: no handler
-//   iterates unbounded inputs (count discipline: 1 or 2). 7 Multiple
-//   Satisfaction — own-input count + constructor-distinct expected datums
-//   force distinct continuations. 8 UTxO Authentication — anchor = Fund State
-//   NFT (shape-checked), member = CIP-68 (100) token. 9 UTxO Contention —
-//   single vault UTxO serializes deposits/claims; ACCEPTED v1 limit
-//   (meeting-cadence groups), documented in the spec; joins use a reference
-//   input. 10 Cheap Spam — all state paths need the member user token or the
-//   quorum; accounts carry min-ADA. 11 Staking Key Control — creations pinned
-//   to the canonical no-stake script address; continuations must keep the
-//   full input address.
-
-// [security]: self-reference — the indexed input must be the UTxO being spent,
-// preventing cross-UTxO attacks that bypass per-UTxO guards.
-fn own(
-  inputs: List<Input>,
-  ix: Int,
-  utxo: OutputReference,
-  family_size: Int,
-) -> (Input, PolicyId) {
-  expect Some(own_input) = list.at(inputs, ix)
-  expect own_input.output_reference == utxo
-  expect Script(policy_id) = own_input.output.address.payment_credential
-  expect own_input_count_is(inputs, policy_id, family_size)
-  (own_input, policy_id)
-}
-
-validator savings_vault {
+// savings_vault(governed_stake, direct_stake) — the DISPATCHER (ADR-0003)
+// ─────────────────────────────────────────────────────────────────────────────
+// The policy/payment identity of the savings module: fund, account and loan
+// tokens are minted under this hash, and every vault UTxO sits at its script
+// address. It validates NOTHING heavy — all state-transition logic lives in the
+// two withdraw-zero family stake validators (`savings_governed`,
+// `savings_direct`, whose hashes are compile-time parameters) and runs ONCE per
+// transaction in their withdraw handlers.
+//
+// The split exists because the single validator reached 16,105 bytes against a
+// 16,128-byte deployable-reference-script ceiling: it could not take a security
+// fix without first being made smaller. See docs/adr/0003.
+//
+// spend — routes by redeemer constructor to the operation's family and requires
+//         that family's action to COVER this UTxO (the pin rule, savings/
+//         dispatch). The constructor tags and the field-0 `intent_hash` of the
+//         six governed operations are unchanged from ADR-0002, so the
+//         Governance Gate reads exactly the bytes it read before the split.
+// mint  — every mint and burn proves the licensing family transition runs in
+//         the same transaction, by family AND action tag. Without the family
+//         check a burn could be attributed to the wrong family; without the tag
+//         check any action of that family would license it.
+//
+// [security]: MLabs checklist entries 1 (Other Redeemer), 7 (Multiple
+// Satisfaction) and 8 (UTxO Authentication) are now enforced centrally by
+// `savings/family.open` — the covered set must be exactly the vault inputs the
+// transaction consumes, duplicate-free, so no vault input is ever spent without
+// a family action that validates it. The checklist notes for the individual
+// operations remain with their `validate_*` functions in savings/validation.
+validator savings_vault(governed_stake: ScriptHash, direct_stake: ScriptHash) {
   mint(redeemer: SavingsMintRedeemer, policy_id: PolicyId, tx: Transaction) {
-    let Transaction { inputs, reference_inputs, outputs, mint, .. } = tx
+    let Transaction { inputs, reference_inputs, outputs, mint, redeemers, .. } = tx
 
     when redeemer is {
+      // Fund creation is one-shot and self-contained: the seed input names the
+      // NFT and the anchor's zeroed charter is fully checked here.
       CreateFund { seed_input_index, fund_output_index } ->
         validate_create_fund(
           policy_id,
@@ -80,6 +58,9 @@ validator savings_vault {
           outputs,
           mint,
         )
+
+      // Joining reads the fund as a REFERENCE input, so it spends no vault
+      // UTxO and needs no family transition.
       MintAccount {
         seed_input_index,
         fund_ref_index,
@@ -98,11 +79,41 @@ validator savings_vault {
           mint,
           tx.validity_range,
         )
-      MintLoan { seed_input_index } ->
-        validate_mint_loan(policy_id, seed_input_index, inputs, mint)
-      BurnLoan -> validate_burn_loan(policy_id, mint)
-      BurnAccount -> validate_burn_account(policy_id, mint)
-      BurnFund -> validate_burn_fund(policy_id, mint)
+
+      // [security]: the loan NFT exists only as part of an origination — the
+      // governed family must be running DisburseLoanAction (tag 3), which
+      // validates the loan record, the principal movement and the intent.
+      MintLoan { seed_input_index } -> and {
+          validate_mint_loan(policy_id, seed_input_index, inputs, mint),
+          action_tag_is(governed_stake, redeemers, 3),
+        }
+
+      // [security]: a loan NFT burns only when the loan closes — either the
+      // borrower repays it in full (direct RepayLoanAction, tag 3) or the
+      // quorum writes it off (governed WriteOffLoanAction, tag 4). Those two
+      // actions pin WHICH token burns.
+      BurnLoan -> and {
+          validate_burn_loan(policy_id, mint),
+          or {
+            action_tag_is(direct_stake, redeemers, 3),
+            action_tag_is(governed_stake, redeemers, 4),
+          },
+        }
+
+      // [security]: a member's CIP-68 pair burns only on RemoveAccountAction
+      // (direct, tag 5), which proves the balance and loan are clear.
+      BurnAccount -> and {
+          validate_burn_account(policy_id, mint),
+          action_tag_is(direct_stake, redeemers, 5),
+        }
+
+      // [security]: the Fund State NFT burns only on CloseFundAction
+      // (governed, tag 5), which pays the whole residual to the committed
+      // destination.
+      BurnFund -> and {
+          validate_burn_fund(policy_id, mint),
+          action_tag_is(governed_stake, redeemers, 5),
+        }
     }
   }
 
@@ -112,364 +123,41 @@ validator savings_vault {
     utxo: OutputReference,
     self: Transaction,
   ) {
-    let Transaction { inputs, outputs, mint, .. } = self
-
     // [security]: datum must be present — guards against datum-less injection.
-    expect Some(savings_datum) = datum
+    expect Some(_savings_datum) = datum
 
-    when redeemer is {
-      Deposit {
-        fund_input_index,
-        member_input_index,
-        fund_output_index,
-        member_output_index,
-        fund_tag,
-      } ->
-        when savings_datum is {
-          SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 2)
-            validate_deposit(
-              policy_id,
-              savings_datum,
-              own_input,
-              member_input_index,
-              fund_output_index,
-              member_output_index,
-              fund_tag,
-              inputs,
-              outputs,
-              mint,
-            )
-          }
-          MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(
-              inputs,
-              member_input_index,
-              utxo,
-              2,
-            )
-            validate_paired_member(
-              policy_id,
-              savings_datum,
-              fund_input_index,
-              inputs,
-            )
-          }
-          LoanAccount { .. } -> False
-        }
-
-      Withdraw {
-        fund_input_index,
-        member_input_index,
-        fund_output_index,
-        member_output_index,
-      } ->
-        when savings_datum is {
-          SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 2)
-            validate_withdraw(
-              policy_id,
-              savings_datum,
-              own_input,
-              member_input_index,
-              fund_output_index,
-              member_output_index,
-              inputs,
-              outputs,
-              mint,
-            )
-          }
-          MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(
-              inputs,
-              member_input_index,
-              utxo,
-              2,
-            )
-            validate_paired_member(
-              policy_id,
-              savings_datum,
-              fund_input_index,
-              inputs,
-            )
-          }
-          LoanAccount { .. } -> False
-        }
-
-      ClaimShareOut {
-        fund_input_index,
-        member_input_index,
-        fund_output_index,
-        member_output_index,
-      } ->
-        when savings_datum is {
-          SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 2)
-            validate_claim_share_out(
-              policy_id,
-              savings_datum,
-              own_input,
-              member_input_index,
-              fund_output_index,
-              member_output_index,
-              inputs,
-              outputs,
-              mint,
-            )
-          }
-          MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(
-              inputs,
-              member_input_index,
-              utxo,
-              2,
-            )
-            validate_paired_member(
-              policy_id,
-              savings_datum,
-              fund_input_index,
-              inputs,
-            )
-          }
-          LoanAccount { .. } -> False
-        }
-
-      SocialPayout {
-        intent_hash,
-        fund_input_index,
-        fund_output_index,
-        payout_output_index,
-      } -> {
-        let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 1)
-        validate_social_payout_bound(
-          policy_id,
-          savings_datum,
-          own_input,
-          intent_hash,
-          fund_output_index,
-          payout_output_index,
-          outputs,
-          mint,
-          self,
-        )
-      }
-
-      UpdateFund { intent_hash, fund_input_index, fund_output_index } -> {
-        let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 1)
-        validate_update_fund_bound(
-          policy_id,
-          savings_datum,
-          own_input,
-          intent_hash,
-          fund_output_index,
-          outputs,
-          mint,
-          self,
-        )
-      }
-
-      CloseCycle { intent_hash, fund_input_index, fund_output_index } -> {
-        let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 1)
-        validate_close_cycle_bound(
-          policy_id,
-          savings_datum,
-          own_input,
-          intent_hash,
-          fund_output_index,
-          outputs,
-          mint,
-          self,
-        )
-      }
-
-      DisburseLoan {
-        intent_hash,
-        fund_input_index,
-        member_input_index,
-        seed_input_index,
-        fund_output_index,
-        member_output_index,
-        loan_output_index,
-      } ->
-        when savings_datum is {
-          SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 2)
-            validate_disburse_loan_bound(
-              policy_id,
-              savings_datum,
-              own_input,
-              intent_hash,
-              member_input_index,
-              seed_input_index,
-              fund_output_index,
-              member_output_index,
-              loan_output_index,
-              inputs,
-              outputs,
-              mint,
-              self,
-            )
-          }
-          MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(
-              inputs,
-              member_input_index,
-              utxo,
-              2,
-            )
-            validate_paired_member(
-              policy_id,
-              savings_datum,
-              fund_input_index,
-              inputs,
-            )
-          }
-          LoanAccount { .. } -> False
-        }
-
-      RepayLoan {
-        fund_input_index,
-        member_input_index,
-        loan_input_index,
-        fund_output_index,
-        member_output_index,
-        loan_output_index,
-      } ->
-        when savings_datum is {
-          SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 3)
-            validate_repay_loan(
-              policy_id,
-              savings_datum,
-              own_input,
-              member_input_index,
-              loan_input_index,
-              fund_output_index,
-              member_output_index,
-              loan_output_index,
-              inputs,
-              outputs,
-              mint,
-            )
-          }
-          MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(
-              inputs,
-              member_input_index,
-              utxo,
-              3,
-            )
-            validate_paired_member(
-              policy_id,
-              savings_datum,
-              fund_input_index,
-              inputs,
-            )
-          }
-          LoanAccount { .. } -> {
-            let (_own_input, policy_id) = own(inputs, loan_input_index, utxo, 3)
-            validate_paired_member(
-              policy_id,
-              savings_datum,
-              fund_input_index,
-              inputs,
-            )
-          }
-        }
-
-      MarkArrears { loan_input_index, loan_output_index } -> {
-        let (own_input, policy_id) = own(inputs, loan_input_index, utxo, 1)
-        validate_mark_arrears(
-          policy_id,
-          savings_datum,
-          own_input,
-          loan_output_index,
-          outputs,
-          mint,
-          self,
-        )
-      }
-
-      WriteOffLoan {
-        intent_hash,
-        fund_input_index,
-        member_input_index,
-        loan_input_index,
-        fund_output_index,
-        member_output_index,
-      } ->
-        when savings_datum is {
-          SavingsFund { .. } -> {
-            let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 3)
-            validate_write_off_loan_bound(
-              policy_id,
-              savings_datum,
-              own_input,
-              intent_hash,
-              member_input_index,
-              loan_input_index,
-              fund_output_index,
-              member_output_index,
-              inputs,
-              outputs,
-              mint,
-              self,
-            )
-          }
-          MemberAccount { .. } -> {
-            let (_own_input, policy_id) = own(
-              inputs,
-              member_input_index,
-              utxo,
-              3,
-            )
-            validate_paired_member(
-              policy_id,
-              savings_datum,
-              fund_input_index,
-              inputs,
-            )
-          }
-          LoanAccount { .. } -> {
-            let (_own_input, policy_id) = own(inputs, loan_input_index, utxo, 3)
-            validate_paired_member(
-              policy_id,
-              savings_datum,
-              fund_input_index,
-              inputs,
-            )
-          }
-        }
-
-      RemoveAccount { member_input_index } -> {
-        let (own_input, policy_id) = own(inputs, member_input_index, utxo, 1)
-        validate_remove_account(
-          policy_id,
-          savings_datum,
-          own_input,
-          inputs,
-          mint,
-        )
-      }
-
-      CloseFund { intent_hash, fund_input_index, payout_output_index } -> {
-        let (own_input, policy_id) = own(inputs, fund_input_index, utxo, 1)
-        validate_close_fund_bound(
-          policy_id,
-          savings_datum,
-          own_input,
-          intent_hash,
-          payout_output_index,
-          outputs,
-          mint,
-          self,
-        )
-      }
+    // [security]: each vault input is bound to BOTH its family AND that
+    // family's action variant. Coverage alone would let a satellite be spent
+    // under any other constructor of the same family while the anchor's
+    // transition still validated — the redeemer on that input would then not
+    // describe the operation, which is the ABI the Governance Gate reads.
+    let (family, action_tag) = when redeemer is {
+      Deposit -> (direct_stake, 0)
+      Withdraw -> (direct_stake, 1)
+      ClaimShareOut -> (direct_stake, 2)
+      RepayLoan -> (direct_stake, 3)
+      MarkArrears -> (direct_stake, 4)
+      RemoveAccount -> (direct_stake, 5)
+      SocialPayout { .. } -> (governed_stake, 0)
+      UpdateFund { .. } -> (governed_stake, 1)
+      CloseCycle { .. } -> (governed_stake, 2)
+      DisburseLoan { .. } -> (governed_stake, 3)
+      WriteOffLoan { .. } -> (governed_stake, 4)
+      CloseFund { .. } -> (governed_stake, 5)
     }
+    action_binds_own_input(
+      family,
+      action_tag,
+      self.redeemers,
+      self.inputs,
+      utxo,
+    )
   }
 
-  // [security]: else branch must fail — no staking withdrawals, certificates,
-  // or governance actions from the vault script.
+  // [security]: else branch must fail — the dispatcher's stake credential is
+  // never registered or withdrawn from (the two family validators carry the
+  // withdraw-zero role); this blocks unauthorized withdrawals, certificate
+  // publications, governance votes, and proposals from the vault credential.
   else(_) {
     fail
   }

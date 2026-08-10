@@ -4,6 +4,8 @@
 export * from "./types.js";
 export * from "./utils.js";
 export * from "./validators.js";
+export * from "./familyWithdraw.js";
+export * from "./registerSavingsStake.js";
 
 export * from "./endpoints/createFund.js";
 export * from "./endpoints/joinFund.js";

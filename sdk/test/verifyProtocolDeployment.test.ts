@@ -11,6 +11,16 @@ import {
   ScriptRefOutRef,
 } from "../src/admin/deployScripts.js";
 import { ScriptRefs } from "../src/core/scripts.js";
+import { LucidContext } from "./context.js";
+import { deployModuleScripts } from "../src/admin/deployModuleScripts.js";
+import { selectWalletFromSeed } from "../src/core/utils/index.js";
+import { registerSavingsStake } from "../src/savings/registerSavingsStake.js";
+import {
+  savingsDirectValidator,
+  savingsGovernedValidator,
+  savingsVaultValidator,
+} from "../src/savings/validators.js";
+import { advanceBlock } from "./effects.js";
 
 const REF_KEYS: DeployedScriptKey[] = [
   "treasury",
@@ -257,6 +267,140 @@ describe("verifyProtocolDeployment (emulator)", () => {
       ).toBe(true);
       // The treasury families are registered by setup and stay unaffected.
       expect(result.refs.treasury.scriptMatches).toBe(true);
+    }),
+  );
+});
+
+// ─── ADR-0003: the savings module verifies as a unit ────────────────────────
+// Savings needs three reference scripts AND two registered stake credentials.
+// A verifier that checked only the dispatcher could report `ok: true` on a
+// deployment where every savings transaction fails at submit time, which is
+// worse than not checking savings at all.
+describe("verifyProtocolDeployment — savings module (emulator)", () => {
+  const deploySavingsTrio = (context: LucidContext) =>
+    Effect.gen(function* () {
+      selectWalletFromSeed(context.lucid, context.users.admin.seedPhrase);
+      const deployed = yield* deployModuleScripts(
+        {
+          savings: savingsVaultValidator.spendVault,
+          savingsGoverned: savingsGovernedValidator,
+          savingsDirect: savingsDirectValidator,
+        },
+        context.lucid,
+        {
+          awaitSettled: () =>
+            Effect.sync(() => context.emulator?.awaitBlock(1)),
+        },
+      );
+      yield* advanceBlock(context.emulator, 1);
+      return deployed;
+    });
+
+  it.effect("passes on a complete trio with both credentials registered", () =>
+    Effect.gen(function* () {
+      const { context } = yield* setupBase();
+      const deployed = yield* deploySavingsTrio(context);
+      yield* registerSavingsStake(context.lucid);
+      yield* advanceBlock(context.emulator, 1);
+
+      const result = yield* verifyProtocolDeployment(context.lucid, {
+        settingsPolicy: context.protocol!.settingsPolicy,
+        refs: {
+          ...refsFromContext(context.scriptRefs!),
+          savings: deployed.refs.savings,
+          savingsGoverned: deployed.refs.savingsGoverned,
+          savingsDirect: deployed.refs.savingsDirect,
+        },
+        expected: {
+          settingsUnit: context.settingsUnit!,
+          network: "Custom",
+        },
+      });
+
+      expect(result.issues).toEqual([]);
+      expect(result.ok).toBe(true);
+      for (const key of [
+        "savings",
+        "savingsGoverned",
+        "savingsDirect",
+      ] as const)
+        expect(result.refs[key].hashMatches).toBe(true);
+      expect(result.savingsStakeRegistrations?.governed.status).toBe(
+        "registered",
+      );
+      expect(result.savingsStakeRegistrations?.direct.status).toBe(
+        "registered",
+      );
+    }),
+  );
+
+  it.effect("rejects a savings deployment missing a family reference", () =>
+    Effect.gen(function* () {
+      const { context } = yield* setupBase();
+      const deployed = yield* deploySavingsTrio(context);
+      yield* registerSavingsStake(context.lucid);
+      yield* advanceBlock(context.emulator, 1);
+
+      // Only the dispatcher is named. Before ADR-0003 this was a complete
+      // savings deployment; now it is one third of one.
+      const result = yield* verifyProtocolDeployment(context.lucid, {
+        settingsPolicy: context.protocol!.settingsPolicy,
+        refs: {
+          ...refsFromContext(context.scriptRefs!),
+          savings: deployed.refs.savings,
+        },
+        expected: {
+          settingsUnit: context.settingsUnit!,
+          network: "Custom",
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.issues.some((i) => i.includes("savingsGoverned"))).toBe(
+        true,
+      );
+      expect(result.issues.some((i) => i.includes("savingsDirect"))).toBe(true);
+    }),
+  );
+
+  it.effect("rejects an unregistered savings family credential", () =>
+    Effect.gen(function* () {
+      const { context } = yield* setupBase();
+      const deployed = yield* deploySavingsTrio(context);
+      // References published, credentials never registered: the shape a deploy
+      // that skipped registerSavingsStake leaves behind.
+
+      const result = yield* verifyProtocolDeployment(context.lucid, {
+        settingsPolicy: context.protocol!.settingsPolicy,
+        refs: {
+          ...refsFromContext(context.scriptRefs!),
+          savings: deployed.refs.savings,
+          savingsGoverned: deployed.refs.savingsGoverned,
+          savingsDirect: deployed.refs.savingsDirect,
+        },
+        expected: {
+          settingsUnit: context.settingsUnit!,
+          network: "Custom",
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.savingsStakeRegistrations?.governed.status).toBe(
+        "not-registered",
+      );
+      expect(result.savingsStakeRegistrations?.direct.status).toBe(
+        "not-registered",
+      );
+      expect(
+        result.issues.some((i) => i.includes("registerSavingsStake")),
+      ).toBe(true);
+      // Every reference is sound — only the registrations are missing.
+      for (const key of [
+        "savings",
+        "savingsGoverned",
+        "savingsDirect",
+      ] as const)
+        expect(result.refs[key].hashMatches).toBe(true);
     }),
   );
 });

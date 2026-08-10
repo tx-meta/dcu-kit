@@ -3,7 +3,6 @@ import {
   LucidEvolution,
   RedeemerBuilder,
   TxSignBuilder,
-  UTxO,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import {
@@ -16,7 +15,15 @@ import {
   attachTxMessage,
   type TxMessage,
 } from "../../core/utils/index.js";
-import { SavingsMintRedeemer, SavingsSpendRedeemer } from "../types.js";
+import {
+  SavingsDirectAction,
+  SavingsMintRedeemer,
+  SavingsSpendRedeemer,
+} from "../types.js";
+import {
+  attachSavingsFamilyWithdrawal,
+  type SavingsRefConfig,
+} from "../familyWithdraw.js";
 import { savingsVaultValidator } from "../validators.js";
 import {
   findUserTokenUtxo,
@@ -35,10 +42,7 @@ import {
  * @param config - ExitFundConfig.
  * @returns Effect yielding TxSignBuilder.
  */
-export type ExitFundConfig = {
-  /** Deployed savings script reference — pass on live networks;
-   *  the ~15.5KB validator cannot ride inline within the tx limit. */
-  scriptRef?: UTxO;
+export type ExitFundConfig = SavingsRefConfig & {
   memberTokenSuffix: string;
   /**
    * Optional human-readable note attached to this transaction as CIP-20
@@ -69,17 +73,27 @@ export const unsignedExitFundTxProgram = (
 
     const { refUnit } = memberUnits(config.memberTokenSuffix);
 
-    const spendRedeemer: RedeemerBuilder = {
+    // ADR-0003: the spending redeemer carries only the operation; indices and
+    // the covered set ride on the direct family withdrawal, which runs the
+    // validation once per transaction.
+    const spendRedeemer = Data.to("RemoveAccount", SavingsSpendRedeemer);
+    const action: RedeemerBuilder = {
       kind: "selected",
       makeRedeemer: (inputIndices: bigint[]) =>
         Data.to(
-          { RemoveAccount: { member_input_index: inputIndices[0] } },
-          SavingsSpendRedeemer,
+          {
+            RemoveAccountAction: {
+              covered_inputs: [inputIndices[0]],
+              member_input_index: inputIndices[0],
+            },
+          },
+          SavingsDirectAction,
         ),
       inputs: [refUtxo],
     };
 
-    return yield* (yield* attachTxMessage(lucid.newTx(), config.message))
+    const network = lucid.config().network ?? "Preprod";
+    const baseTx = (yield* attachTxMessage(lucid.newTx(), config.message))
       .collectFrom([refUtxo], spendRedeemer)
       .collectFrom([userTokenUtxo])
       .compose(
@@ -97,17 +111,25 @@ export const unsignedExitFundTxProgram = (
         config.scriptRef
           ? null
           : lucid.newTx().attach.MintingPolicy(savingsVaultValidator.mintVault),
-      )
-      .completeProgram()
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new TransactionBuildError({
-              operation: "exitFund",
-              error: String(e),
-            }),
-        ),
       );
+
+    const txWithFamily = attachSavingsFamilyWithdrawal(
+      baseTx,
+      network,
+      "direct",
+      action,
+      config.familyRef,
+    );
+
+    return yield* txWithFamily.completeProgram().pipe(
+      Effect.mapError(
+        (e) =>
+          new TransactionBuildError({
+            operation: "exitFund",
+            error: String(e),
+          }),
+      ),
+    );
   });
 
 export const exitFund = (lucid: LucidEvolution, config: ExitFundConfig) =>

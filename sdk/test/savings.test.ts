@@ -36,9 +36,22 @@ import { getFundStateProgram } from "../src/savings/queries/getFundState.js";
 import { getFundMembersProgram } from "../src/savings/queries/getFundMembers.js";
 import { FUND_TAG_SOCIAL, FUND_TAG_TOPUP } from "../src/savings/types.js";
 import { resolveMemberAccount } from "../src/savings/utils.js";
-import { savingsVaultValidator } from "../src/savings/validators.js";
+import {
+  savingsDirectValidator,
+  savingsVaultValidator,
+} from "../src/savings/validators.js";
+import { registerSavingsStake } from "../src/savings/registerSavingsStake.js";
 import { advanceBlock } from "./effects.js";
+import { measureTx, TxMeasurement } from "./utils.js";
 import { readCip20 } from "./utils.js";
+
+// ADR-0003 gate 1: execution units and transaction size measured against the
+// REAL split shape (thin dispatcher + family withdrawal), not the probes the
+// ADR ranked options with. Every transaction the suite submits is recorded
+// here; the final test reports the table and gates it.
+const measurements: TxMeasurement[] = [];
+const record = (operation: string, tx: Parameters<typeof measureTx>[1]) =>
+  measurements.push(measureTx(operation, tx));
 
 // ---------------------------------------------------------------------------
 // Standalone context: a treasurer (fund creator = default quorum) and two
@@ -51,8 +64,10 @@ type SavingsContext = {
   treasurer: { seedPhrase: string; address: string };
   member1: { seedPhrase: string; address: string };
   member2: { seedPhrase: string; address: string };
-  /** The ~15.7KiB validator deployed once as a reference script. */
+  /** The thin vault dispatcher deployed once as a reference script. */
   scriptRef: UTxO;
+  /** The savings_direct family validator, deployed as a reference script. */
+  directRef: UTxO;
 };
 
 const makeContext = Effect.gen(function* () {
@@ -87,6 +102,35 @@ const makeContext = Effect.gen(function* () {
     lucid.utxosAt(referenceAddress),
   )).find((u) => u.scriptRef);
   if (!scriptRef) throw new Error("script ref deploy failed");
+  // ADR-0003 withdraw-zero prerequisite: every savings operation carries a
+  // 0-ADA withdrawal from its family's stake credential, and the ledger (and
+  // the emulator) reject a withdrawal from an unregistered credential — even a
+  // zero one. Uses the production helper, so every emulator run exercises the
+  // same registration path a live deployment performs.
+  // The direct family as a reference script too, so the live-network path
+  // (dispatcher AND family read from references) has emulator coverage
+  // alongside the inline-family path the rest of this suite uses.
+  const deployDirect = yield* Effect.promise(() =>
+    lucid
+      .newTx()
+      .pay.ToAddressWithData(
+        referenceAddress,
+        undefined,
+        { lovelace: 25_000_000n },
+        savingsDirectValidator,
+      )
+      .complete(),
+  );
+  yield* signAndSubmit(deployDirect);
+  yield* advanceBlock(emulator, 2);
+  const directRef = (yield* Effect.promise(() =>
+    lucid.utxosAt(referenceAddress),
+  )).find((u) => u.scriptRef && u.txHash !== scriptRef.txHash);
+  if (!directRef) throw new Error("direct family ref deploy failed");
+  const savingsRegistration = yield* registerSavingsStake(lucid);
+  if (savingsRegistration.alreadyRegistered)
+    throw new Error("expected a fresh savings stake registration");
+  yield* advanceBlock(emulator, 1);
   return {
     lucid,
     emulator,
@@ -94,6 +138,7 @@ const makeContext = Effect.gen(function* () {
     member1,
     member2,
     scriptRef,
+    directRef,
   } as SavingsContext;
 });
 
@@ -101,8 +146,10 @@ const submitAs = (
   ctx: SavingsContext,
   who: { seedPhrase: string },
   tx: Parameters<typeof signAndSubmit>[0],
+  operation?: string,
 ) =>
   Effect.gen(function* () {
+    if (operation) record(operation, tx);
     const txHash = yield* signAndSubmit(tx);
     yield* advanceBlock(ctx.emulator, 3);
     return txHash;
@@ -127,7 +174,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
             maxSharesPerDeposit: 100n,
             withdrawalPolicy: 0n,
           });
-        yield* submitAs(ctx, ctx.treasurer, createTx);
+        yield* submitAs(ctx, ctx.treasurer, createTx, "createFund");
 
         // --- both members join (anchor is a reference input) ---
         selectWalletFromSeed(lucid, ctx.member1.seedPhrase);
@@ -137,7 +184,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
             fundTokenName,
             consent: true,
           });
-        yield* submitAs(ctx, ctx.member1, join1);
+        yield* submitAs(ctx, ctx.member1, join1, "joinFund");
 
         selectWalletFromSeed(lucid, ctx.member2.seedPhrase);
         const { tx: join2, memberTokenSuffix: suffix2 } =
@@ -145,7 +192,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
             scriptRef: ctx.scriptRef,
             fundTokenName,
           });
-        yield* submitAs(ctx, ctx.member2, join2);
+        yield* submitAs(ctx, ctx.member2, join2, "joinFund");
 
         const membersAfterJoin = yield* getFundMembersProgram(
           lucid,
@@ -161,7 +208,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           memberTokenSuffix: suffix1,
           units: 10n,
         });
-        yield* submitAs(ctx, ctx.member1, dep1);
+        yield* submitAs(ctx, ctx.member1, dep1, "deposit(shares)");
 
         selectWalletFromSeed(lucid, ctx.member2.seedPhrase);
         const dep2 = yield* unsignedDepositTxProgram(lucid, {
@@ -170,7 +217,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           memberTokenSuffix: suffix2,
           units: 5n,
         });
-        yield* submitAs(ctx, ctx.member2, dep2);
+        yield* submitAs(ctx, ctx.member2, dep2, "deposit(shares)");
 
         // --- social contribution (member1) + untagged penalty (member2) ---
         selectWalletFromSeed(lucid, ctx.member1.seedPhrase);
@@ -181,7 +228,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           fundTag: FUND_TAG_SOCIAL,
           amount: 3_000_000n,
         });
-        yield* submitAs(ctx, ctx.member1, social1);
+        yield* submitAs(ctx, ctx.member1, social1, "deposit(social)");
 
         selectWalletFromSeed(lucid, ctx.member2.seedPhrase);
         const topup = yield* unsignedDepositTxProgram(lucid, {
@@ -191,7 +238,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           fundTag: FUND_TAG_TOPUP,
           amount: 2_000_000n,
         });
-        yield* submitAs(ctx, ctx.member2, topup);
+        yield* submitAs(ctx, ctx.member2, topup, "deposit(topup)");
 
         const afterDeposits = yield* getFundStateProgram(lucid, fundTokenName);
         expect(afterDeposits.fund.shares_total).toBe(15n);
@@ -208,7 +255,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           amount: 1_000_000n,
           destination: ctx.member2.address,
         });
-        yield* submitAs(ctx, ctx.treasurer, payout);
+        yield* submitAs(ctx, ctx.treasurer, payout, "socialPayout");
 
         // --- charter update (band widened) ---
         const update = yield* unsignedUpdateFundTxProgram(lucid, {
@@ -216,14 +263,14 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           fundTokenName,
           maxSharesPerDeposit: 200n,
         });
-        yield* submitAs(ctx, ctx.treasurer, update);
+        yield* submitAs(ctx, ctx.treasurer, update, "updateFund");
 
         // --- cycle close: pot = 21 - 2 social - 2 buffer = 17 ADA ---
         const close = yield* unsignedCloseCycleTxProgram(lucid, {
           scriptRef: ctx.scriptRef,
           fundTokenName,
         });
-        yield* submitAs(ctx, ctx.treasurer, close);
+        yield* submitAs(ctx, ctx.treasurer, close, "closeCycle");
 
         const afterClose = yield* getFundStateProgram(lucid, fundTokenName);
         expect(afterClose.phase).toBe("SharingOut");
@@ -240,7 +287,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           fundTokenName,
           memberTokenSuffix: suffix1,
         });
-        yield* submitAs(ctx, ctx.member1, claim1);
+        yield* submitAs(ctx, ctx.member1, claim1, "claimShareOut");
 
         selectWalletFromSeed(lucid, ctx.member2.seedPhrase);
         const claim2 = yield* unsignedClaimShareOutTxProgram(lucid, {
@@ -248,7 +295,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           fundTokenName,
           memberTokenSuffix: suffix2,
         });
-        yield* submitAs(ctx, ctx.member2, claim2);
+        yield* submitAs(ctx, ctx.member2, claim2, "claimShareOut");
 
         const m1 = yield* resolveMemberAccount(lucid, suffix1);
         expect(m1.account.share_units).toBe(0n);
@@ -259,14 +306,14 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           scriptRef: ctx.scriptRef,
           memberTokenSuffix: suffix1,
         });
-        yield* submitAs(ctx, ctx.member1, exit1);
+        yield* submitAs(ctx, ctx.member1, exit1, "exitFund");
 
         selectWalletFromSeed(lucid, ctx.member2.seedPhrase);
         const exit2 = yield* unsignedExitFundTxProgram(lucid, {
           scriptRef: ctx.scriptRef,
           memberTokenSuffix: suffix2,
         });
-        yield* submitAs(ctx, ctx.member2, exit2);
+        yield* submitAs(ctx, ctx.member2, exit2, "exitFund");
 
         const membersAfterExit = yield* getFundMembersProgram(
           lucid,
@@ -280,7 +327,12 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           scriptRef: ctx.scriptRef,
           fundTokenName,
         });
-        const closeHash = yield* submitAs(ctx, ctx.treasurer, closeF);
+        const closeHash = yield* submitAs(
+          ctx,
+          ctx.treasurer,
+          closeF,
+          "closeFund",
+        );
         expect(closeHash).toBeDefined();
       }),
   );
@@ -298,7 +350,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           shareValue: 2_000_000n,
           withdrawalPolicy: 1n,
         });
-      yield* submitAs(ctx, ctx.treasurer, createTx);
+      yield* submitAs(ctx, ctx.treasurer, createTx, "createFund");
 
       selectWalletFromSeed(lucid, ctx.member1.seedPhrase);
       const { tx: joinTx, memberTokenSuffix } =
@@ -306,7 +358,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           scriptRef: ctx.scriptRef,
           fundTokenName,
         });
-      yield* submitAs(ctx, ctx.member1, joinTx);
+      yield* submitAs(ctx, ctx.member1, joinTx, "joinFund");
 
       const dep = yield* unsignedDepositTxProgram(lucid, {
         scriptRef: ctx.scriptRef,
@@ -314,7 +366,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
         memberTokenSuffix,
         units: 10n,
       });
-      yield* submitAs(ctx, ctx.member1, dep);
+      yield* submitAs(ctx, ctx.member1, dep, "deposit(shares)");
 
       const wd = yield* unsignedWithdrawSavingsTxProgram(lucid, {
         scriptRef: ctx.scriptRef,
@@ -322,7 +374,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
         memberTokenSuffix,
         units: 4n,
       });
-      yield* submitAs(ctx, ctx.member1, wd);
+      yield* submitAs(ctx, ctx.member1, wd, "withdrawSavings");
 
       const state = yield* getFundStateProgram(lucid, fundTokenName);
       expect(state.fund.shares_total).toBe(6n);
@@ -372,6 +424,8 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           lucid.utxosAt(referenceAddress),
         )).find((u) => u.scriptRef);
         if (!scriptRefNt) throw new Error("script ref deploy failed");
+        yield* registerSavingsStake(lucid);
+        yield* advanceBlock(emulator, 1);
         const ctx = {
           lucid,
           emulator,
@@ -379,6 +433,8 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           member1: member,
           member2: member,
           scriptRef: scriptRefNt,
+          // This standalone context never exercises the reference path.
+          directRef: scriptRefNt,
         } as SavingsContext;
 
         const { tx: createTx, fundTokenName } =
@@ -390,7 +446,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
             shareValue: 1_000n,
             withdrawalPolicy: 0n,
           });
-        yield* submitAs(ctx, treasurer, createTx);
+        yield* submitAs(ctx, treasurer, createTx, "createFund");
 
         selectWalletFromSeed(lucid, member.seedPhrase);
         const { tx: joinTx, memberTokenSuffix } =
@@ -398,7 +454,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
             scriptRef: ctx.scriptRef,
             fundTokenName,
           });
-        yield* submitAs(ctx, member, joinTx);
+        yield* submitAs(ctx, member, joinTx, "joinFund");
 
         const dep = yield* unsignedDepositTxProgram(lucid, {
           scriptRef: ctx.scriptRef,
@@ -406,7 +462,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           memberTokenSuffix,
           units: 100n,
         });
-        yield* submitAs(ctx, member, dep);
+        yield* submitAs(ctx, member, dep, "deposit(shares)");
 
         const state = yield* getFundStateProgram(lucid, fundTokenName);
         expect(state.fund.savings_total).toBe(100_000n);
@@ -418,7 +474,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           scriptRef: ctx.scriptRef,
           fundTokenName,
         });
-        yield* submitAs(ctx, treasurer, close);
+        yield* submitAs(ctx, treasurer, close, "closeCycle");
 
         selectWalletFromSeed(lucid, member.seedPhrase);
         const claim = yield* unsignedClaimShareOutTxProgram(lucid, {
@@ -426,7 +482,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           fundTokenName,
           memberTokenSuffix,
         });
-        yield* submitAs(ctx, member, claim);
+        yield* submitAs(ctx, member, claim, "claimShareOut");
 
         const after = yield* getFundStateProgram(lucid, fundTokenName);
         expect(after.vaultBalance).toBe(0n); // sole member claimed everything
@@ -456,7 +512,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
             maxLoanMultiple: 1n,
             quorum: { type: "Key", hash: quorumHash },
           });
-        yield* submitAs(ctx, ctx.treasurer, createTx);
+        yield* submitAs(ctx, ctx.treasurer, createTx, "createFund");
 
         selectWalletFromSeed(lucid, ctx.member1.seedPhrase);
         const { tx: joinTx, memberTokenSuffix } =
@@ -464,7 +520,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
             scriptRef: ctx.scriptRef,
             fundTokenName,
           });
-        yield* submitAs(ctx, ctx.member1, joinTx);
+        yield* submitAs(ctx, ctx.member1, joinTx, "joinFund");
 
         const dep = yield* unsignedDepositTxProgram(lucid, {
           scriptRef: ctx.scriptRef,
@@ -472,7 +528,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           memberTokenSuffix,
           units: 10n,
         });
-        yield* submitAs(ctx, ctx.member1, dep);
+        yield* submitAs(ctx, ctx.member1, dep, "deposit(shares)");
 
         // Disburse 8 ADA against 10 ADA of shares: borrower builds and signs,
         // the quorum co-signs.
@@ -487,6 +543,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
             due: now + 2_000_000n,
             currentTime: now,
           });
+        record("disburseLoan", disburseTx);
         const disburseSigned = yield* Effect.promise(() =>
           disburseTx.sign
             .withWallet()
@@ -512,7 +569,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           principal: 5_000_000n,
           charge: 400_000n,
         });
-        yield* submitAs(ctx, ctx.member1, partial);
+        yield* submitAs(ctx, ctx.member1, partial, "repayLoan(partial)");
 
         const afterPartial = yield* getFundStateProgram(lucid, fundTokenName);
         expect(afterPartial.fund.loans_outstanding).toBe(3_000_000n);
@@ -525,7 +582,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           memberTokenSuffix,
           loanTokenName,
         });
-        yield* submitAs(ctx, ctx.member1, closeRepay);
+        yield* submitAs(ctx, ctx.member1, closeRepay, "repayLoan(closing)");
 
         const afterClose = yield* getFundStateProgram(lucid, fundTokenName);
         expect(afterClose.fund.loans_outstanding).toBe(0n);
@@ -578,7 +635,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
             loanGrace: 200_000n,
             quorum: { type: "Key", hash: quorumHash },
           });
-        yield* submitAs(ctx, ctx.treasurer, createTx);
+        yield* submitAs(ctx, ctx.treasurer, createTx, "createFund");
 
         selectWalletFromSeed(lucid, ctx.member1.seedPhrase);
         const { tx: joinTx, memberTokenSuffix } =
@@ -586,14 +643,14 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
             scriptRef: ctx.scriptRef,
             fundTokenName,
           });
-        yield* submitAs(ctx, ctx.member1, joinTx);
+        yield* submitAs(ctx, ctx.member1, joinTx, "joinFund");
         const dep = yield* unsignedDepositTxProgram(lucid, {
           scriptRef: ctx.scriptRef,
           fundTokenName,
           memberTokenSuffix,
           units: 10n,
         });
-        yield* submitAs(ctx, ctx.member1, dep);
+        yield* submitAs(ctx, ctx.member1, dep, "deposit(shares)");
 
         const now = BigInt(emulator.now());
         const { tx: disburseTx, loanTokenName } =
@@ -606,6 +663,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
             due: now + 1_000_000n,
             currentTime: now,
           });
+        record("disburseLoan", disburseTx);
         const disburseSigned = yield* Effect.promise(() =>
           disburseTx.sign
             .withWallet()
@@ -623,7 +681,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           loanTokenName,
           currentTime: BigInt(emulator.now()),
         });
-        yield* submitAs(ctx, ctx.member2, toLate);
+        yield* submitAs(ctx, ctx.member2, toLate, "markArrears");
 
         // Past due + grace (200s): 15 more blocks = +300s.
         yield* advanceBlock(emulator, 15);
@@ -632,7 +690,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           loanTokenName,
           currentTime: BigInt(emulator.now()),
         });
-        yield* submitAs(ctx, ctx.member2, toDefaulted);
+        yield* submitAs(ctx, ctx.member2, toDefaulted, "markArrears");
 
         // The quorum writes the loan off: 8 of 10 shares seized.
         selectWalletFromSeed(lucid, ctx.treasurer.seedPhrase);
@@ -641,6 +699,7 @@ describe("savings module — full VSLA lifecycle (emulator)", () => {
           fundTokenName,
           loanTokenName,
         });
+        record("writeOffLoan", writeOff);
         const writeOffSigned = yield* Effect.promise(() =>
           writeOff.sign.withWallet().sign.withPrivateKey(quorumKey).complete(),
         );
@@ -690,4 +749,114 @@ describe("savings — CIP-20 transaction message", () => {
       });
     }),
   );
+});
+
+describe("savings split — reference-script path (ADR-0003)", () => {
+  it.effect(
+    "a deposit reading BOTH the dispatcher and the family from references",
+    () =>
+      Effect.gen(function* () {
+        const ctx = yield* makeContext;
+        const { lucid } = ctx;
+
+        selectWalletFromSeed(lucid, ctx.treasurer.seedPhrase);
+        const { tx: createTx, fundTokenName } =
+          yield* unsignedCreateFundTxProgram(lucid, {
+            scriptRef: ctx.scriptRef,
+            title: "ref-path fund",
+            shareValue: 1_000_000n,
+            minSharesPerDeposit: 1n,
+            maxSharesPerDeposit: 100n,
+            withdrawalPolicy: 1n,
+          });
+        yield* submitAs(ctx, ctx.treasurer, createTx);
+
+        selectWalletFromSeed(lucid, ctx.member1.seedPhrase);
+        const { tx: joinTx, memberTokenSuffix } =
+          yield* unsignedJoinFundTxProgram(lucid, {
+            scriptRef: ctx.scriptRef,
+            fundTokenName,
+          });
+        yield* submitAs(ctx, ctx.member1, joinTx);
+
+        // The same deposit built two ways from the same state: family attached
+        // inline (emulator-only) versus read from its reference script (the
+        // live-network shape). Only the second is submitted.
+        const inlineDep = yield* unsignedDepositTxProgram(lucid, {
+          scriptRef: ctx.scriptRef,
+          fundTokenName,
+          memberTokenSuffix,
+          units: 3n,
+        });
+        const inline = measureTx("deposit(family inline)", inlineDep);
+
+        const dep = yield* unsignedDepositTxProgram(lucid, {
+          scriptRef: ctx.scriptRef,
+          familyRef: ctx.directRef,
+          fundTokenName,
+          memberTokenSuffix,
+          units: 3n,
+        });
+        const referenced = measureTx("deposit(both refs)", dep);
+        yield* submitAs(ctx, ctx.member1, dep);
+
+        // The family validator is ~8.8 KB; reading it instead of inlining it
+        // takes essentially all of that off the transaction.
+        expect(referenced.sizeBytes).toBeLessThan(inline.sizeBytes - 8_000);
+
+        const fund = yield* getFundStateProgram(lucid, fundTokenName);
+        expect(fund.fund.shares_total).toBe(3n);
+      }),
+  );
+});
+
+// ─── ADR-0003 gate 1: measured against the real shape ───────────────────────
+// The ADR ranked the split options with probe validators that still carried
+// the mint handlers and no family withdrawal. This is the real architecture:
+// a thin dispatcher spend per vault input, one family withdrawal carrying the
+// heavy validation, and the mint handler where a mint or burn is involved.
+// The lifecycle tests above record every transaction they submit; this reports
+// the table and gates it against the protocol limits the emulator enforces.
+//
+// Read the size column as the INLINE-FAMILY worst case: these transactions
+// carry the vault dispatcher as a reference script but attach the ~8.8 KB
+// family validator inline, which the helper permits only on the emulator. A
+// live deployment references both, so roughly 8.8 KB of the figures below comes
+// off. Ex-units are unaffected by where the script bytes come from.
+describe("savings split — transaction cost (ADR-0003 gate 1)", () => {
+  it("every savings transaction fits the protocol tx-size and ex-unit limits", () => {
+    // Every operation must have been exercised above, or the table is a
+    // partial picture of the split's cost.
+    expect(measurements.length).toBeGreaterThanOrEqual(20);
+
+    const maxTxSize = PROTOCOL_PARAMETERS_DEFAULT.maxTxSize;
+    const maxTxExMem = Number(PROTOCOL_PARAMETERS_DEFAULT.maxTxExMem);
+    const maxTxExSteps = Number(PROTOCOL_PARAMETERS_DEFAULT.maxTxExSteps);
+
+    // Worst case per operation — repeats of the same operation differ only in
+    // wallet-input count, so the maximum is the number that matters.
+    const worst = new Map<string, TxMeasurement>();
+    for (const m of measurements) {
+      const prev = worst.get(m.operation);
+      if (!prev || m.cpu > prev.cpu) worst.set(m.operation, m);
+    }
+    const rows = [...worst.values()].sort((a, b) => b.cpu - a.cpu);
+
+    console.table(
+      rows.map((r) => ({
+        operation: r.operation,
+        sizeBytes: r.sizeBytes,
+        sizePct: `${((100 * r.sizeBytes) / maxTxSize).toFixed(1)}%`,
+        scriptExecs: r.scriptExecs,
+        memPct: `${((100 * r.mem) / maxTxExMem).toFixed(1)}%`,
+        cpuPct: `${((100 * r.cpu) / maxTxExSteps).toFixed(1)}%`,
+      })),
+    );
+
+    const over = rows.filter(
+      (r) =>
+        r.sizeBytes > maxTxSize || r.mem > maxTxExMem || r.cpu > maxTxExSteps,
+    );
+    expect(over).toEqual([]);
+  });
 });

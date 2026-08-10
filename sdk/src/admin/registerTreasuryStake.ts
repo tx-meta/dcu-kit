@@ -7,6 +7,18 @@ import { Protocol, TreasuryFamily } from "../core/validators/constants.js";
 import { DcuError, SetupError, TransactionBuildError } from "../core/errors.js";
 import { getWalletAddress } from "../core/utils/index.js";
 
+/** One credential's registration outcome, keyed by a caller-supplied label. */
+export type StakeRegistration = {
+  /** Which credential this is, for reporting (e.g. a family name). */
+  label: string;
+  /** The stake validator's reward (stake) address. */
+  rewardAddress: string;
+  /** true when the credential was already registered on-chain. */
+  alreadyRegistered: boolean;
+  /** Hash of the registration transaction, or null when alreadyRegistered. */
+  txHash: string | null;
+};
+
 export type FamilyRegistration = {
   /** Which treasury family stake validator this registration is for. */
   family: TreasuryFamily;
@@ -96,15 +108,61 @@ export const registerTreasuryStake = (
 ): Effect.Effect<RegisterTreasuryStakeResult, DcuError, never> =>
   Effect.gen(function* () {
     const network = lucid.config().network!;
+
+    const results = yield* registerStakeCredentials(
+      lucid,
+      FAMILIES.map((family) => ({
+        label: family,
+        rewardAddress: validatorToRewardAddress(
+          network,
+          protocol.treasuryStakeValidators[family],
+        ),
+      })),
+      "registerTreasuryStake",
+    );
+    const registrations: FamilyRegistration[] = results.map((r) => ({
+      family: r.label as TreasuryFamily,
+      rewardAddress: r.rewardAddress,
+      alreadyRegistered: r.alreadyRegistered,
+      txHash: r.txHash,
+    }));
+
+    return {
+      registrations,
+      alreadyRegistered: registrations.every((r) => r.alreadyRegistered),
+    };
+  });
+
+/**
+ * Registers a set of script stake credentials one at a time, tolerating any
+ * that are already registered.
+ *
+ * Every withdraw-zero family — the four treasury ones, and since ADR-0003 the
+ * two savings ones — needs its stake credential registered before the ledger
+ * will accept the 0-ADA withdrawal that triggers its validator. This is the
+ * shared mechanism; callers supply the labelled reward addresses.
+ *
+ * Idempotency: registration state cannot be read through the provider API
+ * (`delegationAt` returns the same shape for unregistered and
+ * registered-with-no-rewards credentials), so this submits one registration per
+ * credential and treats a duplicate-registration rejection as success. A
+ * rejected transaction never enters a block, so the probe costs nothing.
+ *
+ * @param lucid - Lucid instance with a funded wallet selected (pays the key
+ *                deposit per credential not yet registered).
+ * @param entries - The credentials to register, with a label for reporting.
+ * @param operation - Prefix for the error taxonomy's `operation` field.
+ */
+export const registerStakeCredentials = (
+  lucid: LucidEvolution,
+  entries: ReadonlyArray<{ label: string; rewardAddress: string }>,
+  operation: string,
+): Effect.Effect<StakeRegistration[], DcuError, never> =>
+  Effect.gen(function* () {
     const address = yield* getWalletAddress(lucid);
+    const registrations: StakeRegistration[] = [];
 
-    const registrations: FamilyRegistration[] = [];
-    for (const family of FAMILIES) {
-      const rewardAddress = validatorToRewardAddress(
-        network,
-        protocol.treasuryStakeValidators[family],
-      );
-
+    for (const { label, rewardAddress } of entries) {
       const attempt = Effect.gen(function* () {
         const txBuilder = yield* lucid
           .newTx()
@@ -115,7 +173,7 @@ export const registerTreasuryStake = (
             Effect.mapError(
               (e) =>
                 new TransactionBuildError({
-                  operation: `registerTreasuryStake:${family}:build`,
+                  operation: `${operation}:${label}:build`,
                   error: String(e),
                 }),
             ),
@@ -125,7 +183,7 @@ export const registerTreasuryStake = (
           try: () => txBuilder.sign.withWallet().complete(),
           catch: (e) =>
             new TransactionBuildError({
-              operation: `registerTreasuryStake:${family}:sign`,
+              operation: `${operation}:${label}:sign`,
               error: String(e),
             }),
         });
@@ -133,7 +191,7 @@ export const registerTreasuryStake = (
           try: () => signed.submit(),
           catch: (e) =>
             new TransactionBuildError({
-              operation: `registerTreasuryStake:${family}:submit`,
+              operation: `${operation}:${label}:submit`,
               error: String(e),
             }),
         });
@@ -141,39 +199,38 @@ export const registerTreasuryStake = (
           try: () => lucid.awaitTx(txHash),
           catch: (e) =>
             new TransactionBuildError({
-              operation: `registerTreasuryStake:${family}:confirm`,
+              operation: `${operation}:${label}:confirm`,
               error: String(e),
             }),
         });
-        // Wait for the change UTxO to be indexed so the next family's coin
-        // selection does not reuse an input this tx just spent.
+        // Wait for the change UTxO to be indexed so the next credential's coin
+        // selection does not reuse an input this transaction just spent.
         yield* awaitWalletIndexed(lucid, address, txHash);
 
         return {
-          family,
+          label,
           rewardAddress,
           alreadyRegistered: false,
           txHash,
-        } satisfies FamilyRegistration;
+        } satisfies StakeRegistration;
       });
 
-      const result = yield* attempt.pipe(
-        Effect.catchAll((e) =>
-          e._tag === "TransactionBuildError" && ALREADY_REGISTERED.test(e.error)
-            ? Effect.succeed({
-                family,
-                rewardAddress,
-                alreadyRegistered: true,
-                txHash: null,
-              } satisfies FamilyRegistration)
-            : Effect.fail(e),
+      registrations.push(
+        yield* attempt.pipe(
+          Effect.catchAll((e) =>
+            e._tag === "TransactionBuildError" &&
+            ALREADY_REGISTERED.test(e.error)
+              ? Effect.succeed({
+                  label,
+                  rewardAddress,
+                  alreadyRegistered: true,
+                  txHash: null,
+                } satisfies StakeRegistration)
+              : Effect.fail(e),
+          ),
         ),
       );
-      registrations.push(result);
     }
 
-    return {
-      registrations,
-      alreadyRegistered: registrations.every((r) => r.alreadyRegistered),
-    };
+    return registrations;
   });
