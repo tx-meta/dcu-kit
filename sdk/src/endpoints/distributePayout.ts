@@ -10,7 +10,13 @@ import {
   validatorToRewardAddress,
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
-import { effectiveScriptRefs, ScriptRefs } from "../core/scripts.js";
+import {
+  effectiveScriptRefs,
+  requireLiveReferenceScripts,
+  verifyReferenceScripts,
+  ScriptRefs,
+} from "../core/scripts.js";
+import { requirementsFor } from "../core/operationRequirements.js";
 import {
   GroupDatum,
   GroupSpendRedeemer,
@@ -270,9 +276,9 @@ export const unsignedDistributePayoutTxProgram = (
         );
 
     // ─── Reserve leg (round levy + stand-in draw) ─────────────────────────────
-    // The reserve MUST be spent when the group configures a round levy; with levy
-    // 0 it is spent only while a stand-in is active (the borrower gains the draw).
-    // Levy-0/standin-0 rounds skip the leg entirely — the tx is unchanged.
+    // ADR-R1: every successful distribution spends and continues the reserve.
+    // This pins both levy routing and a positive stand-in decrement on-chain,
+    // including dry levy-0 rounds.
     const roundLevy = groupDatum.reserve_round_levy;
     const reserveUnit = treasuryPolicyId + reserveTokenName(groupRefName);
     const reserveUtxoRaw = yield* resolveUtxoByUnit(lucid, reserveUnit);
@@ -290,10 +296,7 @@ export const unsignedDistributePayoutTxProgram = (
       );
     }
     const standinIn = reserveDatumParsed.ReserveState.standin_rounds;
-    const reserveNeeded = roundLevy > 0n || standinIn > 0n;
-    const levyTotal = reserveNeeded
-      ? roundLevy * BigInt(memberStates.length)
-      : 0n;
+    const levyTotal = roundLevy * BigInt(memberStates.length);
     const reserveRawIn = reserveUtxo.assets[contributionUnit] ?? 0n;
     const reserveContributableIn = contributableBalance(
       reserveRawIn,
@@ -303,7 +306,7 @@ export const unsignedDistributePayoutTxProgram = (
     // pot (plus this round's levy) holds — a dry draw is 0 but still decrements.
     const drawCap = reserveContributableIn + levyTotal;
     const draw =
-      reserveNeeded && standinIn > 0n
+      standinIn > 0n
         ? groupDatum.contribution_fee < drawCap
           ? groupDatum.contribution_fee
           : drawCap < 0n
@@ -314,21 +317,17 @@ export const unsignedDistributePayoutTxProgram = (
     // What the borrower actually receives this round.
     const payoutAmount = grossPot - levyTotal + draw;
 
-    // The indexer legs: member treasuries plus (when needed) the reserve, sorted
+    // The indexer legs: member treasuries plus the mandatory reserve, sorted
     // lexicographically so input and output indices are both ascending on-chain.
     type ReserveLeg = { utxo: UTxO; datum: TreasuryDatum; isReserve: true };
     type Leg = { utxo: UTxO; datum: TreasuryDatum; isReserve?: boolean };
     const legs: Leg[] = [
       ...memberStates,
-      ...(reserveNeeded
-        ? [
-            {
-              utxo: reserveUtxo,
-              datum: reserveDatumParsed,
-              isReserve: true,
-            } as ReserveLeg,
-          ]
-        : []),
+      {
+        utxo: reserveUtxo,
+        datum: reserveDatumParsed,
+        isReserve: true,
+      } as ReserveLeg,
     ].sort((a, b) => {
       const cmp = a.utxo.txHash.localeCompare(b.utxo.txHash);
       return cmp !== 0 ? cmp : a.utxo.outputIndex - b.utxo.outputIndex;
@@ -442,6 +441,13 @@ export const unsignedDistributePayoutTxProgram = (
     // Use reference scripts when provided — avoids including ~20KB of script bytes
     // inline, keeping the tx under Cardano's 16,384-byte size limit.
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    yield* requireLiveReferenceScripts(
+      network,
+      "distributeRound",
+      scriptRefs,
+      requirementsFor("distributeRound"),
+    );
+    yield* verifyReferenceScripts(protocol, scriptRefs);
     const refUtxos = [
       scriptRefs.treasury,
       scriptRefs.group,

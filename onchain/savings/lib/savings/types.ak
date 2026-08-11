@@ -97,39 +97,71 @@ pub type SavingsDatum {
   }
 }
 
+/// The vault's SPENDING redeemer (ADR-0003 two-family split).
+///
+/// Every vault UTxO consumed by an operation is spent with this operation's
+/// constructor; the heavy validation runs once, in the family withdrawal.
+///
+/// [security]: the ABI the Governance Gate depends on (ADR-0002). Constructor
+/// tags are frozen, and every quorum-controlled operation carries
+/// `intent_hash` at FIELD 0. The Gate's `BoundIntent` arm reads exactly that:
+/// the target's spend-redeemer constructor and its field 0. Moving the
+/// commitment to the family withdrawal, or dropping fields so field 0 no
+/// longer exists, would silently void intent binding for all six governed
+/// operations. Indices and routing data live on the family withdrawal instead.
 pub type SavingsSpendRedeemer {
-  // Paired (anchor + member account): tag 0 = buy shares, 1 = social fund,
-  // 2 = untagged top-up (penalties, donations, future #8 interest).
-  Deposit {
+  // 0 — paired (anchor + member account), direct family.
+  Deposit
+  // 1 — paired, direct family.
+  Withdraw
+  // 2 — anchor only, governed family: welfare payment from social_total.
+  SocialPayout { intent_hash: ByteArray }
+  // 3 — anchor only, governed family: charter fields + quorum rotation.
+  UpdateFund { intent_hash: ByteArray }
+  // 4 — anchor only, governed family: freeze the share-out snapshot.
+  CloseCycle { intent_hash: ByteArray }
+  // 5 — paired, direct family: member claims their share of the pot.
+  ClaimShareOut
+  // 6 — triple (anchor + member + loan creation), governed family.
+  DisburseLoan { intent_hash: ByteArray }
+  // 7 — triple (anchor + member + loan), direct family.
+  RepayLoan
+  // 8 — loan only, direct family: advance an overdue loan one status step.
+  MarkArrears
+  // 9 — triple (anchor + member + loan consumed), governed family.
+  WriteOffLoan { intent_hash: ByteArray }
+  // 10 — member account only, direct family.
+  RemoveAccount
+  // 11 — anchor only, governed family: burn the fund, release the residual.
+  CloseFund { intent_hash: ByteArray }
+}
+
+/// `savings_governed` withdraw-zero family action — the six quorum-authorized
+/// operations. Field 0 of every variant is `covered_inputs`: the vault inputs
+/// this action validates (the coverage invariant, ADR-0003).
+pub type SavingsGovernedAction {
+  // 0 — spend tag 2
+  SocialPayoutAction {
+    covered_inputs: List<Int>,
     fund_input_index: Int,
-    member_input_index: Int,
     fund_output_index: Int,
-    member_output_index: Int,
-    fund_tag: Int,
+    payout_output_index: Int,
   }
-  // Paired: sell units back pre-close (withdrawal_policy 1 only).
-  Withdraw {
+  // 1 — spend tag 3
+  UpdateFundAction {
+    covered_inputs: List<Int>,
     fund_input_index: Int,
-    member_input_index: Int,
     fund_output_index: Int,
-    member_output_index: Int,
   }
-  // Anchor only, quorum: welfare payment from social_total.
-  SocialPayout { fund_input_index: Int, fund_output_index: Int }
-  // Anchor only, quorum: mutable charter fields + quorum rotation.
-  UpdateFund { fund_input_index: Int, fund_output_index: Int }
-  // Anchor only, quorum: freeze the share-out snapshot; moves no value.
-  CloseCycle { fund_input_index: Int, fund_output_index: Int }
-  // Paired: member claims pot * share_units / shares (floor).
-  ClaimShareOut {
+  // 2 — spend tag 4
+  CloseCycleAction {
+    covered_inputs: List<Int>,
     fund_input_index: Int,
-    member_input_index: Int,
     fund_output_index: Int,
-    member_output_index: Int,
   }
-  // Triple (anchor + member + loan creation), quorum AND borrower: loan
-  // origination. Principal to the borrower; the record to the vault.
-  DisburseLoan {
+  // 3 — spend tag 6; also licenses the MintLoan mint.
+  DisburseLoanAction {
+    covered_inputs: List<Int>,
     fund_input_index: Int,
     member_input_index: Int,
     seed_input_index: Int,
@@ -137,9 +169,55 @@ pub type SavingsSpendRedeemer {
     member_output_index: Int,
     loan_output_index: Int,
   }
-  // Triple (anchor + member + loan), borrower: repay principal + charge.
-  // loan_output_index == 99 closes the loan (BurnLoan pairs).
-  RepayLoan {
+  // 4 — spend tag 9; also licenses the BurnLoan mint.
+  WriteOffLoanAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    member_input_index: Int,
+    loan_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+  }
+  // 5 — spend tag 11; also licenses the BurnFund mint.
+  CloseFundAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    payout_output_index: Int,
+  }
+}
+
+/// `savings_direct` withdraw-zero family action — the six operations a member,
+/// borrower or anyone with truthful state authorizes directly. Field 0 of every
+/// variant is `covered_inputs`.
+pub type SavingsDirectAction {
+  // 0 — spend tag 0. fund_tag: 0 buys shares, 1 social fund, 2 top-up.
+  DepositAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    member_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+    fund_tag: Int,
+  }
+  // 1 — spend tag 1
+  WithdrawAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    member_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+  }
+  // 2 — spend tag 5
+  ClaimShareOutAction {
+    covered_inputs: List<Int>,
+    fund_input_index: Int,
+    member_input_index: Int,
+    fund_output_index: Int,
+    member_output_index: Int,
+  }
+  // 3 — spend tag 7; loan_output_index == 99 closes the loan (BurnLoan pairs).
+  RepayLoanAction {
+    covered_inputs: List<Int>,
     fund_input_index: Int,
     member_input_index: Int,
     loan_input_index: Int,
@@ -147,22 +225,14 @@ pub type SavingsSpendRedeemer {
     member_output_index: Int,
     loan_output_index: Int,
   }
-  // Loan only, permissionless: advance an overdue loan one status step.
-  MarkArrears { loan_input_index: Int, loan_output_index: Int }
-  // Triple (anchor + member + loan consumed), quorum: close a Defaulted
-  // loan — seize shares first, socialize the remainder. BurnLoan pairs.
-  WriteOffLoan {
-    fund_input_index: Int,
-    member_input_index: Int,
+  // 4 — spend tag 8
+  MarkArrearsAction {
+    covered_inputs: List<Int>,
     loan_input_index: Int,
-    fund_output_index: Int,
-    member_output_index: Int,
+    loan_output_index: Int,
   }
-  // Member account only, standalone (works after fund closure): exit with a
-  // zero balance; paired with the BurnAccount mint.
-  RemoveAccount { member_input_index: Int }
-  // Anchor only, quorum, shares_remaining == 0: paired with BurnFund.
-  CloseFund { fund_input_index: Int }
+  // 5 — spend tag 10; also licenses the BurnAccount mint.
+  RemoveAccountAction { covered_inputs: List<Int>, member_input_index: Int }
 }
 
 pub type SavingsMintRedeemer {

@@ -1,0 +1,18 @@
+---
+title: topUpReserve
+description: Donate contribution assets to a group's mutual reserve.
+---
+
+`sdk.topUpReserve` is permissionless. It increases only the reserve's contribution
+asset balance and preserves its identity, address, and datum.
+
+```ts
+await sdk.topUpReserve(lucid, {
+  groupTokenSuffix,
+  amount: 5_000_000n,
+  scriptRefs,
+}).unsafeRun();
+```
+
+`amount` must be positive. For ADA groups it is lovelace; otherwise it is the
+native asset configured by the group.

@@ -1,0 +1,18 @@
+---
+title: beginRecommit
+description: Open the opt-out and roster-reseal window for a stopped rotation.
+---
+
+`sdk.beginRecommit(lucid, config)` is admin-authorized. It is eligible at a lap
+boundary or when the next payout slot is vacant. Pending reserve cover may carry
+through only in the vacant-slot case; otherwise it must drain first.
+
+```ts
+await sdk.beginRecommit(lucid, {
+  groupTokenSuffix,
+  scriptRefs, // treasury and group refs are mandatory on live networks
+}).unsafeRun();
+```
+
+During the window distribution is blocked, exits are free, and joins reopen.
+After `recommit_window`, call `startGroup` to reseal slots for the new roster.

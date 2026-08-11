@@ -12,7 +12,7 @@ import {
   type TxMessage,
 } from "../../../core/utils/index.js";
 import { ProjectMintRedeemer, ProjectSpendRedeemer } from "../types.js";
-import { projectPolicyId, projectValidator } from "../validators.js";
+import { projectPolicyId } from "../validators.js";
 import {
   effectiveEscrowV2ScriptRefs,
   EscrowV2ScriptRefs,

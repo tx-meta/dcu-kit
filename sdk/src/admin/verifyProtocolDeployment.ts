@@ -27,7 +27,7 @@ import {
 import type { GovernanceInstance } from "../governance/validators.js";
 
 /**
- * The four standalone-module reference scripts that ship alongside a full
+ * The standalone-module reference scripts that ship alongside a full
  * deployment but are NOT part of what `deployScripts()` deploys — they are
  * published by `deployModuleScripts()`, at the same always-fails address.
  * Kept separate from `DeployedScriptKey` (which must stay exactly the six
@@ -36,7 +36,7 @@ import type { GovernanceInstance } from "../governance/validators.js";
  */
 export type { ModuleScriptKey };
 
-/** Every reference script this verifier can check: the six ROSCA refs plus the four standalone modules. */
+/** Every reference script this verifier can check: the six ROSCA refs plus the eight standalone-module refs. */
 export type VerifiableScriptKey = DeployedScriptKey | ModuleScriptKey;
 
 export type VerifyProtocolDeploymentConfig = {
@@ -44,7 +44,7 @@ export type VerifyProtocolDeploymentConfig = {
   settingsPolicy: string;
   /**
    * Reference-script out-refs to verify. The six ROSCA refs are mandatory
-   * (as before); the four module refs are opt-in — omit a key entirely to
+   * (as before); the module refs are opt-in — omit a key entirely to
    * skip checking it, or include it (even as `undefined`) to have its
    * absence reported as an issue rather than silently ignored.
    */
@@ -122,6 +122,14 @@ export type VerifyProtocolDeploymentResult = {
    * was supplied. Null when no seed was given (nothing to derive it from).
    */
   governanceVotingStake: StakeRegistrationCheck | null;
+  /**
+   * The two savings family stake credentials, checked whenever any savings
+   * reference key is requested. Null when savings is out of scope for the call.
+   */
+  savingsStakeRegistrations: Record<
+    SavingsFamilyName,
+    StakeRegistrationCheck
+  > | null;
   registry: RegistryVerification;
 };
 
@@ -136,6 +144,8 @@ const ROSCA_KEYS: DeployedScriptKey[] = [
 
 const MODULE_KEYS: ModuleScriptKey[] = [
   "savings",
+  "savingsGoverned",
+  "savingsDirect",
   "escrowV2",
   "pool",
   "project",
@@ -150,6 +160,23 @@ const FAMILIES: TreasuryFamily[] = [
   "lifecycle",
   "recovery",
   "reserve",
+];
+
+/** The savings withdraw-zero families (ADR-0003). */
+export type SavingsFamilyName = "governed" | "direct";
+
+const SAVINGS_FAMILIES: SavingsFamilyName[] = ["governed", "direct"];
+
+/**
+ * The savings module's three reference scripts. They are verified as a unit:
+ * a savings transaction reads the dispatcher AND its family, so a deployment
+ * carrying only some of them is not a working savings deployment, and
+ * reporting it as sound would be worse than not checking at all.
+ */
+const SAVINGS_KEYS: ModuleScriptKey[] = [
+  "savings",
+  "savingsGoverned",
+  "savingsDirect",
 ];
 
 /** sha256 hex of a blueprint validator's compiledCode — the registry fingerprint scheme. */
@@ -261,16 +288,17 @@ const stakeRegistrationStatus = (
  * chain: registry fingerprint → bundled blueprint → applied script bytes →
  * ledger hash → settings datum → on-chain reference-script CBOR for all six
  * ROSCA reference UTxOs (plus the four family stake registrations), and the
- * four standalone-module reference scripts (savings, escrow v2, and the two
- * seed-parameterised governance refs) that ship alongside a deployment.
+ * standalone-module reference scripts (the savings dispatcher and its two
+ * withdraw-zero families, escrow v2, and the two seed-parameterised governance
+ * refs) that ship alongside a deployment.
  *
  * Checks performed:
  * - Registry: bundled `validator-registry.json` fingerprints match the bundled
  *   rosca blueprint (sha256 of each validator's compiledCode).
  * - Every ref present in `config.refs` (the six ROSCA refs are mandatory; the
- *   four module refs are opt-in) exists at its out-ref and holds the exact
+ *   module refs are opt-in) exists at its out-ref and holds the exact
  *   applied-script CBOR the SDK derives locally; on-chain script hashes match.
- *   All ten are checked against the always-fails deployment address: a ref at
+ *   Every one is checked against the always-fails deployment address: a ref at
  *   any other address is spendable, and spending one takes the deployment down
  *   for every consumer.
  * - `governanceDispatcher` / `governanceVoting` are parameterised by
@@ -283,8 +311,12 @@ const stakeRegistrationStatus = (
  * - The settings NFT exists at the always-fails address and its ProtocolSettings
  *   datum matches the derived account/group/treasury policies and the four
  *   treasury family stake hashes (via `verifySettings`).
- * - The four family stake credentials are registered (read-only provider query;
+ * - The four treasury family stake credentials are registered, and both savings
+ *   family credentials whenever savings is in scope (read-only provider query;
  *   see `stakeRegistrationStatus`).
+ * - Savings is verified as a unit: naming any of `savings`, `savingsGoverned`
+ *   or `savingsDirect` requires all three, because a savings transaction reads
+ *   the dispatcher and its family together.
  * - When a `governanceSeed` is given, the instance's voting stake credential is
  *   registered. Without it the instance is inert: every governance endpoint
  *   withdraws 0 ADA from the voting validator, which the ledger rejects for an
@@ -344,22 +376,41 @@ export const verifyProtocolDeployment = (
     // silently skipped; a key that IS present with no value is an issue.
     const requestedKeys = ALL_KEYS.filter((key) => key in allRefs);
 
-    // --- Reference scripts: six ROSCA (mandatory) + four modules (opt-in) --
+    // Savings is all-or-nothing: mentioning any of the three brings the other
+    // two into scope, so a caller cannot verify the dispatcher alone and read
+    // ok: true while every savings transaction would fail for want of a family
+    // reference.
+    const savingsRequested = SAVINGS_KEYS.some((key) =>
+      requestedKeys.includes(key),
+    );
+    const missingSavingsKeys = savingsRequested
+      ? SAVINGS_KEYS.filter((key) => !requestedKeys.includes(key))
+      : [];
+    for (const key of missingSavingsKeys)
+      issues.push(
+        `${key}: not provided — the savings module needs all three references (savings, savingsGoverned, savingsDirect); a transaction reads the dispatcher and its family together`,
+      );
+
+    // --- Reference scripts: six ROSCA (mandatory) + eight modules (opt-in) --
     // The savings/escrowV2/governance modules each embed their own full
     // compiled Aiken blueprint and are otherwise unreachable from the root
     // package entry. Importing them statically here would drag all three
     // into every consumer's bundle (measured +~360kb minified) even for
     // callers who never check those keys — so load each one lazily, only
     // when its key was actually requested for this call.
-    const savingsVaultValidator = requestedKeys.includes("savings")
-      ? (yield* Effect.tryPromise({
-          try: () => import("../savings/validators.js"),
-          catch: (e) =>
-            new SetupError({
-              message: `verifyProtocolDeployment: failed to load the savings module: ${e}`,
-            }),
-        })).savingsVaultValidator
-      : null;
+    const savingsModule =
+      requestedKeys.includes("savings") ||
+      requestedKeys.includes("savingsGoverned") ||
+      requestedKeys.includes("savingsDirect")
+        ? yield* Effect.tryPromise({
+            try: () => import("../savings/validators.js"),
+            catch: (e) =>
+              new SetupError({
+                message: `verifyProtocolDeployment: failed to load the savings module: ${e}`,
+              }),
+          })
+        : null;
+    const savingsVaultValidator = savingsModule?.savingsVaultValidator ?? null;
 
     // escrowV2, pool and project all live in the same module, so one lazy
     // import covers whichever of the three keys were requested.
@@ -412,6 +463,10 @@ export const verifyProtocolDeployment = (
           return protocol.treasuryStakeValidators.reserve;
         case "savings":
           return savingsVaultValidator?.spendVault ?? null;
+        case "savingsGoverned":
+          return savingsModule?.savingsGovernedValidator ?? null;
+        case "savingsDirect":
+          return savingsModule?.savingsDirectValidator ?? null;
         case "escrowV2":
           return escrowV2Validator?.spendEscrow ?? null;
         case "pool":
@@ -609,6 +664,44 @@ export const verifyProtocolDeployment = (
       governanceVotingStake = { rewardAddress, status };
     }
 
+    // The two savings family stake credentials. Every savings operation carries
+    // a 0-ADA withdrawal from its family, and the ledger rejects a withdrawal
+    // from an unregistered account, so an unregistered family makes the whole
+    // module inert and fails only at submit time.
+    let savingsStakeRegistrations: Record<
+      SavingsFamilyName,
+      StakeRegistrationCheck
+    > | null = null;
+    if (savingsRequested) {
+      const savingsModuleForStake =
+        savingsModule ??
+        (yield* Effect.tryPromise({
+          try: () => import("../savings/validators.js"),
+          catch: (e) =>
+            new SetupError({
+              message: `verifyProtocolDeployment: failed to load the savings module: ${e}`,
+            }),
+        }));
+      const checks = {} as Record<SavingsFamilyName, StakeRegistrationCheck>;
+      for (const family of SAVINGS_FAMILIES) {
+        const rewardAddress = savingsModuleForStake.savingsFamilyRewardAddress(
+          network,
+          family,
+        );
+        const status = yield* stakeRegistrationStatus(lucid, rewardAddress);
+        if (status === "not-registered")
+          issues.push(
+            `savings ${family} stake credential is not registered — every savings operation in that family will be rejected until registerSavingsStake runs`,
+          );
+        if (status === "unknown")
+          issues.push(
+            `savings ${family} stake registration state is not readable through this provider — verify with Blockfrost or the emulator`,
+          );
+        checks[family] = { rewardAddress, status };
+      }
+      savingsStakeRegistrations = checks;
+    }
+
     return {
       ok: issues.length === 0,
       issues,
@@ -619,6 +712,7 @@ export const verifyProtocolDeployment = (
       settingsAtDeployAddress,
       stakeRegistrations,
       governanceVotingStake,
+      savingsStakeRegistrations,
       registry,
     };
   });

@@ -8,7 +8,132 @@ cryptic script errors. Validator hashes for each release are tabled at the botto
 
 ---
 
-## `0.5.7` → next (governance + savings hash wave)
+## `0.6.1-preprod.0` → `0.6.2-preprod.0` (savings two-family split)
+
+Savings changes source; ROSCA, escrow and governance are byte-identical. Neither
+`0.6.1-preprod.0` nor `0.6.2-preprod.0` is deployed: `0.6.1-preprod.0` stands as
+the undeployed pre-split candidate, and consumers stay on `0.6.0-preprod.0`,
+which is what `sdk/src/core/deployments/preprod.json` still describes.
+
+A fresh deployment on these hashes carries **eleven** reference scripts (the six
+ROSCA refs, the three savings refs, and the two governance refs) and **six**
+stake registrations (four treasury, two savings).
+
+### The savings vault is now three validators (ADR-0003)
+
+The single savings validator reached 16,105 bytes against a 16,128-byte
+deployable-reference-script ceiling: it could not take a security fix without
+first being made smaller. It is now a thin spend/mint dispatcher plus two
+withdraw-zero family stake validators, `savings_governed` and `savings_direct`,
+split on who authorizes the operation.
+
+What changes for an integrator:
+
+- **Deploy three savings reference scripts, not one.** `deployModuleScripts`
+  takes `savingsGoverned` and `savingsDirect` alongside `savings`. All three are
+  required on a live network: attaching a family validator inline exceeds the
+  transaction-size limit.
+- **Register the two savings stake credentials** with `registerSavingsStake`
+  before any savings endpoint runs, the same way `registerTreasuryStake` is a
+  prerequisite for ROSCA. The ledger rejects a withdrawal from an unregistered
+  credential, even a zero one.
+- **Every vault-SPENDING endpoint config takes `familyRef`** beside the existing
+  `scriptRef`: the reference script for the family that operation belongs to.
+  `scriptRef` still means the vault dispatcher. `createFund` and `joinFund` are
+  unaffected — creation is one-shot and joining reads the fund as a reference
+  input, so neither spends a vault UTxO and neither needs a family withdrawal.
+- **The spending-redeemer ABI changed.** Indices and routing data moved to the
+  family withdrawal redeemer. The six quorum-controlled operations keep their
+  constructor tags AND `intent_hash` at field 0, so the Governance Gate's
+  `BoundIntent` binding from ADR-0002 reads exactly the bytes it read before.
+  Every vault input must be spent with the constructor matching the family
+  action that runs, satellites included. Only a caller that hand-builds savings
+  redeemers is affected; SDK callers are not.
+
+Governed family: `SocialPayout`, `UpdateFund`, `CloseCycle`, `DisburseLoan`,
+`WriteOffLoan`, `CloseFund`. Direct family: `Deposit`, `Withdraw`,
+`ClaimShareOut`, `RepayLoan`, `MarkArrears`, `RemoveAccount`.
+
+## `0.6.0-preprod.0` → `0.6.1-preprod.0` (ROSCA, savings and governance hash wave)
+
+Three families change **source**: ROSCA (`group_validator`, `treasury_rounds`),
+savings, and governance. The other four ROSCA validators and escrow are
+byte-identical at source.
+
+**This is a fresh-deployment migration, not a partial ref refresh.** The settings
+UTxO is a one-shot NFT with no update path, and its datum records the group policy
+and the four treasury stake hashes. Changing the group and rounds source makes that
+datum unable to describe the new family, so a **fresh settings seed is mandatory**.
+Every ROSCA validator is parameterized off the settings policy, so treasury,
+lifecycle, recovery and reserve get **new applied hashes even though their source
+did not change**.
+
+**Nine new reference scripts:** the six ROSCA refs (`treasury`, `group`,
+`treasuryRounds`, `treasuryLifecycle`, `treasuryRecovery`, `treasuryReserve`),
+`savings`, and the two governance refs. Plus a fresh settings UTxO, **four fresh
+treasury stake registrations**, and a **fresh governance instance** with its own
+seed, voting-stake registration, voter registration and charter. Governance is
+instance-seed parameterized, so new references do not upgrade an existing anchor.
+
+`escrowV2` carries over unchanged. `pool` (4,145 B) and `project` (2,312 B) are
+optional: both attach inline within the transaction-size limit, so they are not
+counted in the nine.
+
+**Nothing is deployed on the new hashes yet.**
+`sdk/src/core/deployments/preprod.json` is marked `legacy-validator-set` and
+still carries the `0.6.0-preprod.0` references. Keep SDK `0.6.0-preprod.0`
+pinned for any existing group, fund or governance instance: it operates the
+hashes those positions were created with. Positions do not migrate across a
+hash change, and never across a settings policy; wind them down and recreate, or
+leave them on the old deployment.
+
+### `BeginRecommit` may now carry reserve cover
+
+No call-site change. `beginRecommit` previously failed whenever the reserve
+showed `standin_rounds > 0`. It now succeeds when the next rotation slot is
+vacant, which is the state a mid-lap `terminateDefault` produces. Cover carries
+across the re-seal and drains over subsequent distributions.
+
+### Every distribution must spend the reserve
+
+No call-site change; `distributePayout` already includes the reserve leg. A
+hand-built distribution that omitted the reserve was previously valid when the
+round levy was zero. It is now rejected.
+
+### Reference scripts are required on live networks
+
+`distributePayout`, `beginRecommit` and `startGroup` previously fell back to
+attaching validators inline when a reference was missing, which overflows the
+transaction-size limit on a live network. They now fail early with
+`MissingReferenceScriptError`. Pass the full `scriptRefs` from `deployScripts`
+or `loadScriptRefs`, or set them once with `configureReferenceScripts`. The
+emulator (`Custom`) keeps the inline path.
+
+### Governed savings operations carry an intent hash
+
+Six quorum-controlled redeemers gain `intent_hash` at field 0:
+`SocialPayout`, `UpdateFund`, `CloseCycle`, `DisburseLoan`, `WriteOffLoan` and
+`CloseFund`. The SDK endpoints compute it, so direct callers need no change.
+Callers building a governance decision must switch from the operation-only
+constructor to the intent-bound one.
+
+```ts
+// before: authorized the operation, not its parameters
+govActionForOperation(SavingsOperation.DisburseLoan);
+
+// after: authorizes exactly this loan
+govActionForIntent(
+  SavingsOperation.DisburseLoan,
+  computeSavingsIntentHash({ DisburseLoanIntent: { loan } }),
+);
+```
+
+`govActionForOperation` still exists and still works; it binds the operation
+only, and should not be used for a governed execution whose parameters matter.
+
+---
+
+## `0.5.7` → `0.6.0-preprod.0` (governance + savings hash wave)
 
 Governance and savings validators change hash together; ROSCA and escrow are
 byte-identical, so groups, accounts, treasuries and escrows are untouched. Both
@@ -89,7 +214,11 @@ leave them on the old deployment.
 
 ```ts
 // before
-createAccount(lucid, { selected_out_ref, display_name: "@alice", contact: "a@b" });
+createAccount(lucid, {
+  selected_out_ref,
+  display_name: "@alice",
+  contact: "a@b",
+});
 // after — private by default…
 createAccount(lucid, { selected_out_ref });
 // …or with a commitment (store profile + salt off-chain)
@@ -180,7 +309,7 @@ groupDatum: {
 ```ts
 ReserveState: {
   group_reference_tokenname: string; // the bound group's (100) ref token name
-  standin_rounds: bigint;            // fee-units owed to future rounds' pots
+  standin_rounds: bigint; // fee-units owed to future rounds' pots
 }
 ```
 
@@ -286,7 +415,7 @@ createGroup(lucid, {
 
 ---
 
-## `0.2.7` → `0.3.0`  ⭐ current release
+## `0.2.7` → `0.3.0` ⭐ current release
 
 The **continuous round model**. The group cycles indefinitely; there is no per-cycle
 `NextCycle` transaction. Most integrators need three changes.
@@ -319,10 +448,10 @@ the on-chain decision is just more robust across unlimited cycles.
 
 ### 4. Validator hash change → redeploy
 
-| Validator | v0.2.7 | v0.3.0 |
-|---|---|---|
-| treasury | `38b14e406a21f44e` | `2023c6894336a168` |
-| group | `54d48e2f3b03eb98` | `3ddc716a5a1d7994` |
+| Validator | v0.2.7             | v0.3.0             |
+| --------- | ------------------ | ------------------ |
+| treasury  | `38b14e406a21f44e` | `2023c6894336a168` |
+| group     | `54d48e2f3b03eb98` | `3ddc716a5a1d7994` |
 
 account, settings, and `always_fails` are unchanged, so the settings policy ID is stable —
 **re-run `deploy-scripts`** (no need to re-`initialize-settings`) and refresh stored
@@ -345,7 +474,10 @@ const tx = await createAccount(lucid, config).unsafeRun();
 const signed = await tx.sign.withWallet().complete();
 
 // After
-const { tx, accountTokenSuffix } = await createAccount(lucid, config).unsafeRun();
+const { tx, accountTokenSuffix } = await createAccount(
+  lucid,
+  config,
+).unsafeRun();
 const signed = await tx.sign.withWallet().complete();
 // accountTokenSuffix is the 28-byte (56 hex char) account identity — feed it
 // straight into updateAccount / joinGroup instead of re-deriving it.
@@ -367,12 +499,12 @@ or the `GroupCip68Parts` from `parseGroupCip68Datum`), so you no longer hand-rol
 round handlers, `UpdateGroup` freeze allowlist, and an Aiken toolchain bump together shift
 every hash):
 
-| Validator | v0.2.6 | v0.2.7 |
-|---|---|---|
-| treasury | `982d5c8dc0872f93` | `38b14e406a21f44e` |
-| group | `24f046d5b86ff58b` | `54d48e2f3b03eb98` |
-| account | `e32328b8dd296c53` | `d80e2e5a82cb60b3` |
-| settings | `0dd2c77a083ca729` | `07a7cd9d64681a33` |
+| Validator | v0.2.6             | v0.2.7             |
+| --------- | ------------------ | ------------------ |
+| treasury  | `982d5c8dc0872f93` | `38b14e406a21f44e` |
+| group     | `24f046d5b86ff58b` | `54d48e2f3b03eb98` |
+| account   | `e32328b8dd296c53` | `d80e2e5a82cb60b3` |
+| settings  | `0dd2c77a083ca729` | `07a7cd9d64681a33` |
 
 The settings policy ID changes, so **re-run `initialize-settings`** (it produces the new
 `createDcuSdk(settingsPolicy)` argument) **then `deploy-scripts`**, and refresh any stored
@@ -422,7 +554,7 @@ they withdraw it with `claimPayout` whenever they like.
 await deferRound(lucid, config).unsafeRun();
 
 // After — create the group with payout_mode: "Pull", then later:
-await sdk.claimPayout(lucid, { groupTokenSuffix, /* … */ }).unsafeRun();
+await sdk.claimPayout(lucid, { groupTokenSuffix /* … */ }).unsafeRun();
 ```
 
 ### 4. Validator hash change → redeploy
@@ -461,10 +593,10 @@ const name = getGroupName(parts); // "Savings Club" | undefined
 
 ### 2. `AccountDatum` field rename (and semantic change)
 
-| v0.2.4 | v0.2.5 | Notes |
-|---|---|---|
+| v0.2.4                  | v0.2.5                    | Notes                                |
+| ----------------------- | ------------------------- | ------------------------------------ |
 | `email_hash: ByteArray` | `display_name: ByteArray` | now **raw UTF-8**, not a sha256 hash |
-| `phone_hash: ByteArray` | `contact: ByteArray` | now **raw UTF-8**, not a sha256 hash |
+| `phone_hash: ByteArray` | `contact: ByteArray`      | now **raw UTF-8**, not a sha256 hash |
 
 The validator's identity check changed from `length == 32` (a hash) to `length > 0`
 (any non-empty UTF-8). Both fields default to the wallet address when omitted, and the
@@ -476,15 +608,18 @@ constructs or reads `AccountDatum` compiles unchanged but writes the wrong on-ch
 const datum = { email_hash: sha256(email), phone_hash: sha256(phone) };
 
 // After
-const datum = { display_name: fromText("@alice"), contact: fromText("alice@dcu.io") };
+const datum = {
+  display_name: fromText("@alice"),
+  contact: fromText("alice@dcu.io"),
+};
 ```
 
 ### 3. `GroupDatum` field renames
 
-| v0.2.4 | v0.2.5 | Notes |
-|---|---|---|
-| `num_intervals` | `num_rounds` | counts rounds, not time; set to `member_count` by `startGroup`, `0` at creation |
-| `admin_payment_credential` | `creator_payment_credential` | joining fees route here |
+| v0.2.4                     | v0.2.5                       | Notes                                                                           |
+| -------------------------- | ---------------------------- | ------------------------------------------------------------------------------- |
+| `num_intervals`            | `num_rounds`                 | counts rounds, not time; set to `member_count` by `startGroup`, `0` at creation |
+| `admin_payment_credential` | `creator_payment_credential` | joining fees route here                                                         |
 
 ### 4. `TreasuryDatum` variant rename + recovery semantics
 
@@ -506,12 +641,12 @@ All three protocol validators recompiled (`always_fails` unchanged). Re-run
 Blueprint hashes (first 16 bytes). A change in any row means that release requires a
 redeploy of that validator's reference script.
 
-| Validator | v0.2.5 | v0.2.6 | v0.2.7 | v0.3.0 |
-|---|---|---|---|---|
-| treasury | `d1bf38fb921ec64c` | `982d5c8dc0872f93` | `38b14e406a21f44e` | `2023c6894336a168` |
-| group | `d19e192b1d005dd8` | `24f046d5b86ff58b` | `54d48e2f3b03eb98` | `3ddc716a5a1d7994` |
-| account | `394027d4084e26f5` | `e32328b8dd296c53` | `d80e2e5a82cb60b3` | `d80e2e5a82cb60b3` |
-| settings | — | `0dd2c77a083ca729` | `07a7cd9d64681a33` | `07a7cd9d64681a33` |
+| Validator    | v0.2.5             | v0.2.6             | v0.2.7             | v0.3.0             |
+| ------------ | ------------------ | ------------------ | ------------------ | ------------------ |
+| treasury     | `d1bf38fb921ec64c` | `982d5c8dc0872f93` | `38b14e406a21f44e` | `2023c6894336a168` |
+| group        | `d19e192b1d005dd8` | `24f046d5b86ff58b` | `54d48e2f3b03eb98` | `3ddc716a5a1d7994` |
+| account      | `394027d4084e26f5` | `e32328b8dd296c53` | `d80e2e5a82cb60b3` | `d80e2e5a82cb60b3` |
+| settings     | —                  | `0dd2c77a083ca729` | `07a7cd9d64681a33` | `07a7cd9d64681a33` |
 | always_fails | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` | `22c9a103ed3f2fa9` |
 
 Unreleased (treasury split): treasury becomes `9c54823e010820a8` (dispatcher) plus

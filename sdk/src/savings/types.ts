@@ -136,54 +136,120 @@ export type LoanAccountFields = Extract<
   { LoanAccount: unknown }
 >["LoanAccount"];
 
+// --- Governance intent commitments ---
+
+const SavingsStakeCredentialSchema = Data.Enum([
+  Data.Object({ Inline: Data.Tuple([CredentialSchema]) }),
+  Data.Object({
+    Pointer: Data.Tuple([Data.Integer(), Data.Integer(), Data.Integer()]),
+  }),
+]);
+
+export const SavingsAddressSchema = Data.Object({
+  payment_credential: CredentialSchema,
+  stake_credential: Data.Nullable(SavingsStakeCredentialSchema),
+});
+export type SavingsAddress = Data.Static<typeof SavingsAddressSchema>;
+
+/** Mirrors `SavingsIntent` in on-chain constructor order. */
+export const SavingsIntentSchema = Data.Enum([
+  Data.Object({
+    SocialPayoutIntent: Data.Object({
+      destination: SavingsAddressSchema,
+      amount: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    UpdateFundIntent: Data.Object({
+      title: Data.Bytes(),
+      quorum: CredentialSchema,
+      min_shares_per_deposit: Data.Integer(),
+      max_shares_per_deposit: Data.Integer(),
+      max_loan_multiple: Data.Integer(),
+      loan_grace: Data.Integer(),
+      cycle_end: Data.Nullable(Data.Integer()),
+    }),
+  }),
+  Data.Object({
+    CloseCycleIntent: Data.Object({}),
+  }),
+  Data.Object({
+    DisburseLoanIntent: Data.Object({ loan: SavingsDatumSchema }),
+  }),
+  Data.Object({
+    WriteOffLoanIntent: Data.Object({ loan_id: Data.Bytes() }),
+  }),
+  Data.Object({
+    CloseFundIntent: Data.Object({ destination: SavingsAddressSchema }),
+  }),
+]);
+export type SavingsIntent = Data.Static<typeof SavingsIntentSchema>;
+export const SavingsIntent = SavingsIntentSchema as unknown as SavingsIntent;
+
 // --- Redeemers (constructor order matches savings/types.ak exactly) ---
 
+/**
+ * The vault's SPENDING redeemer (ADR-0003 two-family split).
+ *
+ * Every vault UTxO an operation consumes is spent with that operation's
+ * constructor; the indices and routing data live on the family withdrawal
+ * redeemer ({@link SavingsGovernedAction} / {@link SavingsDirectAction}).
+ *
+ * The six quorum-controlled operations keep `intent_hash` at FIELD 0. That is
+ * the ABI the Governance Gate's `BoundIntent` arm reads (ADR-0002): the target's
+ * spend-redeemer constructor plus its field 0. Constructor order is frozen.
+ */
 export const SavingsSpendRedeemerSchema = Data.Enum([
+  Data.Literal("Deposit"),
+  Data.Literal("Withdraw"),
+  Data.Object({ SocialPayout: Data.Object({ intent_hash: Data.Bytes() }) }),
+  Data.Object({ UpdateFund: Data.Object({ intent_hash: Data.Bytes() }) }),
+  Data.Object({ CloseCycle: Data.Object({ intent_hash: Data.Bytes() }) }),
+  Data.Literal("ClaimShareOut"),
+  Data.Object({ DisburseLoan: Data.Object({ intent_hash: Data.Bytes() }) }),
+  Data.Literal("RepayLoan"),
+  Data.Literal("MarkArrears"),
+  Data.Object({ WriteOffLoan: Data.Object({ intent_hash: Data.Bytes() }) }),
+  Data.Literal("RemoveAccount"),
+  Data.Object({ CloseFund: Data.Object({ intent_hash: Data.Bytes() }) }),
+]);
+export type SavingsSpendRedeemer = Data.Static<
+  typeof SavingsSpendRedeemerSchema
+>;
+export const SavingsSpendRedeemer =
+  SavingsSpendRedeemerSchema as unknown as SavingsSpendRedeemer;
+
+/**
+ * `savings_governed` family action — the six quorum-authorized operations.
+ * Field 0 of every variant is `covered_inputs`, the vault inputs this action
+ * validates (ADR-0003's coverage invariant).
+ */
+export const SavingsGovernedActionSchema = Data.Enum([
   Data.Object({
-    Deposit: Data.Object({
+    SocialPayoutAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
       fund_input_index: Data.Integer(),
-      member_input_index: Data.Integer(),
       fund_output_index: Data.Integer(),
-      member_output_index: Data.Integer(),
-      fund_tag: Data.Integer(),
+      payout_output_index: Data.Integer(),
     }),
   }),
   Data.Object({
-    Withdraw: Data.Object({
-      fund_input_index: Data.Integer(),
-      member_input_index: Data.Integer(),
-      fund_output_index: Data.Integer(),
-      member_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    SocialPayout: Data.Object({
+    UpdateFundAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
       fund_input_index: Data.Integer(),
       fund_output_index: Data.Integer(),
     }),
   }),
   Data.Object({
-    UpdateFund: Data.Object({
+    CloseCycleAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
       fund_input_index: Data.Integer(),
       fund_output_index: Data.Integer(),
     }),
   }),
   Data.Object({
-    CloseCycle: Data.Object({
-      fund_input_index: Data.Integer(),
-      fund_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    ClaimShareOut: Data.Object({
-      fund_input_index: Data.Integer(),
-      member_input_index: Data.Integer(),
-      fund_output_index: Data.Integer(),
-      member_output_index: Data.Integer(),
-    }),
-  }),
-  Data.Object({
-    DisburseLoan: Data.Object({
+    DisburseLoanAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
       fund_input_index: Data.Integer(),
       member_input_index: Data.Integer(),
       seed_input_index: Data.Integer(),
@@ -193,7 +259,66 @@ export const SavingsSpendRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    RepayLoan: Data.Object({
+    WriteOffLoanAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      fund_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      loan_input_index: Data.Integer(),
+      fund_output_index: Data.Integer(),
+      member_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    CloseFundAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      fund_input_index: Data.Integer(),
+      payout_output_index: Data.Integer(),
+    }),
+  }),
+]);
+export type SavingsGovernedAction = Data.Static<
+  typeof SavingsGovernedActionSchema
+>;
+export const SavingsGovernedAction =
+  SavingsGovernedActionSchema as unknown as SavingsGovernedAction;
+
+/**
+ * `savings_direct` family action — the six directly authorized operations
+ * (member, borrower, or truthful elapsed time). Field 0 is `covered_inputs`.
+ */
+export const SavingsDirectActionSchema = Data.Enum([
+  Data.Object({
+    DepositAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      fund_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      fund_output_index: Data.Integer(),
+      member_output_index: Data.Integer(),
+      /** 0 buys shares, 1 feeds the social fund, 2 is an untagged top-up. */
+      fund_tag: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    WithdrawAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      fund_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      fund_output_index: Data.Integer(),
+      member_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    ClaimShareOutAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
+      fund_input_index: Data.Integer(),
+      member_input_index: Data.Integer(),
+      fund_output_index: Data.Integer(),
+      member_output_index: Data.Integer(),
+    }),
+  }),
+  Data.Object({
+    RepayLoanAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
       fund_input_index: Data.Integer(),
       member_input_index: Data.Integer(),
       loan_input_index: Data.Integer(),
@@ -204,32 +329,22 @@ export const SavingsSpendRedeemerSchema = Data.Enum([
     }),
   }),
   Data.Object({
-    MarkArrears: Data.Object({
+    MarkArrearsAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
       loan_input_index: Data.Integer(),
       loan_output_index: Data.Integer(),
     }),
   }),
   Data.Object({
-    WriteOffLoan: Data.Object({
-      fund_input_index: Data.Integer(),
+    RemoveAccountAction: Data.Object({
+      covered_inputs: Data.Array(Data.Integer()),
       member_input_index: Data.Integer(),
-      loan_input_index: Data.Integer(),
-      fund_output_index: Data.Integer(),
-      member_output_index: Data.Integer(),
     }),
   }),
-  Data.Object({
-    RemoveAccount: Data.Object({ member_input_index: Data.Integer() }),
-  }),
-  Data.Object({
-    CloseFund: Data.Object({ fund_input_index: Data.Integer() }),
-  }),
 ]);
-export type SavingsSpendRedeemer = Data.Static<
-  typeof SavingsSpendRedeemerSchema
->;
-export const SavingsSpendRedeemer =
-  SavingsSpendRedeemerSchema as unknown as SavingsSpendRedeemer;
+export type SavingsDirectAction = Data.Static<typeof SavingsDirectActionSchema>;
+export const SavingsDirectAction =
+  SavingsDirectActionSchema as unknown as SavingsDirectAction;
 
 export const SavingsMintRedeemerSchema = Data.Enum([
   Data.Object({

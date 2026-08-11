@@ -41,10 +41,10 @@ describe("compiled validator sizes", () => {
     );
   });
 
-  // The savings-credit validator sits at ~15.6KB — 97% of the ceiling. This
-  // guard is what turns the next size regression into a loud test failure
-  // instead of a blocked deploy; the known remedy is a withdraw-zero family
-  // split (the treasury precedent).
+  // ADR-0003 split the savings vault at 16,105 bytes (99.86% of the ceiling)
+  // into a thin dispatcher plus two withdraw-zero families. This guard turns
+  // the next size regression into a loud test failure instead of a blocked
+  // deploy.
   it("every savings validator is within the deployable-ref-script ceiling", () => {
     expect(oversized(savingsBlueprint as { validators: Validator[] })).toEqual(
       [],
@@ -57,6 +57,50 @@ describe("compiled validator sizes", () => {
   it("every governance validator is within the deployable-ref-script ceiling", () => {
     expect(
       oversized(governanceBlueprint as { validators: Validator[] }),
+    ).toEqual([]);
+  });
+});
+
+// ADR-0003's second size gate. The hard ceiling above only fires once a
+// validator is already undeployable — by then the remedy (another family split)
+// changes every hash and needs its own rehearsal, which is exactly the corner
+// savings was in at 16,105 bytes. The warning threshold fires while there is
+// still room to act: crossing it is the signal to split again, NOT to spend the
+// remaining headroom.
+describe("compiled validator warning threshold", () => {
+  const WARN_RATIO = 0.8;
+  const WARN_BYTES = Math.floor(MAX_REF_SCRIPT_BYTES * WARN_RATIO);
+
+  const overWarning = (blueprint: { validators: Validator[] }) => {
+    const seen = new Set<string>();
+    const over: Array<{ title: string; bytes: number; pct: string }> = [];
+    for (const v of blueprint.validators) {
+      if (seen.has(v.title)) continue;
+      seen.add(v.title);
+      const bytes = v.compiledCode.length / 2;
+      if (bytes > WARN_BYTES)
+        over.push({
+          title: v.title,
+          bytes,
+          pct: `${((100 * bytes) / MAX_REF_SCRIPT_BYTES).toFixed(1)}%`,
+        });
+    }
+    return over;
+  };
+
+  it("the warning threshold is 80% of the deployable ceiling", () => {
+    expect(WARN_BYTES).toBe(12902);
+  });
+
+  it("every savings validator is under the 80% warning threshold", () => {
+    expect(
+      overWarning(savingsBlueprint as { validators: Validator[] }),
+    ).toEqual([]);
+  });
+
+  it("every governance validator is under the 80% warning threshold", () => {
+    expect(
+      overWarning(governanceBlueprint as { validators: Validator[] }),
     ).toEqual([]);
   });
 });

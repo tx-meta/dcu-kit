@@ -8,6 +8,12 @@ import { escrowV2Validator } from "../src/escrow/v2/validators.js";
 import packageJson from "../package.json" with { type: "json" };
 
 describe("deployment manifest", () => {
+  it("does not claim the candidate package was deployed", () => {
+    const d = loadDeployment("Preprod");
+    expect(d.sdkVersion).not.toBe(packageJson.version);
+    expect(packageJson.version).toBe("0.6.2-preprod.0");
+  });
+
   it("pins a settings policy and every module ref script", () => {
     const d = loadDeployment("Preprod");
     expect(d.settingsPolicy).toBe(
@@ -29,9 +35,9 @@ describe("deployment manifest", () => {
     }
   });
 
-  it("records hashes that match the compiled validators", () => {
+  it("keeps unchanged escrow refs current while savings remains pinned", () => {
     const d = loadDeployment("Preprod");
-    expect(d.refScripts.savings.scriptHash).toBe(
+    expect(d.refScripts.savings.scriptHash).not.toBe(
       validatorToScriptHash(savingsVaultValidator.spendVault),
     );
     expect(d.refScripts.escrowV2.scriptHash).toBe(
@@ -39,18 +45,22 @@ describe("deployment manifest", () => {
     );
   });
 
-  it("records hashes for all six ROSCA refs that match buildProtocol(settingsPolicy)", () => {
+  it("marks changed refs as legacy until the candidate hashes are deployed", () => {
     const d = loadDeployment("Preprod");
     const protocol = buildProtocol(d.settingsPolicy);
 
-    expect(d.refScripts.treasury.scriptHash).toBe(
-      validatorToScriptHash(protocol.treasuryValidator.mintTreasury),
-    );
-    expect(d.refScripts.group.scriptHash).toBe(
+    expect(d.status).toBe("legacy-validator-set");
+    expect(d.sdkVersion).toBe("0.6.0-preprod.0");
+    expect(d.refScripts.group.scriptHash).not.toBe(
       validatorToScriptHash(protocol.groupValidator.spendGroup),
     );
-    expect(d.refScripts.treasuryRounds.scriptHash).toBe(
+    expect(d.refScripts.treasuryRounds.scriptHash).not.toBe(
       validatorToScriptHash(protocol.treasuryStakeValidators.rounds),
+    );
+
+    // The other four applied ROSCA scripts did not move in ADR-R1.
+    expect(d.refScripts.treasury.scriptHash).toBe(
+      validatorToScriptHash(protocol.treasuryValidator.mintTreasury),
     );
     expect(d.refScripts.treasuryLifecycle.scriptHash).toBe(
       validatorToScriptHash(protocol.treasuryStakeValidators.lifecycle),
@@ -63,24 +73,25 @@ describe("deployment manifest", () => {
     );
   });
 
-  it("records governance hashes that match buildGovernance(governance.seed)", () => {
+  it("keeps the internally consistent legacy governance instance pinned", () => {
     const d = loadDeployment("Preprod");
     const instance = buildGovernance(d.governance.seed);
 
-    expect(d.refScripts.governanceDispatcher.scriptHash).toBe(
+    expect(d.refScripts.governanceDispatcher.scriptHash).not.toBe(
       instance.govPolicy,
     );
-    expect(d.refScripts.governanceVoting.scriptHash).toBe(
+    expect(d.refScripts.governanceVoting.scriptHash).not.toBe(
       instance.votingStakeHash,
     );
-    expect(d.governance.govPolicy).toBe(instance.govPolicy);
-    expect(d.governance.gateHash).toBe(instance.gateHash);
-    expect(d.governance.votingStakeHash).toBe(instance.votingStakeHash);
-    expect(d.governance.settingsPolicy).toBe(instance.settingsPolicy);
-  });
-
-  it("ties the manifest sdkVersion to the published package version", () => {
-    const d = loadDeployment("Preprod");
-    expect(d.sdkVersion).toBe(packageJson.version);
+    expect(d.governance.govPolicy).toBe(
+      d.refScripts.governanceDispatcher.scriptHash,
+    );
+    expect(d.governance.votingStakeHash).toBe(
+      d.refScripts.governanceVoting.scriptHash,
+    );
+    expect(d.governance.govPolicy).not.toBe(instance.govPolicy);
+    expect(d.governance.gateHash).not.toBe(instance.gateHash);
+    expect(d.governance.votingStakeHash).not.toBe(instance.votingStakeHash);
+    expect(d.governance.settingsPolicy).not.toBe(instance.settingsPolicy);
   });
 });

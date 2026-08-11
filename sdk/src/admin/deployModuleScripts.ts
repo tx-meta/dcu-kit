@@ -20,12 +20,19 @@ import {
  * that ships beside ROSCA rather than inside it, so they are deployed by key
  * rather than derived from a `Protocol`.
  *
- * Only `savings` and `escrowV2` are large enough that a reference is required;
+ * Since ADR-0003 the savings module ships three: the thin `savings` dispatcher
+ * plus the two withdraw-zero family validators, `savingsGoverned` and
+ * `savingsDirect`. All three are required on a live network — a savings
+ * transaction reads the dispatcher AND its family, and attaching either inline
+ * exceeds the transaction size limit.
+ *
  * `pool` (4.1 KB) and `project` (2.3 KB) fit inline, and their references buy
  * transaction headroom and verifier coverage rather than feasibility.
  */
 export type ModuleScriptKey =
   | "savings"
+  | "savingsGoverned"
+  | "savingsDirect"
   | "escrowV2"
   | "pool"
   | "project"
@@ -35,6 +42,8 @@ export type ModuleScriptKey =
 /** The registry family each module key is frozen against (see VERSIONING.md). */
 const MODULE_FAMILY: Record<ModuleScriptKey, FamilyName> = {
   savings: "savings",
+  savingsGoverned: "savings",
+  savingsDirect: "savings",
   escrowV2: "escrow",
   pool: "escrow",
   project: "escrow",
@@ -80,7 +89,7 @@ export type DeployModuleScriptsOptions = {
    * default polls the provider's wallet UTxO endpoint; the Lucid emulator
    * never advances on its own, so emulator callers pass a block-advancing wait.
    */
-  awaitSettled?: (txHash: string) => Effect.Effect<void, DcuError, never>;
+  awaitSettled?: (_txHash: string) => Effect.Effect<void, DcuError, never>;
 };
 
 /**
@@ -156,7 +165,7 @@ export const deployModuleScripts = (
       return yield* Effect.fail(
         new SetupError({
           message:
-            "deployModuleScripts was called with no scripts — pass at least one of savings, escrowV2, pool, project, governanceDispatcher, governanceVoting",
+            "deployModuleScripts was called with no scripts — pass at least one of savings, savingsGoverned, savingsDirect, escrowV2, pool, project, governanceDispatcher, governanceVoting",
         }),
       );
     }

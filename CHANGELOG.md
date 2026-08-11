@@ -6,6 +6,90 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+## [0.6.2-preprod.0] - 2026-08-10
+
+**Savings validator hashes changed.** ROSCA, escrow and governance are
+byte-identical to `0.6.1-preprod.0`. Nothing is deployed on these hashes;
+`0.6.1-preprod.0` stands as the undeployed pre-split candidate and the Preprod
+manifest stays pinned at `0.6.0-preprod.0`.
+
+### Changed
+
+- **The savings vault is now three validators (ADR-0003).** At 16,105 bytes
+  against a 16,128-byte deployable ceiling it was frozen: no security fix could
+  be deployed without a size refactor first. It is now a thin spend/mint
+  dispatcher (4,731 B) plus two withdraw-zero families, `savings_governed`
+  (8,713 B) and `savings_direct` (8,873 B), split on who authorizes the
+  operation. Every vault-spending endpoint config takes `familyRef` beside
+  `scriptRef`; `createFund` and `joinFund` are unaffected. The six
+  quorum-controlled operations keep their constructor tags and `intent_hash` at
+  field 0, so ADR-0002 intent binding reads the same bytes as before.
+- `deployModuleScripts` takes `savingsGoverned` and `savingsDirect` alongside
+  `savings`. All three are required on a live network.
+- `verifyProtocolDeployment` verifies savings as a unit: naming any savings
+  reference requires all three and checks both family stake registrations, so a
+  deployment on which every savings transaction would fail can no longer report
+  `ok: true`.
+
+### Added
+
+- `registerSavingsStake`, the savings counterpart to `registerTreasuryStake`.
+  The ledger rejects a withdrawal from an unregistered credential, so both
+  savings families must be registered once per deployment before any savings
+  endpoint runs.
+- An 80% warning threshold (12,902 bytes) on compiled validator size, enforced
+  as a test alongside the existing hard ceiling. Crossing it is the signal to
+  split a validator, not to spend the remaining headroom.
+
+## [0.6.1-preprod.0] - 2026-08-10
+
+**Validator hashes changed for ROSCA, savings and governance.** The Preprod
+manifest is marked `legacy-validator-set` and stays pinned at `0.6.0-preprod.0`
+so existing positions keep operating on the hashes they were created with.
+Nothing is deployed on the new hashes yet.
+
+### Fixed
+
+- **ROSCA continuation deadlock (ADR-R1).** Terminating a defaulter whose payout
+  slot had not yet passed left pending stand-in cover and a vacant next slot,
+  which blocked `DistributeRound` (no borrower) and `BeginRecommit` (pending
+  cover) at the same time, with no path back to a running rotation.
+  `BeginRecommit` now opens at a provably vacant slot and carries the cover
+  across the re-seal.
+- **Governance authorized operations, not parameters.** A passed `DisburseLoan`
+  decision authorized any borrower for any amount, and `CloseFund` named no
+  destination. Each governed savings operation now commits its economic payload
+  (ADR-G1), and `CloseFund` routes the entire residual to the committed address.
+- `beginRecommit` was missing from `createDcuSession`.
+- `resolveUtxoByOutRef` reported provider outages as a missing UTxO.
+- `EscrowV2State` omitted `co_beneficiaries`, so a split recipient could not
+  discover their own escrow.
+
+### Added
+
+- `BoundIntent` governance action arm, additive: `Generic` and every typed arm
+  keep their original encoding.
+- Discovery reads: `getGroup`, `listGroups`, `listMembers`, `listMemberships`,
+  with cursors, observation slots, a reported query strategy, and diagnostics
+  for malformed or unattributable UTxOs.
+- Lifecycle eligibility verdicts with reason codes and the out-refs and slot
+  they were computed from.
+- Portable co-signing bundles bound to network, deployment, validity interval
+  and consumed inputs, with cryptographic witness verification.
+- Generated reference-script requirements; `distributePayout`, `beginRecommit`
+  and `startGroup` now reject a missing reference on live networks instead of
+  inlining validator bytes past the transaction-size limit.
+- `docs/adr/` with ADR-0001 and ADR-0002.
+
+### Changed
+
+- Every distribution must spend the group's reserve, making the stand-in
+  decrement an on-chain invariant rather than an off-chain convention.
+- API reference: the `nextCycle` page is removed, DefaultState recovery and the
+  error discriminator names are corrected, and nine missing endpoint pages added.
+
+## [0.6.0-preprod.0] - 2026-08-02
+
 **Validator hashes changed for governance and savings.** Both families were
 redeployed on Preprod (2026-08-02) and the manifest carries the new references.
 ROSCA and escrow blueprints are untouched, so their references and any position

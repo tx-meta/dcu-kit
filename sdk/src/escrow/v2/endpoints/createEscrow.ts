@@ -29,7 +29,7 @@ import {
   partyToCredential,
   toOnchainAddress,
 } from "../types.js";
-import { escrowV2PolicyId, escrowV2Validator } from "../validators.js";
+import { escrowV2PolicyId } from "../validators.js";
 import {
   effectiveEscrowV2ScriptRefs,
   EscrowV2ScriptRefs,

@@ -9,13 +9,20 @@
         "deleteGroup",
         "joinGroup",
         "startGroup",
+        "beginRecommit",
         "distributePayout",
         "claimPayout",
         "contribute",
         "updatePayoutCredential",
         "extendGraceWindow",
+        "topUpReserve",
         "exitGroup",
+        "terminateDefault",
         "terminateGroup",
-        "nextCycle"
+        "assignAdmin",
+        "proposeRecovery",
+        "approveRecovery",
+        "cancelRecovery",
+        "executeRecovery"
     ]
 }

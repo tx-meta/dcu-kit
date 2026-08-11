@@ -1,0 +1,18 @@
+---
+title: approveRecovery
+description: Add a distinct member approval to a pending recovery.
+---
+
+`sdk.approveRecovery` spends and recreates a `RecoveryRequest` with one additional
+signed registry member. The target cannot self-approve and an approval cannot be
+duplicated.
+
+```ts
+await sdk.approveRecovery(lucid, {
+  groupTokenSuffix,
+  targetTokenSuffix,
+  newAccountTokenSuffix,
+  approverTokenSuffix,
+  scriptRefs,
+}).unsafeRun();
+```

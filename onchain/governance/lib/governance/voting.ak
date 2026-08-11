@@ -7,10 +7,10 @@ use cardano/address.{Script}
 use cardano/assets
 use cardano/transaction.{InlineDatum, Input, Transaction}
 use governance/types.{
-  AnyMember, CreatorOnly, Executed, Generic, GovAction, GovernanceAnchor,
-  GovernanceDatum, MembershipChange, OneMemberOneVote, Open, ParamChange, Passed,
-  Proposal, Rejected, Roster, ShareWeighted, SocialPayout, TreasuryMove,
-  VoterRecord, VotingMode, WriteOff,
+  AnyMember, BoundIntent, CreatorOnly, Executed, Generic, GovAction,
+  GovernanceAnchor, GovernanceDatum, MembershipChange, OneMemberOneVote, Open,
+  ParamChange, Passed, Proposal, Rejected, Roster, ShareWeighted, SocialPayout,
+  TreasuryMove, VoterRecord, VotingMode, WriteOff,
 }
 use governance/validation.{
   credential_authorized, decision_token_name, holds_policy, is_voter_record,
@@ -39,6 +39,7 @@ pub fn action_tag(a: GovAction) -> Int {
     // All Generic actions share ONE opener class (key 5) regardless of inner
     // tag — the inner tag is vault-decode vocabulary, not an opener key.
     Generic { .. } -> 5
+    BoundIntent { .. } -> 6
   }
 }
 

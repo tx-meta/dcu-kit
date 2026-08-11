@@ -311,8 +311,9 @@ export const GroupSpendRedeemerSchema = Data.Enum([
       group_input_index: Data.Integer(),
       group_output_index: Data.Integer(),
       /**
-       * The group's reserve UTxO as a REFERENCE input — the clean gate requires
-       * standin_rounds == 0n (owed default cover must finish before a reset).
+       * The group's reserve UTxO as a REFERENCE input. The clean gate normally
+       * requires standin_rounds == 0n; ADR-R1 permits carry only at a provably
+       * vacant next slot.
        */
       reserve_ref_input_index: Data.Integer(),
     }),

@@ -15,6 +15,7 @@ import { unsignedFinalizeProposalTxProgram } from "../src/governance/endpoints/f
 import { unsignedExecuteDecisionTxProgram } from "../src/governance/endpoints/executeDecision.js";
 import { gateWitnessProgram } from "../src/governance/endpoints/authorizeAction.js";
 import {
+  govActionForIntent,
   govActionForOperation,
   SavingsOperation,
 } from "../src/governance/utils.js";
@@ -31,7 +32,8 @@ import {
   savingsPolicyId,
   savingsVaultValidator,
 } from "../src/savings/validators.js";
-import { resolveFund } from "../src/savings/utils.js";
+import { computeSavingsIntentHash, resolveFund } from "../src/savings/utils.js";
+import { registerSavingsStake } from "../src/savings/registerSavingsStake.js";
 import { advanceBlock } from "./effects.js";
 import {
   advancePast,
@@ -46,7 +48,7 @@ import {
 
 /** The governance context plus the savings validator's reference script. */
 type Ctx = GovTestContext & {
-  /** The ~15.5KB savings validator deployed once as a reference script. */
+  /** The ~15.7KiB savings validator deployed once as a reference script. */
   savingsRef: UTxO;
 };
 
@@ -58,6 +60,10 @@ const makeContext = Effect.gen(function* () {
     savingsVaultValidator.spendVault,
     25_000_000n,
   );
+  // ADR-0003: savings operations withdraw 0 ADA from their family's stake
+  // credential, which the ledger rejects while the credential is unregistered.
+  yield* registerSavingsStake(base.lucid);
+  yield* advanceBlock(base.emulator, 1);
   return { ...base, savingsRef } as Ctx;
 });
 
@@ -144,6 +150,7 @@ const runProposalToExecuted = (
   instance: GovernanceInstance,
   scriptRefs: GovScriptRefs,
   fundTokenName: string,
+  intentHash?: string,
 ) =>
   Effect.gen(function* () {
     const { lucid, emulator } = ctx;
@@ -161,7 +168,9 @@ const runProposalToExecuted = (
         // members are ratifying.
         // The decision authorizes exactly one operation on this fund: an
         // UpdateFund. It cannot later be spent to write off a loan.
-        action: govActionForOperation(SavingsOperation.UpdateFund),
+        action: intentHash
+          ? govActionForIntent(SavingsOperation.UpdateFund, intentHash)
+          : govActionForOperation(SavingsOperation.UpdateFund),
         deadline,
         openerTokenUnit: MEMBER_UNIT,
         currentTime: now,
@@ -211,7 +220,7 @@ const runProposalToExecuted = (
 
 describe("governance gate governs a real savings fund", () => {
   it.effect(
-    "an executed decision mutates a fund whose quorum is Script(gateHash)",
+    "an executed decision authorizes only its exact fund parameters",
     () =>
       Effect.gen(function* () {
         const ctx = yield* makeContext;
@@ -219,11 +228,26 @@ describe("governance gate governs a real savings fund", () => {
         const { instance, scriptRefs, fundTokenName } =
           yield* setupGovernedFund(ctx);
 
+        const before = yield* getFundStateProgram(lucid, fundTokenName);
+        expect(before.fund.max_shares_per_deposit).toBe(100n);
+        const intentHash = computeSavingsIntentHash({
+          UpdateFundIntent: {
+            title: before.fund.title,
+            quorum: before.fund.quorum,
+            min_shares_per_deposit: before.fund.min_shares_per_deposit,
+            max_shares_per_deposit: 250n,
+            max_loan_multiple: before.fund.max_loan_multiple,
+            loan_grace: before.fund.loan_grace,
+            cycle_end: before.fund.cycle_end,
+          },
+        });
+
         const { proposalId, decisionName } = yield* runProposalToExecuted(
           ctx,
           instance,
           scriptRefs,
           fundTokenName,
+          intentHash,
         );
 
         // The decision is live at the gate, ready to authorize the mutation.
@@ -236,9 +260,6 @@ describe("governance gate governs a real savings fund", () => {
           gateUtxos.find((u) => (u.assets[decisionUnit] ?? 0n) > 0n),
         ).toBeDefined();
 
-        const before = yield* getFundStateProgram(lucid, fundTokenName);
-        expect(before.fund.max_shares_per_deposit).toBe(100n);
-
         // The mutation itself: quorum-gated updateFund, authorized by spending
         // the decision at the gate in the SAME transaction. The gate fragment
         // indexes the fund input without collecting it — updateFund spends it
@@ -250,11 +271,40 @@ describe("governance gate governs a real savings fund", () => {
           targetUtxo: fundUtxo,
           scriptRefs,
         });
+
+        // Same operation and same decision, but a one-field substitution. The
+        // savings validator recomputes the emitted datum hash while the Gate
+        // binds field 0 to the ratified hash, so this must fail under UPLC.
+        const substituted = yield* Effect.flip(
+          unsignedUpdateFundTxProgram(lucid, {
+            scriptRef: ctx.savingsRef,
+            fundTokenName,
+            maxSharesPerDeposit: 251n,
+            quorumWitness: { extend: gateWitness },
+          }),
+        );
+        expect(substituted._tag).toBe("TransactionBuildError");
+        expect(JSON.stringify(substituted)).toContain(
+          "failed script execution",
+        );
+
+        // Re-resolve both inputs after the rejected build, then execute the
+        // exact parameters the proposal committed.
+        const { utxo: currentFundUtxo } = yield* resolveFund(
+          lucid,
+          fundTokenName,
+        );
+        const exactGateWitness = yield* gateWitnessProgram(lucid, {
+          instance,
+          proposalId,
+          targetUtxo: currentFundUtxo,
+          scriptRefs,
+        });
         const mutate = yield* unsignedUpdateFundTxProgram(lucid, {
           scriptRef: ctx.savingsRef,
           fundTokenName,
           maxSharesPerDeposit: 250n,
-          quorumWitness: { extend: gateWitness },
+          quorumWitness: { extend: exactGateWitness },
         });
         yield* signAndSubmit(mutate);
         yield* advanceBlock(emulator, 3);

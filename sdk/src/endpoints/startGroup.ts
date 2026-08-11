@@ -7,7 +7,12 @@ import {
 } from "@lucid-evolution/lucid";
 import { Effect } from "effect";
 import { AdminAuthConfig, applyAdminWitness } from "../multisig/index.js";
-import { effectiveScriptRefs } from "../core/scripts.js";
+import {
+  effectiveScriptRefs,
+  requireLiveReferenceScripts,
+  verifyReferenceScripts,
+} from "../core/scripts.js";
+import { requirementsFor } from "../core/operationRequirements.js";
 import { GroupDatum, GroupSpendRedeemer } from "../core/types.js";
 import { Protocol } from "../core/validators/constants.js";
 import {
@@ -165,6 +170,14 @@ export const unsignedStartGroupTxProgram = (
     // Use reference scripts when provided — avoids including ~12KB of script bytes
     // inline, keeping the tx under Cardano's 16,384-byte size limit.
     const scriptRefs = effectiveScriptRefs(config.scriptRefs);
+    const network = lucid.config().network!;
+    yield* requireLiveReferenceScripts(
+      network,
+      "startGroup",
+      scriptRefs,
+      requirementsFor("startGroup"),
+    );
+    yield* verifyReferenceScripts(protocol, { group: scriptRefs.group });
     const withValidators =
       scriptRefs.treasury || scriptRefs.group
         ? baseTx.readFrom(

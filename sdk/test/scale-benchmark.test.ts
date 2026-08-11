@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { it } from "@effect/vitest";
-import { describe } from "vitest";
+import { describe, expect } from "vitest";
 import { makeEmulatorContextWithMembers } from "./context.js";
 import {
   createAccountTestCase,
@@ -12,6 +12,7 @@ import { unsignedDistributePayoutTxProgram } from "../src/endpoints/distributePa
 import { assetNameLabels } from "../src/core/utils/assets.js";
 import { selectWalletFromSeed } from "../src/core/utils/wallet.js";
 import { resolveUtxoByUnit } from "../src/core/utils/resolve.js";
+import { sumTxExUnits } from "./utils.js";
 
 // ─── Scale benchmark: full distribute-round structure vs member count ─────────
 //
@@ -20,8 +21,8 @@ import { resolveUtxoByUnit } from "../src/core/utils/resolve.js";
 //   - scriptExecs: redeemer count = N treasury spends + 1 group spend = N+1. This
 //     empirically confirms the per-tx cost MULTIPLIER: the treasury validator runs
 //     once per member, so per-tx cost ≈ (N+1) × per-execution cost.
-//   - sizeBytes: INLINE tx size (the emulator inlines the ~15 KB validator;
-//     production uses reference scripts, so treat this as an upper bound only).
+//   - sizeBytes: production-shaped tx size using the deployed emulator reference
+//     scripts. ADR-R1 gates N=20 at no more than 90% of 16,384 bytes.
 //
 // EX-UNITS are NOT measured here: the Lucid emulator's evaluateTx is a no-op for
 // ex-units, and local UPLC eval fails on distribute's settings .readFrom input
@@ -32,58 +33,13 @@ import { resolveUtxoByUnit } from "../src/core/utils/resolve.js";
 // Run explicitly: `BENCH=1 NETWORK=Emulator pnpm exec vitest run test/scale-benchmark.test.ts`
 // Skipped in the normal suite.
 
-const MEMBER_COUNTS = [2, 10, 20, 40, 60, 80, 100];
+const MEMBER_COUNTS = [2, 10, 20];
+const MAX_TX_SIZE = 16_384;
+const SIZE_GATE = Math.floor(MAX_TX_SIZE * 0.9);
 
 // Sum ex-units from the built tx's redeemers (CML), mirroring Lucid's own
 // makeTxSignBuilder. With local UPLC eval enabled (BENCH_LOCAL_EVAL=1) the redeemers
 // carry the real per-script mem/cpu the node would charge.
-type CmlRedeemer = {
-  ex_units: () => { mem: () => bigint; steps: () => bigint };
-};
-const sumTxExUnits = (txb: {
-  toTransaction: () => {
-    witness_set: () => {
-      redeemers: () => {
-        as_arr_legacy_redeemer?: () => {
-          len: () => number;
-          get: (_i: number) => CmlRedeemer;
-        } | null;
-        as_map_redeemer_key_to_redeemer_val?: () => {
-          keys: () => { len: () => number; get: (_i: number) => unknown };
-          get: (_k: unknown) => CmlRedeemer;
-        } | null;
-      } | null;
-    };
-  };
-}): { mem: number; cpu: number; count: number } => {
-  let mem = 0;
-  let cpu = 0;
-  let count = 0;
-  const reds = txb.toTransaction().witness_set().redeemers();
-  if (reds) {
-    const arr = reds.as_arr_legacy_redeemer?.();
-    if (arr) {
-      for (let i = 0; i < arr.len(); i++) {
-        const r = arr.get(i);
-        mem += Number(r.ex_units().mem().toString());
-        cpu += Number(r.ex_units().steps().toString());
-        count++;
-      }
-    }
-    const map = reds.as_map_redeemer_key_to_redeemer_val?.();
-    if (map) {
-      const keys = map.keys();
-      for (let i = 0; i < keys.len(); i++) {
-        const v = map.get(keys.get(i));
-        mem += Number(v.ex_units().mem().toString());
-        cpu += Number(v.ex_units().steps().toString());
-        count++;
-      }
-    }
-  }
-  return { mem, cpu, count };
-};
-
 const benchOne = (n: number) =>
   Effect.gen(function* () {
     const context = yield* makeEmulatorContextWithMembers(n);
@@ -117,7 +73,7 @@ const benchOne = (n: number) =>
     const distributeTx = yield* unsignedDistributePayoutTxProgram(
       protocol!,
       lucid,
-      { groupTokenSuffix },
+      { groupTokenSuffix, scriptRefs: context.scriptRefs },
     );
     const size = distributeTx.toCBOR().length / 2;
     const { count } = sumTxExUnits(distributeTx as never);
@@ -139,10 +95,11 @@ describe("Scale benchmark — distribute ex-units vs members", () => {
             continue;
           }
           const { size, scriptExecs } = result.right;
+          if (n === 20) expect(size).toBeLessThanOrEqual(SIZE_GATE);
           rows.push({
             members: n,
             scriptExecs,
-            inlineSizeBytes: size,
+            referenceScriptSizeBytes: size,
             status: "built ok",
           });
         }

@@ -1,0 +1,17 @@
+---
+title: cancelRecovery
+description: Veto a pending recovery while the original member still controls N.
+---
+
+`sdk.cancelRecovery` is available immediately and burns the request token. The
+connected wallet proves the original member is not lost by spending and signing
+with the target account token.
+
+```ts
+await sdk.cancelRecovery(lucid, {
+  targetTokenSuffix,
+  newAccountTokenSuffix,
+  groupTokenSuffix, // optional unless lookup is ambiguous
+  scriptRefs,
+}).unsafeRun();
+```

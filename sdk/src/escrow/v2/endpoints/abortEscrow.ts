@@ -13,7 +13,6 @@ import {
   type TxMessage,
 } from "../../../core/utils/index.js";
 import { EscrowV2MintRedeemer, EscrowV2SpendRedeemer } from "../types.js";
-import { escrowV2Validator } from "../validators.js";
 import {
   effectiveEscrowV2ScriptRefs,
   EscrowV2ScriptRefs,

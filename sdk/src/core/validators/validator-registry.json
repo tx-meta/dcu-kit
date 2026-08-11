@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "sdkVersion": "0.6.0-preprod.0",
+  "sdkVersion": "0.6.2-preprod.0",
   "families": {
     "rosca": {
       "status": "launch",
@@ -12,9 +12,9 @@
         "account_validator.account.spend": "ae548bb50a0a438624a1ce990ea4c8deaaaddf2ebd24e23bc9445d357f686034",
         "account_validator.account.else": "ae548bb50a0a438624a1ce990ea4c8deaaaddf2ebd24e23bc9445d357f686034",
         "always_fails.always_fails.else": "298a6f97975239ee083f4283730710fbbb80441de81ea18e87358df3c49f7e49",
-        "group_validator.group_validator.mint": "9ba3202a6d23f3132b78269e2f4f1fd4ff778824ba86e14dead1d7ca62713817",
-        "group_validator.group_validator.spend": "9ba3202a6d23f3132b78269e2f4f1fd4ff778824ba86e14dead1d7ca62713817",
-        "group_validator.group_validator.else": "9ba3202a6d23f3132b78269e2f4f1fd4ff778824ba86e14dead1d7ca62713817",
+        "group_validator.group_validator.mint": "4df085b0c5c45986e1649e65a37f9b3f789420f8d780a97216bc7f46bd78b0a2",
+        "group_validator.group_validator.spend": "4df085b0c5c45986e1649e65a37f9b3f789420f8d780a97216bc7f46bd78b0a2",
+        "group_validator.group_validator.else": "4df085b0c5c45986e1649e65a37f9b3f789420f8d780a97216bc7f46bd78b0a2",
         "settings_validator.settings_nft.mint": "e4a180204d9284758fab9d4f80b470684e0f593d9af0ffca65bae9729bf5f322",
         "settings_validator.settings_nft.else": "e4a180204d9284758fab9d4f80b470684e0f593d9af0ffca65bae9729bf5f322",
         "treasury_lifecycle.treasury_lifecycle.withdraw": "01240b24ec655cb75c3c9480b63e0af390ffb4464ee1734911c12f3b3bc699d5",
@@ -23,8 +23,8 @@
         "treasury_recovery.treasury_recovery.else": "1055eea52378656640fc47fdc9661fe4a6ae322a84b721947c82bdd48a702f40",
         "treasury_reserve.treasury_reserve.withdraw": "c34852fdc18fcd473e71f3b0181997ac2932322ff27daaf3a590fe6efd17f049",
         "treasury_reserve.treasury_reserve.else": "c34852fdc18fcd473e71f3b0181997ac2932322ff27daaf3a590fe6efd17f049",
-        "treasury_rounds.treasury_rounds.withdraw": "e6c2c756502a2a22a3f97f30780b8b1d9be360d3db5441f3d725baa16cb32e80",
-        "treasury_rounds.treasury_rounds.else": "e6c2c756502a2a22a3f97f30780b8b1d9be360d3db5441f3d725baa16cb32e80",
+        "treasury_rounds.treasury_rounds.withdraw": "5e740cab645137680e5d4693b78ae64eb7d3c17d2f3630c21ce85cbb09c7d9c0",
+        "treasury_rounds.treasury_rounds.else": "5e740cab645137680e5d4693b78ae64eb7d3c17d2f3630c21ce85cbb09c7d9c0",
         "treasury_validator.treasury.mint": "d9ed1ca795aa1f6e8678dc4088f45e964dd707647a053aded70c4530a29ab175",
         "treasury_validator.treasury.spend": "d9ed1ca795aa1f6e8678dc4088f45e964dd707647a053aded70c4530a29ab175",
         "treasury_validator.treasury.else": "d9ed1ca795aa1f6e8678dc4088f45e964dd707647a053aded70c4530a29ab175"
@@ -68,9 +68,13 @@
       "onchainSource": "onchain/savings/plutus.json",
       "plutusVersion": "v3",
       "validators": {
-        "savings_vault_validator.savings_vault.mint": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd",
-        "savings_vault_validator.savings_vault.spend": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd",
-        "savings_vault_validator.savings_vault.else": "acc1a5e95ed2bc495a0696dfded9a7f6e4f787347343f1bba6b63d8a30e0c2fd"
+        "savings_direct.savings_direct.withdraw": "c5046fa41010958b7173453c16dd89be70bb12e726359786fadd7d3fc1891f4c",
+        "savings_direct.savings_direct.else": "c5046fa41010958b7173453c16dd89be70bb12e726359786fadd7d3fc1891f4c",
+        "savings_governed.savings_governed.withdraw": "892dc83bcfe028dd738a15d3b5d6e28e99576184d073827de0d71fec566fab4a",
+        "savings_governed.savings_governed.else": "892dc83bcfe028dd738a15d3b5d6e28e99576184d073827de0d71fec566fab4a",
+        "savings_vault_validator.savings_vault.mint": "5edc93d18dce444c1b682082b26f5f3c24690e21ab0b9c0260125b81eb71c33e",
+        "savings_vault_validator.savings_vault.spend": "5edc93d18dce444c1b682082b26f5f3c24690e21ab0b9c0260125b81eb71c33e",
+        "savings_vault_validator.savings_vault.else": "5edc93d18dce444c1b682082b26f5f3c24690e21ab0b9c0260125b81eb71c33e"
       },
       "deployments": {}
     },
@@ -80,15 +84,15 @@
       "onchainSource": "onchain/governance/plutus.json",
       "plutusVersion": "v3",
       "validators": {
-        "governance_dispatcher.governance_dispatcher.mint": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
-        "governance_dispatcher.governance_dispatcher.spend": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
-        "governance_dispatcher.governance_dispatcher.else": "e487477ff5abd3294e6699f92bcc32b2416905b485fc7e642de7a0a60c5229c3",
-        "governance_gate.governance_gate.spend": "b88b16df72597d253fa7180aa45d3d7729a3846299384c2214d892263f897c8f",
-        "governance_gate.governance_gate.else": "b88b16df72597d253fa7180aa45d3d7729a3846299384c2214d892263f897c8f",
-        "governance_settings.governance_settings.mint": "16d5f0a1c6f0cf693e4775f7116baa1cf7d14d7105cf22ccd6680e7f60e9d617",
-        "governance_settings.governance_settings.else": "16d5f0a1c6f0cf693e4775f7116baa1cf7d14d7105cf22ccd6680e7f60e9d617",
-        "governance_voting.governance_voting.withdraw": "92cf239f89964197a0640bd53ead6c16e624de2a0cfca9165820e42549f5f7a8",
-        "governance_voting.governance_voting.else": "92cf239f89964197a0640bd53ead6c16e624de2a0cfca9165820e42549f5f7a8"
+        "governance_dispatcher.governance_dispatcher.mint": "e9d525c4b98f5c6724c009b8dc134eaf8e3e357c403d4bb323a30c05a009307b",
+        "governance_dispatcher.governance_dispatcher.spend": "e9d525c4b98f5c6724c009b8dc134eaf8e3e357c403d4bb323a30c05a009307b",
+        "governance_dispatcher.governance_dispatcher.else": "e9d525c4b98f5c6724c009b8dc134eaf8e3e357c403d4bb323a30c05a009307b",
+        "governance_gate.governance_gate.spend": "54fccf2a9eb4606f5cf48d5cc1910ca529cbb4db56718fd7e56170f22428402a",
+        "governance_gate.governance_gate.else": "54fccf2a9eb4606f5cf48d5cc1910ca529cbb4db56718fd7e56170f22428402a",
+        "governance_settings.governance_settings.mint": "16a5a954ffbe378d638d8dfd565c5c8d61b4244f19be3abcc6bb29e768ee3278",
+        "governance_settings.governance_settings.else": "16a5a954ffbe378d638d8dfd565c5c8d61b4244f19be3abcc6bb29e768ee3278",
+        "governance_voting.governance_voting.withdraw": "4fd952843da8c05c48f6565e894a19b6d19cfcf0f591bf5f8ac6db9c4d393f50",
+        "governance_voting.governance_voting.else": "4fd952843da8c05c48f6565e894a19b6d19cfcf0f591bf5f8ac6db9c4d393f50"
       },
       "deployments": {
         "preprod": {
@@ -99,6 +103,51 @@
     }
   },
   "history": [
+    {
+      "date": "2026-08-10",
+      "sdkVersion": "0.6.2-preprod.0",
+      "changed": [
+        "savings:savings_direct.savings_direct.withdraw",
+        "savings:savings_direct.savings_direct.else",
+        "savings:savings_governed.savings_governed.withdraw",
+        "savings:savings_governed.savings_governed.else",
+        "savings:savings_vault_validator.savings_vault.mint",
+        "savings:savings_vault_validator.savings_vault.spend",
+        "savings:savings_vault_validator.savings_vault.else"
+      ],
+      "note": "ADR-0003: split the savings vault into a thin spend/mint dispatcher plus the savings_governed and savings_direct withdraw-zero families, and bind every vault spend to both its family and that family's action variant. 0.6.1-preprod.0 remains the undeployed pre-split candidate; intent_hash stays at field 0 of the spending redeemer, so the Gate's BoundIntent binding is unchanged."
+    },
+    {
+      "date": "2026-08-09",
+      "sdkVersion": "0.6.1-preprod.0",
+      "changed": [
+        "savings:savings_vault_validator.savings_vault.mint",
+        "savings:savings_vault_validator.savings_vault.spend",
+        "savings:savings_vault_validator.savings_vault.else",
+        "governance:governance_dispatcher.governance_dispatcher.mint",
+        "governance:governance_dispatcher.governance_dispatcher.spend",
+        "governance:governance_dispatcher.governance_dispatcher.else",
+        "governance:governance_gate.governance_gate.spend",
+        "governance:governance_gate.governance_gate.else",
+        "governance:governance_settings.governance_settings.mint",
+        "governance:governance_settings.governance_settings.else",
+        "governance:governance_voting.governance_voting.withdraw",
+        "governance:governance_voting.governance_voting.else"
+      ],
+      "note": "ADR-G1: add additive BoundIntent governance authorization and bind six quorum-controlled savings actions to canonical economic intent hashes"
+    },
+    {
+      "date": "2026-08-09",
+      "sdkVersion": "0.6.1-preprod.0",
+      "changed": [
+        "rosca:group_validator.group_validator.mint",
+        "rosca:group_validator.group_validator.spend",
+        "rosca:group_validator.group_validator.else",
+        "rosca:treasury_rounds.treasury_rounds.withdraw",
+        "rosca:treasury_rounds.treasury_rounds.else"
+      ],
+      "note": "ADR-R1: require the reserve on every distribution and permit carried cover when recommit is provably halted at a vacant slot"
+    },
     {
       "date": "2026-08-02",
       "sdkVersion": "0.6.0-preprod.0",

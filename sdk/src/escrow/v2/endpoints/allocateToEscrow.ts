@@ -27,11 +27,7 @@ import {
   PoolSpendRedeemer,
   VaultDatum,
 } from "../types.js";
-import {
-  escrowV2PolicyId,
-  escrowV2Validator,
-  poolVaultValidator,
-} from "../validators.js";
+import { escrowV2PolicyId } from "../validators.js";
 import {
   effectiveEscrowV2ScriptRefs,
   EscrowV2ScriptRefs,

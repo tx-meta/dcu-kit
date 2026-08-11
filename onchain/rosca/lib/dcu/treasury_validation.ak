@@ -648,59 +648,39 @@ pub fn validate_distribute_withdraw(
   let active_members = group.active_member_count
   let total_payout = active_members * group.contribution_fee
 
-  // [spec Reserve C2/C3]: the reserve leg. The reserve UTxO (located by its
-  // deterministic token name) rides the same indexer fold as the member
-  // treasuries. It MUST be spent when the group configures a round levy; with
-  // levy 0 it MAY be spent (draw-only) while a stand-in is active — the borrower
-  // gains by including it, and BeginRecommit waits for standin_rounds == 0.
+  // [spec Reserve C2/C3 / ADR-R1]: the reserve leg. Every group is created with
+  // exactly one reserve token, and every successful distribution MUST spend its
+  // reserve. This makes levy routing and the one-step stand-in decrement an
+  // on-chain invariant even when the levy and available draw are both zero.
   let reserve_token_name = cip68.convert_ref_to_reserve_token(
     expected_group_token_name,
   )
-  let reserve_input_opt = list.find(
+  expect Some(reserve_in) = list.find(
     inputs,
     fn(i) {
       assets.quantity_of(i.output.value, own_policy_id, reserve_token_name) == 1
     },
   )
-  let reserve_leg_ok = when reserve_input_opt is {
-    Some(_) -> True
-    None -> group.reserve_round_levy == 0
-  }
-  let (reserve_present, standin_in, reserve_in_contributable) = when
-    reserve_input_opt
-  is {
-    Some(reserve_in) -> {
-      expect InlineDatum(reserve_datum_data) = reserve_in.output.datum
-      expect  
-          ReserveState {
-            group_reference_tokenname: reserve_binding,
-            standin_rounds,
-          }: TreasuryDatum
-        = reserve_datum_data
-      expect reserve_binding == expected_group_token_name
-      (
-        True,
-        standin_rounds,
-        contributable_in(
-          reserve_in.output.value,
-          group.contribution_fee_policyid,
-          group.contribution_fee_assetname,
-        ),
-      )
-    }
-    None -> (False, 0, 0)
-  }
+  expect InlineDatum(reserve_datum_data) = reserve_in.output.datum
+  expect  
+      ReserveState {
+        group_reference_tokenname: reserve_binding,
+        standin_rounds: standin_in,
+      }: TreasuryDatum
+    = reserve_datum_data
+  expect reserve_binding == expected_group_token_name
+  let reserve_in_contributable = contributable_in(
+    reserve_in.output.value,
+    group.contribution_fee_policyid,
+    group.contribution_fee_assetname,
+  )
   // Levy accrues per contributing member; the pot shrinks by the same total.
-  let levy_total = if reserve_present {
-    group.reserve_round_levy * active_members
-  } else {
-    0
-  }
+  let levy_total = group.reserve_round_levy * active_members
   // Stand-in draw: one fee-unit per round while the counter is positive, capped
   // by what the pot (plus this round's levy) actually holds — degrades to a dry
   // draw of 0 rather than blocking, and the counter still decrements so owed
   // cover always drains (flat-counter semantics, spec §5).
-  let draw = if reserve_present && standin_in > 0 {
+  let draw = if standin_in > 0 {
     let cap = reserve_in_contributable + levy_total
     if group.contribution_fee < cap {
       group.contribution_fee
@@ -720,12 +700,8 @@ pub fn validate_distribute_withdraw(
   // What the borrower actually receives this round.
   let adjusted_payout = total_payout - levy_total + draw
 
-  // The spent set = every active member treasury, plus the reserve when present.
-  let spent_set_complete = list.length(treasury_input_indices) == active_members + if reserve_present {
-    1
-  } else {
-    0
-  }
+  // The spent set = every active member treasury plus the mandatory reserve.
+  let spent_set_complete = list.length(treasury_input_indices) == active_members + 1
 
   let is_pull = group.payout_mode == Pull
   // [spec DistributeRound 7a / D2]: the last round of EVERY cycle (generalising the old
@@ -851,7 +827,6 @@ pub fn validate_distribute_withdraw(
   and {
     borrower_present?,
     spent_set_complete?,
-    reserve_leg_ok?,
     group_round_incremented?,
     group_output_valid?,
     active_count_correct?,

@@ -20,6 +20,8 @@ pnpm-debug.log
 # The CI handles generating them.
 docs/**/*.pdf
 docs/**/*.md
+!docs/adr/
+!docs/adr/*.md
 
 # Generic Build
 dist/

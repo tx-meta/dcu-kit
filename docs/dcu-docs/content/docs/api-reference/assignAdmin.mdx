@@ -1,0 +1,19 @@
+---
+title: assignAdmin
+description: Transfer a group's bearer admin token to a key or multisig script.
+---
+
+`sdk.assignAdmin` transfers the group `(222)` admin token. Authority follows that
+token; the group validator is not spent.
+
+```ts
+await sdk.assignAdmin(lucid, {
+  groupTokenSuffix,
+  destinationAddress,
+  destinationScript, // required for a script destination unless force is true
+}).unsafeRun();
+```
+
+This is a one-way authority transfer. The SDK verifies a supplied native script
+matches the destination credential to avoid sending authority to an unusable
+address.
