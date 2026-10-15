@@ -2,8 +2,17 @@ packages:
   - "."
 
 overrides:
-  "next>postcss": ^8.5.10
+  postcss: ^8.5.23
   "fumadocs-mdx>esbuild": ^0.28.1
+  # Security patches for transitive dependencies (Dependabot, 2026-10-15), each held
+  # inside its current major line.
+  js-yaml: ^4.3.2
+  image-size: ^2.0.3
+  nanoid@3: ^3.3.18
+  source-map-js: ^1.2.2
+  dompurify: ^3.4.16
+  postcss-selector-parser: ^7.1.6
+  baseline-browser-mapping: ^2.11.0
 
 # Explicit supply-chain policy: docs type generation does not require package
 # lifecycle scripts, so keep both native dependencies disabled by default.
