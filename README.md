@@ -65,10 +65,7 @@ aiken check
 
 ## License
 
-DCU Toolkit is licensed under the [Business Source License 1.1](LICENSE) (BUSL-1.1). The source is
-public and auditable, but production use is restricted until the Change Date, when the license
-automatically converts to the **Apache License, Version 2.0**. The Change Date is four years from the
-date each version is published.
+DCU Toolkit is licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026 Tx Meta.
 
-For production use before the Change Date, or for commercial licensing arrangements, please contact
-Tx Meta.
+Versions published before the switch to Apache-2.0 (up to and including `0.6.2-preprod.0`) remain
+under the Business Source License 1.1 they were released with.
