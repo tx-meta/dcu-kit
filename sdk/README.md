@@ -127,10 +127,14 @@ lag — real project delays are handled by `amendMilestones`.
 ### Savings and lending (`@tx-meta/dcu-kit/savings`)
 
 A savings fund is a group pool in any Cardano asset. Members buy shares with each
-deposit, borrow against their own savings with the group's approval, and claim a
-proportional share-out when the cycle closes. A fund's charter sets whether savings
-are locked until share-out or withdrawable at any time, and how large a loan can be
-relative to the borrower's savings.
+deposit, borrow with the group's approval, and claim a proportional share-out when
+the cycle closes. A fund's charter sets whether savings are locked until share-out
+or flexible, and the borrowing limit as a multiple of the borrower's savings
+(`maxLoanMultiple`, default 1). A flexible withdrawal needs an active fund, enough
+funds in the pool, and enough remaining shares to cover the member's open loan.
+At the default limit a loan never exceeds the borrower's savings. Above it, a
+write-off recovers what the borrower's shares cover, and the rest reduces the pot
+that every member shares.
 
 | Function               | Description                                                    |
 | ---------------------- | -------------------------------------------------------------- |
