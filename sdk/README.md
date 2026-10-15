@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@tx-meta/dcu-kit)](https://www.npmjs.com/package/@tx-meta/dcu-kit)
 [![CI](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml)
 
-TypeScript offchain SDK for the **DCU Toolkit**, a ROSCA protocol on Cardano. Built on [Lucid Evolution](https://github.com/Anastasia-Labs/lucid-evolution) and [Effect](https://effect.website/).
+TypeScript offchain SDK for the **DCU Toolkit**, cooperative finance on Cardano: savings and lending, rotating savings (ROSCA), escrow, and governance. Built on [Lucid Evolution](https://github.com/Anastasia-Labs/lucid-evolution) and [Effect](https://effect.website/).
 
 ## Installation
 
@@ -123,6 +123,52 @@ All parties are passed as plain bech32 addresses (script callers may pass
 Grace guidance: strict supplier delivery 3–7 days; professional services 14 days
 (the default); construction and grant reporting 30 days. Grace covers coordination
 lag — real project delays are handled by `amendMilestones`.
+
+### Savings and lending (`@tx-meta/dcu-kit/savings`)
+
+A savings fund is a group pool in any Cardano asset. Members buy shares with each
+deposit, borrow against their own savings with the group's approval, and claim a
+proportional share-out when the cycle closes. A fund's charter sets whether savings
+are locked until share-out or withdrawable at any time, and how large a loan can be
+relative to the borrower's savings.
+
+| Function               | Description                                                    |
+| ---------------------- | -------------------------------------------------------------- |
+| `registerSavingsStake` | Register the savings stake credentials, once per deployment    |
+| `createFund`           | Open a fund and set its charter                                |
+| `joinFund`             | Join a fund and mint the member's account token                |
+| `deposit`              | Buy shares or pay into the social fund                         |
+| `withdrawSavings`      | Sell shares back before the cycle closes (flexible funds only) |
+| `socialPayout`         | Quorum: pay a welfare claim from the social fund               |
+| `updateFund`           | Quorum: amend the charter's mutable fields                     |
+| `disburseLoan`         | Quorum and borrower: pay a loan out of the pool                |
+| `repayLoan`            | Repay part or all of a loan, plus its service charge           |
+| `markArrears`          | Move an overdue loan to `Late`, then `Defaulted` (anyone)      |
+| `writeOffLoan`         | Quorum: close a `Defaulted` loan against the borrower's shares |
+| `closeCycle`           | Quorum: freeze the share-out snapshot                          |
+| `claimShareOut`        | Claim the member's proportional share of the pot               |
+| `exitFund`             | Leave the fund once the member holds no shares                 |
+| `closeFund`            | Quorum: close the fund after every share is claimed            |
+
+### Governance (`@tx-meta/dcu-kit/governance`)
+
+Members propose, vote (optionally weighted by savings shares), and execute decisions. A
+savings fund can name a governance instance as its quorum, so loans and payouts
+pass by member vote.
+
+| Function              | Description                                                  |
+| --------------------- | ------------------------------------------------------------ |
+| `initGovernance`      | Create a governance instance                                 |
+| `registerVotingStake` | Register the instance's voting stake credential, once        |
+| `registerVoter`       | Register a member as a voter                                 |
+| `splitEligibility`    | Split eligibility tokens into separate outputs before a vote |
+| `openProposal`        | Open a proposal                                              |
+| `castVote`            | Cast one weighted vote                                       |
+| `finalizeProposal`    | Tally a proposal after its deadline                          |
+| `executeDecision`     | Execute a passed proposal                                    |
+| `authorizeAction`     | Spend a decision to authorize the operation it approved      |
+| `expireProposal`      | Retire a failed proposal, or a passed one never executed     |
+| `updateCharter`       | Amend the instance's mutable charter fields                  |
 
 ## Development
 
