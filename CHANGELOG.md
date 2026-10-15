@@ -6,6 +6,14 @@ versioning. Migration steps for every breaking change live in [`MIGRATION.md`](.
 
 ## [Unreleased]
 
+### Changed
+
+- **Relicensed from BUSL-1.1 to Apache-2.0.** The next published version and
+  everything after it ship under the Apache License, Version 2.0, so any project
+  can use the contracts and SDK in production. Versions up to and including
+  `0.6.2-preprod.0` keep the BUSL-1.1 license they were released with. The
+  Aiken blueprints already declared Apache-2.0 and are unchanged.
+
 ## [0.6.2-preprod.0] - 2026-08-10
 
 **Savings validator hashes changed.** ROSCA, escrow and governance are

@@ -152,6 +152,6 @@ NETWORK=Emulator pnpm test -- -t "pattern"        # Filter by name
 
 ## License
 
-Business Source License 1.1. See the repository's
-[LICENSE](https://github.com/tx-meta/dcu-kit/blob/main/LICENSE). Each published
-version converts to Apache-2.0 on its Change Date.
+Apache License, Version 2.0. See the repository's
+[LICENSE](https://github.com/tx-meta/dcu-kit/blob/main/LICENSE). Versions up to
+and including `0.6.2-preprod.0` were released under the Business Source License 1.1.
