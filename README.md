@@ -15,7 +15,7 @@ Four sibling Aiken projects, each with its own `aiken.toml` and compiled bluepri
 - **Automated ROSCA Rotation**: Trustless fund distribution and linear vesting logic.
 - **CIP-68 Membership System**: Verifiable on-chain identity and reputation tracking.
 - **Treasury Management**: Multi-sig fund control and automated dividend distribution.
-- **Savings and Lending**: Share-based group funds, member loans backed by the borrower's savings, and a proportional share-out at the end of each cycle.
+- **Savings and Lending**: Share-based group funds, member loans with savings-linked borrowing limits, and a proportional share-out at the end of each cycle.
 - **Member Governance**: Proposals and votes that can authorize fund operations, such as approving a loan.
 
 ### 2. Middleware & SDK ([sdk/](sdk/))
