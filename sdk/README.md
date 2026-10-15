@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@tx-meta/dcu-kit)](https://www.npmjs.com/package/@tx-meta/dcu-kit)
 [![CI](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tx-meta/dcu-kit/actions/workflows/ci.yml)
 
-TypeScript offchain SDK for the **DCU Toolkit**, a ROSCA protocol on Cardano. Built on [Lucid Evolution](https://github.com/Anastasia-Labs/lucid-evolution) and [Effect](https://effect.website/).
+TypeScript offchain SDK for the **DCU Toolkit**, cooperative finance on Cardano: savings and lending, rotating savings (ROSCA), escrow, and governance. Built on [Lucid Evolution](https://github.com/Anastasia-Labs/lucid-evolution) and [Effect](https://effect.website/).
 
 ## Installation
 
@@ -124,6 +124,56 @@ Grace guidance: strict supplier delivery 3–7 days; professional services 14 da
 (the default); construction and grant reporting 30 days. Grace covers coordination
 lag — real project delays are handled by `amendMilestones`.
 
+### Savings and lending (`@tx-meta/dcu-kit/savings`)
+
+A savings fund is a group pool in any Cardano asset. Members buy shares with each
+deposit, borrow with the group's approval, and claim a proportional share-out when
+the cycle closes. A fund's charter sets whether savings are locked until share-out
+or flexible, and the borrowing limit as a multiple of the borrower's savings
+(`maxLoanMultiple`, default 1). A flexible withdrawal needs an active fund, enough
+funds in the pool, and enough remaining shares to cover the member's open loan.
+At the default limit a loan never exceeds the borrower's savings. Above it, a
+write-off recovers what the borrower's shares cover, and the rest reduces the pot
+that every member shares.
+
+| Function               | Description                                                    |
+| ---------------------- | -------------------------------------------------------------- |
+| `registerSavingsStake` | Register the savings stake credentials, once per deployment    |
+| `createFund`           | Open a fund and set its charter                                |
+| `joinFund`             | Join a fund and mint the member's account token                |
+| `deposit`              | Buy shares or pay into the social fund                         |
+| `withdrawSavings`      | Sell shares back before the cycle closes (flexible funds only) |
+| `socialPayout`         | Quorum: pay a welfare claim from the social fund               |
+| `updateFund`           | Quorum: amend the charter's mutable fields                     |
+| `disburseLoan`         | Quorum and borrower: pay a loan out of the pool                |
+| `repayLoan`            | Repay part or all of a loan, plus its service charge           |
+| `markArrears`          | Move an overdue loan to `Late`, then `Defaulted` (anyone)      |
+| `writeOffLoan`         | Quorum: close a `Defaulted` loan against the borrower's shares |
+| `closeCycle`           | Quorum: freeze the share-out snapshot                          |
+| `claimShareOut`        | Claim the member's proportional share of the pot               |
+| `exitFund`             | Leave the fund once the member holds no shares                 |
+| `closeFund`            | Quorum: close the fund after every share is claimed            |
+
+### Governance (`@tx-meta/dcu-kit/governance`)
+
+Members propose, vote (optionally weighted by savings shares), and execute decisions. A
+savings fund can name a governance instance as its quorum, so loans and payouts
+pass by member vote.
+
+| Function              | Description                                                  |
+| --------------------- | ------------------------------------------------------------ |
+| `initGovernance`      | Create a governance instance                                 |
+| `registerVotingStake` | Register the instance's voting stake credential, once        |
+| `registerVoter`       | Register a member as a voter                                 |
+| `splitEligibility`    | Split eligibility tokens into separate outputs before a vote |
+| `openProposal`        | Open a proposal                                              |
+| `castVote`            | Cast one weighted vote                                       |
+| `finalizeProposal`    | Tally a proposal after its deadline                          |
+| `executeDecision`     | Execute a passed proposal                                    |
+| `authorizeAction`     | Spend a decision to authorize the operation it approved      |
+| `expireProposal`      | Retire a failed proposal, or a passed one never executed     |
+| `updateCharter`       | Amend the instance's mutable charter fields                  |
+
 ## Development
 
 ```sh
@@ -152,6 +202,6 @@ NETWORK=Emulator pnpm test -- -t "pattern"        # Filter by name
 
 ## License
 
-Business Source License 1.1. See the repository's
-[LICENSE](https://github.com/tx-meta/dcu-kit/blob/main/LICENSE). Each published
-version converts to Apache-2.0 on its Change Date.
+Apache License, Version 2.0. See the repository's
+[LICENSE](https://github.com/tx-meta/dcu-kit/blob/main/LICENSE). Versions up to
+and including `0.6.2-preprod.0` were released under the Business Source License 1.1.

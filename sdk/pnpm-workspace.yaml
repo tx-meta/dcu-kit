@@ -13,4 +13,6 @@ overrides:
   "tsup>esbuild": "^0.28.1"
   # GHSA-mwp4-54f8-5fhr reaches in through @cardano-sdk/core; the pinned
   # lucid line has no release carrying the patched range yet.
-  ip-address: ">=10.3.1"
+  ip-address: ">=10.7.1"
+  # Patched pbkdf2 for @lucid-evolution key derivation, held to the 3.x line.
+  pbkdf2: ">=3.1.7 <4"
