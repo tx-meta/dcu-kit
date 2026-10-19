@@ -93,7 +93,7 @@
     "examples:rosca-lifecycle": "pnpm run examples:setup && cd examples && npx tsx rosca-lifecycle.ts"
   },
   "devDependencies": {
-    "@effect/vitest": "^0.30.0",
+    "@effect/vitest": "^4.0.5",
     "@sinclair/typebox": "^0.34.52",
     "@types/node": "^24.13.3",
     "@typescript-eslint/parser": "^8.62.1",
@@ -110,6 +110,6 @@
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.31",
     "@noble/hashes": "^1.8.0",
-    "effect": "^3.21.4"
+    "effect": "^4.0.5"
   }
 }
