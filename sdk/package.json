@@ -98,7 +98,7 @@
     "@types/node": "^24.13.3",
     "@typescript-eslint/parser": "^8.62.1",
     "dotenv": "^17.4.2",
-    "eslint": "^10.7.0",
+    "eslint": "^10.12.0",
     "libsodium-wrappers": "^0.8.4",
     "libsodium-wrappers-sumo": "0.8.2",
     "prettier": "^3.9.6",
