@@ -95,7 +95,7 @@
   "devDependencies": {
     "@effect/vitest": "^0.30.0",
     "@sinclair/typebox": "^0.34.52",
-    "@types/node": "^24.13.3",
+    "@types/node": "^24.19.2",
     "@typescript-eslint/parser": "^8.62.1",
     "dotenv": "^17.4.2",
     "eslint": "^10.7.0",
